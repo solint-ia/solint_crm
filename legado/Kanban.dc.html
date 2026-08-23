@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --app-bg:#F4F7FB;
+    --chat-bg:#EEF2F7;
+    --surface:#FFFFFF;
+    --surface-2:#F7F9FC;
+    --border:#E5E9F0;
+    --border-soft:#EEF1F5;
+    --text:#0A1424;
+    --text-muted:#5B6472;
+    --text-dim:#8B95A5;
+    --toggle-off:#D7DEE8;
+    --accent-soft:#E8F3FF;
+    --accent-soft-text:#0A2540;
+    --selected-bg:#EFF6FF;
+    --accent-border:#B7D9FF;
+    --note-bg:#FFFBEB;
+    --note-border:#FCD34D;
+    --note-text:#7C4A08;
+    --note-meta:#B08340;
+    --amber-soft:#FEF3C7;
+    --amber-text:#B45309;
+    --green-soft:#E8F9EE;
+    --green-text:#0E803C;
+    --green-border:#A7E3C0;
+    --red-soft:#FEE2E2;
+    --red-text:#B91C1C;
+    --red-border:#FCA5A5;
+    --violet-soft:#EDE9FE;
+    --violet-text:#6D28D9;
+    --blue-soft:#E0F2FE;
+    --blue-text:#0369A1;
+    --cyan-soft:#E0F7FF;
+    --cyan-text:#054452;
+    --cyan-border:#B7E9FF;
+    --slate-soft:#F1F5F9;
+    --slate-text:#475569;
+    --pink-soft:#FCE7F0;
+    --pink-text:#BE1857;
+    --indigo-soft:#EEEDFD;
+    --indigo-text:#4C46C4;
+    --accent-soft-meta:#5B85AE;
+  }
+  :root[data-theme="dark"]{
+    --app-bg:#050A14;
+    --chat-bg:#050A14;
+    --surface:#0D121A;
+    --surface-2:#141A24;
+    --border:rgba(255,255,255,0.08);
+    --border-soft:rgba(255,255,255,0.05);
+    --text:#FAFCFF;
+    --text-muted:#A3AEBD;
+    --text-dim:#7C8899;
+    --toggle-off:#2A3442;
+    --accent-soft:#0E335C;
+    --accent-soft-text:#DCEBFF;
+    --accent-soft-meta:#9CC3EE;
+    --selected-bg:#141A24;
+    --accent-border:rgba(53,217,255,0.28);
+    --note-bg:#1E1A11;
+    --note-border:rgba(255,182,92,0.4);
+    --note-text:#FFD9A0;
+    --note-meta:#C9A46A;
+    --amber-soft:rgba(255,182,92,0.16);
+    --amber-text:#FFB65C;
+    --green-soft:rgba(16,185,129,0.16);
+    --green-text:#34D399;
+    --green-border:rgba(16,185,129,0.35);
+    --red-soft:rgba(239,68,68,0.16);
+    --red-text:#FCA5A5;
+    --red-border:rgba(239,68,68,0.4);
+    --violet-soft:rgba(139,92,246,0.18);
+    --violet-text:#C4B5FD;
+    --blue-soft:rgba(56,152,236,0.2);
+    --blue-text:#7DD3FC;
+    --cyan-soft:#0A2C38;
+    --cyan-text:#7FE7FF;
+    --cyan-border:rgba(53,217,255,0.3);
+    --slate-soft:rgba(255,255,255,0.07);
+    --slate-text:#A3AEBD;
+    --pink-soft:rgba(225,48,108,0.18);
+    --pink-text:#F9A8D4;
+    --indigo-soft:rgba(99,102,241,0.2);
+    --indigo-text:#C7D2FE;
+  }
+  html,body{background:var(--app-bg);color:var(--text);}
+  ::-webkit-scrollbar-thumb{background:var(--toggle-off);}
+  a{color:#168CFF;}
+  a:hover{color:#35D9FF;}
+  html,body{margin:0;padding:0;height:100%;}
+  *{box-sizing:border-box;}
+  ::-webkit-scrollbar{width:8px;height:8px;}
+  ::-webkit-scrollbar-thumb{background:var(--toggle-off);border-radius:8px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+  input::placeholder{color:var(--text-dim);}
+</style>
+<script>
+(function(){
+  try{ var t = localStorage.getItem("solint-theme"); if(t) document.documentElement.dataset.theme = t; }catch(e){}
+  if(!window.__solintThemeBound){
+    window.__solintThemeBound = true;
+    document.addEventListener("click", function(e){
+      var el = e.target && e.target.closest ? e.target.closest("[data-theme-toggle]") : null;
+      if(!el) return;
+      var root = document.documentElement;
+      var next = root.dataset.theme === "dark" ? "light" : "dark";
+      root.dataset.theme = next;
+      try{ localStorage.setItem("solint-theme", next); }catch(err){}
+    });
+  }
+})();
+</script>
+</helmet>
+
+<div style="display:flex;width:100vw;height:100vh;min-width:1280px;background:var(--app-bg);font-family:'Inter',sans-serif;color:var(--text);overflow-x:auto;overflow-y:hidden;">
+
+  <!-- NAVIGATION RAIL -->
+  <div style="width:64px;flex:0 0 64px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:14px 0 16px;justify-content:space-between;">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:22px;width:100%;">
+      <div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(100deg,#174EFF 0%,#168CFF 52%,#35D9FF 100%);display:flex;align-items:center;justify-content:center;color:var(--surface);font-family:Sora;font-weight:700;font-size:15px;flex:none;">S</div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
+        <a href="Conversas.dc.html" title="Caixa de Entrada" style="position:relative;width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12H8l-4 4V4z"></path></svg>
+          <span style="position:absolute;top:-4px;right:-4px;min-width:16px;height:16px;padding:0 3px;border-radius:8px;background:#EF4444;color:var(--surface);font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1;">7</span>
+        </a>
+<a href="Contatos.dc.html" title="Contatos" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 20c0-3.5 2.5-6 5.5-6s5.5 2.5 5.5 6"></path><circle cx="17.5" cy="9" r="2.3"></circle><path d="M15.8 14.3c2.4.3 4.2 2.3 4.2 5.2"></path></svg>
+        </a>
+        <button title="Kanban" style="width:40px;height:40px;border-radius:10px;border:none;background:var(--accent-soft);color:#168CFF;display:flex;align-items:center;justify-content:center;cursor:pointer;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="5" height="16" rx="1.4"></rect><rect x="9.8" y="4" width="5" height="10" rx="1.4"></rect><rect x="16" y="4" width="5" height="13" rx="1.4"></rect></svg>
+        </button>
+<a href="Agentes-IA.dc.html" title="Agentes de IA" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="3"></rect><path d="M12 8V4"></path><circle cx="12" cy="3" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="9" cy="14" r="1.3" fill="currentColor" stroke="none"></circle><circle cx="15" cy="14" r="1.3" fill="currentColor" stroke="none"></circle></svg>
+        </a>
+<a href="Campanhas.dc.html" title="Campanhas" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1.5 1.5 0 0 0 1.5 1.5H6v4l3-2.2"></path><path d="M6 11l11.5-6v14L6 13"></path><path d="M17.5 9.5a2.5 2.5 0 0 1 0 5"></path></svg>
+        </a>
+        <a href="Dashboard.dc.html" title="Dashboard e Relatórios" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10"></path><path d="M11 20V4"></path><path d="M18 20v-7"></path></svg>
+        </a>
+<a href="Configuracoes.dc.html" title="Configurações e Conexões" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l1.9-1.5-2-3.4-2.2.9a7.7 7.7 0 0 0-2.6-1.5L14 2h-4l-.5 2.5a7.7 7.7 0 0 0-2.6 1.5l-2.2-.9-2 3.4L4.6 10a7.6 7.6 0 0 0 0 3l-1.9 1.5 2 3.4 2.2-.9c.77.66 1.65 1.17 2.6 1.5L10 22h4l.5-2.5a7.7 7.7 0 0 0 2.6-1.5l2.2.9 2-3.4-1.9-1.5z"></path></svg>
+        </a>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:12px;">
+      <button data-theme-toggle="1" title="Alternar tema" style="width:32px;height:32px;border-radius:8px;border:none;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg>
+      </button>
+<a href="Perfil.dc.html" title="Meu perfil" style="position:relative;width:36px;height:36px;border-radius:50%;background:#174EFF;color:var(--surface);display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:600;font-size:13px;text-decoration:none;">
+        RS
+        <span style="position:absolute;bottom:-2px;right:-2px;width:11px;height:11px;border-radius:50%;border:2px solid var(--surface);background:#10B981;"></span>
+      </a>
+    </div>
+  </div>
+
+  <!-- MAIN AREA -->
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column;">
+
+    <!-- TOPBAR -->
+    <div style="flex:none;height:64px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 24px;gap:20px;">
+      <div style="display:flex;align-items:center;gap:16px;min-width:0;">
+        <div style="min-width:0;">
+          <div style="font-size:11.5px;color:var(--text-dim);">Kanban</div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="font-family:Sora;font-weight:600;font-size:16px;white-space:nowrap;">Funil de Oportunidades</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
+          </div>
+        </div>
+        <div style="width:1px;height:28px;background:var(--border-soft);flex:none;"></div>
+        <div style="display:flex;align-items:center;gap:6px;background:var(--app-bg);border-radius:8px;padding:4px 4px;flex:none;">
+          <sc-for list="{{ pipelines }}" as="p" hint-placeholder-count="2">
+            <button onClick="{{ p.onSelect }}" style="border:none;border-radius:6px;padding:6px 12px;font-size:12.5px;font-weight:600;cursor:pointer;background:{{ p.bg }};color:{{ p.color }};white-space:nowrap;">{{ p.name }}</button>
+          </sc-for>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;flex:none;">
+        <div style="position:relative;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2" stroke-linecap="round" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
+          <input placeholder="Buscar em todo o CRM..." style="width:230px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--app-bg);padding:0 12px 0 32px;font-size:13px;font-family:Inter;color:var(--text);outline:none;"/>
+          <span style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-dim);border:1px solid var(--border);border-radius:5px;padding:1px 5px;background:var(--surface);">⌘K</span>
+        </div>
+        <button title="Notificações" style="position:relative;width:36px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"></path><path d="M10 21a2 2 0 0 0 4 0"></path></svg>
+          <span style="position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:#EF4444;border:2px solid var(--surface);"></span>
+        </button>
+        <div style="display:flex;align-items:center;gap:8px;padding:5px 10px 5px 5px;border:1px solid var(--border);border-radius:9px;cursor:pointer;flex:none;">
+          <div style="width:26px;height:26px;border-radius:50%;background:#174EFF;color:var(--surface);display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:600;font-size:11px;">RS</div>
+          <span style="font-size:12.5px;font-weight:600;color:var(--text);">Solint Demo</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- FILTER BAR -->
+    <div style="flex:none;background:var(--surface);border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;justify-content:space-between;gap:14px;">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <button style="display:flex;align-items:center;gap:6px;border:1px solid var(--border);background:transparent;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:500;color:var(--text);cursor:pointer;">Responsável <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"></path></svg></button>
+        <button style="display:flex;align-items:center;gap:6px;border:1px solid var(--border);background:transparent;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:500;color:var(--text);cursor:pointer;">Etiqueta <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"></path></svg></button>
+        <button style="display:flex;align-items:center;gap:6px;border:1px solid var(--border);background:transparent;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:500;color:var(--text);cursor:pointer;">Faixa de valor <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"></path></svg></button>
+        <button style="display:flex;align-items:center;gap:6px;border:1px solid var(--border);background:transparent;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:500;color:var(--text);cursor:pointer;">Data de entrada <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"></path></svg></button>
+        <button onClick="{{ onToggleMine }}" style="display:flex;align-items:center;gap:6px;border:1px solid {{ mineBorder }};background:{{ mineBg }};border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;color:{{ mineColor }};cursor:pointer;">Só minhas oportunidades</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex:none;">
+      <button onClick="{{ onOpenStagesModal }}" style="display:flex;align-items:center;gap:6px;border:1px solid var(--border);background:transparent;border-radius:8px;padding:8px 13px;font-size:12.5px;font-weight:600;color:var(--text);cursor:pointer;flex:none;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#5B6472" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l1.9-1.5-2-3.4-2.2.9a7.7 7.7 0 0 0-2.6-1.5L14 2h-4l-.5 2.5a7.7 7.7 0 0 0-2.6 1.5l-2.2-.9-2 3.4L4.6 10a7.6 7.6 0 0 0 0 3l-1.9 1.5 2 3.4 2.2-.9c.77.66 1.65 1.17 2.6 1.5L10 22h4l.5-2.5a7.7 7.7 0 0 0 2.6-1.5l2.2.9 2-3.4-1.9-1.5z"></path></svg>
+        Configurar etapas
+      </button>
+      <button onClick="{{ onNewCard }}" style="display:flex;align-items:center;gap:7px;border:none;background:#168CFF;border-radius:8px;padding:8px 14px;font-size:12.5px;font-weight:600;color:var(--surface);cursor:pointer;flex:none;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+        Nova oportunidade
+      </button>
+      </div>
+    </div>
+
+    <!-- BOARD -->
+    <div style="flex:1;min-height:0;overflow-x:auto;overflow-y:hidden;padding:18px 20px;display:flex;gap:14px;">
+      <sc-for list="{{ columns }}" as="col" hint-placeholder-count="5">
+        <div onDragOver="{{ col.onDragOver }}" onDrop="{{ col.onDrop }}" onDragLeave="{{ col.onDragLeave }}" style="width:270px;flex:0 0 270px;display:flex;flex-direction:column;background:{{ col.wrapBg }};border-radius:12px;border:1px solid {{ col.wrapBorder }};min-height:0;">
+          <div style="flex:none;padding:12px 12px 10px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="width:8px;height:8px;border-radius:50%;background:{{ col.dotColor }};flex:none;"></span>
+              <span style="font-family:Sora;font-weight:600;font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ col.name }}</span>
+              <span style="font-size:11px;font-weight:700;color:var(--text-muted);background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:1px 7px;flex:none;">{{ col.count }}</span>
+            </div>
+            <div style="font-size:11.5px;color:var(--text-dim);margin-top:4px;font-family:'JetBrains Mono',monospace;">{{ col.sumLabel }}</div>
+          </div>
+          <div style="flex:1;overflow-y:auto;padding:0 10px 10px;display:flex;flex-direction:column;gap:9px;">
+            <sc-for list="{{ col.cards }}" as="card" hint-placeholder-count="2">
+              <div draggable="true" onDragStart="{{ card.onDragStart }}" onClick="{{ card.onOpen }}" style="background:var(--surface);border:1px solid {{ card.borderColor }};border-radius:10px;padding:11px 12px;cursor:pointer;box-shadow:0 1px 2px rgba(10,20,40,0.04);">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                  <span style="font-size:13px;font-weight:600;color:var(--text);line-height:1.3;">{{ card.name }}</span>
+                  <sc-if value="{{ card.showAlert }}" hint-placeholder-val="{{ false }}">
+                    <span title="Parado há muito tempo nesta etapa" style="flex:none;width:16px;height:16px;border-radius:50%;background:var(--amber-soft);display:flex;align-items:center;justify-content:center;">
+                      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#B45309" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v5"></path><circle cx="12" cy="16.5" r="0.6" fill="#B45309" stroke="none"></circle><path d="M10.3 3.9L2.7 18a1.6 1.6 0 0 0 1.4 2.4h16a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0z"></path></svg>
+                    </span>
+                  </sc-if>
+                </div>
+                <div style="font-size:11.5px;color:var(--text-dim);margin-top:2px;">{{ card.company }}</div>
+                <div style="font-family:Sora;font-weight:600;font-size:14px;color:var(--accent-soft-text);margin-top:8px;">{{ card.valueLabel }}</div>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-top:9px;">
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <div style="width:20px;height:20px;border-radius:50%;background:{{ card.respColor }};color:var(--surface);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;font-family:Sora;">{{ card.respInitials }}</div>
+                    <span style="font-size:11px;color:var(--text-muted);">{{ card.daysInStage }}</span>
+                  </div>
+                  <span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:5px;background:{{ card.priorityBg }};color:{{ card.priorityColor }};">{{ card.priorityLabel }}</span>
+                </div>
+              </div>
+            </sc-for>
+            <sc-if value="{{ col.isEmpty }}" hint-placeholder-val="{{ false }}">
+              <div style="text-align:center;padding:20px 8px;font-size:11.5px;color:var(--text-dim);border:1px dashed var(--border);border-radius:8px;">Nenhuma oportunidade nesta etapa</div>
+            </sc-if>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- STAGES CONFIG MODAL -->
+  <sc-if value="{{ stagesModalOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ onCloseStagesModal }}" style="position:fixed;inset:0;background:rgba(10,20,40,0.32);z-index:30;"></div>
+    <div style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:520px;max-height:80vh;overflow-y:auto;background:var(--surface);border-radius:14px;box-shadow:0 20px 48px rgba(10,20,40,0.2);z-index:31;padding:22px 24px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <span style="font-family:Sora;font-weight:600;font-size:16px;">Configurar etapas do funil</span>
+        <button onClick="{{ onCloseStagesModal }}" style="border:none;background:transparent;color:var(--text-muted);cursor:pointer;width:28px;height:28px;display:flex;align-items:center;justify-content:center;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"></path></svg>
+        </button>
+      </div>
+      <div style="font-size:12px;color:var(--text-dim);margin-bottom:16px;">Renomeie, reordene e defina a cor de cada etapa do funil Comercial.</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <sc-for list="{{ stageConfig }}" as="sg" hint-placeholder-count="5">
+          <div style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:9px;padding:10px 12px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#B9C2CF" stroke-width="2.4" stroke-linecap="round" style="flex:none;cursor:grab;"><path d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01"></path></svg>
+            <span style="width:14px;height:14px;border-radius:5px;background:{{ sg.color }};flex:none;cursor:pointer;" title="Alterar cor"></span>
+            <input value="{{ sg.name }}" readonly style="flex:1;border:none;outline:none;font-size:13px;font-weight:600;color:var(--text);background:transparent;font-family:Inter;"/>
+            <sc-if value="{{ sg.flag }}" hint-placeholder-val="{{ false }}">
+              <span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;background:{{ sg.flagBg }};color:{{ sg.flagColor }};flex:none;">{{ sg.flag }}</span>
+            </sc-if>
+            <button style="border:none;background:transparent;color:var(--text-dim);cursor:pointer;flex:none;" title="Excluir etapa">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path></svg>
+            </button>
+          </div>
+        </sc-for>
+      </div>
+      <button style="margin-top:12px;width:100%;border:1.5px dashed var(--toggle-off);background:transparent;border-radius:9px;padding:10px 0;font-size:12.5px;font-weight:600;color:var(--text-dim);cursor:pointer;">+ Nova etapa</button>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
+        <button onClick="{{ onCloseStagesModal }}" style="border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:9px 16px;font-size:12.5px;font-weight:600;color:var(--text);cursor:pointer;">Cancelar</button>
+        <button onClick="{{ onCloseStagesModal }}" style="border:none;background:#168CFF;border-radius:8px;padding:9px 18px;font-size:12.5px;font-weight:600;color:var(--surface);cursor:pointer;">Salvar etapas</button>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- CARD DETAIL PANEL -->
+  <sc-if value="{{ openCard }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ onCloseCard }}" style="position:fixed;inset:0;background:rgba(10,20,40,0.32);z-index:20;"></div>
+    <div style="position:fixed;top:0;right:0;height:100vh;width:380px;background:var(--surface);box-shadow:-8px 0 24px rgba(10,20,40,0.12);z-index:21;display:flex;flex-direction:column;">
+      <div style="flex:none;padding:18px 20px;border-bottom:1px solid var(--border-soft);display:flex;align-items:center;justify-content:space-between;">
+        <span style="font-family:Sora;font-weight:600;font-size:15px;">Detalhe da oportunidade</span>
+        <button onClick="{{ onCloseCard }}" style="border:none;background:transparent;color:var(--text-muted);cursor:pointer;width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"></path></svg>
+        </button>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:20px;">
+        <div style="display:flex;align-items:center;gap:12px;padding-bottom:16px;border-bottom:1px solid var(--border-soft);">
+          <div style="width:44px;height:44px;border-radius:50%;background:{{ openCard.respColor }};color:var(--surface);display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:600;font-size:15px;">{{ openCard.respInitials }}</div>
+          <div>
+            <div style="font-family:Sora;font-weight:600;font-size:15px;">{{ openCard.name }}</div>
+            <div style="font-size:12px;color:var(--text-muted);">{{ openCard.company }}</div>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:14px 0;border-bottom:1px solid var(--border-soft);">
+          <div>
+            <div style="font-size:11px;color:var(--text-dim);">Valor</div>
+            <div style="font-family:Sora;font-weight:600;font-size:16px;color:var(--accent-soft-text);">{{ openCard.valueLabel }}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:11px;color:var(--text-dim);">Etapa atual</div>
+            <div style="font-weight:600;font-size:13px;">{{ openCard.stageName }}</div>
+          </div>
+        </div>
+        <div style="padding:14px 0;border-bottom:1px solid var(--border-soft);">
+          <div style="font-size:11.5px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px;">Próxima ação</div>
+          <div style="font-size:13px;color:var(--text);">{{ openCard.nextAction }}</div>
+        </div>
+        <div style="padding:14px 0;border-bottom:1px solid var(--border-soft);">
+          <div style="font-size:11.5px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px;">Histórico</div>
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <sc-for list="{{ openCard.history }}" as="h" hint-placeholder-count="2">
+              <div style="display:flex;gap:8px;">
+                <div style="width:6px;height:6px;border-radius:50%;background:#168CFF;margin-top:5px;flex:none;"></div>
+                <div>
+                  <div style="font-size:12.5px;line-height:1.4;color:var(--text);">{{ h.text }}</div>
+                  <div style="font-size:11px;color:var(--text-dim);margin-top:3px;">{{ h.date }}</div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="padding-top:16px;">
+          <a href="Conversas.dc.html" style="display:flex;align-items:center;justify-content:center;gap:7px;border:1px solid var(--border);border-radius:8px;padding:9px 10px;font-size:12.5px;font-weight:600;color:var(--text);text-decoration:none;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#5B6472" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12H8l-4 4V4z"></path></svg>
+            Ver conversa de origem
+          </a>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+function money(v){
+  return 'R$ ' + v.toLocaleString('pt-BR');
+}
+function initials(name){
+  const p = name.trim().split(/\s+/);
+  return ((p[0]||'')[0]+(p[1]||'')[0]).toUpperCase();
+}
+
+const PRIORITY = {
+  baixa:{label:'Baixa', bg:'var(--slate-soft)', color:'var(--slate-text)'},
+  media:{label:'Média', bg:'var(--blue-soft)', color:'var(--blue-text)'},
+  alta:{label:'Alta', bg:'var(--amber-soft)', color:'var(--amber-text)'},
+  urgente:{label:'Urgente', bg:'var(--red-soft)', color:'var(--red-text)'}
+};
+
+const RESP_COLORS = ['#168CFF','#8B5CF6','#F97316','#0E9F6E','#F59E0B'];
+
+function makeStages(){
+  return [
+    {id:'novo', name:'Novo Lead', dotColor:'#94A3B8'},
+    {id:'qualificacao', name:'Qualificação', dotColor:'var(--blue-text)'},
+    {id:'proposta', name:'Proposta Enviada', dotColor:'var(--violet-text)'},
+    {id:'negociacao', name:'Negociação', dotColor:'#FFB65C'},
+    {id:'ganho', name:'Fechado Ganho', dotColor:'#10B981'},
+    {id:'perdido', name:'Fechado Perdido', dotColor:'var(--slate-text)'}
+  ];
+}
+
+function makeCards(){
+  return [
+    {id:1, stageId:'novo', name:'Mariana Costa', company:'Estúdio MC Fotografia', value:3200, resp:'Rafael Souza', priority:'media', daysInStage:'há 1 dia', showAlert:false,
+      nextAction:'Ligar para apresentar catálogo', stageName:'Novo Lead',
+      history:[{text:'Oportunidade criada a partir da conversa', date:'19 ago, 09:14'}]},
+    {id:2, stageId:'novo', name:'Pedro Henrique', company:'—', value:800, resp:'Camila Reis', priority:'baixa', daysInStage:'há 3 horas', showAlert:false,
+      nextAction:'Enviar catálogo de produtos', stageName:'Novo Lead',
+      history:[{text:'Lead recebido via Instagram', date:'20 ago, 11:05'}]},
+    {id:3, stageId:'qualificacao', name:'Roberta Dias', company:'Dias Consultoria', value:5400, resp:'Rafael Souza', priority:'media', daysInStage:'há 2 dias', showAlert:false,
+      nextAction:'Aguardar retorno sobre orçamento', stageName:'Qualificação',
+      history:[{text:'Proposta enviada por e-mail', date:'18 ago, 15:40'},{text:'Reunião de descoberta realizada', date:'16 ago, 10:00'}]},
+    {id:4, stageId:'qualificacao', name:'Studio Bella', company:'Bella Estética', value:2100, resp:'Camila Reis', priority:'baixa', daysInStage:'há 6 dias', showAlert:true,
+      nextAction:'Follow-up de qualificação', stageName:'Qualificação',
+      history:[{text:'Sem resposta desde o primeiro contato', date:'14 ago, 09:00'}]},
+    {id:5, stageId:'proposta', name:'Carlos Eduardo Nunes', company:'Nunes Engenharia', value:12500, resp:'Rafael Souza', priority:'alta', daysInStage:'há 1 dia', showAlert:false,
+      nextAction:'Confirmar aprovação do orçamento', stageName:'Proposta Enviada',
+      history:[{text:'Orçamento com desconto enviado', date:'19 ago, 16:02'},{text:'Reunião comercial realizada', date:'15 ago, 14:00'}]},
+    {id:6, stageId:'proposta', name:'João Pedro Silva', company:'JP Distribuidora', value:8900, resp:'Camila Reis', priority:'urgente', daysInStage:'há 9 dias', showAlert:true,
+      nextAction:'Reenviar proposta e cobrar retorno', stageName:'Proposta Enviada',
+      history:[{text:'Proposta enviada, aguardando aprovação financeira', date:'11 ago, 10:30'}]},
+    {id:7, stageId:'negociacao', name:'Fernanda Lopes', company:'Fernanda Lopes Studio', value:4300, resp:'Rafael Souza', priority:'alta', daysInStage:'há 2 dias', showAlert:false,
+      nextAction:'Negociar prazo de pagamento', stageName:'Negociação',
+      history:[{text:'Cliente pediu desconto de 10%', date:'18 ago, 13:20'}]},
+    {id:8, stageId:'ganho', name:'Ana Beatriz Rocha', company:'—', value:1600, resp:'Camila Reis', priority:'baixa', daysInStage:'há 4 dias', showAlert:false,
+      nextAction:'Enviar contrato assinado ao financeiro', stageName:'Fechado Ganho',
+      history:[{text:'Negociação encerrada com sucesso', date:'16 ago, 17:42'}]},
+    {id:9, stageId:'perdido', name:'Marcos Vinícius', company:'MV Transportes', value:6700, resp:'Rafael Souza', priority:'media', daysInStage:'há 12 dias', showAlert:false,
+      nextAction:'—', stageName:'Fechado Perdido',
+      history:[{text:'Perdido: cliente optou por concorrente', date:'8 ago, 09:00'}]}
+  ];
+}
+
+class Component extends DCLogic {
+  state = {
+    stages: makeStages(),
+    cards: makeCards(),
+    activePipeline: 'comercial',
+    onlyMine: false,
+    draggingId: null,
+    dragOverStageId: null,
+    openCardId: null,
+    stagesModalOpen: false
+  };
+  onOpenStagesModal = () => this.setState({stagesModalOpen:true});
+  onCloseStagesModal = () => this.setState({stagesModalOpen:false});
+
+  onSelectPipeline(id){ this.setState({activePipeline:id}); }
+  onToggleMine = () => this.setState(s => ({onlyMine: !s.onlyMine}));
+  onNewCard = () => {};
+  onCardDragStart(id){ return () => this.setState({draggingId:id}); }
+  onColDragOver(stageId){ return (e) => { e.preventDefault(); if(this.state.dragOverStageId !== stageId) this.setState({dragOverStageId:stageId}); }; }
+  onColDragLeave = () => this.setState({dragOverStageId:null});
+  onColDrop(stageId){
+    return (e) => {
+      e.preventDefault();
+      const id = this.state.draggingId;
+      if(id == null) return;
+      const cards = this.state.cards.map(c => c.id === id ? {...c, stageId, stageName: this.state.stages.find(s=>s.id===stageId).name} : c);
+      this.setState({cards, draggingId:null, dragOverStageId:null});
+    };
+  }
+  onOpenCard(id){ return () => this.setState({openCardId:id}); }
+  onCloseCard = () => this.setState({openCardId:null});
+
+  renderVals(){
+    const pipelines = [
+      {id:'comercial', name:'Comercial'},
+      {id:'suporte', name:'Renovações'}
+    ].map(p => ({
+      ...p,
+      bg: p.id===this.state.activePipeline ? 'var(--surface)' : 'transparent',
+      color: p.id===this.state.activePipeline ? '#168CFF' : 'var(--text-muted)',
+      onSelect: () => this.onSelectPipeline(p.id)
+    }));
+
+    const cardsFiltered = this.state.onlyMine
+      ? this.state.cards.filter(c => c.resp === 'Rafael Souza')
+      : this.state.cards;
+
+    const columns = this.state.stages.map(stage => {
+      const stageCards = cardsFiltered.filter(c => c.stageId === stage.id).map(c => {
+        const prio = PRIORITY[c.priority];
+        return {
+          id:c.id, name:c.name, company:c.company,
+          valueLabel: money(c.value),
+          respInitials: initials(c.resp),
+          respColor: RESP_COLORS[c.resp.length % RESP_COLORS.length],
+          daysInStage: c.daysInStage,
+          priorityLabel: prio.label, priorityBg: prio.bg, priorityColor: prio.color,
+          showAlert: c.showAlert,
+          borderColor: c.showAlert ? 'var(--note-border)' : 'var(--border-soft)',
+          onDragStart: this.onCardDragStart(c.id),
+          onOpen: this.onOpenCard(c.id)
+        };
+      });
+      const sum = stageCards.reduce((acc,c)=>{
+        const raw = this.state.cards.find(x=>x.id===c.id).value;
+        return acc + raw;
+      },0);
+      const isDragOver = this.state.dragOverStageId === stage.id;
+      return {
+        id: stage.id, name: stage.name, dotColor: stage.dotColor,
+        count: stageCards.length, sumLabel: money(sum),
+        cards: stageCards, isEmpty: stageCards.length===0,
+        wrapBg: isDragOver ? 'var(--selected-bg)' : 'var(--surface-2)',
+        wrapBorder: isDragOver ? '#168CFF' : 'var(--border)',
+        onDragOver: this.onColDragOver(stage.id),
+        onDrop: this.onColDrop(stage.id),
+        onDragLeave: this.onColDragLeave
+      };
+    });
+
+    const mine = {
+      bg: this.state.onlyMine ? 'var(--accent-soft)' : 'transparent',
+      color: this.state.onlyMine ? '#168CFF' : 'var(--text)',
+      border: this.state.onlyMine ? '#168CFF' : 'var(--border)'
+    };
+
+    let openCard = null;
+    if(this.state.openCardId != null){
+      const c = this.state.cards.find(x=>x.id===this.state.openCardId);
+      if(c){
+        openCard = {
+          name:c.name, company:c.company, valueLabel: money(c.value),
+          respInitials: initials(c.resp), respColor: RESP_COLORS[c.resp.length % RESP_COLORS.length],
+          stageName: this.state.stages.find(s=>s.id===c.stageId).name,
+          nextAction: c.nextAction, history: c.history
+        };
+      }
+    }
+
+    return {
+      pipelines, columns,
+      mineBg: mine.bg, mineColor: mine.color, mineBorder: mine.border,
+      onToggleMine: this.onToggleMine, onNewCard: this.onNewCard,
+      openCard, onCloseCard: this.onCloseCard,
+      stagesModalOpen: this.state.stagesModalOpen,
+      onOpenStagesModal: this.onOpenStagesModal,
+      onCloseStagesModal: this.onCloseStagesModal,
+      stageConfig: this.state.stages.map(s => ({
+        name: s.name, color: s.dotColor,
+        flag: s.id==='ganho' ? 'Etapa de ganho' : (s.id==='perdido' ? 'Etapa de perda' : null),
+        flagBg: s.id==='ganho' ? 'var(--green-soft)' : 'var(--red-soft)',
+        flagColor: s.id==='ganho' ? 'var(--green-text)' : 'var(--red-text)'
+      }))
+    };
+  }
+}
+
+</script>
+</body>
+</html>

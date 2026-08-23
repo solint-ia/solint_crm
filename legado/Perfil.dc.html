@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --app-bg:#F4F7FB;
+    --chat-bg:#EEF2F7;
+    --surface:#FFFFFF;
+    --surface-2:#F7F9FC;
+    --border:#E5E9F0;
+    --border-soft:#EEF1F5;
+    --text:#0A1424;
+    --text-muted:#5B6472;
+    --text-dim:#8B95A5;
+    --toggle-off:#D7DEE8;
+    --accent-soft:#E8F3FF;
+    --accent-soft-text:#0A2540;
+    --selected-bg:#EFF6FF;
+    --accent-border:#B7D9FF;
+    --note-bg:#FFFBEB;
+    --note-border:#FCD34D;
+    --note-text:#7C4A08;
+    --note-meta:#B08340;
+    --amber-soft:#FEF3C7;
+    --amber-text:#B45309;
+    --green-soft:#E8F9EE;
+    --green-text:#0E803C;
+    --green-border:#A7E3C0;
+    --red-soft:#FEE2E2;
+    --red-text:#B91C1C;
+    --red-border:#FCA5A5;
+    --violet-soft:#EDE9FE;
+    --violet-text:#6D28D9;
+    --blue-soft:#E0F2FE;
+    --blue-text:#0369A1;
+    --cyan-soft:#E0F7FF;
+    --cyan-text:#054452;
+    --cyan-border:#B7E9FF;
+    --slate-soft:#F1F5F9;
+    --slate-text:#475569;
+    --pink-soft:#FCE7F0;
+    --pink-text:#BE1857;
+    --indigo-soft:#EEEDFD;
+    --indigo-text:#4C46C4;
+    --accent-soft-meta:#5B85AE;
+  }
+  :root[data-theme="dark"]{
+    --app-bg:#050A14;
+    --chat-bg:#050A14;
+    --surface:#0D121A;
+    --surface-2:#141A24;
+    --border:rgba(255,255,255,0.08);
+    --border-soft:rgba(255,255,255,0.05);
+    --text:#FAFCFF;
+    --text-muted:#A3AEBD;
+    --text-dim:#7C8899;
+    --toggle-off:#2A3442;
+    --accent-soft:#0E335C;
+    --accent-soft-text:#DCEBFF;
+    --accent-soft-meta:#9CC3EE;
+    --selected-bg:#141A24;
+    --accent-border:rgba(53,217,255,0.28);
+    --note-bg:#1E1A11;
+    --note-border:rgba(255,182,92,0.4);
+    --note-text:#FFD9A0;
+    --note-meta:#C9A46A;
+    --amber-soft:rgba(255,182,92,0.16);
+    --amber-text:#FFB65C;
+    --green-soft:rgba(16,185,129,0.16);
+    --green-text:#34D399;
+    --green-border:rgba(16,185,129,0.35);
+    --red-soft:rgba(239,68,68,0.16);
+    --red-text:#FCA5A5;
+    --red-border:rgba(239,68,68,0.4);
+    --violet-soft:rgba(139,92,246,0.18);
+    --violet-text:#C4B5FD;
+    --blue-soft:rgba(56,152,236,0.2);
+    --blue-text:#7DD3FC;
+    --cyan-soft:#0A2C38;
+    --cyan-text:#7FE7FF;
+    --cyan-border:rgba(53,217,255,0.3);
+    --slate-soft:rgba(255,255,255,0.07);
+    --slate-text:#A3AEBD;
+    --pink-soft:rgba(225,48,108,0.18);
+    --pink-text:#F9A8D4;
+    --indigo-soft:rgba(99,102,241,0.2);
+    --indigo-text:#C7D2FE;
+  }
+  html,body{background:var(--app-bg);color:var(--text);}
+  ::-webkit-scrollbar-thumb{background:var(--toggle-off);}
+  a{color:#168CFF;}
+  a:hover{color:#35D9FF;}
+  html,body{margin:0;padding:0;height:100%;}
+  *{box-sizing:border-box;}
+  ::-webkit-scrollbar{width:8px;height:8px;}
+  ::-webkit-scrollbar-thumb{background:var(--toggle-off);border-radius:8px;}
+  input::placeholder, textarea::placeholder{color:var(--text-dim);}
+</style>
+<script>
+(function(){
+  try{ var t = localStorage.getItem("solint-theme"); if(t) document.documentElement.dataset.theme = t; }catch(e){}
+  if(!window.__solintThemeBound){
+    window.__solintThemeBound = true;
+    document.addEventListener("click", function(e){
+      var el = e.target && e.target.closest ? e.target.closest("[data-theme-toggle]") : null;
+      if(!el) return;
+      var root = document.documentElement;
+      var next = root.dataset.theme === "dark" ? "light" : "dark";
+      root.dataset.theme = next;
+      try{ localStorage.setItem("solint-theme", next); }catch(err){}
+    });
+  }
+})();
+</script>
+</helmet>
+
+<div style="display:flex;width:100vw;height:100vh;min-width:1280px;background:var(--app-bg);font-family:'Inter',sans-serif;color:var(--text);overflow-x:auto;overflow-y:hidden;">
+
+  <!-- NAVIGATION RAIL -->
+  <div style="width:64px;flex:0 0 64px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:14px 0 16px;justify-content:space-between;">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:22px;width:100%;">
+      <div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(100deg,#174EFF 0%,#168CFF 52%,#35D9FF 100%);display:flex;align-items:center;justify-content:center;color:var(--surface);font-family:Sora;font-weight:700;font-size:15px;flex:none;">S</div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
+        <a href="Conversas.dc.html" title="Caixa de Entrada" style="position:relative;width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12H8l-4 4V4z"></path></svg>
+          <span style="position:absolute;top:-4px;right:-4px;min-width:16px;height:16px;padding:0 3px;border-radius:8px;background:#EF4444;color:var(--surface);font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1;">7</span>
+        </a>
+        <a href="Contatos.dc.html" title="Contatos" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 20c0-3.5 2.5-6 5.5-6s5.5 2.5 5.5 6"></path><circle cx="17.5" cy="9" r="2.3"></circle><path d="M15.8 14.3c2.4.3 4.2 2.3 4.2 5.2"></path></svg>
+        </a>
+        <a href="Kanban.dc.html" title="Kanban" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="5" height="16" rx="1.4"></rect><rect x="9.8" y="4" width="5" height="10" rx="1.4"></rect><rect x="16" y="4" width="5" height="13" rx="1.4"></rect></svg>
+        </a>
+        <a href="Agentes-IA.dc.html" title="Agentes de IA" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="3"></rect><path d="M12 8V4"></path><circle cx="12" cy="3" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="9" cy="14" r="1.3" fill="currentColor" stroke="none"></circle><circle cx="15" cy="14" r="1.3" fill="currentColor" stroke="none"></circle></svg>
+        </a>
+        <a href="Campanhas.dc.html" title="Campanhas" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1.5 1.5 0 0 0 1.5 1.5H6v4l3-2.2"></path><path d="M6 11l11.5-6v14L6 13"></path><path d="M17.5 9.5a2.5 2.5 0 0 1 0 5"></path></svg>
+        </a>
+        <a href="Dashboard.dc.html" title="Dashboard e Relatórios" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10"></path><path d="M11 20V4"></path><path d="M18 20v-7"></path></svg>
+        </a>
+        <a href="Configuracoes.dc.html" title="Configurações e Conexões" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l1.9-1.5-2-3.4-2.2.9a7.7 7.7 0 0 0-2.6-1.5L14 2h-4l-.5 2.5a7.7 7.7 0 0 0-2.6 1.5l-2.2-.9-2 3.4L4.6 10a7.6 7.6 0 0 0 0 3l-1.9 1.5 2 3.4 2.2-.9c.77.66 1.65 1.17 2.6 1.5L10 22h4l.5-2.5a7.7 7.7 0 0 0 2.6-1.5l2.2.9 2-3.4-1.9-1.5z"></path></svg>
+        </a>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:12px;">
+      <button data-theme-toggle="1" title="Alternar tema" style="width:32px;height:32px;border-radius:8px;border:none;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg>
+      </button>
+      <div title="Meu perfil" style="position:relative;width:36px;height:36px;border-radius:50%;background:#174EFF;color:var(--surface);display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:600;font-size:13px;outline:2px solid #168CFF;outline-offset:2px;">
+        RS
+        <span style="position:absolute;bottom:-2px;right:-2px;width:11px;height:11px;border-radius:50%;border:2px solid var(--surface);background:{{ statusColor }};"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN AREA -->
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column;">
+    <div style="flex:none;height:64px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 24px;">
+      <div>
+        <div style="font-size:11.5px;color:var(--text-dim);">Conta pessoal</div>
+        <span style="font-family:Sora;font-weight:600;font-size:16px;">Meu perfil</span>
+      </div>
+      <button style="display:flex;align-items:center;gap:7px;border:1px solid var(--red-border);background:var(--surface);border-radius:8px;padding:8px 14px;font-size:12.5px;font-weight:600;color:var(--red-text);cursor:pointer;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#B91C1C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><path d="M16 17l5-5-5-5"></path><path d="M21 12H9"></path></svg>
+        Sair de todas as sessões
+      </button>
+    </div>
+
+    <div style="flex:1;overflow-y:auto;padding:22px 28px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:960px;">
+
+        <!-- DADOS PESSOAIS -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;">
+          <div style="font-size:13.5px;font-weight:600;margin-bottom:16px;">Dados pessoais</div>
+          <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px;">
+            <div style="width:56px;height:56px;border-radius:50%;background:#174EFF;color:var(--surface);display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:600;font-size:19px;">RS</div>
+            <button style="border:1px solid var(--border);background:var(--surface);border-radius:7px;padding:7px 13px;font-size:12px;font-weight:600;color:var(--text);cursor:pointer;">Alterar foto</button>
+          </div>
+          <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:5px;">Nome</label>
+          <input value="Rafael Souza" readonly style="width:100%;height:38px;border-radius:8px;border:1px solid var(--border);padding:0 12px;font-size:13px;outline:none;margin-bottom:12px;"/>
+          <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:5px;">Email</label>
+          <input value="rafael@solint.com" readonly style="width:100%;height:38px;border-radius:8px;border:1px solid var(--border);padding:0 12px;font-size:13px;outline:none;margin-bottom:12px;"/>
+          <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:5px;">Telefone</label>
+          <input value="+55 11 99000-1234" readonly style="width:100%;height:38px;border-radius:8px;border:1px solid var(--border);padding:0 12px;font-size:13px;font-family:'JetBrains Mono',monospace;outline:none;"/>
+        </div>
+
+        <!-- STATUS + ASSINATURA + SENHA -->
+        <div style="display:flex;flex-direction:column;gap:16px;">
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;">
+            <div style="font-size:13.5px;font-weight:600;margin-bottom:12px;">Disponibilidade</div>
+            <div style="display:flex;gap:8px;">
+              <sc-for list="{{ statusOptions }}" as="st" hint-placeholder-count="3">
+                <button onClick="{{ st.onSelect }}" style="flex:1;display:flex;align-items:center;justify-content:center;gap:7px;border:1px solid {{ st.border }};background:{{ st.bg }};border-radius:8px;padding:9px 0;font-size:12px;font-weight:600;color:var(--text);cursor:pointer;">
+                  <span style="width:9px;height:9px;border-radius:50%;background:{{ st.dot }};"></span>
+                  {{ st.label }}
+                </button>
+              </sc-for>
+            </div>
+          </div>
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;">
+            <div style="font-size:13.5px;font-weight:600;margin-bottom:10px;">Assinatura de mensagem</div>
+            <textarea rows="2" readonly style="width:100%;border-radius:8px;border:1px solid var(--border);padding:9px 12px;font-size:12.5px;font-family:Inter;outline:none;resize:none;">Rafael Souza · Comercial Solint</textarea>
+          </div>
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <div style="font-size:13.5px;font-weight:600;">Senha</div>
+                <div style="font-size:11.5px;color:var(--text-dim);margin-top:2px;">Alterada pela última vez há 3 meses</div>
+              </div>
+              <button style="border:1px solid var(--border);background:var(--surface);border-radius:7px;padding:7px 13px;font-size:12px;font-weight:600;color:var(--text);cursor:pointer;">Alterar senha</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- PREFERÊNCIAS -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;">
+          <div style="font-size:13.5px;font-weight:600;margin-bottom:14px;">Notificações pessoais</div>
+          <div style="display:flex;flex-direction:column;gap:11px;">
+            <sc-for list="{{ notifPrefs }}" as="np" hint-placeholder-count="4">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:12.5px;color:var(--text);">{{ np.label }}</span>
+                <button onClick="{{ np.onToggle }}" style="width:36px;height:20px;border-radius:10px;border:none;background:{{ np.bg }};position:relative;cursor:pointer;flex:none;">
+                  <span style="position:absolute;top:2px;left:{{ np.dotLeft }};width:16px;height:16px;border-radius:50%;background:var(--surface);transition:left .15s;"></span>
+                </button>
+              </div>
+            </sc-for>
+          </div>
+          <div style="border-top:1px solid var(--border-soft);margin:16px 0 14px;"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div>
+              <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:5px;">Idioma</label>
+              <div style="display:flex;align-items:center;justify-content:space-between;height:38px;border-radius:8px;border:1px solid var(--border);padding:0 12px;font-size:12.5px;">Português (BR) <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"></path></svg></div>
+            </div>
+            <div>
+              <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:5px;">Tema</label>
+              <div style="display:flex;align-items:center;justify-content:space-between;height:38px;border-radius:8px;border:1px solid var(--border);padding:0 12px;font-size:12.5px;">Claro <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"></path></svg></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- WORKSPACES -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;">
+          <div style="font-size:13.5px;font-weight:600;margin-bottom:14px;">Minhas contas</div>
+          <div style="display:flex;flex-direction:column;gap:9px;">
+            <sc-for list="{{ workspaces }}" as="w" hint-placeholder-count="2">
+              <div style="display:flex;align-items:center;gap:11px;border:1px solid {{ w.border }};background:{{ w.bg }};border-radius:9px;padding:11px 13px;">
+                <div style="width:30px;height:30px;border-radius:8px;background:{{ w.color }};color:var(--surface);display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:700;font-size:12px;flex:none;">{{ w.initial }}</div>
+                <div style="flex:1;">
+                  <div style="font-size:12.5px;font-weight:600;">{{ w.name }}</div>
+                  <div style="font-size:11px;color:var(--text-dim);">{{ w.role }}</div>
+                </div>
+                <sc-if value="{{ w.current }}" hint-placeholder-val="{{ false }}">
+                  <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:5px;background:var(--accent-soft);color:#168CFF;">Atual</span>
+                </sc-if>
+                <sc-if value="{{ w.notCurrent }}" hint-placeholder-val="{{ false }}">
+                  <button style="border:1px solid var(--border);background:var(--surface);border-radius:6px;padding:5px 11px;font-size:11px;font-weight:600;color:var(--text);cursor:pointer;">Trocar</button>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = {
+    status: 'online',
+    notifPrefs: [
+      {id:'assigned', label:'Conversa atribuída a mim', on:true},
+      {id:'mention', label:'Menções em notas internas', on:true},
+      {id:'sla', label:'SLA prestes a estourar', on:true},
+      {id:'campaign', label:'Campanhas concluídas', on:false},
+      {id:'email', label:'Resumo diário por email', on:false}
+    ]
+  };
+
+  setStatus(s){ return () => this.setState({status:s}); }
+  togglePref(id){
+    return () => this.setState(st => ({notifPrefs: st.notifPrefs.map(p => p.id===id ? {...p, on:!p.on} : p)}));
+  }
+
+  renderVals(){
+    const statusDefs = [
+      {id:'online', label:'Disponível', dot:'#10B981'},
+      {id:'busy', label:'Ocupado', dot:'#EF4444'},
+      {id:'away', label:'Ausente', dot:'#F59E0B'}
+    ];
+    const statusOptions = statusDefs.map(s => ({
+      label:s.label, dot:s.dot,
+      bg: this.state.status===s.id ? 'var(--selected-bg)' : 'var(--surface)',
+      border: this.state.status===s.id ? '#168CFF' : 'var(--border)',
+      onSelect: this.setStatus(s.id)
+    }));
+
+    const notifPrefs = this.state.notifPrefs.map(p => ({
+      label:p.label,
+      bg: p.on ? '#168CFF' : 'var(--toggle-off)',
+      dotLeft: p.on ? '18px' : '2px',
+      onToggle: this.togglePref(p.id)
+    }));
+
+    const workspaces = [
+      {name:'Solint Demo', role:'Administrador', initial:'S', color:'#174EFF', current:true, notCurrent:false, bg:'var(--selected-bg)', border:'var(--accent-border)'},
+      {name:'Agência Delta', role:'Agente', initial:'D', color:'#8B5CF6', current:false, notCurrent:true, bg:'var(--surface)', border:'var(--border)'}
+    ];
+
+    return {
+      statusColor: statusDefs.find(s=>s.id===this.state.status).dot,
+      statusOptions, notifPrefs, workspaces
+    };
+  }
+}
+
+</script>
+</body>
+</html>

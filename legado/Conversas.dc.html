@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --app-bg:#F4F7FB;
+    --chat-bg:#EEF2F7;
+    --surface:#FFFFFF;
+    --surface-2:#F7F9FC;
+    --border:#E5E9F0;
+    --border-soft:#EEF1F5;
+    --text:#0A1424;
+    --text-muted:#5B6472;
+    --text-dim:#8B95A5;
+    --toggle-off:#D7DEE8;
+    --accent-soft:#E8F3FF;
+    --accent-soft-text:#0A2540;
+    --selected-bg:#EFF6FF;
+    --accent-border:#B7D9FF;
+    --note-bg:#FFFBEB;
+    --note-border:#FCD34D;
+    --note-text:#7C4A08;
+    --note-meta:#B08340;
+    --amber-soft:#FEF3C7;
+    --amber-text:#B45309;
+    --green-soft:#E8F9EE;
+    --green-text:#0E803C;
+    --green-border:#A7E3C0;
+    --red-soft:#FEE2E2;
+    --red-text:#B91C1C;
+    --red-border:#FCA5A5;
+    --violet-soft:#EDE9FE;
+    --violet-text:#6D28D9;
+    --blue-soft:#E0F2FE;
+    --blue-text:#0369A1;
+    --cyan-soft:#E0F7FF;
+    --cyan-text:#054452;
+    --cyan-border:#B7E9FF;
+    --slate-soft:#F1F5F9;
+    --slate-text:#475569;
+    --pink-soft:#FCE7F0;
+    --pink-text:#BE1857;
+    --indigo-soft:#EEEDFD;
+    --indigo-text:#4C46C4;
+    --accent-soft-meta:#5B85AE;
+  }
+  :root[data-theme="dark"]{
+    --app-bg:#050A14;
+    --chat-bg:#050A14;
+    --surface:#0D121A;
+    --surface-2:#141A24;
+    --border:rgba(255,255,255,0.08);
+    --border-soft:rgba(255,255,255,0.05);
+    --text:#FAFCFF;
+    --text-muted:#A3AEBD;
+    --text-dim:#7C8899;
+    --toggle-off:#2A3442;
+    --accent-soft:#0E335C;
+    --accent-soft-text:#DCEBFF;
+    --accent-soft-meta:#9CC3EE;
+    --selected-bg:#141A24;
+    --accent-border:rgba(53,217,255,0.28);
+    --note-bg:#1E1A11;
+    --note-border:rgba(255,182,92,0.4);
+    --note-text:#FFD9A0;
+    --note-meta:#C9A46A;
+    --amber-soft:rgba(255,182,92,0.16);
+    --amber-text:#FFB65C;
+    --green-soft:rgba(16,185,129,0.16);
+    --green-text:#34D399;
+    --green-border:rgba(16,185,129,0.35);
+    --red-soft:rgba(239,68,68,0.16);
+    --red-text:#FCA5A5;
+    --red-border:rgba(239,68,68,0.4);
+    --violet-soft:rgba(139,92,246,0.18);
+    --violet-text:#C4B5FD;
+    --blue-soft:rgba(56,152,236,0.2);
+    --blue-text:#7DD3FC;
+    --cyan-soft:#0A2C38;
+    --cyan-text:#7FE7FF;
+    --cyan-border:rgba(53,217,255,0.3);
+    --slate-soft:rgba(255,255,255,0.07);
+    --slate-text:#A3AEBD;
+    --pink-soft:rgba(225,48,108,0.18);
+    --pink-text:#F9A8D4;
+    --indigo-soft:rgba(99,102,241,0.2);
+    --indigo-text:#C7D2FE;
+  }
+  html,body{background:var(--app-bg);color:var(--text);}
+  ::-webkit-scrollbar-thumb{background:var(--toggle-off);}
+  a{color:#168CFF;}
+  a:hover{color:#35D9FF;}
+  html,body{margin:0;padding:0;height:100%;}
+  *{box-sizing:border-box;}
+  ::-webkit-scrollbar{width:8px;height:8px;}
+  ::-webkit-scrollbar-thumb{background:var(--toggle-off);border-radius:8px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+  @keyframes dcTypingDot{0%,80%,100%{transform:translateY(0);opacity:.4;}40%{transform:translateY(-3px);opacity:1;}}
+  input::placeholder, textarea::placeholder{color:var(--text-dim);}
+</style>
+<script>
+(function(){
+  try{ var t = localStorage.getItem("solint-theme"); if(t) document.documentElement.dataset.theme = t; }catch(e){}
+  if(!window.__solintThemeBound){
+    window.__solintThemeBound = true;
+    document.addEventListener("click", function(e){
+      var el = e.target && e.target.closest ? e.target.closest("[data-theme-toggle]") : null;
+      if(!el) return;
+      var root = document.documentElement;
+      var next = root.dataset.theme === "dark" ? "light" : "dark";
+      root.dataset.theme = next;
+      try{ localStorage.setItem("solint-theme", next); }catch(err){}
+    });
+  }
+})();
+</script>
+</helmet>
+
+<div style="display:flex;width:100vw;height:100vh;min-width:1440px;background:var(--app-bg);font-family:'Inter',sans-serif;color:var(--text);overflow-x:auto;overflow-y:hidden;">
+
+  <!-- COLUMN 1: NAVIGATION RAIL -->
+  <div style="width:64px;flex:0 0 64px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:14px 0 16px;justify-content:space-between;">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:22px;width:100%;">
+      <div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(100deg,#174EFF 0%,#168CFF 52%,#35D9FF 100%);display:flex;align-items:center;justify-content:center;color:var(--surface);font-family:Sora;font-weight:700;font-size:15px;flex:none;">S</div>
+
+      <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
+        <button title="Caixa de Entrada" style="position:relative;width:40px;height:40px;border-radius:10px;border:none;background:var(--accent-soft);color:#168CFF;display:flex;align-items:center;justify-content:center;cursor:pointer;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12H8l-4 4V4z"></path></svg>
+          <span style="position:absolute;top:-4px;right:-4px;min-width:16px;height:16px;padding:0 3px;border-radius:8px;background:#EF4444;color:var(--surface);font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1;">7</span>
+        </button>
+<a href="Contatos.dc.html" title="Contatos" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 20c0-3.5 2.5-6 5.5-6s5.5 2.5 5.5 6"></path><circle cx="17.5" cy="9" r="2.3"></circle><path d="M15.8 14.3c2.4.3 4.2 2.3 4.2 5.2"></path></svg>
+        </a>
+<a href="Kanban.dc.html" title="Kanban" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="5" height="16" rx="1.4"></rect><rect x="9.8" y="4" width="5" height="10" rx="1.4"></rect><rect x="16" y="4" width="5" height="13" rx="1.4"></rect></svg>
+        </a>
+<a href="Agentes-IA.dc.html" title="Agentes de IA" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="3"></rect><path d="M12 8V4"></path><circle cx="12" cy="3" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="9" cy="14" r="1.3" fill="currentColor" stroke="none"></circle><circle cx="15" cy="14" r="1.3" fill="currentColor" stroke="none"></circle></svg>
+        </a>
+<a href="Campanhas.dc.html" title="Campanhas" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1.5 1.5 0 0 0 1.5 1.5H6v4l3-2.2"></path><path d="M6 11l11.5-6v14L6 13"></path><path d="M17.5 9.5a2.5 2.5 0 0 1 0 5"></path></svg>
+        </a>
+        <a href="Dashboard.dc.html" title="Dashboard e Relatórios" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10"></path><path d="M11 20V4"></path><path d="M18 20v-7"></path></svg>
+        </a>
+<a href="Configuracoes.dc.html" title="Configurações e Conexões" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l1.9-1.5-2-3.4-2.2.9a7.7 7.7 0 0 0-2.6-1.5L14 2h-4l-.5 2.5a7.7 7.7 0 0 0-2.6 1.5l-2.2-.9-2 3.4L4.6 10a7.6 7.6 0 0 0 0 3l-1.9 1.5 2 3.4 2.2-.9c.77.66 1.65 1.17 2.6 1.5L10 22h4l.5-2.5a7.7 7.7 0 0 0 2.6-1.5l2.2.9 2-3.4-1.9-1.5z"></path></svg>
+        </a>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;align-items:center;gap:12px;">
+      <button data-theme-toggle="1" title="Alternar tema" onClick="{{ noop }}" style="width:32px;height:32px;border-radius:8px;border:none;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg>
+      </button>
+      <button onClick="{{ onCycleStatus }}" title="Alterar status" style="position:relative;width:36px;height:36px;border-radius:50%;background:#174EFF;color:var(--surface);border:none;display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:600;font-size:13px;cursor:pointer;">
+        RS
+        <span style="position:absolute;bottom:-2px;right:-2px;width:11px;height:11px;border-radius:50%;border:2px solid var(--surface);background:{{ agentStatusColor }};"></span>
+      </button>
+    </div>
+  </div>
+
+  <!-- COLUMN 2: CONVERSATION LIST -->
+  <div style="width:340px;flex:0 0 340px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;">
+    <div style="padding:18px 16px 12px;border-bottom:1px solid var(--border-soft);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <span style="font-family:Sora;font-weight:600;font-size:17px;">Conversas</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-dim);border:1px solid var(--border);border-radius:5px;padding:2px 6px;">⌘K</span>
+      </div>
+      <div style="position:relative;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2" stroke-linecap="round" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
+        <input value="{{ search }}" onChange="{{ onSearchChange }}" placeholder="Buscar conversas..." style="width:100%;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--app-bg);padding:0 12px 0 32px;font-size:13px;font-family:Inter;color:var(--text);outline:none;"/>
+      </div>
+      <div style="display:flex;gap:4px;margin-top:12px;background:var(--app-bg);border-radius:8px;padding:3px;">
+        <button onClick="{{ onSetTabMine }}" style="flex:1;border:none;border-radius:6px;padding:6px 0;font-size:12.5px;font-weight:600;cursor:pointer;background:{{ tabMineBg }};color:{{ tabMineColor }};">Minhas</button>
+        <button onClick="{{ onSetTabUnassigned }}" style="flex:1;border:none;border-radius:6px;padding:6px 0;font-size:12.5px;font-weight:600;cursor:pointer;background:{{ tabUnassignedBg }};color:{{ tabUnassignedColor }};">Não atrib.</button>
+        <button onClick="{{ onSetTabAll }}" style="flex:1;border:none;border-radius:6px;padding:6px 0;font-size:12.5px;font-weight:600;cursor:pointer;background:{{ tabAllBg }};color:{{ tabAllColor }};">Todas</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:5px;margin-top:10px;">
+        <sc-for list="{{ statusTabs }}" as="st" hint-placeholder-count="4">
+          <button onClick="{{ st.onSelect }}" style="border:1px solid {{ st.border }};background:{{ st.bg }};color:{{ st.color }};border-radius:14px;padding:3px 10px;font-size:11px;font-weight:600;cursor:pointer;">{{ st.label }}</button>
+        </sc-for>
+        <button title="Ordenar por" style="margin-left:auto;display:flex;align-items:center;gap:3px;border:none;background:transparent;color:var(--text-dim);font-size:11px;font-weight:600;cursor:pointer;padding:2px;">
+          Recentes
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 9l6 6 6-6"></path></svg>
+        </button>
+      </div>
+    </div>
+
+    <div style="flex:1;overflow-y:auto;">
+      <sc-for list="{{ filteredConversations }}" as="c" hint-placeholder-count="6">
+        <div onClick="{{ c.onSelect }}" style="display:flex;gap:10px;padding:{{ listItemPadding }};cursor:pointer;border-bottom:1px solid var(--border-soft);background:{{ c.rowBg }};border-left:3px solid {{ c.rowBorder }};">
+          <div style="position:relative;flex:none;">
+            <div style="width:42px;height:42px;border-radius:50%;background:{{ c.avatarColor }};color:var(--surface);display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:600;font-size:14px;">{{ c.initials }}</div>
+            <div style="position:absolute;bottom:-2px;right:-2px;width:15px;height:15px;border-radius:50%;background:var(--surface);display:flex;align-items:center;justify-content:center;">
+              <div style="width:11px;height:11px;border-radius:50%;background:{{ c.channelColor }};"></div>
+            </div>
+          </div>
+          <div style="flex:1;min-width:0;">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px;">
+              <span style="display:flex;align-items:center;gap:6px;min-width:0;">
+                <span title="Prioridade" style="width:7px;height:7px;border-radius:50%;background:{{ c.priorityColor }};flex:none;"></span>
+                <span style="font-weight:600;font-size:13.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ c.name }}</span>
+              </span>
+              <span style="font-size:11px;color:var(--text-dim);flex:none;">{{ c.lastTime }}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:2px;">
+              <span style="font-size:12.5px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ c.previewLine }}</span>
+              <sc-if value="{{ c.unreadCount }}" hint-placeholder-val="{{ false }}">
+                <span style="flex:none;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#168CFF;color:var(--surface);font-size:10.5px;font-weight:700;display:flex;align-items:center;justify-content:center;">{{ c.unreadCount }}</span>
+              </sc-if>
+            </div>
+            <div style="display:flex;gap:5px;margin-top:6px;flex-wrap:wrap;">
+              <sc-if value="{{ c.showSla }}" hint-placeholder-val="{{ false }}">
+                <span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:5px;background:{{ c.slaBg }};color:{{ c.slaColor }};">{{ c.slaText }}</span>
+              </sc-if>
+              <sc-for list="{{ c.tags }}" as="t" hint-placeholder-count="0">
+                <span style="font-size:10px;font-weight:600;padding:2px 6px;border-radius:5px;background:{{ t.bg }};color:{{ t.color }};">{{ t.label }}</span>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- COLUMN 3: CHAT AREA -->
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column;background:var(--chat-bg);">
+    <div style="flex:none;background:var(--surface);border-bottom:1px solid var(--border);padding:14px 22px;display:flex;align-items:center;flex-wrap:wrap;justify-content:space-between;gap:10px 16px;min-width:0;">
+      <div style="display:flex;align-items:center;gap:12px;min-width:220px;flex:1 1 220px;overflow:hidden;">
+        <div style="width:40px;height:40px;border-radius:50%;background:{{ selected.avatarColor }};color:var(--surface);display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:600;font-size:13.5px;flex:none;">{{ selected.initials }}</div>
+        <div style="min-width:0;overflow:hidden;">
+          <div style="display:flex;align-items:center;gap:7px;min-width:0;">
+            <span style="font-family:Sora;font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:110px;flex:0 1 auto;">{{ selected.name }}</span>
+            <span style="flex:none;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:5px;background:{{ selected.channelTagBg }};color:{{ selected.channelTagColor }};">{{ selected.channelLabel }}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:2px;font-size:12px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+            <span style="font-family:'JetBrains Mono',monospace;">{{ selected.phone }}</span>
+            <span>·</span>
+            <span>{{ selected.queue }}</span>
+            <span>·</span>
+            <span>{{ selected.statusLabel }}</span>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;flex:none;flex-wrap:wrap;justify-content:flex-end;max-width:280px;">
+        <button style="height:32px;padding:0 11px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text);font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">Transferir</button>
+        <button style="height:32px;padding:0 11px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text);font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">Pendente</button>
+        <button style="height:32px;padding:0 14px;border-radius:8px;border:none;background:#10B981;color:var(--surface);font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">Resolver</button>
+      </div>
+    </div>
+
+    <sc-if value="{{ selected.channelOffline }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:none;background:var(--red-soft);border-bottom:1px solid var(--red-border);padding:8px 22px;display:flex;align-items:center;gap:9px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#B91C1C" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M10.3 3.9L2.7 18a1.6 1.6 0 0 0 1.4 2.4h16a1.6 1.6 0 0 0 1.4-2.4L13.7 3.9a1.6 1.6 0 0 0-2.8 0z"></path><path d="M12 9v4"></path><circle cx="12" cy="16.5" r="0.6" fill="#B91C1C" stroke="none"></circle></svg>
+        <span style="font-size:12px;color:var(--red-text);font-weight:600;flex:1;">Canal desconectado — novas mensagens não serão enviadas até reconectar.</span>
+        <a href="Configuracoes.dc.html" style="font-size:11.5px;font-weight:700;color:var(--red-text);text-decoration:underline;">Reconectar canal</a>
+      </div>
+    </sc-if>
+    <sc-if value="{{ selected.collision }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:none;background:var(--accent-soft);border-bottom:1px solid var(--accent-border);padding:6px 22px;display:flex;align-items:center;gap:8px;">
+        <span style="width:20px;height:20px;border-radius:50%;background:#8B5CF6;color:var(--surface);display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:600;font-size:9px;flex:none;">CR</span>
+        <span style="font-size:11.5px;color:var(--accent-soft-text);font-weight:600;">Camila Reis também está visualizando esta conversa</span>
+      </div>
+    </sc-if>
+    <div ref="{{ timelineRef }}" style="flex:1;overflow-y:auto;padding:22px 26px;display:flex;flex-direction:column;gap:14px;">
+      <sc-for list="{{ selected.messages }}" as="m" hint-placeholder-count="4">
+
+        <sc-if value="{{ m.isDivider }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;align-items:center;justify-content:center;margin:6px 0;">
+            <span style="font-size:11.5px;font-weight:600;color:var(--text-dim);background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:4px 14px;">{{ m.text }}</span>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ m.isSystem }}" hint-placeholder-val="{{ false }}">
+          <div style="text-align:center;font-size:11.5px;color:var(--text-dim);padding:2px 0;">{{ m.text }}</div>
+        </sc-if>
+
+        <sc-if value="{{ m.isNote }}" hint-placeholder-val="{{ false }}">
+          <div style="align-self:center;width:90%;background:var(--note-bg);border:1px solid var(--note-border);border-radius:12px;padding:12px 14px;">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#B45309" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="1.5"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>
+              <span style="font-size:11px;font-weight:700;color:var(--amber-text);text-transform:uppercase;letter-spacing:.3px;">Nota interna · visível apenas para a equipe</span>
+            </div>
+            <div style="font-size:13.5px;color:var(--note-text);line-height:1.5;">{{ m.text }}</div>
+            <div style="font-size:11px;color:var(--note-meta);margin-top:6px;">{{ m.author }} · {{ m.time }}</div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ m.isBubble }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;align-items:{{ m.align }};gap:4px;">
+            <sc-if value="{{ m.showAiTag }}" hint-placeholder-val="{{ false }}">
+              <span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;background:var(--cyan-soft);color:var(--cyan-text);border:1px solid var(--cyan-border);">Agente IA</span>
+            </sc-if>
+            <div style="max-width:62%;background:{{ m.bg }};color:{{ m.textColor }};border:{{ m.border }};border-radius:{{ m.radius }};padding:10px 13px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+              <sc-if value="{{ m.quoted }}" hint-placeholder-val="{{ false }}">
+                <div style="border-left:2.5px solid var(--accent-border);padding-left:8px;margin-bottom:6px;font-size:12px;color:var(--text-muted);">{{ m.quoted }}</div>
+              </sc-if>
+              <sc-if value="{{ m.isAudio }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;align-items:center;gap:9px;min-width:190px;">
+                  <div style="width:30px;height:30px;border-radius:50%;background:{{ m.audioBtnBg }};color:var(--surface);display:flex;align-items:center;justify-content:center;flex:none;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>
+                  </div>
+                  <div style="flex:1;height:3px;border-radius:2px;background:{{ m.audioTrackBg }};position:relative;">
+                    <div style="position:absolute;left:0;top:0;height:100%;width:38%;border-radius:2px;background:{{ m.audioProgressBg }};"></div>
+                  </div>
+                  <span style="font-size:11px;color:{{ m.textColor }};flex:none;font-family:'JetBrains Mono',monospace;">{{ m.audioDuration }}</span>
+                </div>
+                <div style="font-size:11px;color:var(--text-dim);margin-top:5px;font-style:italic;">"{{ m.transcript }}"</div>
+              </sc-if>
+              <sc-if value="{{ m.text }}" hint-placeholder-val="{{ false }}">
+                <div style="font-size:13.5px;line-height:1.5;">{{ m.text }}</div>
+              </sc-if>
+              <div style="display:flex;justify-content:flex-end;align-items:center;gap:4px;margin-top:5px;">
+                <span style="font-size:10.5px;color:{{ m.timeColor }};">{{ m.time }}</span>
+                <sc-if value="{{ m.tickIcon }}" hint-placeholder-val="{{ false }}">
+                  <span style="font-size:10.5px;color:{{ m.tickColor }};font-weight:600;">{{ m.tickIcon }}</span>
+                </sc-if>
+                <sc-if value="{{ m.failed }}" hint-placeholder-val="{{ false }}">
+                  <span style="font-size:10.5px;color:#EF4444;font-weight:700;">⚠ Falha no envio</span>
+                  <button style="border:none;background:transparent;color:#168CFF;font-size:10.5px;font-weight:700;cursor:pointer;padding:0;">Reenviar</button>
+                </sc-if>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+      </sc-for>
+
+      <sc-if value="{{ selected.isTyping }}" hint-placeholder-val="{{ false }}">
+        <div style="align-self:flex-start;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 14px;display:flex;align-items:center;gap:4px;">
+          <span style="width:6px;height:6px;border-radius:50%;background:var(--text-dim);display:inline-block;animation:dcTypingDot 1.1s ease-in-out infinite;animation-delay:0s;"></span>
+          <span style="width:6px;height:6px;border-radius:50%;background:var(--text-dim);display:inline-block;animation:dcTypingDot 1.1s ease-in-out infinite;animation-delay:.15s;"></span>
+          <span style="width:6px;height:6px;border-radius:50%;background:var(--text-dim);display:inline-block;animation:dcTypingDot 1.1s ease-in-out infinite;animation-delay:.3s;"></span>
+        </div>
+      </sc-if>
+    </div>
+
+    <sc-if value="{{ selected.hsmClosed }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:none;background:var(--note-bg);border-top:1px solid var(--note-border);padding:10px 20px;display:flex;align-items:center;gap:10px;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#B45309" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3.5 2"></path></svg>
+        <span style="flex:1;font-size:12px;color:var(--note-text);line-height:1.4;">A janela de atendimento de 24h do WhatsApp está fechada. Só é possível iniciar com um <strong>template aprovado</strong>.</span>
+        <button style="flex:none;border:1px solid var(--note-border);background:var(--surface);border-radius:7px;padding:6px 12px;font-size:11.5px;font-weight:700;color:var(--amber-text);cursor:pointer;">Selecionar template</button>
+      </div>
+    </sc-if>
+    <div style="flex:none;background:var(--surface);border-top:1px solid var(--border);padding:12px 20px 16px;">
+      <div style="display:flex;gap:6px;margin-bottom:10px;min-width:0;overflow:hidden;">
+        <button onClick="{{ onSetComposerPublic }}" style="flex:none;border:none;border-radius:7px;padding:6px 13px;font-size:12px;font-weight:600;cursor:pointer;background:{{ composerPublicBg }};color:{{ composerPublicColor }};">Mensagem pública</button>
+        <button onClick="{{ onSetComposerNote }}" style="flex:none;border:none;border-radius:7px;padding:6px 13px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;background:{{ composerNoteBg }};color:{{ composerNoteColor }};">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="1.5"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>
+          Nota interna
+        </button>
+        <span style="margin-left:auto;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;color:var(--text-dim);align-self:center;">Digite <span style="font-family:'JetBrains Mono',monospace;background:var(--app-bg);border-radius:4px;padding:1px 4px;">/</span> para respostas rápidas</span>
+      </div>
+      <div style="display:flex;align-items:flex-end;gap:8px;border:1.5px solid {{ composerBorder }};border-radius:12px;padding:9px 10px;background:{{ composerBg }};">
+        <button title="Anexar" style="flex:none;width:30px;height:30px;border:none;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.5 8.5a4.9 4.9 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-8.7 8.7a1.7 1.7 0 0 1-2.4-2.4l7.6-7.6"></path></svg>
+        </button>
+        <textarea value="{{ composerText }}" onChange="{{ onComposerTextChange }}" placeholder="{{ composerPlaceholder }}" rows="1" style="flex:1;resize:none;border:none;outline:none;background:transparent;font-family:Inter;font-size:13.5px;color:var(--text);padding:6px 0;max-height:90px;"></textarea>
+        <button title="Emoji" style="flex:none;width:30px;height:30px;border:none;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M8.5 14.5s1.2 2 3.5 2 3.5-2 3.5-2"></path><path d="M9 9.5h.01M15 9.5h.01"></path></svg>
+        </button>
+        <button title="Gravar áudio" style="flex:none;width:30px;height:30px;border:none;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0"></path><path d="M12 18v3"></path></svg>
+        </button>
+        <button title="Agendar envio" style="flex:none;width:30px;height:30px;border:none;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3.5 2"></path></svg>
+        </button>
+        <button onClick="{{ onSend }}" style="flex:none;height:34px;padding:0 16px;border:none;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;background:{{ sendBtnBg }};color:var(--surface);">{{ sendBtnLabel }}</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- COLUMN 4: CONTACT CONTEXT PANEL -->
+  <div style="width:320px;flex:0 0 320px;background:var(--surface);border-left:1px solid var(--border);overflow-y:auto;padding:22px 18px 30px;">
+    <div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding-bottom:18px;border-bottom:1px solid var(--border-soft);">
+      <div style="width:64px;height:64px;border-radius:50%;background:{{ selected.avatarColor }};color:var(--surface);display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:600;font-size:22px;margin-bottom:10px;">{{ selected.initials }}</div>
+      <div style="font-family:Sora;font-weight:600;font-size:16px;">{{ selected.name }}</div>
+      <div style="font-size:12.5px;color:var(--text-muted);margin-top:2px;">{{ selected.company }}</div>
+    </div>
+
+    <div style="padding:16px 0;border-bottom:1px solid var(--border-soft);display:flex;flex-direction:column;gap:9px;">
+      <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);min-width:0;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M4 4h16v16H4z" opacity="0"></path><path d="M22 6l-10 7L2 6"></path><rect x="2" y="4" width="20" height="16" rx="2"></rect></svg>
+        <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ selected.email }}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);min-width:0;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.1-8.7A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.8 2z"></path></svg>
+        <span style="font-family:'JetBrains Mono',monospace;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ selected.phone }}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);min-width:0;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3.5 2"></path></svg>
+        <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ selected.timezone }}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);min-width:0;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="M12 21s-7-6.2-7-11a7 7 0 1 1 14 0c0 4.8-7 11-7 11z"></path><circle cx="12" cy="10" r="2.4"></circle></svg>
+        <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ selected.location }}</span>
+      </div>
+    </div>
+
+    <div style="padding:16px 0;border-bottom:1px solid var(--border-soft);">
+      <div style="font-size:11.5px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px;">Etiquetas</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <sc-for list="{{ selected.tags }}" as="t" hint-placeholder-count="2">
+          <span style="font-size:11px;font-weight:600;padding:4px 9px;border-radius:6px;background:{{ t.bg }};color:{{ t.color }};">{{ t.label }}</span>
+        </sc-for>
+        <button style="font-size:11px;font-weight:600;padding:4px 9px;border-radius:6px;border:1px dashed var(--toggle-off);background:transparent;color:var(--text-dim);cursor:pointer;">+ Adicionar</button>
+      </div>
+    </div>
+
+    <div style="padding:16px 0;border-bottom:1px solid var(--border-soft);">
+      <div style="font-size:11.5px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.4px;margin-bottom:10px;">Campos personalizados</div>
+      <div style="display:flex;flex-direction:column;gap:9px;">
+        <sc-for list="{{ selected.customFields }}" as="f" hint-placeholder-count="4">
+          <div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px;">
+            <span style="color:var(--text-dim);">{{ f.label }}</span>
+            <span style="color:var(--text);font-weight:500;text-align:right;">{{ f.value }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="padding:16px 0;border-bottom:1px solid var(--border-soft);">
+      <div style="font-size:11.5px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.4px;margin-bottom:10px;">Histórico de protocolos</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <sc-for list="{{ selected.protocols }}" as="p" hint-placeholder-count="2">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border:1px solid var(--border-soft);border-radius:8px;">
+            <div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--text);">{{ p.code }}</div>
+              <div style="font-size:11px;color:var(--text-dim);margin-top:1px;">{{ p.date }}</div>
+            </div>
+            <span style="font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:5px;background:{{ p.bg }};color:{{ p.color }};">{{ p.status }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="padding:16px 0;border-bottom:1px solid var(--border-soft);">
+      <div style="font-size:11.5px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px;">Notas rápidas</div>
+      <textarea placeholder="Escreva uma anotação sobre este contato..." rows="3" style="width:100%;resize:none;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:Inter;font-size:12.5px;color:var(--text);outline:none;background:var(--surface-2);"></textarea>
+    </div>
+
+    <div style="padding-top:16px;display:flex;flex-direction:column;gap:8px;">
+      <button style="display:flex;align-items:center;gap:8px;border:1px solid var(--border);background:transparent;border-radius:8px;padding:8px 10px;font-size:12.5px;font-weight:500;color:var(--text);cursor:pointer;text-align:left;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#5B6472" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M5.5 5.5l13 13"></path></svg>
+        Bloquear contato
+      </button>
+      <button style="display:flex;align-items:center;gap:8px;border:1px solid var(--border);background:transparent;border-radius:8px;padding:8px 10px;font-size:12.5px;font-weight:500;color:var(--text);cursor:pointer;text-align:left;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#5B6472" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3l4 4-4 4"></path><path d="M21 7H10a5 5 0 0 0 0 10h1"></path></svg>
+        Mesclar contatos duplicados
+      </button>
+      <button style="display:flex;align-items:center;gap:8px;border:none;background:#168CFF;border-radius:8px;padding:9px 10px;font-size:12.5px;font-weight:600;color:var(--surface);cursor:pointer;text-align:left;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>
+        Nova conversa
+      </button>
+    </div>
+  </div>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;density&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;comfortable&quot;,&quot;options&quot;:[&quot;comfortable&quot;,&quot;compact&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Layout&quot;},&quot;highlightSla&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Layout&quot;}}">
+function initials(name){
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]||'')[0]+(parts[1]||'')[0]).toUpperCase();
+}
+
+const CHANNEL_META = {
+  whatsapp: {color:'#25D366', label:'WhatsApp', tagBg:'var(--green-soft)', tagColor:'var(--green-text)'},
+  instagram: {color:'#E1306C', label:'Instagram', tagBg:'var(--pink-soft)', tagColor:'var(--pink-text)'},
+  webchat: {color:'#6366F1', label:'Webchat', tagBg:'var(--indigo-soft)', tagColor:'var(--indigo-text)'}
+};
+
+const TAGS = {
+  vip: {label:'VIP', bg:'var(--amber-soft)', color:'var(--amber-text)'},
+  recorrente: {label:'Recorrente', bg:'var(--blue-soft)', color:'var(--blue-text)'},
+  proposta: {label:'Proposta Enviada', bg:'var(--violet-soft)', color:'var(--violet-text)'},
+  urgente: {label:'Urgente', bg:'var(--red-soft)', color:'var(--red-text)'},
+  novoCliente: {label:'Novo Cliente', bg:'var(--green-soft)', color:'var(--green-text)'}
+};
+
+function makeConversations(){
+  return [
+    {
+      id:'a', name:'Mariana Costa', channel:'whatsapp', avatarColor:'#168CFF',
+      company:'Estúdio MC Fotografia', email:'mariana.costa@email.com', phone:'+55 11 98213-4470',
+      timezone:'GMT-3 · São Paulo', location:'São Paulo, SP',
+      queue:'Comercial', status:'aberta', statusLabel:'Em andamento', priority:'media',
+      assignedToMe:true, unassigned:false, unreadCount:0, isTyping:true, collision:true,
+      tags:[TAGS.vip, TAGS.recorrente],
+      customFields:[
+        {label:'CPF', value:'123.456.789-00'},
+        {label:'Código ERP', value:'CRM-00214'},
+        {label:'Valor de Lead', value:'R$ 3.200'},
+        {label:'Venc. Fatura', value:'05/09/2026'}
+      ],
+      protocols:[
+        {code:'#AT-84920', date:'12 jul 2026', status:'Resolvido', bg:'var(--slate-soft)', color:'var(--slate-text)'},
+        {code:'#AT-83410', date:'02 jun 2026', status:'Resolvido', bg:'var(--slate-soft)', color:'var(--slate-text)'}
+      ],
+      messages:[
+        {kind:'divider', text:'Hoje'},
+        {kind:'contact', text:'Oi, bom dia! Fiz um pedido ontem e queria saber o status da entrega.', time:'09:14'},
+        {kind:'agent', text:'Bom dia, Mariana! Deixa eu verificar aqui pra você 🙂', time:'09:16', tick:'read'},
+        {kind:'agent', audio:{duration:'0:42', transcript:'Confirmado, seu pedido saiu do centro de distribuição hoje de manhã e chega até quinta-feira.'}, time:'09:17', tick:'delivered'},
+        {kind:'contact', text:'Perfeito, pode confirmar o horário de entrega?', time:'09:20'}
+      ]
+    },
+    {
+      id:'b', name:'João Pedro Silva', channel:'whatsapp', avatarColor:'#F59E0B',
+      company:'JP Distribuidora', email:'joao.pedro@jpdistribuidora.com.br', phone:'+55 79 96809-9911',
+      timezone:'GMT-3 · Aracaju', location:'Aracaju, SE',
+      queue:'Financeiro', status:'pendente', statusLabel:'Aguardando resposta', priority:'alta',
+      assignedToMe:false, unassigned:true, unreadCount:2, slaText:'SLA estourado', isTyping:false,
+      tags:[TAGS.urgente],
+      customFields:[
+        {label:'CNPJ', value:'12.345.678/0001-90'},
+        {label:'Código ERP', value:'CRM-00587'},
+        {label:'Valor de Lead', value:'—'},
+        {label:'Venc. Fatura', value:'18/08/2026'}
+      ],
+      protocols:[
+        {code:'#AT-85102', date:'ontem', status:'Pendente', bg:'var(--amber-soft)', color:'var(--amber-text)'}
+      ],
+      messages:[
+        {kind:'divider', text:'Hoje'},
+        {kind:'contact', text:'Ainda não recebi o boleto da minha compra, pode reenviar?', time:'08:02'},
+        {kind:'note', text:'Cliente já pagou via Pix ontem às 19h. Conferir com o financeiro antes de reenviar o boleto para não cobrar em duplicidade.', author:'Rafael Souza', time:'08:05'},
+        {kind:'contact', text:'Alguém pode me ajudar?', time:'13:40'}
+      ]
+    },
+    {
+      id:'c', name:'Fernanda Lopes', channel:'webchat', avatarColor:'#6366F1',
+      company:'Fernanda Lopes Studio', email:'fernanda.lopes@gmail.com', phone:'+55 21 99887-2231',
+      timezone:'GMT-3 · Rio de Janeiro', location:'Rio de Janeiro, RJ',
+      queue:'Suporte N1', status:'resolvida', statusLabel:'Encerrada pelo Agente IA', priority:'baixa',
+      assignedToMe:false, unassigned:false, unreadCount:0, isTyping:false,
+      tags:[TAGS.novoCliente],
+      customFields:[
+        {label:'CPF', value:'—'},
+        {label:'Código ERP', value:'—'},
+        {label:'Valor de Lead', value:'—'},
+        {label:'Venc. Fatura', value:'—'}
+      ],
+      protocols:[
+        {code:'#AT-85220', date:'hoje', status:'Resolvido', bg:'var(--slate-soft)', color:'var(--slate-text)'}
+      ],
+      messages:[
+        {kind:'divider', text:'Hoje'},
+        {kind:'contact', text:'Qual o prazo de garantia do produto?', time:'12:38'},
+        {kind:'bot', text:'Olá! Nossos produtos têm garantia de 12 meses contra defeitos de fabricação. Posso ajudar com mais alguma coisa?', time:'12:38', tick:'read'},
+        {kind:'contact', text:'Não, só isso. Obrigada!', time:'12:40'},
+        {kind:'system', text:'Conversa encerrada automaticamente pelo Agente IA'}
+      ]
+    },
+    {
+      id:'d', name:'Carlos Eduardo Nunes', channel:'whatsapp', avatarColor:'#0E9F6E',
+      company:'Nunes Engenharia', email:'carlos.nunes@nunesengenharia.com', phone:'+55 31 98765-4321',
+      timezone:'GMT-3 · Belo Horizonte', location:'Belo Horizonte, MG',
+      queue:'Comercial', status:'resolvida', statusLabel:'Encerrada', priority:'baixa',
+      assignedToMe:true, unassigned:false, unreadCount:0, isTyping:false, hsmClosed:true,
+      tags:[TAGS.recorrente],
+      customFields:[
+        {label:'CNPJ', value:'22.111.333/0001-55'},
+        {label:'Código ERP', value:'CRM-00098'},
+        {label:'Valor de Lead', value:'R$ 12.500'},
+        {label:'Venc. Fatura', value:'—'}
+      ],
+      protocols:[
+        {code:'#AT-81004', date:'20 mai 2026', status:'Resolvido', bg:'var(--slate-soft)', color:'var(--slate-text)'},
+        {code:'#AT-79930', date:'03 abr 2026', status:'Resolvido', bg:'var(--slate-soft)', color:'var(--slate-text)'}
+      ],
+      messages:[
+        {kind:'divider', text:'Ontem'},
+        {kind:'agent', text:'Fechamos o orçamento com o desconto combinado, pode confirmar por aqui quando aprovar.', time:'16:02', tick:'read'},
+        {kind:'contact', text:'Aprovado! Muito obrigado pela agilidade.', time:'16:10'}
+      ]
+    },
+    {
+      id:'e', name:'Pedro Henrique', channel:'instagram', avatarColor:'#E1306C',
+      company:'—', email:'pedro.h@outlook.com', phone:'+55 41 99123-8890',
+      timezone:'GMT-3 · Curitiba', location:'Curitiba, PR',
+      queue:'Comercial', status:'aberta', statusLabel:'Em andamento', priority:'urgente',
+      assignedToMe:false, unassigned:true, unreadCount:1, isTyping:false, channelOffline:true,
+      tags:[],
+      customFields:[
+        {label:'CPF', value:'—'}, {label:'Código ERP', value:'—'},
+        {label:'Valor de Lead', value:'R$ 800'}, {label:'Venc. Fatura', value:'—'}
+      ],
+      protocols:[],
+      messages:[
+        {kind:'divider', text:'Hoje'},
+        {kind:'contact', text:'Vi o produto no feed, ainda tem em estoque?', time:'11:05'},
+        {kind:'agent', text:'Temos sim! Posso separar uma unidade pra você 😊', time:'11:08', tick:'failed'}
+      ]
+    },
+    {
+      id:'f', name:'Ana Beatriz Rocha', channel:'whatsapp', avatarColor:'#8B5CF6',
+      company:'—', email:'ana.rocha@gmail.com', phone:'+55 85 99456-1120',
+      timezone:'GMT-3 · Fortaleza', location:'Fortaleza, CE',
+      queue:'Suporte N1', status:'resolvida', statusLabel:'Encerrada', priority:'baixa',
+      assignedToMe:true, unassigned:false, unreadCount:0, isTyping:false,
+      tags:[],
+      customFields:[
+        {label:'CPF', value:'—'}, {label:'Código ERP', value:'—'},
+        {label:'Valor de Lead', value:'—'}, {label:'Venc. Fatura', value:'—'}
+      ],
+      protocols:[{code:'#AT-84711', date:'ontem', status:'Resolvido', bg:'var(--slate-soft)', color:'var(--slate-text)'}],
+      messages:[
+        {kind:'divider', text:'Ontem'},
+        {kind:'agent', text:'Qualquer coisa é só chamar!', time:'17:40', tick:'read'},
+        {kind:'contact', text:'Obrigada!', time:'17:42'}
+      ]
+    },
+    {
+      id:'g', name:'Roberta Dias', channel:'webchat', avatarColor:'#F97316',
+      company:'Dias Consultoria', email:'roberta.dias@diasconsultoria.com', phone:'+55 51 99321-7654',
+      timezone:'GMT-3 · Porto Alegre', location:'Porto Alegre, RS',
+      queue:'Comercial', status:'pendente', statusLabel:'Aguardando retorno', priority:'media',
+      assignedToMe:false, unassigned:true, unreadCount:1, isTyping:false,
+      tags:[TAGS.proposta],
+      customFields:[
+        {label:'CNPJ', value:'—'}, {label:'Código ERP', value:'CRM-00901'},
+        {label:'Valor de Lead', value:'R$ 5.400'}, {label:'Venc. Fatura', value:'—'}
+      ],
+      protocols:[],
+      messages:[
+        {kind:'divider', text:'Hoje'},
+        {kind:'contact', text:'Recebi a proposta, vou avaliar com o financeiro e retorno até sexta.', time:'10:12'}
+      ]
+    }
+  ];
+}
+
+class Component extends DCLogic {
+  state = {
+    conversations: makeConversations(),
+    selectedId: 'a',
+    filterTab: 'todas',
+    statusTab: 'todas',
+    search: '',
+    composerMode: 'public',
+    composerText: '',
+    agentStatus: 'online',
+    density: 'comfortable'
+  };
+
+  onCycleStatus = () => {
+    const order = ['online','busy','away'];
+    const next = order[(order.indexOf(this.state.agentStatus)+1) % order.length];
+    this.setState({agentStatus: next});
+  };
+
+  onSetTabMine = () => this.setState({filterTab:'minhas'});
+  onSetTabUnassigned = () => this.setState({filterTab:'unassigned'});
+  onSetTabAll = () => this.setState({filterTab:'todas'});
+  setStatusTab(s){ return () => this.setState({statusTab:s}); }
+  onSearchChange = (e) => this.setState({search: e.target.value});
+  onSetComposerPublic = () => this.setState({composerMode:'public'});
+  onSetComposerNote = () => this.setState({composerMode:'note'});
+  onComposerTextChange = (e) => this.setState({composerText: e.target.value});
+
+  onSend = () => {
+    const text = this.state.composerText.trim();
+    if(!text) return;
+    const isNote = this.state.composerMode === 'note';
+    const newMsg = isNote
+      ? {kind:'note', text, author:'Você', time: nowTime()}
+      : {kind:'agent', text, time: nowTime(), tick:'sent'};
+    const conversations = this.state.conversations.map(c => {
+      if(c.id !== this.state.selectedId) return c;
+      return {...c, messages:[...c.messages, newMsg], isTyping:false};
+    });
+    this.setState({conversations, composerText:''});
+  };
+
+  selectConversation(id){ this.setState({selectedId:id}); }
+
+  renderVals(){
+    const density = this.props.density ?? this.state.density;
+    const highlightSla = this.props.highlightSla ?? true;
+    const listItemPadding = density === 'compact' ? '10px 16px' : '13px 16px';
+
+    const tabColors = (active) => active
+      ? {bg:'var(--surface)', color:'#168CFF'}
+      : {bg:'transparent', color:'var(--text-muted)'};
+    const mine = tabColors(this.state.filterTab==='minhas');
+    const unas = tabColors(this.state.filterTab==='unassigned');
+    const all = tabColors(this.state.filterTab==='todas');
+
+    let list = this.state.conversations;
+    if(this.state.filterTab === 'minhas') list = list.filter(c=>c.assignedToMe);
+    if(this.state.filterTab === 'unassigned') list = list.filter(c=>c.unassigned);
+    const q = this.state.search.trim().toLowerCase();
+    if(q) list = list.filter(c=>c.name.toLowerCase().includes(q));
+    if(this.state.statusTab !== 'todas') list = list.filter(c=>c.status===this.state.statusTab);
+
+    const filteredConversations = list.map(c => {
+      const meta = CHANNEL_META[c.channel];
+      const lastMsg = c.messages.filter(m=>m.kind!=='divider' && m.kind!=='system').slice(-1)[0];
+      let previewPrefix = '';
+      let previewText = '';
+      if(lastMsg){
+        if(lastMsg.kind==='contact'){ previewPrefix='Cliente: '; previewText = lastMsg.text || '[áudio]'; }
+        else if(lastMsg.kind==='agent'){ previewPrefix='Você: '; previewText = lastMsg.text || '[áudio]'; }
+        else if(lastMsg.kind==='bot'){ previewPrefix='Bot: '; previewText = lastMsg.text; }
+        else if(lastMsg.kind==='note'){ previewPrefix='Nota: '; previewText = lastMsg.text; }
+      }
+      const lastTime = lastMsg ? lastMsg.time : '';
+      const isSelected = c.id === this.state.selectedId;
+      return {
+        id:c.id, name:c.name, initials:initials(c.name),
+        avatarColor:c.avatarColor, channelColor:meta.color,
+        priorityColor: ({baixa:'#94A3B8', media:'var(--blue-text)', alta:'#FFB65C', urgente:'#EF4444'})[c.priority] || '#94A3B8',
+        previewLine: previewPrefix + previewText,
+        lastTime, unreadCount: c.unreadCount,
+        showSla: highlightSla && !!c.slaText,
+        slaText: c.slaText, slaBg:'var(--red-soft)', slaColor:'var(--red-text)',
+        tags: c.tags,
+        rowBg: isSelected ? 'var(--selected-bg)' : 'var(--surface)',
+        rowBorder: isSelected ? '#168CFF' : 'transparent',
+        onSelect: () => this.selectConversation(c.id)
+      };
+    });
+
+    const sel = this.state.conversations.find(c=>c.id===this.state.selectedId) || this.state.conversations[0];
+    const meta = CHANNEL_META[sel.channel];
+    const statusLabelMap = {aberta:'Aberta', pendente:'Pendente', resolvida:'Resolvida'};
+
+    const messages = sel.messages.map((m,i) => {
+      const base = {key:i};
+      if(m.kind==='divider') return {...base, isDivider:true, text:m.text};
+      if(m.kind==='system') return {...base, isSystem:true, text:m.text};
+      if(m.kind==='note') return {...base, isNote:true, text:m.text, author:m.author, time:m.time};
+
+      const isContact = m.kind==='contact';
+      const isBot = m.kind==='bot';
+      const align = isContact ? 'flex-start' : 'flex-end';
+      let bg, textColor, border, radiusBase;
+      if(isContact){ bg='var(--surface)'; textColor='var(--text)'; border='1px solid var(--border)'; }
+      else if(isBot){ bg='var(--cyan-soft)'; textColor='var(--cyan-text)'; border='1px solid var(--cyan-border)'; }
+      else { bg='var(--accent-soft)'; textColor='var(--accent-soft-text)'; border='none'; }
+      const radius = isContact ? '12px 12px 12px 4px' : '12px 12px 4px 12px';
+
+      const tickMap = {sent:'✓', delivered:'✓✓', read:'✓✓'};
+      const tickColor = m.tick==='read' ? '#168CFF' : 'var(--text-dim)';
+
+      return {
+        ...base, isBubble:true, align, bg, textColor, border, radius,
+        text: m.audio ? null : m.text,
+        time: m.time, timeColor: isContact ? 'var(--text-dim)' : (isBot? 'var(--cyan-text)' : 'var(--accent-soft-meta)'),
+        tickIcon: !isContact && m.tick && m.tick!=='failed' ? tickMap[m.tick] : null, tickColor,
+        failed: m.tick==='failed',
+        showAiTag: isBot,
+        isAudio: !!m.audio,
+        audioDuration: m.audio ? m.audio.duration : null,
+        transcript: m.audio ? m.audio.transcript : null,
+        audioBtnBg: isContact ? '#168CFF' : 'var(--accent-soft-text)',
+        audioTrackBg: isContact ? 'var(--border)' : 'rgba(10,37,64,0.15)',
+        audioProgressBg: isContact ? '#168CFF' : 'var(--accent-soft-text)'
+      };
+    });
+
+    const composerIsNote = this.state.composerMode === 'note';
+
+    return {
+      noop: () => {},
+      agentStatusColor: {online:'#10B981', busy:'#EF4444', away:'#F59E0B'}[this.state.agentStatus],
+      search: this.state.search, onSearchChange: this.onSearchChange,
+      tabMineBg: mine.bg, tabMineColor: mine.color, onSetTabMine: this.onSetTabMine,
+      tabUnassignedBg: unas.bg, tabUnassignedColor: unas.color, onSetTabUnassigned: this.onSetTabUnassigned,
+      tabAllBg: all.bg, tabAllColor: all.color, onSetTabAll: this.onSetTabAll,
+      filteredConversations, listItemPadding,
+      onCycleStatus: this.onCycleStatus,
+      selected: {
+        name: sel.name, initials: initials(sel.name), avatarColor: sel.avatarColor,
+        channelLabel: meta.label, channelTagBg: meta.tagBg, channelTagColor: meta.tagColor,
+        phone: sel.phone, queue: sel.queue, statusLabel: statusLabelMap[sel.status] + ' · ' + sel.statusLabel,
+        company: sel.company, email: sel.email, timezone: sel.timezone, location: sel.location,
+        tags: sel.tags, customFields: sel.customFields, protocols: sel.protocols,
+        messages, isTyping: sel.isTyping,
+        collision: !!sel.collision, channelOffline: !!sel.channelOffline,
+        hsmClosed: !!sel.hsmClosed
+      },
+      statusTabs: [{id:'todas',label:'Todas'},{id:'aberta',label:'Abertas'},{id:'pendente',label:'Pendentes'},{id:'resolvida',label:'Resolvidas'}].map(t => ({
+        label:t.label,
+        bg: this.state.statusTab===t.id ? 'var(--accent-soft)' : 'transparent',
+        color: this.state.statusTab===t.id ? '#168CFF' : 'var(--text-muted)',
+        border: this.state.statusTab===t.id ? 'var(--accent-border)' : 'var(--border)',
+        onSelect: this.setStatusTab(t.id)
+      })),
+      composerPublicBg: !composerIsNote ? 'var(--accent-soft)' : 'transparent',
+      composerPublicColor: !composerIsNote ? '#168CFF' : 'var(--text-muted)',
+      composerNoteBg: composerIsNote ? 'var(--note-bg)' : 'transparent',
+      composerNoteColor: composerIsNote ? 'var(--amber-text)' : 'var(--text-muted)',
+      onSetComposerPublic: this.onSetComposerPublic, onSetComposerNote: this.onSetComposerNote,
+      composerBorder: composerIsNote ? 'var(--note-border)' : 'var(--border)',
+      composerBg: composerIsNote ? 'var(--note-bg)' : 'var(--surface)',
+      composerText: this.state.composerText, onComposerTextChange: this.onComposerTextChange,
+      composerPlaceholder: composerIsNote ? 'Escreva uma nota interna, visível apenas para a equipe...' : 'Digite uma mensagem...',
+      sendBtnBg: composerIsNote ? 'var(--amber-text)' : '#168CFF',
+      sendBtnLabel: composerIsNote ? 'Adicionar nota' : 'Enviar',
+      onSend: this.onSend
+    };
+  }
+}
+
+function nowTime(){
+  const d = new Date();
+  return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+}
+
+</script>
+</body>
+</html>

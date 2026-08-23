@@ -1,0 +1,250 @@
+import 'server-only';
+
+import {
+  WAMessageStatus,
+  normalizeMessageContent,
+  type WAMessage,
+  type WAMessageContent,
+} from '@whiskeysockets/baileys';
+
+import type { DeliveryStatus, MessageContent } from '@/core/domain/message';
+
+/**
+ * Traducao do payload bruto do WhatsApp para o modelo de mensagem do dominio.
+ *
+ * Uma mensagem sem texto (foto, figurinha, localizacao) tambem e uma mensagem:
+ * descarta-la faria a conversa "pular" e o preview mentir. Por isso todo tipo
+ * suportado recebe ao menos um resumo legivel — e, quando ha midia, uma
+ * descrição do que precisa ser baixado para exibi-la de fato.
+ */
+
+export type MediaKind = 'image' | 'video' | 'sticker' | 'audio' | 'document';
+
+export interface MediaRef {
+  readonly kind: MediaKind;
+  readonly mimeType: string;
+  readonly fileLength: number;
+  readonly caption?: string;
+  readonly fileName?: string;
+  /** Áudio: duracao formatada. */
+  readonly duration?: string;
+  /** Áudio gravado na hora (push-to-talk). */
+  readonly voice?: boolean;
+  /** Video sem som exibido em laco — o "GIF" do WhatsApp. */
+  readonly gif?: boolean;
+  readonly animated?: boolean;
+  /** Tamanho legivel, usado no fallback quando o download falha. */
+  readonly sizeLabel: string;
+}
+
+export interface DecodedMessage {
+  /** Conteudo valido mesmo sem midia — vira o fallback se o download falhar. */
+  readonly content: MessageContent;
+  /** Resumo curto para a lista de conversas. */
+  readonly preview: string;
+  readonly media?: MediaRef;
+}
+
+const formatBytes = (bytes: number): string => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '—';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / 1024 ** exponent;
+  return `${value >= 10 || exponent === 0 ? Math.round(value) : value.toFixed(1)} ${units[exponent]}`;
+};
+
+const formatDuration = (seconds: number): string => {
+  const total = Math.max(1, Math.round(seconds));
+  const minutes = Math.floor(total / 60);
+  return `${minutes}:${String(total % 60).padStart(2, '0')}`;
+};
+
+const asText = (text: string): DecodedMessage => ({
+  content: { type: 'text', text },
+  preview: text,
+});
+
+/** Anexo sem texto proprio: o rotulo vira o corpo da mensagem e o preview. */
+const asAttachmentText = (label: string, caption?: string | null): DecodedMessage => {
+  const text = caption?.trim() ? `${label} · ${caption.trim()}` : label;
+  return { content: { type: 'text', text }, preview: text };
+};
+
+/**
+ * Decodifica o conteúdo. Retorna `null` para eventos que não são mensagens de
+ * conversa (edicoes de protocolo, reacoes, atualizacoes de enquete, chaves).
+ */
+export const decodeWaMessage = (raw: WAMessage): DecodedMessage | null => {
+  const message: WAMessageContent | undefined = normalizeMessageContent(raw.message);
+  if (!message) return null;
+
+  if (message.conversation) return asText(message.conversation);
+
+  if (message.extendedTextMessage?.text) return asText(message.extendedTextMessage.text);
+
+  if (message.imageMessage) {
+    const caption = message.imageMessage.caption?.trim() || undefined;
+    const fallback = asAttachmentText('📷 Foto', caption);
+    return {
+      ...fallback,
+      preview: caption ? `📷 ${caption}` : '📷 Foto',
+      media: {
+        kind: 'image',
+        mimeType: message.imageMessage.mimetype ?? 'image/jpeg',
+        fileLength: Number(message.imageMessage.fileLength ?? 0),
+        sizeLabel: formatBytes(Number(message.imageMessage.fileLength ?? 0)),
+        caption,
+      },
+    };
+  }
+
+  if (message.videoMessage) {
+    const gif = Boolean(message.videoMessage.gifPlayback);
+    const caption = message.videoMessage.caption?.trim() || undefined;
+    const label = gif ? '🎞️ GIF' : '🎬 Vídeo';
+    return {
+      ...asAttachmentText(label, caption),
+      preview: caption ? `${label} · ${caption}` : label,
+      media: {
+        kind: 'video',
+        mimeType: message.videoMessage.mimetype ?? 'video/mp4',
+        fileLength: Number(message.videoMessage.fileLength ?? 0),
+        sizeLabel: formatBytes(Number(message.videoMessage.fileLength ?? 0)),
+        caption,
+        gif,
+      },
+    };
+  }
+
+  if (message.audioMessage) {
+    const duration = formatDuration(Number(message.audioMessage.seconds ?? 0));
+    const voice = Boolean(message.audioMessage.ptt);
+    return {
+      content: { type: 'audio', duration, voice },
+      preview: voice ? '🎤 Áudio' : '🎵 Áudio',
+      media: {
+        kind: 'audio',
+        mimeType: message.audioMessage.mimetype ?? 'audio/ogg',
+        fileLength: Number(message.audioMessage.fileLength ?? 0),
+        sizeLabel: formatBytes(Number(message.audioMessage.fileLength ?? 0)),
+        duration,
+        voice,
+      },
+    };
+  }
+
+  if (message.documentMessage) {
+    const fileName = message.documentMessage.fileName?.trim() || 'documento';
+    const size = formatBytes(Number(message.documentMessage.fileLength ?? 0));
+    return {
+      content: { type: 'document', fileName, size },
+      preview: `📎 ${fileName}`,
+      media: {
+        kind: 'document',
+        mimeType: message.documentMessage.mimetype ?? 'application/octet-stream',
+        fileLength: Number(message.documentMessage.fileLength ?? 0),
+        sizeLabel: size,
+        fileName,
+      },
+    };
+  }
+
+  if (message.stickerMessage) {
+    return {
+      ...asAttachmentText('🩹 Figurinha'),
+      media: {
+        kind: 'sticker',
+        mimeType: message.stickerMessage.mimetype ?? 'image/webp',
+        fileLength: Number(message.stickerMessage.fileLength ?? 0),
+        sizeLabel: formatBytes(Number(message.stickerMessage.fileLength ?? 0)),
+        animated: Boolean(message.stickerMessage.isAnimated),
+      },
+    };
+  }
+
+  if (message.locationMessage || message.liveLocationMessage) {
+    return asAttachmentText('📍 Localização', message.locationMessage?.name);
+  }
+
+  if (message.contactMessage) {
+    return asAttachmentText('👤 Contato', message.contactMessage.displayName);
+  }
+
+  if (message.contactsArrayMessage) {
+    const total = message.contactsArrayMessage.contacts?.length ?? 0;
+    return asAttachmentText(`👥 ${total} contatos compartilhados`);
+  }
+
+  if (message.pollCreationMessage || message.pollCreationMessageV3) {
+    const name =
+      message.pollCreationMessage?.name ?? message.pollCreationMessageV3?.name ?? undefined;
+    return asAttachmentText('📊 Enquete', name);
+  }
+
+  const buttonReply =
+    message.buttonsResponseMessage?.selectedDisplayText ??
+    message.templateButtonReplyMessage?.selectedDisplayText ??
+    message.listResponseMessage?.title;
+  if (buttonReply) return asText(buttonReply);
+
+  // protocolMessage, reactionMessage, pollUpdateMessage, senderKeyDistributionMessage etc.
+  return null;
+};
+
+/** Conteudo definitivo depois que a midia foi decifrada e ficou disponível. */
+export const mediaContent = (media: MediaRef, url: string): MessageContent => {
+  switch (media.kind) {
+    case 'image':
+      return { type: 'image', url, caption: media.caption };
+    case 'video':
+      return {
+        type: 'video',
+        url,
+        caption: media.caption,
+        mimeType: media.mimeType,
+        gif: media.gif,
+      };
+    case 'sticker':
+      return { type: 'sticker', url, animated: media.animated };
+    case 'audio':
+      return {
+        type: 'audio',
+        duration: media.duration ?? '0:00',
+        url,
+        mimeType: media.mimeType,
+        voice: media.voice,
+      };
+    case 'document':
+      return {
+        type: 'document',
+        fileName: media.fileName ?? 'documento',
+        size: media.sizeLabel,
+        url,
+      };
+  }
+};
+
+/** `proto.WebMessageInfo.Status` -> status de entrega do dominio. */
+export const deliveryStatusFrom = (status: number | null | undefined): DeliveryStatus | undefined => {
+  switch (status) {
+    case WAMessageStatus.ERROR:
+      return 'falha';
+    case WAMessageStatus.PENDING:
+      return 'enviando';
+    case WAMessageStatus.SERVER_ACK:
+      return 'enviado';
+    case WAMessageStatus.DELIVERY_ACK:
+      return 'entregue';
+    case WAMessageStatus.READ:
+    case WAMessageStatus.PLAYED:
+      return 'lido';
+    default:
+      return undefined;
+  }
+};
+
+/** Timestamp da mensagem em ms; cai para "agora" quando o servidor não envia. */
+export const timestampOf = (raw: WAMessage): number => {
+  const seconds = Number(raw.messageTimestamp ?? 0);
+  return seconds > 0 ? seconds * 1000 : Date.now();
+};

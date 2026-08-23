@@ -1,0 +1,493 @@
+@import 'tailwindcss';
+
+/* ==========================================================================
+   Solint CRM — Design System & Tokens
+   Estética refinada, ritmo tipográfico e modo escuro de alto contraste.
+   ========================================================================== */
+
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+:root {
+  /* superfícies e texto — modo claro */
+  --app-bg: #f8fafc;
+  --chat-bg: #f1f5f9;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --border: #e2e8f0;
+  --border-soft: #f1f5f9;
+  --text: #0f172a;
+  --text-muted: #475569;
+  --text-dim: #64748b;
+  --toggle-off: #cbd5e1;
+
+  /* balão do atendente / seleção */
+  --accent-soft: #e0f2fe;
+  --accent-soft-text: #0369a1;
+  --accent-soft-meta: #0284c7;
+  --selected-bg: #eff6ff;
+  --accent-border: #bae6fd;
+
+  /* nota interna privada (âmbar) */
+  --note-bg: #fffbeb;
+  --note-border: #fcd34d;
+  --note-text: #78350f;
+  --note-meta: #92400e;
+
+  /* pares soft/text para badges e tags */
+  --amber-soft: #fef3c7;
+  --amber-text: #92400e;
+  --green-soft: #dcfce7;
+  --green-text: #166534;
+  --green-border: #86efac;
+  --red-soft: #fee2e2;
+  --red-text: #991b1b;
+  --red-border: #fca5a5;
+  --violet-soft: #ede9fe;
+  --violet-text: #5b21b6;
+  --blue-soft: #dbeafe;
+  --blue-text: #1e40af;
+  --cyan-soft: #cffafe;
+  --cyan-text: #155e75;
+  --cyan-border: #67e8f9;
+  --slate-soft: #f1f5f9;
+  --slate-text: #334155;
+  --pink-soft: #fce7f3;
+  --pink-text: #9d174d;
+  --indigo-soft: #e0e7ff;
+  --indigo-text: #3730a3;
+}
+
+:root[data-theme='dark'] {
+  /* modo escuro profissional — azul-ardósia profundo */
+  --app-bg: #070b14;
+  --chat-bg: #070b14;
+  --surface: #0e1526;
+  --surface-2: #151f36;
+  --border: rgba(255, 255, 255, 0.10);
+  --border-soft: rgba(255, 255, 255, 0.06);
+  --text: #f8fafc;
+  --text-muted: #94a3b8;
+  --text-dim: #64748b;
+  --toggle-off: #334155;
+
+  --accent-soft: rgba(22, 140, 255, 0.16);
+  --accent-soft-text: #93c5fd;
+  --accent-soft-meta: #60a5fa;
+  --selected-bg: rgba(22, 140, 255, 0.12);
+  --accent-border: rgba(22, 140, 255, 0.35);
+
+  --note-bg: rgba(245, 158, 11, 0.08);
+  --note-border: rgba(245, 158, 11, 0.35);
+  --note-text: #fef3c7;
+  --note-meta: #fcd34d;
+
+  --amber-soft: rgba(245, 158, 11, 0.15);
+  --amber-text: #fbbf24;
+  --green-soft: rgba(16, 185, 129, 0.15);
+  --green-text: #34d399;
+  --green-border: rgba(16, 185, 129, 0.3);
+  --red-soft: rgba(239, 68, 68, 0.15);
+  --red-text: #f87171;
+  --red-border: rgba(239, 68, 68, 0.3);
+  --violet-soft: rgba(139, 92, 246, 0.15);
+  --violet-text: #a78bfa;
+  --blue-soft: rgba(59, 130, 246, 0.15);
+  --blue-text: #60a5fa;
+  --cyan-soft: rgba(6, 182, 212, 0.15);
+  --cyan-text: #38bdf8;
+  --cyan-border: rgba(6, 182, 212, 0.3);
+  --slate-soft: rgba(148, 163, 184, 0.12);
+  --slate-text: #cbd5e1;
+  --pink-soft: rgba(236, 72, 153, 0.15);
+  --pink-text: #f472b6;
+  --indigo-soft: rgba(99, 102, 241, 0.15);
+  --indigo-text: #818cf8;
+}
+
+@theme inline {
+  /* tipografia */
+  --font-display: var(--font-sora), 'Sora', system-ui, sans-serif;
+  --font-sans: var(--font-inter), 'Inter', system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace;
+
+  /* cores de marca e canais */
+  --color-brand: #168cff;
+  --color-brand-hover: #1178dc;
+  --color-brand-deep: #174eff;
+  --color-brand-cyan: #35d9ff;
+  --color-brand-amber: #f59e0b;
+  --color-whatsapp: #22c55e;
+  --color-whatsapp-deep: #16a34a;
+  --color-instagram: #e1306c;
+  --color-webchat: #6366f1;
+  --color-telegram: #0088cc;
+  --color-email: #64748b;
+  --color-status-open: #10b981;
+  --color-status-pending: #f59e0b;
+  --color-status-resolved: #64748b;
+  --color-status-danger: #ef4444;
+
+  /* superfícies e texto */
+  --color-app: var(--app-bg);
+  --color-chat: var(--chat-bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--border);
+  --color-line-soft: var(--border-soft);
+  --color-ink: var(--text);
+  --color-muted: var(--text-muted);
+  --color-dim: var(--text-dim);
+  --color-toggle-off: var(--toggle-off);
+
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-soft-text: var(--accent-soft-text);
+  --color-accent-soft-meta: var(--accent-soft-meta);
+  --color-selected: var(--selected-bg);
+  --color-accent-line: var(--accent-border);
+
+  --color-note: var(--note-bg);
+  --color-note-line: var(--note-border);
+  --color-note-text: var(--note-text);
+  --color-note-meta: var(--note-meta);
+
+  --color-amber-soft: var(--amber-soft);
+  --color-amber-text: var(--amber-text);
+  --color-green-soft: var(--green-soft);
+  --color-green-text: var(--green-text);
+  --color-green-line: var(--green-border);
+  --color-red-soft: var(--red-soft);
+  --color-red-text: var(--red-text);
+  --color-red-line: var(--red-border);
+  --color-violet-soft: var(--violet-soft);
+  --color-violet-text: var(--violet-text);
+  --color-blue-soft: var(--blue-soft);
+  --color-blue-text: var(--blue-text);
+  --color-cyan-soft: var(--cyan-soft);
+  --color-cyan-text: var(--cyan-text);
+  --color-cyan-line: var(--cyan-border);
+  --color-slate-soft: var(--slate-soft);
+  --color-slate-text: var(--slate-text);
+  --color-pink-soft: var(--pink-soft);
+  --color-pink-text: var(--pink-text);
+  --color-indigo-soft: var(--indigo-soft);
+  --color-indigo-text: var(--indigo-text);
+
+  /*
+   * Escala tipografica fechada.
+   * Havia 15 tamanhos arbitrarios em px (9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5,
+   * 13, 13.5, 14, 14.5, 15, 26, 28) — meio pixel de diferenca nao e decisao de
+   * design, e ruido. Sao 8 passos, cada um com um trabalho definido — 7 na aplicacao mais
+   * `hero`, exclusivo da chamada das telas de entrada.
+   */
+  --text-micro: 10px;          /* rotulos em caixa alta, metadados minimos */
+  --text-micro--line-height: 1.4;
+  --text-meta: 11px;           /* metadados, dicas, horarios */
+  --text-meta--line-height: 1.45;
+  --text-body: 12px;           /* corpo denso: listas, tabelas, badges */
+  --text-body--line-height: 1.5;
+  --text-ui: 13px;             /* corpo padrao da interface e das mensagens */
+  --text-ui--line-height: 1.55;
+  --text-title: 15px;          /* titulos de secao e de pagina */
+  --text-title--line-height: 1.3;
+  --text-metric: 20px;         /* numeros de destaque medio */
+  --text-metric--line-height: 1.1;
+  --text-display: 28px;        /* numeros grandes do painel de operacao */
+  --text-display--line-height: 1;
+  --text-hero: 32px;           /* unico passo acima: a chamada das telas de entrada */
+  --text-hero--line-height: 1.1;
+
+  /*
+   * Escala de raio semantica: o canto diz o que a peca e.
+   * Raio uniforme em tudo faz o canto parar de carregar informacao —
+   * o usuario deixa de distinguir superficie estrutural de controle.
+   */
+  --radius-surface: 0px;  /* paineis, colunas, tabelas, cards: fixos no plano */
+  --radius-control: 4px;  /* botoes, inputs, selects, chips: manipulaveis */
+  --radius-float: 10px;   /* modal, paleta, dropdown: flutuam acima do plano */
+  --radius-bubble: 14px;  /* balao de mensagem: convencao do WhatsApp */
+  /* rounded-full fica reservado a indicadores: pontos de status, avatares, contadores */
+
+  /* gradiente institucional de alto impacto */
+  --background-image-brand-gradient: linear-gradient(
+    135deg,
+    #174eff 0%,
+    #168cff 60%,
+    #35d9ff 100%
+  );
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background-color: var(--app-bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Acessibilidade: foco visível moderno */
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--text-dim);
+    opacity: 0.8;
+  }
+
+  /* Scrollbars elegantes */
+  ::-webkit-scrollbar {
+    width: 7px;
+    height: 7px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--toggle-off);
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-dim);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer utilities {
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Entrada dos avisos efêmeros. O bloco de prefers-reduced-motion acima ja
+   neutraliza a duração para quem pediu menos movimento. */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+/* ==========================================================================
+   Telas de entrada (login, cadastro, recuperar senha)
+   ==========================================================================
+
+   Uma única superfície contínua, não duas metades.
+
+   A versão anterior cortava a tela ao meio: gradiente de marca à esquerda,
+   fundo claro do app à direita, com uma emenda vertical dura no meio. Aqui o
+   gradiente atravessa a página inteira na diagonal e o formulário flutua
+   *sobre* ele — o que separa os dois lados passa a ser elevação, não cor.
+
+   Os tons saem do modo escuro do próprio produto (`--app-bg`, `--surface`,
+   `--color-brand-deep`, `--color-brand`, `--color-brand-cyan`). Nenhuma cor
+   nova foi inventada para esta tela.
+   ========================================================================== */
+
+.auth-shell {
+  /*
+   * Escopo de tokens: dentro da casca de entrada, os mesmos componentes de
+   * formulário do resto do produto passam a renderizar em modo escuro.
+   * Nenhum `Field`, `TextInput` ou `Button` precisou ser alterado — eles
+   * continuam lendo as variáveis, que aqui valem outra coisa.
+   */
+  --surface: rgba(255, 255, 255, 0.05);
+  --surface-2: rgba(255, 255, 255, 0.08);
+  --border: rgba(148, 197, 255, 0.22);
+  --border-soft: rgba(148, 197, 255, 0.12);
+  --text: #f4f8ff;
+  --text-muted: #a8c2e8;
+  --text-dim: #7e9bc4;
+  --toggle-off: rgba(255, 255, 255, 0.18);
+
+  --accent-soft: rgba(53, 217, 255, 0.16);
+  --accent-soft-text: #9adcff;
+  --selected-bg: rgba(22, 140, 255, 0.16);
+  --accent-border: rgba(53, 217, 255, 0.4);
+
+  --green-soft: rgba(16, 185, 129, 0.16);
+  --green-text: #5eead4;
+  --green-border: rgba(16, 185, 129, 0.4);
+  --red-soft: rgba(239, 68, 68, 0.18);
+  --red-text: #fca5a5;
+  --red-border: rgba(239, 68, 68, 0.45);
+  --amber-soft: rgba(245, 158, 11, 0.16);
+  --amber-text: #fcd34d;
+
+  position: relative;
+  isolation: isolate;
+  background:
+    /* halo por trás do formulário: puxa o olho para a direita sem emenda */
+    radial-gradient(120% 90% at 88% 42%, rgba(22, 140, 255, 0.34) 0%, transparent 62%),
+    /* brilho de marca no canto de origem */
+    radial-gradient(80% 70% at 6% 4%, rgba(23, 78, 255, 0.42) 0%, transparent 58%),
+    /* base diagonal: da noite à esquerda para o azul de marca à direita */
+    linear-gradient(118deg, #04070f 0%, #070b14 22%, #0b1a38 48%, #10306e 72%, #12459d 100%);
+  color: #f4f8ff;
+}
+
+/*
+ * Grade de fundo.
+ *
+ * Uma trama fina de 1px, não um padrão decorativo: dá profundidade e escala à
+ * superfície sem competir com o conteúdo. Some suavemente nas bordas para não
+ * criar uma segunda emenda onde a primeira foi removida.
+ */
+.auth-grid {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(rgba(148, 197, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 197, 255, 0.06) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(120% 100% at 20% 0%, #000 0%, transparent 75%);
+  -webkit-mask-image: radial-gradient(120% 100% at 20% 0%, #000 0%, transparent 75%);
+}
+
+/*
+ * Aurora: duas manchas que respiram devagar sobre o gradiente.
+ *
+ * 26 e 34 segundos, deslocamento pequeno. O objetivo é que a tela pareça viva
+ * quando olhada, não que chame atenção enquanto se digita uma senha.
+ */
+.auth-aurora {
+  position: absolute;
+  inset: -20%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(38% 42% at 30% 30%, rgba(53, 217, 255, 0.22) 0%, transparent 70%),
+    radial-gradient(34% 40% at 70% 65%, rgba(23, 78, 255, 0.28) 0%, transparent 70%);
+  filter: blur(30px);
+  animation: auth-aurora 26s ease-in-out infinite alternate;
+}
+
+@keyframes auth-aurora {
+  from {
+    transform: translate3d(-2%, -1%, 0) scale(1);
+  }
+  to {
+    transform: translate3d(3%, 2%, 0) scale(1.08);
+  }
+}
+
+/* O painel do formulário: vidro sobre o gradiente, nunca um bloco opaco. */
+.auth-panel {
+  background: linear-gradient(
+    160deg,
+    rgba(255, 255, 255, 0.11) 0%,
+    rgba(255, 255, 255, 0.05) 55%,
+    rgba(255, 255, 255, 0.03) 100%
+  );
+  border: 1px solid rgba(148, 197, 255, 0.2);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.14) inset,
+    0 24px 60px -20px rgba(2, 6, 20, 0.7);
+}
+
+/* Marca-d'água da logo: presença, não protagonismo. */
+.auth-logo {
+  filter: brightness(0) invert(1) drop-shadow(0 0 22px rgba(53, 217, 255, 0.35));
+}
+
+/* Entrada encadeada. O atraso vem do `style` de cada elemento. */
+.auth-rise {
+  animation: auth-rise 700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes auth-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+/* Balão que chega na vinheta do inbox. */
+@keyframes auth-bubble-in {
+  from {
+    opacity: 0;
+    transform: translate3d(-10px, 8px, 0) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+.auth-bubble {
+  animation: auth-bubble-in 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Pulso do ponto "ao vivo". */
+@keyframes auth-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.5);
+  }
+  50% {
+    opacity: 0.75;
+    box-shadow: 0 0 0 5px rgba(52, 211, 153, 0);
+  }
+}
+
+.auth-live-dot {
+  animation: auth-pulse 2.4s ease-in-out infinite;
+}
+
+/*
+ * Quem pediu menos movimento recebe a tela pronta, não a tela quebrada:
+ * o bloco global de `prefers-reduced-motion` zera as durações, e aqui a
+ * aurora para de vez em vez de piscar no primeiro quadro.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .auth-aurora {
+    animation: none;
+  }
+}

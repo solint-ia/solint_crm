@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --app-bg:#F4F7FB;
+    --chat-bg:#EEF2F7;
+    --surface:#FFFFFF;
+    --surface-2:#F7F9FC;
+    --border:#E5E9F0;
+    --border-soft:#EEF1F5;
+    --text:#0A1424;
+    --text-muted:#5B6472;
+    --text-dim:#8B95A5;
+    --toggle-off:#D7DEE8;
+    --accent-soft:#E8F3FF;
+    --accent-soft-text:#0A2540;
+    --selected-bg:#EFF6FF;
+    --accent-border:#B7D9FF;
+    --note-bg:#FFFBEB;
+    --note-border:#FCD34D;
+    --note-text:#7C4A08;
+    --note-meta:#B08340;
+    --amber-soft:#FEF3C7;
+    --amber-text:#B45309;
+    --green-soft:#E8F9EE;
+    --green-text:#0E803C;
+    --green-border:#A7E3C0;
+    --red-soft:#FEE2E2;
+    --red-text:#B91C1C;
+    --red-border:#FCA5A5;
+    --violet-soft:#EDE9FE;
+    --violet-text:#6D28D9;
+    --blue-soft:#E0F2FE;
+    --blue-text:#0369A1;
+    --cyan-soft:#E0F7FF;
+    --cyan-text:#054452;
+    --cyan-border:#B7E9FF;
+    --slate-soft:#F1F5F9;
+    --slate-text:#475569;
+    --pink-soft:#FCE7F0;
+    --pink-text:#BE1857;
+    --indigo-soft:#EEEDFD;
+    --indigo-text:#4C46C4;
+    --accent-soft-meta:#5B85AE;
+  }
+  :root[data-theme="dark"]{
+    --app-bg:#050A14;
+    --chat-bg:#050A14;
+    --surface:#0D121A;
+    --surface-2:#141A24;
+    --border:rgba(255,255,255,0.08);
+    --border-soft:rgba(255,255,255,0.05);
+    --text:#FAFCFF;
+    --text-muted:#A3AEBD;
+    --text-dim:#7C8899;
+    --toggle-off:#2A3442;
+    --accent-soft:#0E335C;
+    --accent-soft-text:#DCEBFF;
+    --accent-soft-meta:#9CC3EE;
+    --selected-bg:#141A24;
+    --accent-border:rgba(53,217,255,0.28);
+    --note-bg:#1E1A11;
+    --note-border:rgba(255,182,92,0.4);
+    --note-text:#FFD9A0;
+    --note-meta:#C9A46A;
+    --amber-soft:rgba(255,182,92,0.16);
+    --amber-text:#FFB65C;
+    --green-soft:rgba(16,185,129,0.16);
+    --green-text:#34D399;
+    --green-border:rgba(16,185,129,0.35);
+    --red-soft:rgba(239,68,68,0.16);
+    --red-text:#FCA5A5;
+    --red-border:rgba(239,68,68,0.4);
+    --violet-soft:rgba(139,92,246,0.18);
+    --violet-text:#C4B5FD;
+    --blue-soft:rgba(56,152,236,0.2);
+    --blue-text:#7DD3FC;
+    --cyan-soft:#0A2C38;
+    --cyan-text:#7FE7FF;
+    --cyan-border:rgba(53,217,255,0.3);
+    --slate-soft:rgba(255,255,255,0.07);
+    --slate-text:#A3AEBD;
+    --pink-soft:rgba(225,48,108,0.18);
+    --pink-text:#F9A8D4;
+    --indigo-soft:rgba(99,102,241,0.2);
+    --indigo-text:#C7D2FE;
+  }
+  html,body{background:var(--app-bg);color:var(--text);}
+  ::-webkit-scrollbar-thumb{background:var(--toggle-off);}
+  a{color:#168CFF;}
+  a:hover{color:#35D9FF;}
+  html,body{margin:0;padding:0;height:100%;}
+  *{box-sizing:border-box;}
+  ::-webkit-scrollbar{width:8px;height:8px;}
+  ::-webkit-scrollbar-thumb{background:var(--toggle-off);border-radius:8px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+  input::placeholder{color:var(--text-dim);}
+</style>
+<script>
+(function(){
+  try{ var t = localStorage.getItem("solint-theme"); if(t) document.documentElement.dataset.theme = t; }catch(e){}
+  if(!window.__solintThemeBound){
+    window.__solintThemeBound = true;
+    document.addEventListener("click", function(e){
+      var el = e.target && e.target.closest ? e.target.closest("[data-theme-toggle]") : null;
+      if(!el) return;
+      var root = document.documentElement;
+      var next = root.dataset.theme === "dark" ? "light" : "dark";
+      root.dataset.theme = next;
+      try{ localStorage.setItem("solint-theme", next); }catch(err){}
+    });
+  }
+})();
+</script>
+</helmet>
+
+<div style="display:flex;width:100vw;height:100vh;min-width:1280px;background:var(--app-bg);font-family:'Inter',sans-serif;color:var(--text);overflow-x:auto;overflow-y:hidden;">
+
+  <!-- NAVIGATION RAIL -->
+  <div style="width:64px;flex:0 0 64px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:14px 0 16px;justify-content:space-between;">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:22px;width:100%;">
+      <div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(100deg,#174EFF 0%,#168CFF 52%,#35D9FF 100%);display:flex;align-items:center;justify-content:center;color:var(--surface);font-family:Sora;font-weight:700;font-size:15px;flex:none;">S</div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
+        <a href="Conversas.dc.html" title="Caixa de Entrada" style="position:relative;width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12H8l-4 4V4z"></path></svg>
+          <span style="position:absolute;top:-4px;right:-4px;min-width:16px;height:16px;padding:0 3px;border-radius:8px;background:#EF4444;color:var(--surface);font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1;">7</span>
+        </a>
+        <a href="Contatos.dc.html" title="Contatos" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 20c0-3.5 2.5-6 5.5-6s5.5 2.5 5.5 6"></path><circle cx="17.5" cy="9" r="2.3"></circle><path d="M15.8 14.3c2.4.3 4.2 2.3 4.2 5.2"></path></svg>
+        </a>
+        <a href="Kanban.dc.html" title="Kanban" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="5" height="16" rx="1.4"></rect><rect x="9.8" y="4" width="5" height="10" rx="1.4"></rect><rect x="16" y="4" width="5" height="13" rx="1.4"></rect></svg>
+        </a>
+        <a href="Agentes-IA.dc.html" title="Agentes de IA" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="3"></rect><path d="M12 8V4"></path><circle cx="12" cy="3" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="9" cy="14" r="1.3" fill="currentColor" stroke="none"></circle><circle cx="15" cy="14" r="1.3" fill="currentColor" stroke="none"></circle></svg>
+        </a>
+        <a href="Campanhas.dc.html" title="Campanhas" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1.5 1.5 0 0 0 1.5 1.5H6v4l3-2.2"></path><path d="M6 11l11.5-6v14L6 13"></path><path d="M17.5 9.5a2.5 2.5 0 0 1 0 5"></path></svg>
+        </a>
+        <button title="Dashboard e Relatórios" style="width:40px;height:40px;border-radius:10px;border:none;background:var(--accent-soft);color:#168CFF;display:flex;align-items:center;justify-content:center;cursor:pointer;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10"></path><path d="M11 20V4"></path><path d="M18 20v-7"></path></svg>
+        </button>
+        <a href="Configuracoes.dc.html" title="Configurações e Conexões" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l1.9-1.5-2-3.4-2.2.9a7.7 7.7 0 0 0-2.6-1.5L14 2h-4l-.5 2.5a7.7 7.7 0 0 0-2.6 1.5l-2.2-.9-2 3.4L4.6 10a7.6 7.6 0 0 0 0 3l-1.9 1.5 2 3.4 2.2-.9c.77.66 1.65 1.17 2.6 1.5L10 22h4l.5-2.5a7.7 7.7 0 0 0 2.6-1.5l2.2.9 2-3.4-1.9-1.5z"></path></svg>
+        </a>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:12px;">
+      <button data-theme-toggle="1" title="Alternar tema" style="width:32px;height:32px;border-radius:8px;border:none;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg>
+      </button>
+<a href="Perfil.dc.html" title="Meu perfil" style="position:relative;width:36px;height:36px;border-radius:50%;background:#174EFF;color:var(--surface);display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:600;font-size:13px;text-decoration:none;">
+        RS
+        <span style="position:absolute;bottom:-2px;right:-2px;width:11px;height:11px;border-radius:50%;border:2px solid var(--surface);background:#10B981;"></span>
+      </a>
+    </div>
+  </div>
+
+  <!-- MAIN AREA -->
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column;">
+
+    <!-- TOPBAR -->
+    <div style="flex:none;height:64px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 24px;gap:20px;">
+      <div style="display:flex;align-items:center;gap:16px;min-width:0;">
+        <div style="min-width:0;">
+          <div style="font-size:11.5px;color:var(--text-dim);">Dashboard & Relatórios</div>
+          <span style="font-family:Sora;font-weight:600;font-size:16px;white-space:nowrap;">{{ topTitle }}</span>
+        </div>
+        <div style="width:1px;height:28px;background:var(--border-soft);flex:none;"></div>
+        <div style="display:flex;align-items:center;gap:6px;background:var(--app-bg);border-radius:8px;padding:4px;flex:none;">
+          <button onClick="{{ onViewDash }}" style="border:none;border-radius:6px;padding:6px 12px;font-size:12.5px;font-weight:600;cursor:pointer;background:{{ viewDashBg }};color:{{ viewDashColor }};">Visão geral</button>
+          <button onClick="{{ onViewReports }}" style="border:none;border-radius:6px;padding:6px 12px;font-size:12.5px;font-weight:600;cursor:pointer;background:{{ viewReportsBg }};color:{{ viewReportsColor }};">Relatórios</button>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;flex:none;">
+        <div style="display:flex;align-items:center;gap:4px;background:var(--app-bg);border-radius:8px;padding:3px;">
+          <sc-for list="{{ periods }}" as="p" hint-placeholder-count="3">
+            <button onClick="{{ p.onSelect }}" style="border:none;border-radius:6px;padding:5px 11px;font-size:11.5px;font-weight:600;cursor:pointer;background:{{ p.bg }};color:{{ p.color }};white-space:nowrap;">{{ p.label }}</button>
+          </sc-for>
+        </div>
+        <div style="position:relative;">
+          <button onClick="{{ onToggleNotifs }}" title="Notificações" style="position:relative;width:36px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"></path><path d="M10 21a2 2 0 0 0 4 0"></path></svg>
+            <span style="position:absolute;top:-3px;right:-3px;min-width:15px;height:15px;border-radius:8px;background:#EF4444;border:2px solid var(--surface);color:var(--surface);font-size:8.5px;font-weight:700;display:flex;align-items:center;justify-content:center;">3</span>
+          </button>
+          <sc-if value="{{ notifsOpen }}" hint-placeholder-val="{{ false }}">
+            <div style="position:absolute;top:44px;right:0;width:320px;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 12px 32px rgba(10,20,40,0.14);z-index:30;overflow:hidden;">
+              <div style="padding:12px 14px;border-bottom:1px solid var(--border-soft);display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:13px;font-weight:600;">Notificações</span>
+                <button style="border:none;background:transparent;color:#168CFF;font-size:11.5px;font-weight:600;cursor:pointer;">Marcar todas como lidas</button>
+              </div>
+              <sc-for list="{{ notifications }}" as="n" hint-placeholder-count="3">
+                <div style="padding:11px 14px;border-bottom:1px solid var(--border-soft);display:flex;gap:10px;background:{{ n.bg }};cursor:pointer;">
+                  <span style="width:8px;height:8px;border-radius:50%;background:{{ n.dot }};margin-top:5px;flex:none;"></span>
+                  <div>
+                    <div style="font-size:12.5px;color:var(--text);font-weight:{{ n.weight }};line-height:1.4;">{{ n.text }}</div>
+                    <div style="font-size:11px;color:var(--text-dim);margin-top:2px;">{{ n.time }}</div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;padding:5px 10px 5px 5px;border:1px solid var(--border);border-radius:9px;cursor:pointer;flex:none;">
+          <div style="width:26px;height:26px;border-radius:50%;background:#174EFF;color:var(--surface);display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:600;font-size:11px;">RS</div>
+          <span style="font-size:12.5px;font-weight:600;color:var(--text);">Solint Demo</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- DASHBOARD VIEW -->
+    <sc-if value="{{ isViewDash }}" hint-placeholder-val="{{ true }}">
+      <div style="flex:1;overflow-y:auto;padding:20px 24px 28px;">
+
+        <!-- KPI CARDS -->
+        <div style="display:grid;grid-template-columns:repeat(5, minmax(0,1fr));gap:14px;margin-bottom:18px;">
+          <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="5">
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;">
+              <div style="font-size:11.5px;color:var(--text-dim);font-weight:600;">{{ k.label }}</div>
+              <div style="font-family:Sora;font-weight:700;font-size:24px;margin-top:6px;">{{ k.value }}</div>
+              <div style="font-size:11px;font-weight:600;color:{{ k.deltaColor }};margin-top:4px;">{{ k.delta }}</div>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="display:grid;grid-template-columns:2fr 1fr;gap:14px;margin-bottom:14px;">
+          <!-- VOLUME CHART -->
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;">
+            <div style="font-size:13px;font-weight:600;margin-bottom:14px;">Volume de conversas · últimos 7 dias</div>
+            <div style="display:flex;align-items:flex-end;gap:14px;height:150px;">
+              <sc-for list="{{ volumeBars }}" as="b" hint-placeholder-count="7">
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end;">
+                  <span style="font-size:10.5px;color:var(--text-muted);font-weight:600;">{{ b.value }}</span>
+                  <div style="width:100%;max-width:38px;height:{{ b.height }};border-radius:6px 6px 0 0;background:{{ b.color }};"></div>
+                  <span style="font-size:10.5px;color:var(--text-dim);">{{ b.day }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          <!-- CHANNEL DISTRIBUTION -->
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;">
+            <div style="font-size:13px;font-weight:600;margin-bottom:14px;">Conversas por canal</div>
+            <div style="display:flex;flex-direction:column;gap:12px;">
+              <sc-for list="{{ channels }}" as="c" hint-placeholder-count="4">
+                <div>
+                  <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+                    <span style="color:var(--text);font-weight:600;">{{ c.name }}</span>
+                    <span style="color:var(--text-dim);">{{ c.pct }}</span>
+                  </div>
+                  <div style="height:7px;border-radius:4px;background:var(--slate-soft);overflow:hidden;">
+                    <div style="height:100%;width:{{ c.pct }};border-radius:4px;background:{{ c.color }};"></div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;">
+          <!-- AGENT RANKING -->
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;">
+            <div style="font-size:13px;font-weight:600;margin-bottom:12px;">Ranking de agentes</div>
+            <div style="display:flex;flex-direction:column;gap:10px;">
+              <sc-for list="{{ agentRanking }}" as="a" hint-placeholder-count="3">
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <div style="width:28px;height:28px;border-radius:50%;background:{{ a.color }};color:var(--surface);display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:600;font-size:11px;flex:none;">{{ a.initials }}</div>
+                  <div style="flex:1;min-width:0;">
+                    <div style="font-size:12.5px;font-weight:600;">{{ a.name }}</div>
+                    <div style="font-size:11px;color:var(--text-dim);">{{ a.meta }}</div>
+                  </div>
+                  <span style="font-family:Sora;font-weight:600;font-size:14px;">{{ a.count }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          <!-- FUNNEL SUMMARY -->
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+              <span style="font-size:13px;font-weight:600;">Funil resumido</span>
+              <a href="Kanban.dc.html" style="font-size:11.5px;font-weight:600;color:#168CFF;text-decoration:none;">Ver kanban</a>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <sc-for list="{{ funnel }}" as="f" hint-placeholder-count="4">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span style="width:8px;height:8px;border-radius:50%;background:{{ f.color }};flex:none;"></span>
+                  <span style="flex:1;font-size:12.5px;color:var(--text);">{{ f.stage }}</span>
+                  <span style="font-size:12px;color:var(--text-dim);font-family:'JetBrains Mono',monospace;">{{ f.sum }}</span>
+                  <span style="font-family:Sora;font-weight:600;font-size:13px;width:20px;text-align:right;">{{ f.count }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          <!-- PENDING + SHORTCUTS -->
+          <div style="display:flex;flex-direction:column;gap:14px;">
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;flex:1;">
+              <div style="font-size:13px;font-weight:600;margin-bottom:12px;">Aguardando resposta há mais tempo</div>
+              <div style="display:flex;flex-direction:column;gap:9px;">
+                <sc-for list="{{ pendings }}" as="p" hint-placeholder-count="3">
+                  <a href="Conversas.dc.html" style="display:flex;justify-content:space-between;align-items:center;text-decoration:none;">
+                    <span style="font-size:12.5px;color:var(--text);font-weight:600;">{{ p.name }}</span>
+                    <span style="font-size:11px;font-weight:700;padding:2px 7px;border-radius:5px;background:{{ p.bg }};color:{{ p.color }};">{{ p.wait }}</span>
+                  </a>
+                </sc-for>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <a href="Conversas.dc.html" style="flex:1;text-align:center;border:none;background:#168CFF;border-radius:8px;padding:9px 0;font-size:12px;font-weight:600;color:var(--surface);text-decoration:none;">Nova conversa</a>
+              <a href="Contatos.dc.html" style="flex:1;text-align:center;border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:9px 0;font-size:12px;font-weight:600;color:var(--text);text-decoration:none;">Novo contato</a>
+              <a href="Agentes-IA.dc.html" style="flex:1;text-align:center;border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:9px 0;font-size:12px;font-weight:600;color:var(--text);text-decoration:none;">Novo agente IA</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- REPORTS VIEW -->
+    <sc-if value="{{ isViewReports }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:none;padding:16px 24px 0;display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:6px;background:var(--app-bg);border-radius:8px;padding:4px;">
+          <sc-for list="{{ reportTabs }}" as="rt" hint-placeholder-count="4">
+            <button onClick="{{ rt.onSelect }}" style="border:none;border-radius:6px;padding:6px 12px;font-size:12.5px;font-weight:600;cursor:pointer;background:{{ rt.bg }};color:{{ rt.color }};">{{ rt.label }}</button>
+          </sc-for>
+        </div>
+        <button style="display:flex;align-items:center;gap:6px;border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:8px 13px;font-size:12px;font-weight:600;color:var(--text);cursor:pointer;">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#5B6472" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5"></path><path d="M4 21h16"></path></svg>
+          Exportar CSV/PDF
+        </button>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:16px 24px 28px;">
+
+        <sc-if value="{{ isReportConversas }}" hint-placeholder-val="{{ true }}">
+          <div style="display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:14px;margin-bottom:14px;">
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;">
+              <div style="font-size:11.5px;color:var(--text-dim);font-weight:600;">Tempo médio de 1ª resposta</div>
+              <div style="font-family:Sora;font-weight:700;font-size:22px;margin-top:5px;">2m 41s</div>
+              <div style="font-size:11px;font-weight:600;color:var(--green-text);margin-top:3px;">▼ 12% vs. período anterior</div>
+            </div>
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;">
+              <div style="font-size:11.5px;color:var(--text-dim);font-weight:600;">Tempo médio de resolução</div>
+              <div style="font-family:Sora;font-weight:700;font-size:22px;margin-top:5px;">38m</div>
+              <div style="font-size:11px;font-weight:600;color:var(--red-text);margin-top:3px;">▲ 6% vs. período anterior</div>
+            </div>
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;">
+              <div style="font-size:11.5px;color:var(--text-dim);font-weight:600;">Conversas no período</div>
+              <div style="font-family:Sora;font-weight:700;font-size:22px;margin-top:5px;">1.284</div>
+              <div style="font-size:11px;font-weight:600;color:var(--green-text);margin-top:3px;">▲ 9% vs. período anterior</div>
+            </div>
+          </div>
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;">
+            <div style="font-size:13px;font-weight:600;margin-bottom:14px;">Série temporal · volume e tempo de resposta</div>
+            <svg width="100%" height="180" viewBox="0 0 800 180" preserveAspectRatio="none">
+              <line x1="0" y1="45" x2="800" y2="45" stroke="#F1F5F9" stroke-width="1"></line>
+              <line x1="0" y1="90" x2="800" y2="90" stroke="#F1F5F9" stroke-width="1"></line>
+              <line x1="0" y1="135" x2="800" y2="135" stroke="#F1F5F9" stroke-width="1"></line>
+              <polyline points="0,120 115,100 230,110 345,70 460,80 575,50 690,60 800,40" fill="none" stroke="#168CFF" stroke-width="2.5"></polyline>
+              <polyline points="0,140 115,135 230,145 345,125 460,130 575,115 690,120 800,110" fill="none" stroke="#35D9FF" stroke-width="2.5" stroke-dasharray="5 4"></polyline>
+            </svg>
+            <div style="display:flex;gap:16px;margin-top:8px;">
+              <span style="font-size:11.5px;color:var(--text-muted);display:flex;align-items:center;gap:5px;"><span style="width:14px;height:3px;background:#168CFF;border-radius:2px;display:inline-block;"></span>Volume de conversas</span>
+              <span style="font-size:11.5px;color:var(--text-muted);display:flex;align-items:center;gap:5px;"><span style="width:14px;height:3px;background:#35D9FF;border-radius:2px;display:inline-block;"></span>Tempo médio de resposta</span>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isReportAgentes }}" hint-placeholder-val="{{ false }}">
+          <table style="width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+            <thead>
+              <tr style="background:var(--surface-2);border-bottom:1px solid var(--border);">
+                <th style="text-align:left;padding:10px 12px;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;">Agente</th>
+                <th style="text-align:right;padding:10px 12px;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;">Conversas atendidas</th>
+                <th style="text-align:right;padding:10px 12px;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;">Tempo médio de resposta</th>
+                <th style="text-align:right;padding:10px 12px;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;">CSAT médio</th>
+              </tr>
+            </thead>
+            <tbody>
+              <sc-for list="{{ agentReport }}" as="a" hint-placeholder-count="4">
+                <tr style="border-bottom:1px solid var(--border-soft);">
+                  <td style="padding:10px 12px;">
+                    <div style="display:flex;align-items:center;gap:9px;">
+                      <div style="width:26px;height:26px;border-radius:50%;background:{{ a.color }};color:var(--surface);display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:600;font-size:10.5px;">{{ a.initials }}</div>
+                      <span style="font-size:12.5px;font-weight:600;">{{ a.name }}</span>
+                    </div>
+                  </td>
+                  <td style="padding:10px 12px;text-align:right;font-size:12.5px;font-family:'JetBrains Mono',monospace;">{{ a.count }}</td>
+                  <td style="padding:10px 12px;text-align:right;font-size:12.5px;font-family:'JetBrains Mono',monospace;">{{ a.tma }}</td>
+                  <td style="padding:10px 12px;text-align:right;font-size:12.5px;font-weight:600;color:{{ a.csatColor }};">{{ a.csat }}</td>
+                </tr>
+              </sc-for>
+            </tbody>
+          </table>
+        </sc-if>
+
+        <sc-if value="{{ isReportFunil }}" hint-placeholder-val="{{ false }}">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;">
+              <div style="font-size:13px;font-weight:600;margin-bottom:14px;">Conversão entre etapas</div>
+              <div style="display:flex;flex-direction:column;gap:10px;">
+                <sc-for list="{{ funnelConv }}" as="f" hint-placeholder-count="4">
+                  <div>
+                    <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+                      <span style="font-weight:600;">{{ f.stage }}</span>
+                      <span style="color:var(--text-dim);">{{ f.rate }} · {{ f.avg }}</span>
+                    </div>
+                    <div style="height:8px;border-radius:4px;background:var(--slate-soft);overflow:hidden;">
+                      <div style="height:100%;width:{{ f.rate }};border-radius:4px;background:#168CFF;"></div>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;">
+              <div style="font-size:13px;font-weight:600;margin-bottom:14px;">Motivos de perda</div>
+              <div style="display:flex;flex-direction:column;gap:10px;">
+                <sc-for list="{{ lossReasons }}" as="l" hint-placeholder-count="4">
+                  <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <span style="font-size:12.5px;">{{ l.reason }}</span>
+                    <span style="font-size:12px;font-weight:600;color:var(--text-muted);font-family:'JetBrains Mono',monospace;">{{ l.pct }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isReportCsat }}" hint-placeholder-val="{{ false }}">
+          <div style="display:grid;grid-template-columns:1fr 2fr;gap:14px;">
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;text-align:center;">
+              <div style="font-size:11.5px;color:var(--text-dim);font-weight:600;">CSAT médio do período</div>
+              <div style="font-family:Sora;font-weight:700;font-size:42px;margin:10px 0 4px;color:var(--green-text);">4,6</div>
+              <div style="font-size:12px;color:var(--text-dim);">de 5,0 · 318 avaliações</div>
+              <div style="display:flex;flex-direction:column;gap:6px;margin-top:16px;">
+                <sc-for list="{{ csatDist }}" as="c" hint-placeholder-count="5">
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-size:11px;color:var(--text-muted);width:14px;text-align:right;">{{ c.stars }}</span>
+                    <div style="flex:1;height:6px;border-radius:3px;background:var(--slate-soft);overflow:hidden;">
+                      <div style="height:100%;width:{{ c.pct }};background:{{ c.color }};border-radius:3px;"></div>
+                    </div>
+                    <span style="font-size:11px;color:var(--text-dim);width:32px;">{{ c.pct }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;">
+              <div style="font-size:13px;font-weight:600;margin-bottom:12px;">Comentários recentes</div>
+              <div style="display:flex;flex-direction:column;gap:10px;">
+                <sc-for list="{{ csatComments }}" as="c" hint-placeholder-count="3">
+                  <div style="border:1px solid var(--border-soft);border-radius:9px;padding:11px 13px;">
+                    <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+                      <span style="font-size:12px;font-weight:600;">{{ c.name }}</span>
+                      <span style="font-size:12px;color:#F59E0B;">{{ c.stars }}</span>
+                    </div>
+                    <div style="font-size:12.5px;color:var(--text-muted);line-height:1.5;">{{ c.text }}</div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+      </div>
+    </sc-if>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { view:'dash', period:'7d', reportTab:'conversas', notifsOpen:false };
+
+  setView(v){ return () => this.setState({view:v}); }
+  setPeriod(p){ return () => this.setState({period:p}); }
+  setReportTab(t){ return () => this.setState({reportTab:t}); }
+  onToggleNotifs = () => this.setState(s => ({notifsOpen: !s.notifsOpen}));
+
+  renderVals(){
+    const isViewDash = this.state.view==='dash';
+    const isViewReports = this.state.view==='reports';
+    const pick = (on) => on ? {bg:'var(--surface)', color:'#168CFF'} : {bg:'transparent', color:'var(--text-muted)'};
+    const vd = pick(isViewDash), vr = pick(isViewReports);
+
+    const periods = [{id:'hoje',label:'Hoje'},{id:'7d',label:'7 dias'},{id:'30d',label:'30 dias'}].map(p => ({
+      label:p.label, bg: this.state.period===p.id ? 'var(--surface)' : 'transparent',
+      color: this.state.period===p.id ? '#168CFF' : 'var(--text-muted)', onSelect: this.setPeriod(p.id)
+    }));
+
+    const kpis = [
+      {label:'Conversas abertas', value:'23', delta:'▲ 4 vs. ontem', deltaColor:'var(--red-text)'},
+      {label:'Tempo 1ª resposta', value:'2m 41s', delta:'▼ 12% no período', deltaColor:'var(--green-text)'},
+      {label:'Tempo de resolução', value:'38m', delta:'▲ 6% no período', deltaColor:'var(--red-text)'},
+      {label:'CSAT', value:'4,6', delta:'▲ 0,2 no período', deltaColor:'var(--green-text)'},
+      {label:'Resolvidas hoje', value:'47', delta:'▲ 18% vs. ontem', deltaColor:'var(--green-text)'}
+    ];
+
+    const vols = [{day:'Qui',v:142},{day:'Sex',v:168},{day:'Sáb',v:74},{day:'Dom',v:52},{day:'Seg',v:189},{day:'Ter',v:203},{day:'Qua',v:176}];
+    const max = 203;
+    const volumeBars = vols.map((b,i) => ({
+      day:b.day, value:String(b.v),
+      height: Math.round(b.v/max*100)+'%',
+      color: i===5 ? '#168CFF' : 'var(--accent-border)'
+    }));
+
+    const channels = [
+      {name:'WhatsApp', pct:'72%', color:'#25D366'},
+      {name:'Instagram', pct:'14%', color:'#E1306C'},
+      {name:'Webchat', pct:'9%', color:'#6366F1'},
+      {name:'Email', pct:'5%', color:'var(--blue-text)'}
+    ];
+
+    const agentRanking = [
+      {name:'Camila Reis', initials:'CR', color:'#8B5CF6', meta:'TMR 2m 05s', count:'58'},
+      {name:'Rafael Souza', initials:'RS', color:'#174EFF', meta:'TMR 2m 48s', count:'44'},
+      {name:'Diego Martins', initials:'DM', color:'var(--slate-text)', meta:'TMR 3m 22s', count:'31'}
+    ];
+
+    const funnel = [
+      {stage:'Novo Lead', count:'2', sum:'R$ 4.000', color:'#94A3B8'},
+      {stage:'Qualificação', count:'2', sum:'R$ 7.500', color:'var(--blue-text)'},
+      {stage:'Proposta Enviada', count:'2', sum:'R$ 21.400', color:'var(--violet-text)'},
+      {stage:'Negociação', count:'1', sum:'R$ 4.300', color:'#FFB65C'},
+      {stage:'Fechado Ganho', count:'1', sum:'R$ 1.600', color:'#10B981'}
+    ];
+
+    const pendings = [
+      {name:'João Pedro Silva', wait:'5h 42m', bg:'var(--red-soft)', color:'var(--red-text)'},
+      {name:'Roberta Dias', wait:'3h 10m', bg:'var(--amber-soft)', color:'var(--amber-text)'},
+      {name:'Pedro Henrique', wait:'1h 25m', bg:'var(--slate-soft)', color:'var(--slate-text)'}
+    ];
+
+    const notifications = [
+      {text:'Nova conversa atribuída a você: Mariana Costa', time:'Há 8 min', read:false},
+      {text:'SLA prestes a estourar: João Pedro Silva (faltam 18 min)', time:'Há 22 min', read:false},
+      {text:'Campanha "Reativação Agosto" concluída · 94% entregue', time:'Há 1h', read:false},
+      {text:'Você foi mencionado por Camila em uma nota interna', time:'Ontem', read:true}
+    ].map(n => ({text:n.text, time:n.time, bg: n.read ? 'var(--surface)' : 'var(--selected-bg)', dot: n.read ? 'transparent' : '#168CFF', weight: n.read ? '400' : '600'}));
+
+    const reportTabs = [{id:'conversas',label:'Conversas'},{id:'agentes',label:'Agentes'},{id:'funil',label:'Funil'},{id:'csat',label:'CSAT'}].map(t => ({
+      label:t.label, bg: this.state.reportTab===t.id ? 'var(--surface)' : 'transparent',
+      color: this.state.reportTab===t.id ? '#168CFF' : 'var(--text-muted)', onSelect: this.setReportTab(t.id)
+    }));
+
+    const agentReport = [
+      {name:'Camila Reis', initials:'CR', color:'#8B5CF6', count:'58', tma:'2m 05s', csat:'4,8', csatColor:'var(--green-text)'},
+      {name:'Rafael Souza', initials:'RS', color:'#174EFF', count:'44', tma:'2m 48s', csat:'4,6', csatColor:'var(--green-text)'},
+      {name:'Diego Martins', initials:'DM', color:'var(--slate-text)', count:'31', tma:'3m 22s', csat:'4,1', csatColor:'var(--amber-text)'},
+      {name:'Agente IA · Suporte N1', initials:'IA', color:'#35D9FF', count:'687', tma:'4s', csat:'4,3', csatColor:'var(--green-text)'}
+    ];
+
+    const funnelConv = [
+      {stage:'Novo Lead → Qualificação', rate:'64%', avg:'2,1 dias na etapa'},
+      {stage:'Qualificação → Proposta', rate:'48%', avg:'3,4 dias na etapa'},
+      {stage:'Proposta → Negociação', rate:'52%', avg:'5,2 dias na etapa'},
+      {stage:'Negociação → Ganho', rate:'71%', avg:'2,8 dias na etapa'}
+    ];
+    const lossReasons = [
+      {reason:'Optou por concorrente', pct:'34%'},
+      {reason:'Preço acima do orçamento', pct:'28%'},
+      {reason:'Sem resposta / esfriou', pct:'23%'},
+      {reason:'Momento errado', pct:'15%'}
+    ];
+
+    const csatDist = [
+      {stars:'5', pct:'68%', color:'#10B981'},
+      {stars:'4', pct:'21%', color:'#10B981'},
+      {stars:'3', pct:'6%', color:'#FFB65C'},
+      {stars:'2', pct:'3%', color:'#EF4444'},
+      {stars:'1', pct:'2%', color:'#EF4444'}
+    ];
+    const csatComments = [
+      {name:'Mariana Costa', stars:'★★★★★', text:'Atendimento rápido e resolveram tudo pelo WhatsApp mesmo. Excelente!'},
+      {name:'Carlos Eduardo Nunes', stars:'★★★★★', text:'Negociação transparente e sem enrolação. Recomendo.'},
+      {name:'Pedro Henrique', stars:'★★★☆☆', text:'Demoraram um pouco para responder no início, mas depois foi tranquilo.'}
+    ];
+
+    return {
+      topTitle: isViewDash ? 'Visão geral' : 'Relatórios e analytics',
+      isViewDash, isViewReports,
+      onViewDash: this.setView('dash'), onViewReports: this.setView('reports'),
+      viewDashBg: vd.bg, viewDashColor: vd.color, viewReportsBg: vr.bg, viewReportsColor: vr.color,
+      periods, kpis, volumeBars, channels, agentRanking, funnel, pendings,
+      notifsOpen: this.state.notifsOpen, onToggleNotifs: this.onToggleNotifs, notifications,
+      reportTabs,
+      isReportConversas: this.state.reportTab==='conversas',
+      isReportAgentes: this.state.reportTab==='agentes',
+      isReportFunil: this.state.reportTab==='funil',
+      isReportCsat: this.state.reportTab==='csat',
+      agentReport, funnelConv, lossReasons, csatDist, csatComments
+    };
+  }
+}
+
+</script>
+</body>
+</html>

@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --app-bg:#F4F7FB;
+    --chat-bg:#EEF2F7;
+    --surface:#FFFFFF;
+    --surface-2:#F7F9FC;
+    --border:#E5E9F0;
+    --border-soft:#EEF1F5;
+    --text:#0A1424;
+    --text-muted:#5B6472;
+    --text-dim:#8B95A5;
+    --toggle-off:#D7DEE8;
+    --accent-soft:#E8F3FF;
+    --accent-soft-text:#0A2540;
+    --selected-bg:#EFF6FF;
+    --accent-border:#B7D9FF;
+    --note-bg:#FFFBEB;
+    --note-border:#FCD34D;
+    --note-text:#7C4A08;
+    --note-meta:#B08340;
+    --amber-soft:#FEF3C7;
+    --amber-text:#B45309;
+    --green-soft:#E8F9EE;
+    --green-text:#0E803C;
+    --green-border:#A7E3C0;
+    --red-soft:#FEE2E2;
+    --red-text:#B91C1C;
+    --red-border:#FCA5A5;
+    --violet-soft:#EDE9FE;
+    --violet-text:#6D28D9;
+    --blue-soft:#E0F2FE;
+    --blue-text:#0369A1;
+    --cyan-soft:#E0F7FF;
+    --cyan-text:#054452;
+    --cyan-border:#B7E9FF;
+    --slate-soft:#F1F5F9;
+    --slate-text:#475569;
+    --pink-soft:#FCE7F0;
+    --pink-text:#BE1857;
+    --indigo-soft:#EEEDFD;
+    --indigo-text:#4C46C4;
+    --accent-soft-meta:#5B85AE;
+  }
+  :root[data-theme="dark"]{
+    --app-bg:#050A14;
+    --chat-bg:#050A14;
+    --surface:#0D121A;
+    --surface-2:#141A24;
+    --border:rgba(255,255,255,0.08);
+    --border-soft:rgba(255,255,255,0.05);
+    --text:#FAFCFF;
+    --text-muted:#A3AEBD;
+    --text-dim:#7C8899;
+    --toggle-off:#2A3442;
+    --accent-soft:#0E335C;
+    --accent-soft-text:#DCEBFF;
+    --accent-soft-meta:#9CC3EE;
+    --selected-bg:#141A24;
+    --accent-border:rgba(53,217,255,0.28);
+    --note-bg:#1E1A11;
+    --note-border:rgba(255,182,92,0.4);
+    --note-text:#FFD9A0;
+    --note-meta:#C9A46A;
+    --amber-soft:rgba(255,182,92,0.16);
+    --amber-text:#FFB65C;
+    --green-soft:rgba(16,185,129,0.16);
+    --green-text:#34D399;
+    --green-border:rgba(16,185,129,0.35);
+    --red-soft:rgba(239,68,68,0.16);
+    --red-text:#FCA5A5;
+    --red-border:rgba(239,68,68,0.4);
+    --violet-soft:rgba(139,92,246,0.18);
+    --violet-text:#C4B5FD;
+    --blue-soft:rgba(56,152,236,0.2);
+    --blue-text:#7DD3FC;
+    --cyan-soft:#0A2C38;
+    --cyan-text:#7FE7FF;
+    --cyan-border:rgba(53,217,255,0.3);
+    --slate-soft:rgba(255,255,255,0.07);
+    --slate-text:#A3AEBD;
+    --pink-soft:rgba(225,48,108,0.18);
+    --pink-text:#F9A8D4;
+    --indigo-soft:rgba(99,102,241,0.2);
+    --indigo-text:#C7D2FE;
+  }
+  html,body{background:var(--app-bg);color:var(--text);}
+  ::-webkit-scrollbar-thumb{background:var(--toggle-off);}
+  a{color:#168CFF;}
+  a:hover{color:#35D9FF;}
+  html,body{margin:0;padding:0;height:100%;}
+  *{box-sizing:border-box;}
+  ::-webkit-scrollbar{width:8px;height:8px;}
+  ::-webkit-scrollbar-thumb{background:var(--toggle-off);border-radius:8px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+  input::placeholder, textarea::placeholder{color:var(--text-dim);}
+</style>
+<script>
+(function(){
+  try{ var t = localStorage.getItem("solint-theme"); if(t) document.documentElement.dataset.theme = t; }catch(e){}
+  if(!window.__solintThemeBound){
+    window.__solintThemeBound = true;
+    document.addEventListener("click", function(e){
+      var el = e.target && e.target.closest ? e.target.closest("[data-theme-toggle]") : null;
+      if(!el) return;
+      var root = document.documentElement;
+      var next = root.dataset.theme === "dark" ? "light" : "dark";
+      root.dataset.theme = next;
+      try{ localStorage.setItem("solint-theme", next); }catch(err){}
+    });
+  }
+})();
+</script>
+</helmet>
+
+<div style="display:flex;width:100vw;height:100vh;min-width:1280px;background:var(--app-bg);font-family:'Inter',sans-serif;color:var(--text);overflow-x:auto;overflow-y:hidden;">
+
+  <!-- NAVIGATION RAIL -->
+  <div style="width:64px;flex:0 0 64px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:14px 0 16px;justify-content:space-between;">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:22px;width:100%;">
+      <div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(100deg,#174EFF 0%,#168CFF 52%,#35D9FF 100%);display:flex;align-items:center;justify-content:center;color:var(--surface);font-family:Sora;font-weight:700;font-size:15px;flex:none;">S</div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
+        <a href="Conversas.dc.html" title="Caixa de Entrada" style="position:relative;width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12H8l-4 4V4z"></path></svg>
+          <span style="position:absolute;top:-4px;right:-4px;min-width:16px;height:16px;padding:0 3px;border-radius:8px;background:#EF4444;color:var(--surface);font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1;">7</span>
+        </a>
+        <a href="Contatos.dc.html" title="Contatos" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 20c0-3.5 2.5-6 5.5-6s5.5 2.5 5.5 6"></path><circle cx="17.5" cy="9" r="2.3"></circle><path d="M15.8 14.3c2.4.3 4.2 2.3 4.2 5.2"></path></svg>
+        </a>
+        <a href="Kanban.dc.html" title="Kanban" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="5" height="16" rx="1.4"></rect><rect x="9.8" y="4" width="5" height="10" rx="1.4"></rect><rect x="16" y="4" width="5" height="13" rx="1.4"></rect></svg>
+        </a>
+        <button title="Agentes de IA" style="width:40px;height:40px;border-radius:10px;border:none;background:var(--accent-soft);color:#168CFF;display:flex;align-items:center;justify-content:center;cursor:pointer;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="3"></rect><path d="M12 8V4"></path><circle cx="12" cy="3" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="9" cy="14" r="1.3" fill="currentColor" stroke="none"></circle><circle cx="15" cy="14" r="1.3" fill="currentColor" stroke="none"></circle></svg>
+        </button>
+<a href="Campanhas.dc.html" title="Campanhas" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1.5 1.5 0 0 0 1.5 1.5H6v4l3-2.2"></path><path d="M6 11l11.5-6v14L6 13"></path><path d="M17.5 9.5a2.5 2.5 0 0 1 0 5"></path></svg>
+        </a>
+        <a href="Dashboard.dc.html" title="Dashboard e Relatórios" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10"></path><path d="M11 20V4"></path><path d="M18 20v-7"></path></svg>
+        </a>
+<a href="Configuracoes.dc.html" title="Configurações e Conexões" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l1.9-1.5-2-3.4-2.2.9a7.7 7.7 0 0 0-2.6-1.5L14 2h-4l-.5 2.5a7.7 7.7 0 0 0-2.6 1.5l-2.2-.9-2 3.4L4.6 10a7.6 7.6 0 0 0 0 3l-1.9 1.5 2 3.4 2.2-.9c.77.66 1.65 1.17 2.6 1.5L10 22h4l.5-2.5a7.7 7.7 0 0 0 2.6-1.5l2.2.9 2-3.4-1.9-1.5z"></path></svg>
+        </a>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:12px;">
+      <button data-theme-toggle="1" title="Alternar tema" style="width:32px;height:32px;border-radius:8px;border:none;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg>
+      </button>
+<a href="Perfil.dc.html" title="Meu perfil" style="position:relative;width:36px;height:36px;border-radius:50%;background:#174EFF;color:var(--surface);display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:600;font-size:13px;text-decoration:none;">
+        RS
+        <span style="position:absolute;bottom:-2px;right:-2px;width:11px;height:11px;border-radius:50%;border:2px solid var(--surface);background:#10B981;"></span>
+      </a>
+    </div>
+  </div>
+
+  <!-- MAIN AREA -->
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column;">
+
+    <!-- TOPBAR -->
+    <div style="flex:none;height:64px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 24px;gap:20px;">
+      <div style="min-width:0;">
+        <div style="font-size:11.5px;color:var(--text-dim);">Agentes de IA</div>
+        <span style="font-family:Sora;font-weight:600;font-size:16px;white-space:nowrap;">{{ topTitle }}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;flex:none;">
+        <div style="position:relative;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2" stroke-linecap="round" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
+          <input placeholder="Buscar em todo o CRM..." style="width:230px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--app-bg);padding:0 12px 0 32px;font-size:13px;font-family:Inter;color:var(--text);outline:none;"/>
+          <span style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-dim);border:1px solid var(--border);border-radius:5px;padding:1px 5px;background:var(--surface);">⌘K</span>
+        </div>
+        <button title="Notificações" style="position:relative;width:36px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"></path><path d="M10 21a2 2 0 0 0 4 0"></path></svg>
+          <span style="position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:#EF4444;border:2px solid var(--surface);"></span>
+        </button>
+        <div style="display:flex;align-items:center;gap:8px;padding:5px 10px 5px 5px;border:1px solid var(--border);border-radius:9px;cursor:pointer;flex:none;">
+          <div style="width:26px;height:26px;border-radius:50%;background:#174EFF;color:var(--surface);display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:600;font-size:11px;">RS</div>
+          <span style="font-size:12.5px;font-weight:600;color:var(--text);">Solint Demo</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- LIST VIEW -->
+    <sc-if value="{{ isListView }}" hint-placeholder-val="{{ true }}">
+      <div style="flex:none;padding:18px 24px 4px;display:flex;justify-content:flex-end;">
+        <button onClick="{{ onNewAgent }}" style="display:flex;align-items:center;gap:7px;border:none;background:#168CFF;border-radius:8px;padding:9px 15px;font-size:12.5px;font-weight:600;color:var(--surface);cursor:pointer;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+          Criar agente de IA
+        </button>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:14px 24px 24px;">
+        <div style="display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:16px;">
+          <sc-for list="{{ agents }}" as="ag" hint-placeholder-count="3">
+            <div onClick="{{ ag.onOpen }}" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;cursor:pointer;display:flex;flex-direction:column;gap:12px;">
+              <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
+                <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+                  <div style="width:38px;height:38px;border-radius:10px;background:var(--cyan-soft);color:var(--cyan-text);display:flex;align-items:center;justify-content:center;flex:none;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="3"></rect><path d="M12 8V4"></path><circle cx="9" cy="14" r="1.3" fill="currentColor" stroke="none"></circle><circle cx="15" cy="14" r="1.3" fill="currentColor" stroke="none"></circle></svg>
+                  </div>
+                  <div style="min-width:0;">
+                    <div style="font-family:Sora;font-weight:600;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ ag.name }}</div>
+                    <div style="font-size:11.5px;color:var(--text-dim);margin-top:1px;">{{ ag.channel }}</div>
+                  </div>
+                </div>
+                <span style="flex:none;font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:5px;background:{{ ag.statusBg }};color:{{ ag.statusColor }};">{{ ag.statusLabel }}</span>
+              </div>
+              <div style="font-size:12.5px;color:var(--text-muted);line-height:1.5;">{{ ag.persona }}</div>
+              <div style="display:flex;gap:16px;padding-top:10px;border-top:1px solid var(--border-soft);">
+                <div>
+                  <div style="font-family:Sora;font-weight:600;font-size:15px;">{{ ag.handledCount }}</div>
+                  <div style="font-size:10.5px;color:var(--text-dim);">conversas/mês</div>
+                </div>
+                <div>
+                  <div style="font-family:Sora;font-weight:600;font-size:15px;">{{ ag.transferRate }}</div>
+                  <div style="font-size:10.5px;color:var(--text-dim);">transferidas p/ humano</div>
+                </div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- EDIT VIEW -->
+    <sc-if value="{{ isEditView }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;min-height:0;display:flex;">
+
+        <!-- LEFT: agent header + tabs -->
+        <div style="width:220px;flex:0 0 220px;background:var(--surface);border-right:1px solid var(--border);padding:18px 14px;display:flex;flex-direction:column;">
+          <button onClick="{{ onBackToList }}" style="display:flex;align-items:center;gap:6px;border:none;background:transparent;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;padding:0;margin-bottom:16px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+            Agentes de IA
+          </button>
+          <div style="font-family:Sora;font-weight:600;font-size:15px;margin-bottom:2px;">{{ edit.name }}</div>
+          <div style="font-size:11.5px;color:var(--text-dim);margin-bottom:14px;">{{ edit.channel }}</div>
+          <div style="display:flex;flex-direction:column;gap:2px;">
+            <button onClick="{{ onTab_config }}" style="text-align:left;border:none;background:{{ tabBg_config }};color:{{ tabColor_config }};border-radius:7px;padding:9px 10px;font-size:12.5px;font-weight:600;cursor:pointer;">Configuração</button>
+            <button onClick="{{ onTab_kb }}" style="text-align:left;border:none;background:{{ tabBg_kb }};color:{{ tabColor_kb }};border-radius:7px;padding:9px 10px;font-size:12.5px;font-weight:600;cursor:pointer;">Base de conhecimento</button>
+            <button onClick="{{ onTab_rules }}" style="text-align:left;border:none;background:{{ tabBg_rules }};color:{{ tabColor_rules }};border-radius:7px;padding:9px 10px;font-size:12.5px;font-weight:600;cursor:pointer;">Regras de transferência</button>
+            <button onClick="{{ onTab_flow }}" style="text-align:left;border:none;background:{{ tabBg_flow }};color:{{ tabColor_flow }};border-radius:7px;padding:9px 10px;font-size:12.5px;font-weight:600;cursor:pointer;">Fluxo de atendimento</button>
+            <button onClick="{{ onTab_test }}" style="text-align:left;border:none;background:{{ tabBg_test }};color:{{ tabColor_test }};border-radius:7px;padding:9px 10px;font-size:12.5px;font-weight:600;cursor:pointer;">Testar agente</button>
+            <button onClick="{{ onTab_logs }}" style="text-align:left;border:none;background:{{ tabBg_logs }};color:{{ tabColor_logs }};border-radius:7px;padding:9px 10px;font-size:12.5px;font-weight:600;cursor:pointer;">Logs de conversas</button>
+          </div>
+          <div style="margin-top:auto;padding-top:16px;border-top:1px solid var(--border-soft);">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <span style="font-size:12px;font-weight:600;color:var(--text);">Ativo neste inbox</span>
+              <button onClick="{{ onToggleActive }}" style="width:36px;height:20px;border-radius:10px;border:none;background:{{ toggleBg }};position:relative;cursor:pointer;flex:none;">
+                <span style="position:absolute;top:2px;left:{{ toggleDotLeft }};width:16px;height:16px;border-radius:50%;background:var(--surface);transition:left .15s;"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT: tab content -->
+        <div style="flex:1;min-width:0;overflow-y:auto;padding:22px 28px;">
+
+          <sc-if value="{{ isTab_config }}" hint-placeholder-val="{{ true }}">
+            <div style="max-width:620px;display:flex;flex-direction:column;gap:16px;">
+              <div>
+                <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:6px;">Nome do agente</label>
+                <input value="{{ edit.name }}" readonly style="width:100%;height:38px;border-radius:8px;border:1px solid var(--border);padding:0 12px;font-size:13px;font-family:Inter;color:var(--text);outline:none;"/>
+              </div>
+              <div>
+                <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:6px;">Persona / tom de voz</label>
+                <textarea readonly rows="2" style="width:100%;border-radius:8px;border:1px solid var(--border);padding:10px 12px;font-size:13px;font-family:Inter;color:var(--text);outline:none;resize:none;">{{ edit.persona }}</textarea>
+              </div>
+              <div>
+                <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:6px;">Instruções / prompt principal</label>
+                <textarea readonly rows="6" style="width:100%;border-radius:8px;border:1px solid var(--border);padding:10px 12px;font-size:12.5px;font-family:'JetBrains Mono',monospace;color:var(--text);outline:none;resize:none;line-height:1.6;">{{ edit.prompt }}</textarea>
+              </div>
+              <div>
+                <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:6px;">Modelo de linguagem</label>
+                <div style="display:flex;align-items:center;justify-content:space-between;width:260px;height:38px;border-radius:8px;border:1px solid var(--border);padding:0 12px;font-size:13px;color:var(--text);">
+                  <span>{{ edit.model }}</span>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"></path></svg>
+                </div>
+              </div>
+              <button style="align-self:flex-start;border:none;background:#168CFF;border-radius:8px;padding:9px 18px;font-size:12.5px;font-weight:600;color:var(--surface);cursor:pointer;">Salvar alterações</button>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isTab_kb }}" hint-placeholder-val="{{ false }}">
+            <div style="max-width:640px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                <span style="font-size:13px;font-weight:600;color:var(--text);">Documentos e FAQs da base de conhecimento</span>
+                <button style="display:flex;align-items:center;gap:6px;border:1px solid var(--border);background:transparent;border-radius:7px;padding:7px 12px;font-size:12px;font-weight:600;color:var(--text);cursor:pointer;">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#5B6472" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+                  Adicionar documento
+                </button>
+              </div>
+              <div style="border:1.5px dashed var(--toggle-off);border-radius:10px;padding:26px;text-align:center;margin-bottom:18px;">
+                <div style="font-size:12.5px;color:var(--text-dim);">Arraste arquivos aqui (PDF, DOCX, TXT) ou clique para enviar</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:8px;">
+                <sc-for list="{{ edit.knowledgeBase }}" as="kb" hint-placeholder-count="3">
+                  <div style="display:flex;align-items:center;justify-content:space-between;border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
+                    <div style="display:flex;align-items:center;gap:9px;">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5B6472" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path></svg>
+                      <span style="font-size:12.5px;color:var(--text);">{{ kb.name }}</span>
+                    </div>
+                    <span style="font-size:11px;color:var(--text-dim);">{{ kb.meta }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isTab_rules }}" hint-placeholder-val="{{ false }}">
+            <div style="max-width:680px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                <span style="font-size:13px;font-weight:600;color:var(--text);">Quando transferir a conversa para um humano</span>
+                <button style="display:flex;align-items:center;gap:6px;border:1px solid var(--border);background:transparent;border-radius:7px;padding:7px 12px;font-size:12px;font-weight:600;color:var(--text);cursor:pointer;">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#5B6472" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+                  Adicionar regra
+                </button>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:8px;">
+                <sc-for list="{{ edit.transferRules }}" as="r" hint-placeholder-count="3">
+                  <div style="display:flex;align-items:center;justify-content:space-between;border:1px solid var(--border);border-radius:8px;padding:11px 14px;">
+                    <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+                      <span style="flex:none;font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;background:var(--border-soft);color:var(--text-muted);">{{ r.type }}</span>
+                      <span style="font-size:12.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ r.condition }}</span>
+                    </div>
+                    <button onClick="{{ r.onToggle }}" style="flex:none;width:32px;height:18px;border-radius:9px;border:none;background:{{ r.toggleBg }};position:relative;cursor:pointer;">
+                      <span style="position:absolute;top:2px;left:{{ r.toggleDotLeft }};width:14px;height:14px;border-radius:50%;background:var(--surface);transition:left .15s;"></span>
+                    </button>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isTab_flow }}" hint-placeholder-val="{{ false }}">
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:30px;position:relative;height:420px;overflow:auto;">
+              <svg width="100%" height="100%" viewBox="0 0 720 340" style="position:absolute;top:0;left:0;">
+                <path d="M115 55 L115 105" stroke="#CBD5E1" stroke-width="2" fill="none"></path>
+                <path d="M115 145 L115 195" stroke="#CBD5E1" stroke-width="2" fill="none"></path>
+                <path d="M195 215 L305 215" stroke="#CBD5E1" stroke-width="2" fill="none"></path>
+                <path d="M195 215 L305 100" stroke="#CBD5E1" stroke-width="2" fill="none"></path>
+                <path d="M465 100 L575 100" stroke="#CBD5E1" stroke-width="2" fill="none"></path>
+                <path d="M465 215 L575 215" stroke="#CBD5E1" stroke-width="2" fill="none"></path>
+              </svg>
+              <div style="position:absolute;left:30px;top:15px;width:170px;background:var(--accent-soft);border:1px solid var(--accent-border);border-radius:8px;padding:10px 12px;">
+                <div style="font-size:11px;font-weight:700;color:#168CFF;">INÍCIO</div>
+                <div style="font-size:12px;color:var(--accent-soft-text);margin-top:2px;">Nova mensagem recebida</div>
+              </div>
+              <div style="position:absolute;left:30px;top:145px;width:170px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
+                <div style="font-size:11px;font-weight:700;color:var(--text-muted);">DETECÇÃO</div>
+                <div style="font-size:12px;color:var(--text);margin-top:2px;">Identificar intenção do cliente</div>
+              </div>
+              <div style="position:absolute;left:300px;top:195px;width:170px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
+                <div style="font-size:11px;font-weight:700;color:var(--text-muted);">RESPOSTA</div>
+                <div style="font-size:12px;color:var(--text);margin-top:2px;">Responder com base na base de conhecimento</div>
+              </div>
+              <div style="position:absolute;left:300px;top:80px;width:170px;background:var(--note-bg);border:1px solid var(--note-border);border-radius:8px;padding:10px 12px;">
+                <div style="font-size:11px;font-weight:700;color:var(--amber-text);">CONDIÇÃO</div>
+                <div style="font-size:12px;color:var(--note-text);margin-top:2px;">Palavra-chave de transferência?</div>
+              </div>
+              <div style="position:absolute;left:570px;top:80px;width:130px;background:var(--cyan-soft);border:1px solid var(--cyan-border);border-radius:8px;padding:10px 12px;">
+                <div style="font-size:11px;font-weight:700;color:var(--cyan-text);">HANDOFF</div>
+                <div style="font-size:12px;color:var(--cyan-text);margin-top:2px;">Transferir p/ humano</div>
+              </div>
+              <div style="position:absolute;left:570px;top:195px;width:130px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
+                <div style="font-size:11px;font-weight:700;color:var(--text-muted);">FIM</div>
+                <div style="font-size:12px;color:var(--text);margin-top:2px;">Encerrar conversa</div>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isTab_test }}" hint-placeholder-val="{{ false }}">
+            <div style="max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+              <div style="background:var(--surface-2);border-bottom:1px solid var(--border-soft);padding:10px 14px;font-size:12px;font-weight:600;color:var(--text-muted);">Ambiente de teste · não afeta conversas reais</div>
+              <div style="padding:16px;display:flex;flex-direction:column;gap:10px;min-height:220px;">
+                <sc-for list="{{ testMessages }}" as="m" hint-placeholder-count="3">
+                  <div style="display:flex;justify-content:{{ m.justify }};">
+                    <div style="max-width:75%;background:{{ m.bg }};color:{{ m.color }};border-radius:10px;padding:8px 11px;font-size:13px;">{{ m.text }}</div>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="border-top:1px solid var(--border-soft);padding:10px;display:flex;gap:8px;">
+                <input value="{{ testInput }}" onChange="{{ onTestInputChange }}" placeholder="Digite para testar o agente..." style="flex:1;height:34px;border-radius:7px;border:1px solid var(--border);padding:0 10px;font-size:12.5px;outline:none;"/>
+                <button onClick="{{ onTestSend }}" style="border:none;background:#168CFF;color:var(--surface);border-radius:7px;padding:0 14px;font-size:12.5px;font-weight:600;cursor:pointer;">Enviar</button>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isTab_logs }}" hint-placeholder-val="{{ false }}">
+            <table style="width:100%;max-width:820px;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+              <thead>
+                <tr style="background:var(--surface-2);border-bottom:1px solid var(--border);">
+                  <th style="text-align:left;padding:9px 12px;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;">Contato</th>
+                  <th style="text-align:left;padding:9px 12px;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;">Data</th>
+                  <th style="text-align:left;padding:9px 12px;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;">Resultado</th>
+                </tr>
+              </thead>
+              <tbody>
+                <sc-for list="{{ edit.logs }}" as="l" hint-placeholder-count="3">
+                  <tr style="border-bottom:1px solid var(--border-soft);">
+                    <td style="padding:10px 12px;font-size:12.5px;color:var(--text);">{{ l.contact }}</td>
+                    <td style="padding:10px 12px;font-size:12px;color:var(--text-muted);">{{ l.date }}</td>
+                    <td style="padding:10px 12px;">
+                      <span style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:5px;background:{{ l.bg }};color:{{ l.color }};">{{ l.result }}</span>
+                    </td>
+                  </tr>
+                </sc-for>
+              </tbody>
+            </table>
+          </sc-if>
+
+        </div>
+      </div>
+    </sc-if>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+function makeAgents(){
+  return [
+    {id:'a1', name:'Assistente Comercial', channel:'WhatsApp · Vendas', active:true,
+      persona:'Consultivo e direto, foco em qualificar leads e agendar demonstrações.',
+      prompt:'Você é o assistente comercial da Solint. Responda dúvidas sobre planos, colete o nome da empresa e o principal canal usado hoje, e ofereça agendar uma demonstração quando o cliente demonstrar interesse real.',
+      model:'Claude Sonnet 4.5', handledCount:'412', transferRate:'18%',
+      knowledgeBase:[{name:'Tabela de Planos 2026.pdf', meta:'Atualizado há 4 dias'},{name:'FAQ Comercial.docx', meta:'Atualizado há 2 semanas'}],
+      transferRules:[
+        {type:'Palavra-chave', condition:'"falar com humano", "atendente", "gerente"', enabled:true},
+        {type:'Intenção', condition:'Cliente relata problema técnico urgente', enabled:true},
+        {type:'Horário', condition:'Fora do horário comercial (após 18h)', enabled:false}
+      ],
+      logs:[
+        {contact:'Mariana Costa', date:'Hoje, 09:05', result:'Concluído pela IA', bg:'var(--green-soft)', color:'var(--green-text)'},
+        {contact:'Lucas Andrade', date:'Ontem, 17:20', result:'Transferido p/ humano', bg:'var(--amber-soft)', color:'var(--amber-text)'},
+        {contact:'Bianca Ferreira', date:'18 ago, 11:40', result:'Concluído pela IA', bg:'var(--green-soft)', color:'var(--green-text)'}
+      ]},
+    {id:'a2', name:'Suporte N1', channel:'WhatsApp + Webchat · Suporte', active:true,
+      persona:'Objetivo e empático, resolve dúvidas frequentes antes de escalar.',
+      prompt:'Você é o assistente de suporte de primeiro nível da Solint. Use a base de conhecimento para responder dúvidas sobre garantia, trocas e uso do produto. Se não encontrar a resposta ou o cliente insistir, transfira para um humano.',
+      model:'Claude Sonnet 4.5', handledCount:'687', transferRate:'9%',
+      knowledgeBase:[{name:'Política de Garantia.pdf', meta:'Atualizado há 1 mês'},{name:'Manual do Produto.pdf', meta:'Atualizado há 1 mês'},{name:'FAQ Suporte.txt', meta:'Atualizado há 3 dias'}],
+      transferRules:[
+        {type:'Palavra-chave', condition:'"reembolso", "cancelar", "reclamação"', enabled:true},
+        {type:'Solicitação explícita', condition:'Cliente pede para falar com atendente', enabled:true}
+      ],
+      logs:[
+        {contact:'Fernanda Lopes', date:'Hoje, 12:40', result:'Concluído pela IA', bg:'var(--green-soft)', color:'var(--green-text)'},
+        {contact:'Diego Martins', date:'Hoje, 08:10', result:'Concluído pela IA', bg:'var(--green-soft)', color:'var(--green-text)'}
+      ]},
+    {id:'a3', name:'Cobrança Automática', channel:'WhatsApp · Financeiro', active:false,
+      persona:'Formal e cordial, foco em lembrar vencimentos sem soar agressivo.',
+      prompt:'Você envia lembretes de fatura e responde dúvidas simples sobre pagamento. Nunca negocie descontos — sempre transfira para o time financeiro nesses casos.',
+      model:'Claude Haiku 4.5', handledCount:'0', transferRate:'—',
+      knowledgeBase:[{name:'Regras de Cobrança.pdf', meta:'Atualizado há 2 meses'}],
+      transferRules:[{type:'Palavra-chave', condition:'"desconto", "negociar", "não vou pagar"', enabled:true}],
+      logs:[]}
+  ];
+}
+
+class Component extends DCLogic {
+  state = {
+    agents: makeAgents(),
+    view: 'list',
+    selectedId: null,
+    tab: 'config',
+    testInput: '',
+    testMessages: [
+      {from:'bot', text:'Olá! Sou o assistente comercial da Solint. Como posso ajudar hoje?'},
+      {from:'user', text:'Quero saber os planos disponíveis'},
+      {from:'bot', text:'Temos os planos Starter, Pro e Enterprise. Qual o tamanho da sua equipe de atendimento?'}
+    ]
+  };
+
+  onNewAgent = () => {};
+  onOpenAgent(id){ return () => this.setState({view:'edit', selectedId:id, tab:'config'}); }
+  onBackToList = () => this.setState({view:'list'});
+  setTab(t){ return () => this.setState({tab:t}); }
+  onToggleActive = () => {
+    const agents = this.state.agents.map(a => a.id===this.state.selectedId ? {...a, active:!a.active} : a);
+    this.setState({agents});
+  };
+  onToggleRule(idx){
+    return () => {
+      const agents = this.state.agents.map(a => {
+        if(a.id !== this.state.selectedId) return a;
+        const transferRules = a.transferRules.map((r,i) => i===idx ? {...r, enabled:!r.enabled} : r);
+        return {...a, transferRules};
+      });
+      this.setState({agents});
+    };
+  }
+  onTestInputChange = (e) => this.setState({testInput: e.target.value});
+  onTestSend = () => {
+    const text = this.state.testInput.trim();
+    if(!text) return;
+    this.setState({
+      testMessages: [...this.state.testMessages, {from:'user', text}, {from:'bot', text:'Entendido! Deixa eu verificar isso para você e te retorno em seguida.'}],
+      testInput: ''
+    });
+  };
+
+  renderVals(){
+    const isListView = this.state.view === 'list';
+    const isEditView = this.state.view === 'edit';
+
+    const agents = this.state.agents.map(a => ({
+      id:a.id, name:a.name, channel:a.channel, persona:a.persona,
+      handledCount:a.handledCount, transferRate:a.transferRate,
+      statusLabel: a.active ? 'Ativo' : 'Inativo',
+      statusBg: a.active ? 'var(--green-soft)' : 'var(--slate-soft)',
+      statusColor: a.active ? 'var(--green-text)' : 'var(--slate-text)',
+      onOpen: this.onOpenAgent(a.id)
+    }));
+
+    let edit = null;
+    let selAgent = null;
+    if(isEditView){
+      selAgent = this.state.agents.find(a=>a.id===this.state.selectedId);
+      if(selAgent){
+        edit = {
+          name:selAgent.name, channel:selAgent.channel, persona:selAgent.persona,
+          prompt:selAgent.prompt, model:selAgent.model,
+          knowledgeBase:selAgent.knowledgeBase,
+          transferRules: selAgent.transferRules.map((r,i) => ({
+            type:r.type, condition:r.condition,
+            toggleBg: r.enabled ? '#168CFF' : 'var(--toggle-off)',
+            toggleDotLeft: r.enabled ? '16px' : '2px',
+            onToggle: this.onToggleRule(i)
+          })),
+          logs: selAgent.logs
+        };
+      }
+    }
+
+    const tabs = ['config','kb','rules','flow','test','logs'];
+    const tabVals = {};
+    tabs.forEach(t => {
+      const active = this.state.tab === t;
+      tabVals['tabBg_'+t] = active ? 'var(--accent-soft)' : 'transparent';
+      tabVals['tabColor_'+t] = active ? '#168CFF' : 'var(--text-muted)';
+      tabVals['onTab_'+t] = this.setTab(t);
+      tabVals['isTab_'+t] = active;
+    });
+
+    const testMessages = this.state.testMessages.map(m => ({
+      justify: m.from==='bot' ? 'flex-start' : 'flex-end',
+      bg: m.from==='bot' ? 'var(--cyan-soft)' : 'var(--accent-soft)',
+      color: m.from==='bot' ? 'var(--cyan-text)' : 'var(--accent-soft-text)',
+      text: m.text
+    }));
+
+    return {
+      topTitle: isEditView && edit ? edit.name : 'Agentes de inteligência artificial',
+      isListView, isEditView, agents, onNewAgent: this.onNewAgent,
+      onBackToList: this.onBackToList, edit,
+      toggleBg: selAgent && selAgent.active ? '#168CFF' : 'var(--toggle-off)',
+      toggleDotLeft: selAgent && selAgent.active ? '18px' : '2px',
+      onToggleActive: this.onToggleActive,
+      ...tabVals,
+      testMessages, testInput: this.state.testInput,
+      onTestInputChange: this.onTestInputChange, onTestSend: this.onTestSend
+    };
+  }
+}
+
+</script>
+</body>
+</html>

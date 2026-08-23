@@ -1,0 +1,55 @@
+{
+  "name": "solint-crm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CRM Omnichannel com foco em WhatsApp - Solint",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "db:migrate": "prisma migrate dev",
+    "db:push": "prisma db push",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:studio": "prisma studio",
+    "db:reset": "prisma migrate reset --force && tsx prisma/seed.ts",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css,md}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css,md}\""
+  },
+  "dependencies": {
+    "@prisma/adapter-better-sqlite3": "^7.9.1",
+    "@prisma/client": "^7.9.1",
+    "@whiskeysockets/baileys": "^7.0.0-rc14",
+    "better-sqlite3": "^13.0.3",
+    "clsx": "^2.1.1",
+    "jose": "^6.2.10",
+    "lucide-react": "^0.460.0",
+    "next": "^15.1.6",
+    "pino": "^10.3.1",
+    "prisma": "^7.9.1",
+    "qrcode": "^1.5.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "server-only": "^0.0.1",
+    "tailwind-merge": "^2.5.5",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^22.10.6",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.0.7",
+    "@types/react-dom": "^19.0.3",
+    "eslint": "^9.18.0",
+    "eslint-config-next": "^15.1.6",
+    "playwright": "^1.62.1",
+    "prettier": "^3.4.2",
+    "tailwindcss": "^4.0.0",
+    "tsx": "^4.23.12",
+    "typescript": "^5.7.3"
+  }
+}

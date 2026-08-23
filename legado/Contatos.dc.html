@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --app-bg:#F4F7FB;
+    --chat-bg:#EEF2F7;
+    --surface:#FFFFFF;
+    --surface-2:#F7F9FC;
+    --border:#E5E9F0;
+    --border-soft:#EEF1F5;
+    --text:#0A1424;
+    --text-muted:#5B6472;
+    --text-dim:#8B95A5;
+    --toggle-off:#D7DEE8;
+    --accent-soft:#E8F3FF;
+    --accent-soft-text:#0A2540;
+    --selected-bg:#EFF6FF;
+    --accent-border:#B7D9FF;
+    --note-bg:#FFFBEB;
+    --note-border:#FCD34D;
+    --note-text:#7C4A08;
+    --note-meta:#B08340;
+    --amber-soft:#FEF3C7;
+    --amber-text:#B45309;
+    --green-soft:#E8F9EE;
+    --green-text:#0E803C;
+    --green-border:#A7E3C0;
+    --red-soft:#FEE2E2;
+    --red-text:#B91C1C;
+    --red-border:#FCA5A5;
+    --violet-soft:#EDE9FE;
+    --violet-text:#6D28D9;
+    --blue-soft:#E0F2FE;
+    --blue-text:#0369A1;
+    --cyan-soft:#E0F7FF;
+    --cyan-text:#054452;
+    --cyan-border:#B7E9FF;
+    --slate-soft:#F1F5F9;
+    --slate-text:#475569;
+    --pink-soft:#FCE7F0;
+    --pink-text:#BE1857;
+    --indigo-soft:#EEEDFD;
+    --indigo-text:#4C46C4;
+    --accent-soft-meta:#5B85AE;
+  }
+  :root[data-theme="dark"]{
+    --app-bg:#050A14;
+    --chat-bg:#050A14;
+    --surface:#0D121A;
+    --surface-2:#141A24;
+    --border:rgba(255,255,255,0.08);
+    --border-soft:rgba(255,255,255,0.05);
+    --text:#FAFCFF;
+    --text-muted:#A3AEBD;
+    --text-dim:#7C8899;
+    --toggle-off:#2A3442;
+    --accent-soft:#0E335C;
+    --accent-soft-text:#DCEBFF;
+    --accent-soft-meta:#9CC3EE;
+    --selected-bg:#141A24;
+    --accent-border:rgba(53,217,255,0.28);
+    --note-bg:#1E1A11;
+    --note-border:rgba(255,182,92,0.4);
+    --note-text:#FFD9A0;
+    --note-meta:#C9A46A;
+    --amber-soft:rgba(255,182,92,0.16);
+    --amber-text:#FFB65C;
+    --green-soft:rgba(16,185,129,0.16);
+    --green-text:#34D399;
+    --green-border:rgba(16,185,129,0.35);
+    --red-soft:rgba(239,68,68,0.16);
+    --red-text:#FCA5A5;
+    --red-border:rgba(239,68,68,0.4);
+    --violet-soft:rgba(139,92,246,0.18);
+    --violet-text:#C4B5FD;
+    --blue-soft:rgba(56,152,236,0.2);
+    --blue-text:#7DD3FC;
+    --cyan-soft:#0A2C38;
+    --cyan-text:#7FE7FF;
+    --cyan-border:rgba(53,217,255,0.3);
+    --slate-soft:rgba(255,255,255,0.07);
+    --slate-text:#A3AEBD;
+    --pink-soft:rgba(225,48,108,0.18);
+    --pink-text:#F9A8D4;
+    --indigo-soft:rgba(99,102,241,0.2);
+    --indigo-text:#C7D2FE;
+  }
+  html,body{background:var(--app-bg);color:var(--text);}
+  ::-webkit-scrollbar-thumb{background:var(--toggle-off);}
+  a{color:#168CFF;}
+  a:hover{color:#35D9FF;}
+  html,body{margin:0;padding:0;height:100%;}
+  *{box-sizing:border-box;}
+  ::-webkit-scrollbar{width:8px;height:8px;}
+  ::-webkit-scrollbar-thumb{background:var(--toggle-off);border-radius:8px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+  input::placeholder{color:var(--text-dim);}
+  tr.dc-row:hover{background:var(--surface-2);}
+</style>
+<script>
+(function(){
+  try{ var t = localStorage.getItem("solint-theme"); if(t) document.documentElement.dataset.theme = t; }catch(e){}
+  if(!window.__solintThemeBound){
+    window.__solintThemeBound = true;
+    document.addEventListener("click", function(e){
+      var el = e.target && e.target.closest ? e.target.closest("[data-theme-toggle]") : null;
+      if(!el) return;
+      var root = document.documentElement;
+      var next = root.dataset.theme === "dark" ? "light" : "dark";
+      root.dataset.theme = next;
+      try{ localStorage.setItem("solint-theme", next); }catch(err){}
+    });
+  }
+})();
+</script>
+</helmet>
+
+<div style="display:flex;width:100vw;height:100vh;min-width:1280px;background:var(--app-bg);font-family:'Inter',sans-serif;color:var(--text);overflow-x:auto;overflow-y:hidden;">
+
+  <!-- NAVIGATION RAIL -->
+  <div style="width:64px;flex:0 0 64px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:14px 0 16px;justify-content:space-between;">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:22px;width:100%;">
+      <div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(100deg,#174EFF 0%,#168CFF 52%,#35D9FF 100%);display:flex;align-items:center;justify-content:center;color:var(--surface);font-family:Sora;font-weight:700;font-size:15px;flex:none;">S</div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
+        <a href="Conversas.dc.html" title="Caixa de Entrada" style="position:relative;width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12H8l-4 4V4z"></path></svg>
+          <span style="position:absolute;top:-4px;right:-4px;min-width:16px;height:16px;padding:0 3px;border-radius:8px;background:#EF4444;color:var(--surface);font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1;">7</span>
+        </a>
+        <button title="Contatos" style="width:40px;height:40px;border-radius:10px;border:none;background:var(--accent-soft);color:#168CFF;display:flex;align-items:center;justify-content:center;cursor:pointer;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 20c0-3.5 2.5-6 5.5-6s5.5 2.5 5.5 6"></path><circle cx="17.5" cy="9" r="2.3"></circle><path d="M15.8 14.3c2.4.3 4.2 2.3 4.2 5.2"></path></svg>
+        </button>
+        <a href="Kanban.dc.html" title="Kanban" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="5" height="16" rx="1.4"></rect><rect x="9.8" y="4" width="5" height="10" rx="1.4"></rect><rect x="16" y="4" width="5" height="13" rx="1.4"></rect></svg>
+        </a>
+<a href="Agentes-IA.dc.html" title="Agentes de IA" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="3"></rect><path d="M12 8V4"></path><circle cx="12" cy="3" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="9" cy="14" r="1.3" fill="currentColor" stroke="none"></circle><circle cx="15" cy="14" r="1.3" fill="currentColor" stroke="none"></circle></svg>
+        </a>
+<a href="Campanhas.dc.html" title="Campanhas" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1.5 1.5 0 0 0 1.5 1.5H6v4l3-2.2"></path><path d="M6 11l11.5-6v14L6 13"></path><path d="M17.5 9.5a2.5 2.5 0 0 1 0 5"></path></svg>
+        </a>
+        <a href="Dashboard.dc.html" title="Dashboard e Relatórios" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10"></path><path d="M11 20V4"></path><path d="M18 20v-7"></path></svg>
+        </a>
+<a href="Configuracoes.dc.html" title="Configurações e Conexões" style="width:40px;height:40px;border-radius:10px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l1.9-1.5-2-3.4-2.2.9a7.7 7.7 0 0 0-2.6-1.5L14 2h-4l-.5 2.5a7.7 7.7 0 0 0-2.6 1.5l-2.2-.9-2 3.4L4.6 10a7.6 7.6 0 0 0 0 3l-1.9 1.5 2 3.4 2.2-.9c.77.66 1.65 1.17 2.6 1.5L10 22h4l.5-2.5a7.7 7.7 0 0 0 2.6-1.5l2.2.9 2-3.4-1.9-1.5z"></path></svg>
+        </a>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:12px;">
+      <button data-theme-toggle="1" title="Alternar tema" style="width:32px;height:32px;border-radius:8px;border:none;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg>
+      </button>
+<a href="Perfil.dc.html" title="Meu perfil" style="position:relative;width:36px;height:36px;border-radius:50%;background:#174EFF;color:var(--surface);display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:600;font-size:13px;text-decoration:none;">
+        RS
+        <span style="position:absolute;bottom:-2px;right:-2px;width:11px;height:11px;border-radius:50%;border:2px solid var(--surface);background:#10B981;"></span>
+      </a>
+    </div>
+  </div>
+
+  <!-- MAIN AREA -->
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column;">
+
+    <!-- TOPBAR -->
+    <div style="flex:none;height:64px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 24px;gap:20px;">
+      <div style="min-width:0;">
+        <div style="font-size:11.5px;color:var(--text-dim);">Contatos</div>
+        <span style="font-family:Sora;font-weight:600;font-size:16px;white-space:nowrap;">{{ topTitle }}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;flex:none;">
+        <div style="position:relative;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2" stroke-linecap="round" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
+          <input placeholder="Buscar em todo o CRM..." style="width:230px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--app-bg);padding:0 12px 0 32px;font-size:13px;font-family:Inter;color:var(--text);outline:none;"/>
+          <span style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-dim);border:1px solid var(--border);border-radius:5px;padding:1px 5px;background:var(--surface);">⌘K</span>
+        </div>
+        <button title="Notificações" style="position:relative;width:36px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"></path><path d="M10 21a2 2 0 0 0 4 0"></path></svg>
+          <span style="position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:#EF4444;border:2px solid var(--surface);"></span>
+        </button>
+        <div style="display:flex;align-items:center;gap:8px;padding:5px 10px 5px 5px;border:1px solid var(--border);border-radius:9px;cursor:pointer;flex:none;">
+          <div style="width:26px;height:26px;border-radius:50%;background:#174EFF;color:var(--surface);display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:600;font-size:11px;">RS</div>
+          <span style="font-size:12.5px;font-weight:600;color:var(--text);">Solint Demo</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- LIST VIEW -->
+    <sc-if value="{{ isListView }}" hint-placeholder-val="{{ true }}">
+      <div style="flex:none;background:var(--surface);border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;justify-content:space-between;gap:14px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <div style="position:relative;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2" stroke-linecap="round" style="position:absolute;left:9px;top:50%;transform:translateY(-50%);"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
+            <input value="{{ search }}" onChange="{{ onSearchChange }}" placeholder="Buscar por nome, telefone ou email..." style="width:260px;height:34px;border-radius:7px;border:1px solid var(--border);background:var(--app-bg);padding:0 10px 0 30px;font-size:12.5px;font-family:Inter;color:var(--text);outline:none;"/>
+          </div>
+          <button style="display:flex;align-items:center;gap:6px;border:1px solid var(--border);background:transparent;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:500;color:var(--text);cursor:pointer;">Etiqueta <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"></path></svg></button>
+          <button style="display:flex;align-items:center;gap:6px;border:1px solid var(--border);background:transparent;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:500;color:var(--text);cursor:pointer;">Responsável <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"></path></svg></button>
+          <button style="display:flex;align-items:center;gap:6px;border:1px solid var(--border);background:transparent;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;color:#168CFF;cursor:pointer;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#168CFF" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+            Salvar como segmento
+          </button>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex:none;">
+          <button onClick="{{ onOpenImport }}" style="display:flex;align-items:center;gap:6px;border:1px solid var(--border);background:transparent;border-radius:8px;padding:8px 13px;font-size:12.5px;font-weight:600;color:var(--text);cursor:pointer;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#5B6472" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5"></path><path d="M4 21h16"></path></svg>
+            Importar CSV
+          </button>
+          <button style="display:flex;align-items:center;gap:6px;border:1px solid var(--border);background:transparent;border-radius:8px;padding:8px 13px;font-size:12.5px;font-weight:600;color:var(--text);cursor:pointer;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#5B6472" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V9M7 14l5-5 5 5"></path><path d="M4 3h16"></path></svg>
+            Exportar
+          </button>
+          <button style="display:flex;align-items:center;gap:7px;border:none;background:#168CFF;border-radius:8px;padding:8px 14px;font-size:12.5px;font-weight:600;color:var(--surface);cursor:pointer;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+            Novo contato
+          </button>
+        </div>
+      </div>
+
+      <div style="flex:1;overflow-y:auto;padding:0 24px 24px;">
+        <table style="width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-top:16px;">
+          <thead>
+            <tr style="background:var(--surface-2);border-bottom:1px solid var(--border);">
+              <th style="width:36px;padding:10px 12px;"><input type="checkbox"/></th>
+              <th style="text-align:left;padding:10px 12px;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.3px;">Nome</th>
+              <th style="text-align:left;padding:10px 12px;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.3px;">Telefone</th>
+              <th style="text-align:left;padding:10px 12px;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.3px;">Email</th>
+              <th style="text-align:left;padding:10px 12px;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.3px;">Empresa</th>
+              <th style="text-align:left;padding:10px 12px;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.3px;">Etiquetas</th>
+              <th style="text-align:left;padding:10px 12px;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.3px;">Último contato</th>
+              <th style="text-align:left;padding:10px 12px;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.3px;">Responsável</th>
+            </tr>
+          </thead>
+          <tbody>
+            <sc-for list="{{ filteredContacts }}" as="c" hint-placeholder-count="6">
+              <tr class="dc-row" onClick="{{ c.onOpen }}" style="border-bottom:1px solid var(--border-soft);cursor:pointer;">
+                <td style="padding:10px 12px;" onClick="{{ stopProp }}"><input type="checkbox"/></td>
+                <td style="padding:10px 12px;">
+                  <div style="display:flex;align-items:center;gap:9px;">
+                    <div style="width:30px;height:30px;border-radius:50%;background:{{ c.avatarColor }};color:var(--surface);display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:600;font-size:12px;flex:none;">{{ c.initials }}</div>
+                    <span style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;">{{ c.name }}</span>
+                  </div>
+                </td>
+                <td style="padding:10px 12px;font-size:12.5px;font-family:'JetBrains Mono',monospace;color:var(--text);white-space:nowrap;">{{ c.phone }}</td>
+                <td style="padding:10px 12px;font-size:12.5px;color:var(--text-muted);white-space:nowrap;">{{ c.email }}</td>
+                <td style="padding:10px 12px;font-size:12.5px;color:var(--text);white-space:nowrap;">{{ c.company }}</td>
+                <td style="padding:10px 12px;">
+                  <div style="display:flex;gap:5px;flex-wrap:wrap;">
+                    <sc-for list="{{ c.tags }}" as="t" hint-placeholder-count="1">
+                      <span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:5px;background:{{ t.bg }};color:{{ t.color }};white-space:nowrap;">{{ t.label }}</span>
+                    </sc-for>
+                  </div>
+                </td>
+                <td style="padding:10px 12px;font-size:12px;color:var(--text-muted);white-space:nowrap;">{{ c.lastContact }}</td>
+                <td style="padding:10px 12px;font-size:12.5px;color:var(--text);white-space:nowrap;">{{ c.responsible }}</td>
+              </tr>
+            </sc-for>
+          </tbody>
+        </table>
+      </div>
+    </sc-if>
+
+    <!-- DETAIL VIEW -->
+    <sc-if value="{{ isDetailView }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;overflow-y:auto;padding:22px 28px 30px;">
+        <button onClick="{{ onBackToList }}" style="display:flex;align-items:center;gap:6px;border:none;background:transparent;color:var(--text-muted);font-size:12.5px;font-weight:600;cursor:pointer;padding:0;margin-bottom:16px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+          Voltar para contatos
+        </button>
+
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:20px;margin-bottom:22px;">
+          <div style="display:flex;align-items:center;gap:14px;">
+            <div style="width:58px;height:58px;border-radius:50%;background:{{ detail.avatarColor }};color:var(--surface);display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:600;font-size:20px;flex:none;">{{ detail.initials }}</div>
+            <div>
+              <div style="font-family:Sora;font-weight:600;font-size:19px;">{{ detail.name }}</div>
+              <div style="font-size:13px;color:var(--text-muted);margin-top:2px;">{{ detail.company }}</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex:none;">
+            <button style="display:flex;align-items:center;gap:6px;border:1px solid var(--border);background:transparent;border-radius:8px;padding:8px 13px;font-size:12.5px;font-weight:600;color:var(--text);cursor:pointer;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#5B6472" stroke-width="2.2" stroke-linecap="round"><path d="M17 3l4 4-4 4"></path><path d="M21 7H10a5 5 0 0 0 0 10h1"></path></svg>
+              Mesclar duplicados
+            </button>
+            <button style="display:flex;align-items:center;gap:7px;border:none;background:#168CFF;border-radius:8px;padding:8px 14px;font-size:12.5px;font-weight:600;color:var(--surface);cursor:pointer;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M4 4h16v12H8l-4 4V4z"></path></svg>
+              Nova conversa
+            </button>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:22px;">
+          <div style="width:280px;flex:none;display:flex;flex-direction:column;gap:16px;">
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;">
+              <div style="font-size:11.5px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.4px;margin-bottom:10px;">Dados cadastrais</div>
+              <div style="display:flex;flex-direction:column;gap:9px;">
+                <div style="display:flex;justify-content:space-between;font-size:12.5px;"><span style="color:var(--text-dim);">Telefone</span><span style="font-family:'JetBrains Mono',monospace;color:var(--text);">{{ detail.phone }}</span></div>
+                <div style="display:flex;justify-content:space-between;font-size:12.5px;"><span style="color:var(--text-dim);">Email</span><span style="color:var(--text);">{{ detail.email }}</span></div>
+                <div style="display:flex;justify-content:space-between;font-size:12.5px;"><span style="color:var(--text-dim);">Empresa</span><span style="color:var(--text);">{{ detail.company }}</span></div>
+              </div>
+            </div>
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;">
+              <div style="font-size:11.5px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.4px;margin-bottom:10px;">Atributos personalizados</div>
+              <div style="display:flex;flex-direction:column;gap:9px;">
+                <sc-for list="{{ detail.customFields }}" as="f" hint-placeholder-count="3">
+                  <div style="display:flex;justify-content:space-between;font-size:12.5px;"><span style="color:var(--text-dim);">{{ f.label }}</span><span style="color:var(--text);">{{ f.value }}</span></div>
+                </sc-for>
+              </div>
+            </div>
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;">
+              <div style="font-size:11.5px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.4px;margin-bottom:10px;">Etiquetas</div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                <sc-for list="{{ detail.tags }}" as="t" hint-placeholder-count="1">
+                  <span style="font-size:11px;font-weight:600;padding:4px 9px;border-radius:6px;background:{{ t.bg }};color:{{ t.color }};">{{ t.label }}</span>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+
+          <div style="flex:1;min-width:0;">
+            <div style="display:flex;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:4px;margin-bottom:16px;width:fit-content;">
+              <button onClick="{{ onTabTimeline }}" style="border:none;border-radius:6px;padding:7px 14px;font-size:12.5px;font-weight:600;cursor:pointer;background:{{ tabTimelineBg }};color:{{ tabTimelineColor }};">Linha do tempo</button>
+              <button onClick="{{ onTabConversas }}" style="border:none;border-radius:6px;padding:7px 14px;font-size:12.5px;font-weight:600;cursor:pointer;background:{{ tabConversasBg }};color:{{ tabConversasColor }};">Conversas relacionadas</button>
+            </div>
+
+            <sc-if value="{{ isTabTimeline }}" hint-placeholder-val="{{ true }}">
+              <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px;">
+                <div style="display:flex;flex-direction:column;gap:14px;">
+                  <sc-for list="{{ detail.timeline }}" as="ev" hint-placeholder-count="3">
+                    <div style="display:flex;gap:12px;">
+                      <div style="width:28px;height:28px;border-radius:8px;background:{{ ev.iconBg }};color:{{ ev.iconColor }};display:flex;align-items:center;justify-content:center;flex:none;font-size:12px;font-weight:700;">{{ ev.iconLabel }}</div>
+                      <div>
+                        <div style="font-size:13px;color:var(--text);">{{ ev.text }}</div>
+                        <div style="font-size:11.5px;color:var(--text-dim);margin-top:2px;">{{ ev.date }}</div>
+                      </div>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ isTabConversas }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;flex-direction:column;gap:10px;">
+                <sc-for list="{{ detail.relatedConversations }}" as="rc" hint-placeholder-count="2">
+                  <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;">
+                    <div>
+                      <div style="font-size:13px;font-weight:600;color:var(--text);">{{ rc.preview }}</div>
+                      <div style="font-size:11.5px;color:var(--text-dim);margin-top:3px;">{{ rc.date }} · {{ rc.channel }}</div>
+                    </div>
+                    <span style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:5px;background:{{ rc.statusBg }};color:{{ rc.statusColor }};">{{ rc.status }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- CSV IMPORT MODAL -->
+    <sc-if value="{{ importOpen }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ onCloseImport }}" style="position:fixed;inset:0;background:rgba(10,20,40,0.32);z-index:30;"></div>
+      <div style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:560px;max-height:82vh;overflow-y:auto;background:var(--surface);border-radius:14px;box-shadow:0 20px 48px rgba(10,20,40,0.2);z-index:31;padding:22px 24px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <span style="font-family:Sora;font-weight:600;font-size:16px;">Importar contatos via CSV</span>
+          <button onClick="{{ onCloseImport }}" style="border:none;background:transparent;color:var(--text-muted);cursor:pointer;width:28px;height:28px;display:flex;align-items:center;justify-content:center;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"></path></svg>
+          </button>
+        </div>
+
+        <sc-if value="{{ importMapping }}" hint-placeholder-val="{{ true }}">
+          <div style="font-size:12px;color:var(--text-dim);margin-bottom:14px;">Arquivo <span style="font-family:'JetBrains Mono',monospace;color:var(--text);">contatos-agosto.csv</span> · 312 linhas detectadas. Mapeie as colunas do arquivo para os campos do CRM.</div>
+          <table style="width:100%;border-collapse:collapse;border:1px solid var(--border);border-radius:9px;overflow:hidden;">
+            <thead>
+              <tr style="background:var(--surface-2);border-bottom:1px solid var(--border);">
+                <th style="text-align:left;padding:9px 12px;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;">Coluna do CSV</th>
+                <th style="text-align:left;padding:9px 12px;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;">Exemplo</th>
+                <th style="text-align:left;padding:9px 12px;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;">Campo no CRM</th>
+              </tr>
+            </thead>
+            <tbody>
+              <sc-for list="{{ csvColumns }}" as="col" hint-placeholder-count="4">
+                <tr style="border-bottom:1px solid var(--border-soft);">
+                  <td style="padding:9px 12px;font-size:12.5px;font-family:'JetBrains Mono',monospace;">{{ col.csv }}</td>
+                  <td style="padding:9px 12px;font-size:12px;color:var(--text-dim);">{{ col.sample }}</td>
+                  <td style="padding:9px 12px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;height:30px;border-radius:7px;border:1px solid {{ col.border }};padding:0 9px;font-size:12px;color:{{ col.fieldColor }};background:{{ col.bg }};">{{ col.field }} <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"></path></svg></div>
+                  </td>
+                </tr>
+              </sc-for>
+            </tbody>
+          </table>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
+            <button onClick="{{ onCloseImport }}" style="border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:9px 16px;font-size:12.5px;font-weight:600;color:var(--text);cursor:pointer;">Cancelar</button>
+            <button onClick="{{ onStartImport }}" style="border:none;background:#168CFF;border-radius:8px;padding:9px 18px;font-size:12.5px;font-weight:600;color:var(--surface);cursor:pointer;">Iniciar importação</button>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ importRunning }}" hint-placeholder-val="{{ false }}">
+          <div style="font-size:12px;color:var(--text-dim);margin-bottom:16px;">Importando <span style="font-family:'JetBrains Mono',monospace;color:var(--text);">contatos-agosto.csv</span>...</div>
+          <div style="height:9px;border-radius:5px;background:var(--slate-soft);overflow:hidden;margin-bottom:8px;">
+            <div style="height:100%;width:64%;background:linear-gradient(90deg,#168CFF,#35D9FF);border-radius:5px;"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:18px;">
+            <span>200 de 312 contatos processados</span>
+            <span style="font-family:'JetBrains Mono',monospace;">64%</span>
+          </div>
+          <div style="background:var(--note-bg);border:1px solid var(--note-border);border-radius:9px;padding:11px 13px;margin-bottom:16px;">
+            <div style="font-size:12px;font-weight:700;color:var(--amber-text);margin-bottom:6px;">3 erros até agora</div>
+            <div style="font-size:11.5px;color:var(--note-text);line-height:1.6;">Linha 47: telefone inválido · Linha 112: email duplicado · Linha 178: campo obrigatório "nome" vazio</div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;">
+            <button onClick="{{ onCloseImport }}" style="border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:9px 16px;font-size:12.5px;font-weight:600;color:var(--text);cursor:pointer;">Continuar em segundo plano</button>
+          </div>
+        </sc-if>
+      </div>
+    </sc-if>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+function initials(name){
+  const p = name.trim().split(/\s+/);
+  return ((p[0]||'')[0]+(p[1]||'')[0]).toUpperCase();
+}
+
+const TAGS = {
+  vip:{label:'VIP', bg:'var(--amber-soft)', color:'var(--amber-text)'},
+  recorrente:{label:'Recorrente', bg:'var(--blue-soft)', color:'var(--blue-text)'},
+  proposta:{label:'Proposta Enviada', bg:'var(--violet-soft)', color:'var(--violet-text)'},
+  novo:{label:'Novo Cliente', bg:'var(--green-soft)', color:'var(--green-text)'},
+  urgente:{label:'Urgente', bg:'var(--red-soft)', color:'var(--red-text)'}
+};
+
+function makeContacts(){
+  return [
+    {id:'a', name:'Mariana Costa', phone:'+55 11 98213-4470', email:'mariana.costa@email.com', company:'Estúdio MC Fotografia', tags:[TAGS.vip, TAGS.recorrente], lastContact:'Hoje, 09:20', responsible:'Rafael Souza', avatarColor:'#168CFF',
+      customFields:[{label:'CPF', value:'123.456.789-00'},{label:'Código ERP', value:'CRM-00214'},{label:'Valor de Lead', value:'R$ 3.200'}],
+      timeline:[
+        {iconLabel:'C', iconBg:'var(--accent-soft)', iconColor:'#168CFF', text:'Conversa aberta no WhatsApp', date:'Hoje, 09:14'},
+        {iconLabel:'K', iconBg:'var(--violet-soft)', iconColor:'var(--violet-text)', text:'Movido para etapa Novo Lead no funil Comercial', date:'19 ago, 09:14'},
+        {iconLabel:'N', iconBg:'var(--note-bg)', iconColor:'var(--amber-text)', text:'Nota adicionada por Rafael Souza', date:'12 jul, 14:00'}
+      ],
+      relatedConversations:[
+        {preview:'Perfeito, pode confirmar o horário de entrega?', date:'Hoje', channel:'WhatsApp', status:'Aberta', statusBg:'var(--blue-soft)', statusColor:'var(--blue-text)'},
+        {preview:'Obrigada pela atenção!', date:'12 jul', channel:'WhatsApp', status:'Resolvida', statusBg:'var(--slate-soft)', statusColor:'var(--slate-text)'}
+      ]},
+    {id:'b', name:'João Pedro Silva', phone:'+55 79 96809-9911', email:'joao.pedro@jpdistribuidora.com.br', company:'JP Distribuidora', tags:[TAGS.urgente], lastContact:'Hoje, 13:40', responsible:'Camila Reis', avatarColor:'#F59E0B',
+      customFields:[{label:'CNPJ', value:'12.345.678/0001-90'},{label:'Código ERP', value:'CRM-00587'},{label:'Venc. Fatura', value:'18/08/2026'}],
+      timeline:[{iconLabel:'C', iconBg:'var(--accent-soft)', iconColor:'#168CFF', text:'Conversa aberta no WhatsApp', date:'Hoje, 08:02'}],
+      relatedConversations:[{preview:'Ainda não recebi o boleto da minha compra...', date:'Hoje', channel:'WhatsApp', status:'Pendente', statusBg:'var(--amber-soft)', statusColor:'var(--amber-text)'}]},
+    {id:'c', name:'Fernanda Lopes', phone:'+55 21 99887-2231', email:'fernanda.lopes@gmail.com', company:'Fernanda Lopes Studio', tags:[TAGS.novo], lastContact:'Hoje, 12:40', responsible:'—', avatarColor:'#6366F1',
+      customFields:[{label:'CPF', value:'—'},{label:'Código ERP', value:'—'}],
+      timeline:[{iconLabel:'I', iconBg:'var(--cyan-soft)', iconColor:'var(--cyan-text)', text:'Conversa encerrada automaticamente pelo Agente IA', date:'Hoje, 12:40'}],
+      relatedConversations:[{preview:'Não, só isso. Obrigada!', date:'Hoje', channel:'Webchat', status:'Resolvida', statusBg:'var(--slate-soft)', statusColor:'var(--slate-text)'}]},
+    {id:'d', name:'Carlos Eduardo Nunes', phone:'+55 31 98765-4321', email:'carlos.nunes@nunesengenharia.com', company:'Nunes Engenharia', tags:[TAGS.recorrente], lastContact:'Ontem, 16:10', responsible:'Rafael Souza', avatarColor:'#0E9F6E',
+      customFields:[{label:'CNPJ', value:'22.111.333/0001-55'},{label:'Valor de Lead', value:'R$ 12.500'}],
+      timeline:[{iconLabel:'K', iconBg:'var(--violet-soft)', iconColor:'var(--violet-text)', text:'Movido para Fechado Ganho no funil Comercial', date:'Ontem, 16:10'}],
+      relatedConversations:[{preview:'Aprovado! Muito obrigado pela agilidade.', date:'Ontem', channel:'WhatsApp', status:'Resolvida', statusBg:'var(--slate-soft)', statusColor:'var(--slate-text)'}]},
+    {id:'e', name:'Pedro Henrique', phone:'+55 41 99123-8890', email:'pedro.h@outlook.com', company:'—', tags:[], lastContact:'Hoje, 11:05', responsible:'Camila Reis', avatarColor:'#E1306C',
+      customFields:[{label:'Valor de Lead', value:'R$ 800'}],
+      timeline:[{iconLabel:'C', iconBg:'var(--accent-soft)', iconColor:'#168CFF', text:'Conversa aberta no Instagram', date:'Hoje, 11:05'}],
+      relatedConversations:[{preview:'Vi o produto no feed, ainda tem em estoque?', date:'Hoje', channel:'Instagram', status:'Aberta', statusBg:'var(--blue-soft)', statusColor:'var(--blue-text)'}]},
+    {id:'f', name:'Ana Beatriz Rocha', phone:'+55 85 99456-1120', email:'ana.rocha@gmail.com', company:'—', tags:[], lastContact:'Ontem, 17:42', responsible:'Rafael Souza', avatarColor:'#8B5CF6',
+      customFields:[], timeline:[{iconLabel:'C', iconBg:'var(--accent-soft)', iconColor:'#168CFF', text:'Conversa resolvida', date:'Ontem, 17:42'}],
+      relatedConversations:[{preview:'Obrigada!', date:'Ontem', channel:'WhatsApp', status:'Resolvida', statusBg:'var(--slate-soft)', statusColor:'var(--slate-text)'}]},
+    {id:'g', name:'Roberta Dias', phone:'+55 51 99321-7654', email:'roberta.dias@diasconsultoria.com', company:'Dias Consultoria', tags:[TAGS.proposta], lastContact:'Hoje, 10:12', responsible:'Rafael Souza', avatarColor:'#F97316',
+      customFields:[{label:'Código ERP', value:'CRM-00901'},{label:'Valor de Lead', value:'R$ 5.400'}],
+      timeline:[{iconLabel:'K', iconBg:'var(--violet-soft)', iconColor:'var(--violet-text)', text:'Movido para Qualificação no funil Comercial', date:'18 ago, 15:40'}],
+      relatedConversations:[{preview:'Recebi a proposta, vou avaliar com o financeiro.', date:'Hoje', channel:'Webchat', status:'Pendente', statusBg:'var(--amber-soft)', statusColor:'var(--amber-text)'}]},
+    {id:'h', name:'Marcos Vinícius', phone:'+55 61 99887-3345', email:'marcos.v@mvtransportes.com', company:'MV Transportes', tags:[], lastContact:'8 ago, 09:00', responsible:'Rafael Souza', avatarColor:'var(--slate-text)',
+      customFields:[{label:'CNPJ', value:'44.555.666/0001-11'}],
+      timeline:[{iconLabel:'K', iconBg:'var(--violet-soft)', iconColor:'var(--violet-text)', text:'Movido para Fechado Perdido no funil Comercial', date:'8 ago, 09:00'}],
+      relatedConversations:[{preview:'Vamos seguir com outro fornecedor, obrigado.', date:'8 ago', channel:'WhatsApp', status:'Resolvida', statusBg:'var(--slate-soft)', statusColor:'var(--slate-text)'}]}
+  ];
+}
+
+class Component extends DCLogic {
+  state = {
+    contacts: makeContacts(),
+    search: '',
+    view: 'list',
+    selectedId: null,
+    detailTab: 'timeline',
+    importOpen: false,
+    importStep: 'mapping'
+  };
+  onOpenImport = () => this.setState({importOpen:true, importStep:'mapping'});
+  onCloseImport = () => this.setState({importOpen:false});
+  onStartImport = () => this.setState({importStep:'running'});
+
+  onSearchChange = (e) => this.setState({search: e.target.value});
+  onOpenContact(id){ return () => this.setState({view:'detail', selectedId:id, detailTab:'timeline'}); }
+  onBackToList = () => this.setState({view:'list'});
+  onTabTimeline = () => this.setState({detailTab:'timeline'});
+  onTabConversas = () => this.setState({detailTab:'conversas'});
+  stopProp = (e) => e.stopPropagation();
+
+  renderVals(){
+    const q = this.state.search.trim().toLowerCase();
+    let list = this.state.contacts;
+    if(q) list = list.filter(c => c.name.toLowerCase().includes(q) || c.phone.includes(q) || c.email.toLowerCase().includes(q));
+
+    const filteredContacts = list.map(c => ({
+      id:c.id, name:c.name, initials:initials(c.name), avatarColor:c.avatarColor,
+      phone:c.phone, email:c.email, company:c.company, tags:c.tags,
+      lastContact:c.lastContact, responsible:c.responsible,
+      onOpen: this.onOpenContact(c.id)
+    }));
+
+    const isListView = this.state.view === 'list';
+    const isDetailView = this.state.view === 'detail';
+    let detail = null;
+    if(isDetailView){
+      const c = this.state.contacts.find(x=>x.id===this.state.selectedId);
+      if(c){
+        detail = {
+          name:c.name, initials:initials(c.name), avatarColor:c.avatarColor,
+          company:c.company, phone:c.phone, email:c.email,
+          customFields:c.customFields, tags:c.tags,
+          timeline:c.timeline, relatedConversations:c.relatedConversations
+        };
+      }
+    }
+
+    const isTabTimeline = this.state.detailTab === 'timeline';
+    const isTabConversas = this.state.detailTab === 'conversas';
+
+    return {
+      topTitle: isDetailView && detail ? detail.name : 'Base de contatos',
+      search: this.state.search, onSearchChange: this.onSearchChange,
+      filteredContacts, stopProp: this.stopProp,
+      isListView, isDetailView, detail,
+      onBackToList: this.onBackToList,
+      onTabTimeline: this.onTabTimeline, onTabConversas: this.onTabConversas,
+      isTabTimeline, isTabConversas,
+      tabTimelineBg: isTabTimeline ? 'var(--accent-soft)' : 'transparent', tabTimelineColor: isTabTimeline ? '#168CFF' : 'var(--text-muted)',
+      tabConversasBg: isTabConversas ? 'var(--accent-soft)' : 'transparent', tabConversasColor: isTabConversas ? '#168CFF' : 'var(--text-muted)',
+      importOpen: this.state.importOpen,
+      importMapping: this.state.importStep==='mapping',
+      importRunning: this.state.importStep==='running',
+      onOpenImport: this.onOpenImport, onCloseImport: this.onCloseImport, onStartImport: this.onStartImport,
+      csvColumns: [
+        {csv:'nome_completo', sample:'Mariana Costa', field:'Nome', fieldColor:'var(--text)', border:'var(--border)', bg:'var(--surface)'},
+        {csv:'whatsapp', sample:'+55 11 98213-4470', field:'Telefone', fieldColor:'var(--text)', border:'var(--border)', bg:'var(--surface)'},
+        {csv:'e_mail', sample:'mariana@email.com', field:'Email', fieldColor:'var(--text)', border:'var(--border)', bg:'var(--surface)'},
+        {csv:'empresa', sample:'Estúdio MC', field:'Empresa', fieldColor:'var(--text)', border:'var(--border)', bg:'var(--surface)'},
+        {csv:'obs', sample:'cliente antigo', field:'Não importar', fieldColor:'var(--text-dim)', border:'var(--border)', bg:'var(--surface-2)'}
+      ]
+    };
+  }
+}
+
+</script>
+</body>
+</html>

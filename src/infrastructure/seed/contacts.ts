@@ -1,0 +1,231 @@
+import type { Contact } from '@/core/domain/contact';
+import { ACCOUNT_ID, LABEL } from './workspace';
+
+/**
+ * Dados de demonstracao portados do prototipo Claude Design.
+ * Substituir por um adaptador HTTP quando o backend existir (ver container.ts).
+ */
+export const CONTACTS: readonly Contact[] = [
+  {
+    id: 'ct-mariana',
+    accountId: ACCOUNT_ID,
+    name: 'Mariana Costa',
+    phone: '+5511982134470',
+    email: 'mariana.costa@email.com',
+    company: 'Estudio MC Fotografia',
+    channel: 'whatsapp',
+    avatarTone: 'var(--color-brand)',
+    location: 'São Paulo, SP',
+    timezone: 'GMT-3 · São Paulo',
+    ownerName: 'Rafael Souza',
+    lastContactLabel: 'Hoje, 09:20',
+    labels: [LABEL.vip, LABEL.recorrente],
+    customFields: [
+      { label: 'CPF', value: '123.456.789-00' },
+      { label: 'Código ERP', value: 'CRM-00214' },
+      { label: 'Valor de Lead', value: 'R$ 3.200' },
+      { label: 'Venc. Fatura', value: '05/09/2026' },
+    ],
+    timeline: [
+      {
+        id: 'tl-1',
+        type: 'conversa',
+        title: 'Conversa aberta no WhatsApp',
+        occurredAt: 'Hoje, 09:14',
+      },
+      {
+        id: 'tl-2',
+        type: 'funil',
+        title: 'Movido para etapa Novo Lead no funil Comercial',
+        occurredAt: '19 ago, 09:14',
+      },
+      {
+        id: 'tl-3',
+        type: 'nota',
+        title: 'Nota adicionada por Rafael Souza',
+        occurredAt: '12 jul, 14:00',
+      },
+    ],
+  },
+  {
+    id: 'ct-joao',
+    accountId: ACCOUNT_ID,
+    name: 'Joao Pedro Silva',
+    phone: '+5579998877665',
+    email: 'joao.pedro@jpdistribuidora.com.br',
+    company: 'JP Distribuidora',
+    channel: 'whatsapp',
+    avatarTone: 'var(--color-status-pending)',
+    location: 'Aracaju, SE',
+    timezone: 'GMT-3 · Aracaju',
+    ownerName: 'Camila Reis',
+    lastContactLabel: 'Hoje, 13:40',
+    labels: [LABEL.urgente],
+    customFields: [
+      { label: 'CNPJ', value: '12.345.678/0001-90' },
+      { label: 'Código ERP', value: 'CRM-00587' },
+      { label: 'Valor de Lead', value: '—' },
+      { label: 'Venc. Fatura', value: '18/08/2026' },
+    ],
+    timeline: [
+      {
+        id: 'tl-4',
+        type: 'conversa',
+        title: 'Conversa aberta no WhatsApp',
+        occurredAt: 'Hoje, 08:02',
+      },
+    ],
+  },
+  {
+    id: 'ct-fernanda',
+    accountId: ACCOUNT_ID,
+    name: 'Fernanda Lopes',
+    phone: '+5521998872231',
+    email: 'fernanda.lopes@gmail.com',
+    company: 'Fernanda Lopes Studio',
+    channel: 'webchat',
+    avatarTone: 'var(--color-webchat)',
+    location: 'Rio de Janeiro, RJ',
+    timezone: 'GMT-3 · Rio de Janeiro',
+    lastContactLabel: 'Hoje, 12:40',
+    labels: [LABEL.novo],
+    customFields: [
+      { label: 'CPF', value: '—' },
+      { label: 'Código ERP', value: '—' },
+    ],
+    timeline: [
+      {
+        id: 'tl-5',
+        type: 'conversa',
+        title: 'Conversa encerrada automaticamente pelo Agente IA',
+        occurredAt: 'Hoje, 12:40',
+      },
+    ],
+  },
+  {
+    id: 'ct-carlos',
+    accountId: ACCOUNT_ID,
+    name: 'Carlos Eduardo Nunes',
+    phone: '+5531987654321',
+    email: 'carlos.nunes@nunesengenharia.com',
+    company: 'Nunes Engenharia',
+    channel: 'whatsapp',
+    avatarTone: '#0E9F6E',
+    location: 'Belo Horizonte, MG',
+    timezone: 'GMT-3 · Belo Horizonte',
+    ownerName: 'Rafael Souza',
+    lastContactLabel: 'Ontem, 16:10',
+    labels: [LABEL.recorrente],
+    customFields: [
+      { label: 'CNPJ', value: '22.111.333/0001-55' },
+      { label: 'Código ERP', value: 'CRM-00098' },
+      { label: 'Valor de Lead', value: 'R$ 12.500' },
+    ],
+    timeline: [
+      {
+        id: 'tl-6',
+        type: 'funil',
+        title: 'Movido para Fechado Ganho no funil Comercial',
+        occurredAt: 'Ontem, 16:10',
+      },
+    ],
+  },
+  {
+    id: 'ct-pedro',
+    accountId: ACCOUNT_ID,
+    name: 'Pedro Henrique',
+    phone: '+5541991238890',
+    email: 'pedro.h@outlook.com',
+    channel: 'instagram',
+    avatarTone: 'var(--color-instagram)',
+    location: 'Curitiba, PR',
+    timezone: 'GMT-3 · Curitiba',
+    ownerName: 'Camila Reis',
+    lastContactLabel: 'Hoje, 11:05',
+    labels: [],
+    customFields: [{ label: 'Valor de Lead', value: 'R$ 800' }],
+    timeline: [
+      {
+        id: 'tl-7',
+        type: 'conversa',
+        title: 'Conversa aberta no Instagram',
+        occurredAt: 'Hoje, 11:05',
+      },
+    ],
+  },
+  {
+    id: 'ct-ana',
+    accountId: ACCOUNT_ID,
+    name: 'Ana Beatriz Rocha',
+    phone: '+5585994561120',
+    email: 'ana.rocha@gmail.com',
+    channel: 'whatsapp',
+    avatarTone: '#8B5CF6',
+    location: 'Fortaleza, CE',
+    timezone: 'GMT-3 · Fortaleza',
+    ownerName: 'Rafael Souza',
+    lastContactLabel: 'Ontem, 17:42',
+    labels: [],
+    customFields: [],
+    timeline: [
+      { id: 'tl-8', type: 'conversa', title: 'Conversa resolvida', occurredAt: 'Ontem, 17:42' },
+    ],
+  },
+  {
+    id: 'ct-roberta',
+    accountId: ACCOUNT_ID,
+    name: 'Roberta Dias',
+    phone: '+5551993217654',
+    email: 'roberta.dias@diasconsultoria.com',
+    company: 'Dias Consultoria',
+    channel: 'webchat',
+    avatarTone: '#F97316',
+    location: 'Porto Alegre, RS',
+    timezone: 'GMT-3 · Porto Alegre',
+    ownerName: 'Rafael Souza',
+    lastContactLabel: 'Hoje, 10:12',
+    labels: [LABEL.proposta],
+    customFields: [
+      { label: 'Código ERP', value: 'CRM-00901' },
+      { label: 'Valor de Lead', value: 'R$ 5.400' },
+    ],
+    timeline: [
+      {
+        id: 'tl-9',
+        type: 'funil',
+        title: 'Movido para Qualificação no funil Comercial',
+        occurredAt: '18 ago, 15:40',
+      },
+    ],
+  },
+  {
+    id: 'ct-marcos',
+    accountId: ACCOUNT_ID,
+    name: 'Marcos Vinicius',
+    phone: '+5561998873345',
+    email: 'marcos.v@mvtransportes.com',
+    company: 'MV Transportes',
+    channel: 'whatsapp',
+    avatarTone: 'var(--color-slate-text)',
+    location: 'Brasilia, DF',
+    timezone: 'GMT-3 · Brasilia',
+    ownerName: 'Rafael Souza',
+    lastContactLabel: '8 ago, 09:00',
+    labels: [],
+    customFields: [{ label: 'CNPJ', value: '44.555.666/0001-11' }],
+    timeline: [
+      {
+        id: 'tl-10',
+        type: 'funil',
+        title: 'Movido para Fechado Perdido no funil Comercial',
+        occurredAt: '8 ago, 09:00',
+      },
+    ],
+  },
+];
+
+export const contactById = (id: string): Contact => {
+  const contact = CONTACTS.find((item) => item.id === id);
+  if (!contact) throw new Error(`Contato de seed inexistente: ${id}`);
+  return contact;
+};

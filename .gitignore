@@ -1,0 +1,49 @@
+# dependências
+/node_modules
+/.pnp
+.pnp.*
+
+# build
+/.next/
+/out/
+/build
+next-env.d.ts.bak
+
+# ambiente — NUNCA versionar segredos
+.env
+.env.*
+!.env.example
+
+# logs e caches
+*.log
+npm-debug.log*
+.eslintcache
+*.tsbuildinfo
+
+# sistema operacional / editores
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# artefatos de teste
+/coverage
+/playwright-report
+/test-results
+
+# credenciais e sessões de WhatsApp
+/.sessions/
+
+
+# mídias do WhatsApp baixadas (conteúdo de conversas de clientes)
+/.media/
+
+# banco local de desenvolvimento (SQLite) e cliente gerado
+# Sem ancora de caminho: o arquivo nasce na raiz (DATABASE_URL="file:./dev.db")
+# e conteria hashes de senha dos usuarios de carga.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+/src/generated/

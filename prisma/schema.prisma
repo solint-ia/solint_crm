@@ -1,0 +1,442 @@
+// Esquema de persistência do Solint CRM.
+//
+// SQLite de propósito: é um arquivo local, não pede credencial nenhuma, e o
+// caminho para Supabase/Postgres depois é trocar o `provider` abaixo e rodar
+// uma migração. Duas restrições do SQLite moldaram o desenho:
+//
+//   1. Não há `enum`  -> todo estado de domínio é `String`, validado no domínio.
+//   2. Não há `Json`  -> agregados viram `String` com JSON dentro, sempre com
+//      sufixo `Json` no nome. Ao migrar para Postgres esses campos viram `Json`
+//      nativo; é uma troca mecânica, campo a campo.
+//
+// A regra de corte entre coluna relacional e coluna JSON: **é relacional o que
+// se consulta, filtra ou escreve individualmente**. É JSON o agregado que só é
+// lido e gravado inteiro (o horário comercial de uma caixa, as regras de
+// transferência de um agente, o histórico de um card). Normalizar esses
+// últimos criaria dez tabelas que nenhuma consulta jamais tocaria sozinhas.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+// O Prisma 7 tirou a `url` daqui: a conexão vem de `prisma.config.ts` (CLI) e
+// do adaptador passado ao `PrismaClient` (runtime).
+datasource db {
+  provider = "sqlite"
+}
+
+// ---------------------------------------------------------------- conta e acesso
+
+model Account {
+  id       String  @id
+  name     String
+  plan     String
+  document String?
+
+  createdAt DateTime @default(now())
+
+  users         User[]
+  roles         Role[]
+  labels        Label[]
+  contacts      Contact[]
+  conversations Conversation[]
+  pipelines     Pipeline[]
+  deals         Deal[]
+  aiAgents      AiAgent[]
+  notifications Notification[]
+  automations   Automation[]
+  connections   ChannelConnection[]
+  categories    KnowledgeCategory[]
+  articles      KnowledgeArticle[]
+  settings      AccountSettings?
+}
+
+model User {
+  id        String  @id
+  accountId String
+  name      String
+  /// Identidade de login. Guardado em minúsculas para a busca ser case-insensitive.
+  email     String  @unique
+  /// `scrypt` com sal por usuário. A senha em claro nunca é gravada nem logada.
+  passwordHash String
+  roleSlug     String
+  avatarTone   String
+  availability String  @default("disponivel")
+  /// JSON: string[]
+  teamsJson    String  @default("[]")
+  signature    String?
+  twoFactorEnabled Boolean @default(false)
+  lastActiveAt String?
+
+  createdAt DateTime @default(now())
+
+  account       Account        @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  authSessions  AuthSession[]
+  conversations Conversation[]
+  notifications Notification[]
+
+  @@index([accountId])
+}
+
+/// Sessão emitida. Existe para que "sair de todas as sessões" seja possível:
+/// um JWT sem registro é irrevogável até expirar.
+model AuthSession {
+  id        String    @id @default(cuid())
+  userId    String
+  /// `jti` do token. É o que a verificação confere contra a revogação.
+  tokenId   String    @unique
+  userAgent String?
+  ip        String?
+  createdAt DateTime  @default(now())
+  expiresAt DateTime
+  revokedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Role {
+  id          String  @id
+  accountId   String
+  slug        String
+  name        String
+  description String
+  /// JSON: Permission[]
+  permissionsJson String
+  isSystem    Boolean @default(false)
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, slug])
+}
+
+// ---------------------------------------------------------------- etiquetas
+
+model Label {
+  id          String  @id
+  accountId   String
+  name        String
+  tone        String
+  description String?
+  usageCount  Int?
+
+  account       Account        @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  contacts      Contact[]      @relation("ContactLabels")
+  conversations Conversation[] @relation("ConversationLabels")
+
+  @@index([accountId])
+}
+
+// ---------------------------------------------------------------- contatos
+
+model Contact {
+  id        String  @id
+  accountId String
+  name      String
+  /// E.164. Vazio quando `kind = grupo` — um grupo não tem telefone próprio.
+  phone     String
+  email     String?
+  company   String?
+  channel   String
+  avatarTone String
+  location  String?
+  timezone  String?
+  ownerName String?
+  lastContactAt    String?
+  lastContactLabel String?
+  /// JSON: CustomField[]
+  customFieldsJson String @default("[]")
+  notes     String?
+  /// JSON: TimelineEvent[]
+  timelineJson String?
+  kind      String? @default("pessoa")
+  avatarUrl String?
+  participantCount Int?
+
+  account       Account        @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  labels        Label[]        @relation("ContactLabels")
+  conversations Conversation[]
+
+  @@index([accountId])
+}
+
+// ---------------------------------------------------------------- conversas
+
+model Conversation {
+  id        String  @id
+  accountId String
+  contactId String
+  channel   String
+  inboxId   String
+  queue     String
+  status    String
+  statusLabel String
+  priority  String
+  assigneeId   String?
+  assigneeName String?
+  unreadCount  Int    @default(0)
+  lastMessagePreview String @default("")
+  /// Rótulo de exibição ("14:32"). Nunca use para ordenar.
+  lastMessageAt      String @default("")
+  /// Instante real da última atividade — a única fonte de ordenação.
+  lastActivityAt     DateTime?
+  /// JSON: Protocol[]
+  protocolsJson      String @default("[]")
+  slaDeadlineAt      String?
+  slaLabel           String?
+  slaBreached        Boolean?
+  isTyping           Boolean?
+  collisionAgent     String?
+  lastInboundAt      String?
+  channelOffline     Boolean?
+  /// JID do WhatsApp. É o destino canônico de envio.
+  channelThreadId    String?
+
+  account  Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  contact  Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  assignee User?     @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
+  labels   Label[]   @relation("ConversationLabels")
+  messages Message[]
+
+  @@index([accountId, lastActivityAt])
+  @@index([contactId])
+}
+
+model Message {
+  id             String  @id
+  conversationId String
+  author         String
+  authorName     String?
+  /// Tipo do conteúdo, duplicado fora do JSON para permitir consulta por mídia.
+  contentType    String
+  /// JSON: MessageContent
+  contentJson    String
+  /// Rótulo de exibição ("14:32").
+  time           String
+  /// Instante real. É daqui que saem os divisores de dia da timeline.
+  createdAt      DateTime @default(now())
+  deliveryStatus String?
+  isPrivate      Boolean  @default(false)
+  replyToId      String?
+  externalId     String?
+  origin         String?
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@index([externalId])
+}
+
+// ---------------------------------------------------------------- funil
+
+model Pipeline {
+  id        String @id
+  accountId String
+  name      String
+
+  account Account         @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  stages  PipelineStage[]
+  deals   Deal[]
+
+  @@index([accountId])
+}
+
+model PipelineStage {
+  id         String  @id
+  pipelineId String
+  name       String
+  order      Int
+  color      String
+  isWon      Boolean @default(false)
+  isLost     Boolean @default(false)
+
+  pipeline Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  deals    Deal[]
+
+  @@index([pipelineId])
+}
+
+model Deal {
+  id         String  @id
+  accountId  String
+  pipelineId String
+  stageId    String
+  contactId  String?
+  contactName String
+  company    String?
+  /// Centavos. Dinheiro nunca é float.
+  amountInCents Int
+  ownerName  String
+  priority   String
+  enteredStageAt String
+  stageAgeLabel  String
+  nextAction     String
+  conversationId String?
+  /// JSON: DealHistoryEntry[]
+  historyJson    String @default("[]")
+
+  account  Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  pipeline Pipeline      @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  stage    PipelineStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, pipelineId])
+  @@index([stageId])
+}
+
+// ---------------------------------------------------------------- agentes de IA
+
+model AiAgent {
+  id        String  @id
+  accountId String
+  name      String
+  scope     String
+  active    Boolean @default(false)
+  persona   String
+  systemPrompt String
+  model     String
+  handledCount Int   @default(0)
+  transferRate String
+  /// JSON: KnowledgeDocument[]
+  knowledgeBaseJson String @default("[]")
+  /// JSON: TransferRule[]
+  transferRulesJson String @default("[]")
+  /// JSON: AgentFlowBlock[]
+  flowJson          String @default("[]")
+  /// JSON: AiAgentLog[]
+  logsJson          String @default("[]")
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+}
+
+// ---------------------------------------------------------------- notificações
+
+model Notification {
+  id        String  @id
+  accountId String
+  /// Nulo = aviso da conta inteira, visível para todos os agentes.
+  userId    String?
+  kind      String
+  text      String
+  timeLabel String
+  read      Boolean @default(false)
+  href      String?
+  createdAt DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, userId])
+}
+
+// ---------------------------------------------------------------- configurações
+
+model Automation {
+  id        String  @id
+  accountId String
+  name      String
+  trigger   String
+  /// JSON: AutomationCondition[]
+  conditionsJson String @default("[]")
+  /// JSON: AutomationAction[]
+  actionsJson    String @default("[]")
+  enabled   Boolean @default(true)
+  /// Decide quem vence um conflito de sobrescrita.
+  order     Int
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, order])
+}
+
+model ChannelConnection {
+  id         String  @id
+  accountId  String
+  name       String
+  channel    String
+  identifier String
+  status     String
+  provider   String
+  /// JSON: BusinessHours
+  businessHoursJson String
+  /// JSON: AutoReply
+  awayMessageJson   String
+  /// JSON: AutoReply
+  greetingJson      String
+  webhookUrl String?
+  teamName   String?
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+}
+
+model KnowledgeCategory {
+  id          String @id
+  accountId   String
+  name        String
+  description String
+  order       Int
+
+  account  Account            @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  articles KnowledgeArticle[]
+
+  @@index([accountId])
+}
+
+model KnowledgeArticle {
+  id         String @id
+  accountId  String
+  categoryId String
+  title      String
+  slug       String
+  excerpt    String
+  content    String
+  status     String
+  updatedLabel String
+  authorName String
+  views      Int @default(0)
+  helpful    Int @default(0)
+  notHelpful Int @default(0)
+  /// JSON: string[]
+  tagsJson   String @default("[]")
+
+  account  Account           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  category KnowledgeCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@index([accountId, categoryId])
+}
+
+/// Resto das configurações da conta.
+///
+/// Uma linha por conta, com agregados em JSON. Estes campos são lidos inteiros
+/// e — com exceção de `assignmentMethod` — nunca escritos pela aplicação hoje.
+/// Normalizá-los em dez tabelas seria burocracia sem consulta que a justifique;
+/// quando algum deles ganhar escrita individual, vira tabela.
+model AccountSettings {
+  accountId String @id
+  assignmentMethod String @default("round_robin")
+  /// JSON: Macro[]
+  macrosJson           String @default("[]")
+  /// JSON: CannedResponse[]
+  cannedResponsesJson  String @default("[]")
+  /// JSON: Webhook[]
+  webhooksJson         String @default("[]")
+  /// JSON: ApiToken[]
+  apiTokensJson        String @default("[]")
+  /// JSON: Team[]
+  teamsJson            String @default("[]")
+  /// JSON: CustomAttributeDefinition[]
+  customAttributesJson String @default("[]")
+  /// JSON: BillingInfo
+  billingJson          String
+  /// JSON: AuditLogEntry[]
+  auditLogJson         String @default("[]")
+  /// JSON: ActiveSession[]
+  activeSessionsJson   String @default("[]")
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+}

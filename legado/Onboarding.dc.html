@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --app-bg:#F4F7FB;
+    --chat-bg:#EEF2F7;
+    --surface:#FFFFFF;
+    --surface-2:#F7F9FC;
+    --border:#E5E9F0;
+    --border-soft:#EEF1F5;
+    --text:#0A1424;
+    --text-muted:#5B6472;
+    --text-dim:#8B95A5;
+    --toggle-off:#D7DEE8;
+    --accent-soft:#E8F3FF;
+    --accent-soft-text:#0A2540;
+    --selected-bg:#EFF6FF;
+    --accent-border:#B7D9FF;
+    --note-bg:#FFFBEB;
+    --note-border:#FCD34D;
+    --note-text:#7C4A08;
+    --note-meta:#B08340;
+    --amber-soft:#FEF3C7;
+    --amber-text:#B45309;
+    --green-soft:#E8F9EE;
+    --green-text:#0E803C;
+    --green-border:#A7E3C0;
+    --red-soft:#FEE2E2;
+    --red-text:#B91C1C;
+    --red-border:#FCA5A5;
+    --violet-soft:#EDE9FE;
+    --violet-text:#6D28D9;
+    --blue-soft:#E0F2FE;
+    --blue-text:#0369A1;
+    --cyan-soft:#E0F7FF;
+    --cyan-text:#054452;
+    --cyan-border:#B7E9FF;
+    --slate-soft:#F1F5F9;
+    --slate-text:#475569;
+    --pink-soft:#FCE7F0;
+    --pink-text:#BE1857;
+    --indigo-soft:#EEEDFD;
+    --indigo-text:#4C46C4;
+    --accent-soft-meta:#5B85AE;
+  }
+  :root[data-theme="dark"]{
+    --app-bg:#050A14;
+    --chat-bg:#050A14;
+    --surface:#0D121A;
+    --surface-2:#141A24;
+    --border:rgba(255,255,255,0.08);
+    --border-soft:rgba(255,255,255,0.05);
+    --text:#FAFCFF;
+    --text-muted:#A3AEBD;
+    --text-dim:#7C8899;
+    --toggle-off:#2A3442;
+    --accent-soft:#0E335C;
+    --accent-soft-text:#DCEBFF;
+    --accent-soft-meta:#9CC3EE;
+    --selected-bg:#141A24;
+    --accent-border:rgba(53,217,255,0.28);
+    --note-bg:#1E1A11;
+    --note-border:rgba(255,182,92,0.4);
+    --note-text:#FFD9A0;
+    --note-meta:#C9A46A;
+    --amber-soft:rgba(255,182,92,0.16);
+    --amber-text:#FFB65C;
+    --green-soft:rgba(16,185,129,0.16);
+    --green-text:#34D399;
+    --green-border:rgba(16,185,129,0.35);
+    --red-soft:rgba(239,68,68,0.16);
+    --red-text:#FCA5A5;
+    --red-border:rgba(239,68,68,0.4);
+    --violet-soft:rgba(139,92,246,0.18);
+    --violet-text:#C4B5FD;
+    --blue-soft:rgba(56,152,236,0.2);
+    --blue-text:#7DD3FC;
+    --cyan-soft:#0A2C38;
+    --cyan-text:#7FE7FF;
+    --cyan-border:rgba(53,217,255,0.3);
+    --slate-soft:rgba(255,255,255,0.07);
+    --slate-text:#A3AEBD;
+    --pink-soft:rgba(225,48,108,0.18);
+    --pink-text:#F9A8D4;
+    --indigo-soft:rgba(99,102,241,0.2);
+    --indigo-text:#C7D2FE;
+  }
+  html,body{background:var(--app-bg);color:var(--text);}
+  ::-webkit-scrollbar-thumb{background:var(--toggle-off);}
+  a{color:#168CFF;}
+  a:hover{color:#35D9FF;}
+  html,body{margin:0;padding:0;height:100%;}
+  *{box-sizing:border-box;}
+  input::placeholder, textarea::placeholder{color:var(--text-dim);}
+</style>
+<script>
+(function(){
+  try{ var t = localStorage.getItem("solint-theme"); if(t) document.documentElement.dataset.theme = t; }catch(e){}
+  if(!window.__solintThemeBound){
+    window.__solintThemeBound = true;
+    document.addEventListener("click", function(e){
+      var el = e.target && e.target.closest ? e.target.closest("[data-theme-toggle]") : null;
+      if(!el) return;
+      var root = document.documentElement;
+      var next = root.dataset.theme === "dark" ? "light" : "dark";
+      root.dataset.theme = next;
+      try{ localStorage.setItem("solint-theme", next); }catch(err){}
+    });
+  }
+})();
+</script>
+</helmet>
+
+<div style="width:100vw;min-height:100vh;background:var(--app-bg);font-family:'Inter',sans-serif;color:var(--text);display:flex;flex-direction:column;align-items:center;padding:40px 24px;">
+
+  <div style="display:flex;align-items:center;gap:9px;margin-bottom:34px;">
+    <div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(100deg,#174EFF 0%,#168CFF 52%,#35D9FF 100%);display:flex;align-items:center;justify-content:center;color:var(--surface);font-family:Sora;font-weight:700;font-size:15px;">S</div>
+    <span style="font-family:Sora;font-weight:700;font-size:17px;">Solint CRM</span>
+  </div>
+
+  <!-- STEPPER -->
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:30px;width:640px;max-width:100%;">
+    <sc-for list="{{ steps }}" as="s" hint-placeholder-count="4">
+      <div style="display:flex;align-items:center;gap:8px;flex:1;">
+        <span style="width:28px;height:28px;border-radius:50%;background:{{ s.circleBg }};color:{{ s.circleColor }};display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex:none;border:1.5px solid {{ s.circleBorder }};">{{ s.n }}</span>
+        <span style="font-size:12px;font-weight:600;color:{{ s.labelColor }};white-space:nowrap;">{{ s.label }}</span>
+        <sc-if value="{{ s.showLine }}" hint-placeholder-val="{{ true }}">
+          <div style="flex:1;height:2px;background:{{ s.lineColor }};border-radius:1px;"></div>
+        </sc-if>
+      </div>
+    </sc-for>
+  </div>
+
+  <div style="width:640px;max-width:100%;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:30px 34px;">
+
+    <sc-if value="{{ isStep1 }}" hint-placeholder-val="{{ true }}">
+      <div style="font-family:Sora;font-weight:600;font-size:18px;margin-bottom:4px;">Sobre a sua empresa</div>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:22px;">Essas informações aparecem para seus clientes e nos relatórios.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:5px;">Nome da empresa</label>
+          <input value="Solint Demo" readonly style="width:100%;height:40px;border-radius:8px;border:1px solid var(--border);padding:0 12px;font-size:13px;outline:none;"/>
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:5px;">Segmento</label>
+          <div style="display:flex;align-items:center;justify-content:space-between;height:40px;border-radius:8px;border:1px solid var(--border);padding:0 12px;font-size:13px;color:var(--text);">Serviços <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"></path></svg></div>
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:5px;">Tamanho da equipe</label>
+          <div style="display:flex;align-items:center;justify-content:space-between;height:40px;border-radius:8px;border:1px solid var(--border);padding:0 12px;font-size:13px;color:var(--text);">2 a 10 pessoas <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"></path></svg></div>
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:5px;">Fuso horário</label>
+          <div style="display:flex;align-items:center;justify-content:space-between;height:40px;border-radius:8px;border:1px solid var(--border);padding:0 12px;font-size:13px;color:var(--text);">GMT-3 · São Paulo <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"></path></svg></div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isStep2 }}" hint-placeholder-val="{{ false }}">
+      <div style="font-family:Sora;font-weight:600;font-size:18px;margin-bottom:4px;">Conecte seu primeiro canal</div>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:22px;">Você pode conectar outros canais depois, em Configurações.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <sc-for list="{{ channelOptions }}" as="c" hint-placeholder-count="4">
+          <label style="display:flex;align-items:center;gap:11px;border:1px solid {{ c.border }};background:{{ c.bg }};border-radius:10px;padding:14px;cursor:pointer;">
+            <input type="radio" checked="{{ c.checked }}" onChange="{{ c.onSelect }}"/>
+            <div style="width:32px;height:32px;border-radius:8px;background:{{ c.iconBg }};color:{{ c.iconColor }};display:flex;align-items:center;justify-content:center;font-family:Sora;font-weight:700;font-size:12px;flex:none;">{{ c.icon }}</div>
+            <div>
+              <div style="font-size:13px;font-weight:600;">{{ c.name }}</div>
+              <div style="font-size:11px;color:var(--text-dim);">{{ c.desc }}</div>
+            </div>
+          </label>
+        </sc-for>
+      </div>
+      <sc-if value="{{ showQr }}" hint-placeholder-val="{{ false }}">
+        <div style="margin-top:18px;border:1px dashed var(--toggle-off);border-radius:10px;padding:18px;display:flex;align-items:center;gap:18px;">
+          <div style="width:110px;height:110px;border-radius:8px;background:repeating-conic-gradient(var(--text) 0% 25%, var(--surface) 0% 50%);background-size:14px 14px;flex:none;border:6px solid var(--surface);outline:1px solid var(--border);"></div>
+          <div>
+            <div style="font-size:13px;font-weight:600;margin-bottom:4px;">Escaneie com o WhatsApp do número da empresa</div>
+            <div style="font-size:12px;color:var(--text-muted);line-height:1.5;">Abra o WhatsApp → Aparelhos conectados → Conectar um aparelho. O QR Code expira em <span style="font-family:'JetBrains Mono',monospace;color:var(--text);">0:48</span>.</div>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:8px;">
+              <span style="width:8px;height:8px;border-radius:50%;background:#FFB65C;"></span>
+              <span style="font-size:12px;font-weight:600;color:var(--amber-text);">Aguardando pareamento...</span>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+    </sc-if>
+
+    <sc-if value="{{ isStep3 }}" hint-placeholder-val="{{ false }}">
+      <div style="font-family:Sora;font-weight:600;font-size:18px;margin-bottom:4px;">Convide sua equipe</div>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:22px;">Adicione os emails separados por vírgula. Você pode pular esta etapa.</div>
+      <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:5px;">Emails</label>
+      <textarea rows="3" placeholder="camila@empresa.com, diego@empresa.com" style="width:100%;border-radius:8px;border:1px solid var(--border);padding:10px 12px;font-size:13px;font-family:Inter;outline:none;resize:none;margin-bottom:14px;"></textarea>
+      <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:5px;">Papel dos convidados</label>
+      <div style="display:flex;align-items:center;justify-content:space-between;height:40px;width:240px;border-radius:8px;border:1px solid var(--border);padding:0 12px;font-size:13px;color:var(--text);">Agente <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8B95A5" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"></path></svg></div>
+    </sc-if>
+
+    <sc-if value="{{ isStep4 }}" hint-placeholder-val="{{ false }}">
+      <div style="text-align:center;padding:16px 0;">
+        <div style="width:64px;height:64px;border-radius:50%;background:var(--green-soft);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#0E803C" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"></path></svg>
+        </div>
+        <div style="font-family:Sora;font-weight:600;font-size:20px;margin-bottom:6px;">Tudo pronto!</div>
+        <div style="font-size:13.5px;color:var(--text-muted);line-height:1.6;max-width:380px;margin:0 auto 22px;">Sua conta está configurada. Conecte-se com seus clientes e comece a atender agora mesmo.</div>
+        <a href="Conversas.dc.html" style="display:inline-flex;align-items:center;justify-content:center;height:44px;padding:0 26px;border-radius:9px;background:linear-gradient(100deg,#174EFF 0%,#168CFF 52%,#35D9FF 100%);color:var(--surface);font-size:14px;font-weight:600;text-decoration:none;">Ir para a caixa de entrada</a>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ showNav }}" hint-placeholder-val="{{ true }}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:26px;padding-top:20px;border-top:1px solid var(--border-soft);">
+        <button onClick="{{ onSkip }}" style="border:none;background:transparent;color:var(--text-dim);font-size:12.5px;font-weight:600;cursor:pointer;">Pular esta etapa</button>
+        <div style="display:flex;gap:8px;">
+          <sc-if value="{{ canGoBack }}" hint-placeholder-val="{{ false }}">
+            <button onClick="{{ onPrev }}" style="border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:9px 18px;font-size:12.5px;font-weight:600;color:var(--text);cursor:pointer;">Voltar</button>
+          </sc-if>
+          <button onClick="{{ onNext }}" style="border:none;background:#168CFF;border-radius:8px;padding:9px 20px;font-size:12.5px;font-weight:600;color:var(--surface);cursor:pointer;">Continuar</button>
+        </div>
+      </div>
+    </sc-if>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { step:1, channel:'wa-qr' };
+
+  onNext = () => this.setState(s => ({step: Math.min(4, s.step+1)}));
+  onPrev = () => this.setState(s => ({step: Math.max(1, s.step-1)}));
+  onSkip = () => this.setState(s => ({step: Math.min(4, s.step+1)}));
+  setChannel(id){ return () => this.setState({channel:id}); }
+
+  renderVals(){
+    const defs = [{n:1,label:'Empresa'},{n:2,label:'Canal'},{n:3,label:'Equipe'},{n:4,label:'Conclusão'}];
+    const steps = defs.map(s => {
+      const active = this.state.step===s.n;
+      const done = this.state.step>s.n;
+      return {
+        n: done ? '✓' : String(s.n), label:s.label,
+        circleBg: active ? '#168CFF' : (done ? 'var(--green-soft)' : 'var(--surface)'),
+        circleColor: active ? 'var(--surface)' : (done ? 'var(--green-text)' : 'var(--text-dim)'),
+        circleBorder: active ? '#168CFF' : (done ? 'var(--green-border)' : 'var(--border)'),
+        labelColor: active ? 'var(--text)' : 'var(--text-dim)',
+        lineColor: done ? 'var(--green-border)' : 'var(--border-soft)',
+        showLine: s.n < 4
+      };
+    });
+
+    const chDefs = [
+      {id:'wa-qr', name:'WhatsApp via QR Code', desc:'Rápido, usa o app do celular', icon:'W', iconBg:'var(--green-soft)', iconColor:'var(--green-text)'},
+      {id:'wa-api', name:'WhatsApp API oficial', desc:'Cloud API / BSP, mais estável', icon:'W', iconBg:'var(--green-soft)', iconColor:'var(--green-text)'},
+      {id:'instagram', name:'Instagram Direct', desc:'Mensagens do seu perfil', icon:'IG', iconBg:'var(--pink-soft)', iconColor:'var(--pink-text)'},
+      {id:'webchat', name:'Webchat no site', desc:'Widget para seu site', icon:'WC', iconBg:'var(--indigo-soft)', iconColor:'var(--indigo-text)'}
+    ];
+    const channelOptions = chDefs.map(c => ({
+      ...c, checked: this.state.channel===c.id,
+      bg: this.state.channel===c.id ? 'var(--selected-bg)' : 'var(--surface)',
+      border: this.state.channel===c.id ? '#168CFF' : 'var(--border)',
+      onSelect: this.setChannel(c.id)
+    }));
+
+    return {
+      steps, channelOptions,
+      isStep1: this.state.step===1, isStep2: this.state.step===2,
+      isStep3: this.state.step===3, isStep4: this.state.step===4,
+      showQr: this.state.step===2 && this.state.channel==='wa-qr',
+      showNav: this.state.step<4, canGoBack: this.state.step>1,
+      onNext: this.onNext, onPrev: this.onPrev, onSkip: this.onSkip
+    };
+  }
+}
+
+</script>
+</body>
+</html>
