@@ -82,9 +82,9 @@ export function ChatPanel({
     : PhoneNumber.format(conversation.contact.phone) || 'Sem telefone';
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col bg-[#0b101e] h-full overflow-hidden">
+    <section className="flex min-w-0 flex-1 flex-col bg-chat h-full overflow-hidden">
       {/* ---------- Cabeçalho Fixo da Conversa ---------- */}
-      <header className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-white/[0.06] bg-[#0d1424] px-3 sm:px-4 py-2 z-10 shadow-xs">
+      <header className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-line bg-surface px-3 sm:px-4 py-2 z-10 shadow-xs">
         {/* Lado Esquerdo: Identificação do Contato (Truncamento Seguro) */}
         <div className="flex items-center gap-2.5 min-w-0 max-w-[48%] sm:max-w-[58%]">
           {onBack && (
@@ -92,7 +92,7 @@ export function ChatPanel({
               type="button"
               onClick={onBack}
               aria-label="Voltar para a lista de conversas"
-              className="-ml-1 flex size-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/[0.06] hover:text-white lg:hidden"
+              className="-ml-1 flex size-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-ink lg:hidden"
             >
               <ArrowLeft className="size-4" />
             </button>
@@ -103,7 +103,7 @@ export function ChatPanel({
             type="button"
             onClick={onToggleContext}
             title={isContextOpen ? 'Recolher detalhes do contato' : 'Ver detalhes do contato'}
-            className="group flex items-center gap-2.5 text-left min-w-0 rounded-lg p-1 -m-1 transition-colors hover:bg-white/[0.04]"
+            className="group flex items-center gap-2.5 text-left min-w-0 rounded-lg p-1 -m-1 transition-colors hover:bg-surface-2"
           >
             <div className="relative shrink-0">
               <Avatar
@@ -115,18 +115,18 @@ export function ChatPanel({
             </div>
             <div className="min-w-0 flex flex-col justify-center">
               <div className="flex items-center gap-1.5 min-w-0">
-                <h2 className="truncate font-display text-xs sm:text-sm font-semibold text-slate-100 group-hover:text-blue-400 transition-colors">
+                <h2 className="truncate font-display text-xs sm:text-sm font-semibold text-ink group-hover:text-brand transition-colors">
                   {conversation.contact.name}
                 </h2>
                 <ChannelBadge channel={conversation.channel} />
                 {isGroup && (
-                  <span className="flex items-center gap-1 rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-semibold text-slate-300">
+                  <span className="flex items-center gap-1 rounded-md bg-surface-2 border border-line-soft px-1.5 py-0.5 text-[10px] font-semibold text-muted">
                     <Users className="size-3" />
                     Grupo
                   </span>
                 )}
               </div>
-              <p className="truncate font-mono text-[11px] text-slate-400 leading-tight mt-0.5">
+              <p className="truncate font-mono text-[11px] text-muted leading-tight mt-0.5">
                 {identity} · {conversation.queue}
               </p>
             </div>
@@ -158,11 +158,11 @@ export function ChatPanel({
                 disabled={conversation.status === 'espera'}
                 title="Colocar atendimento em espera"
                 className={cn(
-                  'hidden md:inline-flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.03] px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-all hover:bg-white/[0.08] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed',
-                  conversation.status === 'espera' && 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+                  'hidden md:inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-ink transition-all hover:bg-surface-2 disabled:opacity-40 disabled:cursor-not-allowed',
+                  conversation.status === 'espera' && 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-300 font-semibold',
                 )}
               >
-                <PauseCircle className="size-3.5 text-amber-400" />
+                <PauseCircle className="size-3.5 text-amber-500" />
                 <span>Em espera</span>
               </button>
 
@@ -172,11 +172,11 @@ export function ChatPanel({
                 disabled={conversation.status === 'pendente'}
                 title="Marcar como pendente"
                 className={cn(
-                  'hidden md:inline-flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.03] px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-all hover:bg-white/[0.08] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed',
-                  conversation.status === 'pendente' && 'border-sky-500/30 bg-sky-500/10 text-sky-300',
+                  'hidden md:inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-ink transition-all hover:bg-surface-2 disabled:opacity-40 disabled:cursor-not-allowed',
+                  conversation.status === 'pendente' && 'border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-300 font-semibold',
                 )}
               >
-                <Clock className="size-3.5 text-sky-400" />
+                <Clock className="size-3.5 text-sky-500" />
                 <span>Pendente</span>
               </button>
 
@@ -185,7 +185,7 @@ export function ChatPanel({
                 <Menu
                   label="Mais ações da conversa"
                   trigger={
-                    <span className="flex size-8 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.03] text-slate-400 hover:bg-white/[0.08] hover:text-white transition-colors">
+                    <span className="flex size-8 items-center justify-center rounded-lg border border-line bg-surface text-muted hover:bg-surface-2 hover:text-ink transition-colors">
                       <MoreVertical className="size-4" />
                     </span>
                   }
@@ -199,7 +199,7 @@ export function ChatPanel({
                           close();
                         }}
                       >
-                        <PauseCircle className="size-3.5 text-amber-400" />
+                        <PauseCircle className="size-3.5 text-amber-500" />
                         <span>Colocar em espera</span>
                       </MenuItem>
                       <MenuItem
@@ -208,7 +208,7 @@ export function ChatPanel({
                           close();
                         }}
                       >
-                        <Clock className="size-3.5 text-sky-400" />
+                        <Clock className="size-3.5 text-sky-500" />
                         <span>Marcar como pendente</span>
                       </MenuItem>
                       <MenuItem
@@ -217,7 +217,7 @@ export function ChatPanel({
                           close();
                         }}
                       >
-                        <UserCheck className="size-3.5 text-blue-400" />
+                        <UserCheck className="size-3.5 text-brand" />
                         <span>Transferir responsável</span>
                       </MenuItem>
                     </>
@@ -231,7 +231,7 @@ export function ChatPanel({
               <Menu
                 label="Mais opções da conversa"
                 trigger={
-                  <span className="flex size-8 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.03] text-slate-400 hover:bg-white/[0.08] hover:text-white transition-colors">
+                  <span className="flex size-8 items-center justify-center rounded-lg border border-line bg-surface text-muted hover:bg-surface-2 hover:text-ink transition-colors">
                     <MoreVertical className="size-4" />
                   </span>
                 }
@@ -245,7 +245,7 @@ export function ChatPanel({
                         close();
                       }}
                     >
-                      <PauseCircle className="size-3.5 text-amber-400" />
+                      <PauseCircle className="size-3.5 text-amber-500" />
                       <span>Colocar em espera</span>
                     </MenuItem>
                     <MenuItem
@@ -254,7 +254,7 @@ export function ChatPanel({
                         close();
                       }}
                     >
-                      <Clock className="size-3.5 text-sky-400" />
+                      <Clock className="size-3.5 text-sky-500" />
                       <span>Marcar como pendente</span>
                     </MenuItem>
                     <MenuItem
@@ -263,7 +263,7 @@ export function ChatPanel({
                         close();
                       }}
                     >
-                      <UserCheck className="size-3.5 text-blue-400" />
+                      <UserCheck className="size-3.5 text-brand" />
                       <span>Transferir responsável</span>
                     </MenuItem>
                   </>
@@ -279,7 +279,7 @@ export function ChatPanel({
             disabled={conversation.status === 'resolvida'}
             title="Finalizar e resolver atendimento"
             className={cn(
-              'inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-white shadow-sm shadow-emerald-600/25 transition-all hover:bg-emerald-500 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed',
+              'inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-white shadow-xs shadow-emerald-600/25 transition-all hover:bg-emerald-500 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed',
             )}
           >
             <CheckCircle2 className="size-3.5 shrink-0" />
@@ -297,8 +297,8 @@ export function ChatPanel({
               className={cn(
                 'flex size-8 shrink-0 items-center justify-center rounded-lg border transition-all',
                 isContextOpen
-                  ? 'border-blue-500/40 bg-blue-500/15 text-blue-400 shadow-sm'
-                  : 'border-white/[0.08] bg-white/[0.03] text-slate-400 hover:bg-white/[0.08] hover:text-white',
+                  ? 'border-brand/40 bg-brand/12 text-brand shadow-xs'
+                  : 'border-line bg-surface text-muted hover:bg-surface-2 hover:text-ink',
               )}
             >
               {isContextOpen ? (
@@ -313,12 +313,12 @@ export function ChatPanel({
 
       {/* Alertas contextuais */}
       {conversation.channelOffline && (
-        <div className="flex items-center gap-2 bg-red-950/60 border-b border-red-800/40 px-4 py-2 text-xs text-red-300">
-          <PlugZap className="size-3.5 shrink-0 text-red-400" />
+        <div className="flex items-center gap-2 bg-red-500/10 border-b border-red-500/20 px-4 py-2 text-xs text-red-600 dark:text-red-300">
+          <PlugZap className="size-3.5 shrink-0 text-red-500" />
           <span>Canal desconectado: as mensagens não serão entregues até a reconexão.</span>
           <Link
             href="/configuracoes?secao=integracoes"
-            className="ml-auto font-semibold text-red-200 underline hover:no-underline"
+            className="ml-auto font-semibold text-red-600 dark:text-red-200 underline hover:no-underline"
           >
             Reconectar
           </Link>
@@ -326,8 +326,8 @@ export function ChatPanel({
       )}
 
       {conversation.collisionAgent && (
-        <div className="flex items-center gap-2 bg-amber-950/60 border-b border-amber-800/40 px-4 py-2 text-xs text-amber-300">
-          <Eye className="size-3.5 shrink-0 text-amber-400" />
+        <div className="flex items-center gap-2 bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
+          <Eye className="size-3.5 shrink-0 text-amber-500" />
           <span>{conversation.collisionAgent} também está visualizando esta conversa.</span>
         </div>
       )}
@@ -337,7 +337,7 @@ export function ChatPanel({
         {conversation.timeline.map((item) =>
           item.kind === 'divider' ? (
             <div key={`divider-${item.label}`} className="my-3 flex items-center justify-center">
-              <span className="rounded-full border border-white/[0.08] bg-white/[0.04] px-3 py-0.5 text-[11px] font-medium text-slate-400 backdrop-blur-xs">
+              <span className="rounded-full border border-line bg-surface/80 px-3 py-0.5 text-[11px] font-medium text-muted backdrop-blur-xs">
                 {item.label}
               </span>
             </div>
@@ -351,7 +351,7 @@ export function ChatPanel({
         )}
 
         {conversation.isTyping && (
-          <p className="text-xs text-cyan-400 animate-pulse font-medium">
+          <p className="text-xs text-brand animate-pulse font-medium">
             {conversation.contact.name} está digitando...
           </p>
         )}
@@ -359,7 +359,7 @@ export function ChatPanel({
 
       {/* Aviso de Janela de 24h Meta/HSM */}
       {!hsmOpen && conversation.channel === 'whatsapp' && (
-        <div className="border-t border-amber-500/20 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-200 flex items-center justify-between gap-3">
+        <div className="border-t border-amber-500/20 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-800 dark:text-amber-200 flex items-center justify-between gap-3">
           <span>Janela de 24h do WhatsApp encerrada. Use um template aprovado para reabrir.</span>
           <button
             type="button"
@@ -373,7 +373,7 @@ export function ChatPanel({
       )}
 
       {/* ---------- Compositor de Mensagens Fixo na Base ---------- */}
-      <div className="shrink-0 border-t border-white/[0.06] bg-[#0d1424] p-3 md:p-4">
+      <div className="shrink-0 border-t border-line bg-surface p-3 md:p-4">
         <Composer
           disabledReason={
             !hsmOpen && conversation.channel === 'whatsapp'

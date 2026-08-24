@@ -142,33 +142,34 @@ export function Composer({
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) chunksRef.current.push(event.data);
       };
+
       recorder.onstop = () => {
-        const seconds = Math.max(1, Math.round((Date.now() - startedAtRef.current) / 1000));
-        const blob = new Blob(chunksRef.current, { type: mimeType });
         stream.getTracks().forEach((track) => track.stop());
+        const blob = new Blob(chunksRef.current, { type: mimeType });
+        const seconds = Math.max(1, Math.floor((Date.now() - startedAtRef.current) / 1000));
+        setRecording({ blob, seconds });
         setIsRecording(false);
         setElapsed(0);
-        if (blob.size > 0) setRecording({ blob, seconds });
       };
 
       recorderRef.current = recorder;
-      recorder.start();
+      recorder.start(250);
       setIsRecording(true);
       setElapsed(0);
+      setAttachment(undefined);
     } catch {
-      setMediaError('Permissão de microfone negada.');
+      setMediaError('Acesso ao microfone foi negado.');
     }
   };
 
   const cancelRecording = () => {
-    const recorder = recorderRef.current;
-    if (!recorder) return;
-    recorder.onstop = () => {
-      recorder.stream.getTracks().forEach((track) => track.stop());
-      setIsRecording(false);
-      setElapsed(0);
-    };
-    recorder.stop();
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+      recorderRef.current.stream.getTracks().forEach((track) => track.stop());
+      recorderRef.current.stop();
+    }
+    setIsRecording(false);
+    setRecording(undefined);
+    setElapsed(0);
   };
 
   const clearMedia = () => {
@@ -180,41 +181,52 @@ export function Composer({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (blocked || uploading) return;
+    if (blocked || uploading || pending) return;
 
-    if (hasMedia && onSendMedia) {
-      const form = new FormData();
-      form.set('isPrivate', String(isNote));
-      form.set('caption', text.trim());
-
-      if (recording) {
-        const extension = recording.blob.type.includes('ogg') ? 'ogg' : 'webm';
-        form.set('kind', 'audio');
-        form.set('voice', 'true');
-        form.set('durationSeconds', String(recording.seconds));
-        form.set('file', recording.blob, `audio-${Date.now()}.${extension}`);
-      } else if (attachment) {
-        form.set('kind', kindOf(attachment.type));
-        form.set('file', attachment, attachment.name);
-      }
-
+    if (attachment && onSendMedia) {
       setUploading(true);
       setMediaError(undefined);
-      const result = await onSendMedia(form);
-      setUploading(false);
-
-      if (!result.ok) {
-        setMediaError(result.error ?? 'Não foi possível enviar o anexo.');
-        return;
+      try {
+        const form = new FormData();
+        form.set('file', attachment);
+        if (text.trim()) form.set('caption', text.trim());
+        const res = await onSendMedia(form);
+        if (!res.ok) {
+          setMediaError(res.error || 'Não foi possível enviar o anexo.');
+          return;
+        }
+        clearMedia();
+        setText('');
+      } finally {
+        setUploading(false);
       }
-      clearMedia();
-      setText('');
       return;
     }
 
-    const content = text.trim();
-    if (!content) return;
-    onSend(content, mode);
+    if (recording && onSendMedia) {
+      setUploading(true);
+      setMediaError(undefined);
+      try {
+        const form = new FormData();
+        const ext = recording.blob.type.includes('ogg') ? 'ogg' : 'webm';
+        form.set('file', recording.blob, `audio-${Date.now()}.${ext}`);
+        if (text.trim()) form.set('caption', text.trim());
+        const res = await onSendMedia(form);
+        if (!res.ok) {
+          setMediaError(res.error || 'Não foi possível enviar o áudio.');
+          return;
+        }
+        clearMedia();
+        setText('');
+      } finally {
+        setUploading(false);
+      }
+      return;
+    }
+
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    onSend(trimmed, mode);
     setText('');
   };
 
@@ -222,21 +234,19 @@ export function Composer({
     if (cannedMatches.length > 0) {
       if (event.key === 'ArrowDown') {
         event.preventDefault();
-        setCannedIndex((index) => (index + 1) % cannedMatches.length);
+        setCannedIndex((prev) => (prev + 1) % cannedMatches.length);
         return;
       }
       if (event.key === 'ArrowUp') {
         event.preventDefault();
-        setCannedIndex((index) => (index - 1 + cannedMatches.length) % cannedMatches.length);
+        setCannedIndex((prev) => (prev - 1 + cannedMatches.length) % cannedMatches.length);
         return;
       }
-      if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
-        const chosen = cannedMatches[cannedIndex];
-        if (chosen) {
-          event.preventDefault();
-          applyCanned(chosen);
-          return;
-        }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault();
+        const match = cannedMatches[cannedIndex];
+        if (match) applyCanned(match);
+        return;
       }
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -258,10 +268,10 @@ export function Composer({
     <form
       onSubmit={submit}
       className={cn(
-        'relative flex flex-col gap-2 rounded-2xl border transition-all duration-200 p-2.5 sm:p-3 shadow-sm',
+        'relative flex flex-col gap-2 rounded-2xl border transition-all duration-200 p-2.5 sm:p-3 shadow-xs',
         isNote
-          ? 'border-amber-500/30 bg-amber-950/20'
-          : 'border-white/[0.08] bg-[#0f172a]/60 focus-within:border-blue-500/50 focus-within:ring-2 focus-within:ring-blue-500/10',
+          ? 'border-note-line bg-note'
+          : 'border-line bg-surface focus-within:border-brand/50 focus-within:ring-2 focus-within:ring-brand/10',
       )}
     >
       {/* Respostas rápidas popup */}
@@ -269,7 +279,7 @@ export function Composer({
         <ul
           role="listbox"
           aria-label="Respostas rápidas"
-          className="absolute bottom-full left-0 z-20 mb-2 w-[min(32rem,100%)] overflow-hidden rounded-xl border border-white/[0.08] bg-[#0e1626] shadow-2xl backdrop-blur-md"
+          className="absolute bottom-full left-0 z-20 mb-2 w-[min(32rem,100%)] overflow-hidden rounded-xl border border-line bg-surface shadow-2xl backdrop-blur-md"
         >
           {cannedMatches.map((response, index) => (
             <li key={response.id}>
@@ -280,25 +290,25 @@ export function Composer({
                 onMouseEnter={() => setCannedIndex(index)}
                 onClick={() => applyCanned(response)}
                 className={cn(
-                  'flex w-full flex-col gap-0.5 border-b border-white/[0.04] px-3.5 py-2.5 text-left last:border-0 transition-colors',
-                  index === cannedIndex ? 'bg-blue-600/20 text-white' : 'text-slate-300 hover:bg-white/[0.04]',
+                  'flex w-full flex-col gap-0.5 border-b border-line-soft px-3.5 py-2.5 text-left last:border-0 transition-colors',
+                  index === cannedIndex ? 'bg-brand/12 text-ink' : 'text-muted hover:bg-surface-2',
                 )}
               >
-                <span className="font-mono text-xs font-bold text-blue-400">
+                <span className="font-mono text-xs font-bold text-brand">
                   {response.shortcut}
                 </span>
-                <span className="line-clamp-2 text-xs text-slate-400">{response.content}</span>
+                <span className="line-clamp-2 text-xs text-muted">{response.content}</span>
               </button>
             </li>
           ))}
-          <li className="bg-white/[0.02] px-3.5 py-1.5 text-[10px] text-slate-500 font-mono">
+          <li className="bg-surface-2 px-3.5 py-1.5 text-[10px] text-muted font-mono">
             ↑↓ navega · Enter insere · Esc cancela
           </li>
         </ul>
       )}
 
       {/* Topo do compositor: Alternância de Modo */}
-      <div className="flex items-center justify-between gap-2 border-b border-white/[0.04] pb-2">
+      <div className="flex items-center justify-between gap-2 border-b border-line-soft pb-2">
         <div className="flex items-center gap-1.5">
           <button
             type="button"
@@ -306,8 +316,8 @@ export function Composer({
             className={cn(
               'flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-all',
               !isNote
-                ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
-                : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-200 border border-transparent',
+                ? 'bg-brand/15 text-brand border border-brand/30 shadow-xs'
+                : 'text-muted hover:bg-surface-2 hover:text-ink border border-transparent',
             )}
           >
             <span>Mensagem pública</span>
@@ -319,35 +329,35 @@ export function Composer({
             className={cn(
               'flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-all',
               isNote
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-200 border border-transparent',
+                ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/40'
+                : 'text-muted hover:bg-surface-2 hover:text-ink border border-transparent',
             )}
           >
-            <Lock className="size-3 text-amber-400" />
+            <Lock className="size-3 text-amber-500" />
             <span>Nota interna</span>
           </button>
         </div>
 
         {cannedResponses.length > 0 && (
-          <span className="hidden text-[11px] text-slate-500 sm:block font-mono">
-            Atalho <kbd className="rounded bg-white/[0.08] px-1 py-0.5 text-slate-300">/</kbd>
+          <span className="hidden text-[11px] text-muted sm:block font-mono">
+            Atalho <kbd className="rounded bg-surface-2 px-1 py-0.5 text-ink border border-line-soft">/</kbd>
           </span>
         )}
       </div>
 
       {blocked && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
           {disabledReason}
         </div>
       )}
 
       {/* Prévia de Anexo */}
       {attachment && (
-        <div className="flex items-center justify-between rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-xs text-slate-200">
+        <div className="flex items-center justify-between rounded-lg border border-line-soft bg-surface-2 px-3 py-2 text-xs text-ink">
           <div className="flex items-center gap-2 min-w-0">
-            <Paperclip className="size-4 shrink-0 text-blue-400" />
+            <Paperclip className="size-4 shrink-0 text-brand" />
             <span className="truncate font-medium">{attachment.name}</span>
-            <span className="text-[10px] text-slate-400 shrink-0">
+            <span className="text-[10px] text-muted shrink-0">
               ({kindOf(attachment.type)} · {humanSize(attachment.size)})
             </span>
           </div>
@@ -355,7 +365,7 @@ export function Composer({
             type="button"
             onClick={clearMedia}
             aria-label="Remover anexo"
-            className="flex size-5 items-center justify-center rounded text-slate-400 hover:text-red-400"
+            className="flex size-5 items-center justify-center rounded text-muted hover:text-red-500"
           >
             <X className="size-3.5" />
           </button>
@@ -364,17 +374,17 @@ export function Composer({
 
       {/* Prévia de Gravação */}
       {recording && (
-        <div className="flex items-center justify-between rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-xs text-slate-200">
+        <div className="flex items-center justify-between rounded-lg border border-line-soft bg-surface-2 px-3 py-2 text-xs text-ink">
           <div className="flex items-center gap-2 min-w-0">
-            <Mic className="size-4 shrink-0 text-cyan-400" />
+            <Mic className="size-4 shrink-0 text-brand" />
             <span className="truncate font-medium">Áudio gravado ({clock(recording.seconds)})</span>
-            <span className="text-[10px] text-slate-400 shrink-0">({humanSize(recording.blob.size)})</span>
+            <span className="text-[10px] text-muted shrink-0">({humanSize(recording.blob.size)})</span>
           </div>
           <button
             type="button"
             onClick={clearMedia}
             aria-label="Descartar gravação"
-            className="flex size-5 items-center justify-center rounded text-slate-400 hover:text-red-400"
+            className="flex size-5 items-center justify-center rounded text-muted hover:text-red-500"
           >
             <X className="size-3.5" />
           </button>
@@ -382,23 +392,23 @@ export function Composer({
       )}
 
       {mediaError && (
-        <p role="alert" className="text-xs font-medium text-red-400">
+        <p role="alert" className="text-xs font-medium text-red-500">
           {mediaError}
         </p>
       )}
 
       {/* Painel Gravando Áudio */}
       {isRecording && (
-        <div className="flex items-center gap-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3.5 py-2 text-xs text-red-300">
+        <div className="flex items-center gap-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3.5 py-2 text-xs text-red-600 dark:text-red-300">
           <span className="size-2 shrink-0 animate-pulse rounded-full bg-red-500" />
-          <span className="font-mono font-bold text-red-200 tabular-nums">
+          <span className="font-mono font-bold text-red-600 dark:text-red-200 tabular-nums">
             {clock(elapsed)}
           </span>
           <span className="flex-1 font-medium">Gravando áudio...</span>
           <button
             type="button"
             onClick={cancelRecording}
-            className="font-medium text-red-300 hover:text-red-100 hover:underline"
+            className="font-medium text-red-600 dark:text-red-300 hover:underline"
           >
             Descartar
           </button>
@@ -430,7 +440,7 @@ export function Composer({
               ? 'Escreva uma nota interna visível apenas para a equipe...'
               : 'Escreva sua mensagem... (Enter para enviar, Shift+Enter para nova linha)'
         }
-        className="w-full resize-none bg-transparent px-1 py-1 text-sm text-slate-100 placeholder:text-slate-500 outline-none disabled:opacity-50 min-h-[44px] max-h-36 leading-relaxed"
+        className="w-full resize-none bg-transparent px-1 py-1 text-sm text-ink placeholder:text-muted outline-none disabled:opacity-50 min-h-[44px] max-h-36 leading-relaxed"
       />
 
       <input
@@ -447,7 +457,7 @@ export function Composer({
       />
 
       {/* Barra de Ferramentas Inferior */}
-      <div className="flex items-center justify-between gap-2 pt-1 border-t border-white/[0.04]">
+      <div className="flex items-center justify-between gap-2 pt-1 border-t border-line-soft">
         <div className="flex items-center gap-1">
           <ToolbarButton
             label="Anexar arquivo"
@@ -486,7 +496,7 @@ export function Composer({
           type="submit"
           disabled={blocked || isBusy || !canSubmit}
           className={cn(
-            'flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold text-white shadow-md transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40',
+            'flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold text-white shadow-xs transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40',
             isNote
               ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-600/25'
               : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-blue-600/30',
@@ -532,8 +542,8 @@ function ToolbarButton({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        'flex size-8 items-center justify-center rounded-lg transition-all text-slate-400 hover:bg-white/[0.06] hover:text-white disabled:opacity-40 disabled:pointer-events-none',
-        active && 'bg-red-500/20 text-red-400 border border-red-500/30',
+        'flex size-8 items-center justify-center rounded-lg transition-all text-muted hover:bg-surface-2 hover:text-ink disabled:opacity-40 disabled:pointer-events-none',
+        active && 'bg-red-500/20 text-red-500 border border-red-500/30',
       )}
     >
       {children}

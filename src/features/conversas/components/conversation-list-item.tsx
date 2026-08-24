@@ -30,10 +30,10 @@ export function ConversationListItem({
         onClick={() => onSelect(conversation.id)}
         aria-current={selected ? 'true' : undefined}
         className={cn(
-          'group relative flex w-full gap-3 border-b border-white/[0.04] p-3 text-left transition-all duration-150',
+          'group relative flex w-full gap-3 border-b border-line-soft p-3 text-left transition-all duration-150',
           selected
-            ? 'bg-blue-600/[0.08] border-l-2 border-l-blue-500 pl-[10px]'
-            : 'hover:bg-white/[0.03] active:bg-white/[0.05]',
+            ? 'bg-selected border-l-2 border-l-brand pl-[10px]'
+            : 'hover:bg-surface-2/60 active:bg-surface-2',
         )}
       >
         {/* Avatar com status */}
@@ -55,27 +55,27 @@ export function ConversationListItem({
           <div className="flex items-center justify-between gap-1.5 mb-0.5">
             <div className="flex items-center gap-1.5 min-w-0">
               {isGroup && (
-                <Users className="size-3 shrink-0 text-slate-400" aria-label="Grupo" />
+                <Users className="size-3 shrink-0 text-muted" aria-label="Grupo" />
               )}
               <span
                 className={cn(
                   'truncate text-xs font-semibold tracking-tight transition-colors',
-                  selected ? 'text-blue-400' : 'text-slate-200 group-hover:text-white',
+                  selected ? 'text-brand' : 'text-ink group-hover:text-brand',
                 )}
               >
                 {conversation.contact.name}
               </span>
             </div>
 
-            <span className="shrink-0 font-mono text-[11px] tabular-nums text-slate-400">
+            <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted">
               {conversation.lastMessageAt}
             </span>
           </div>
 
           {/* Prévia da mensagem */}
-          <p className="truncate text-xs text-slate-400 leading-snug">
+          <p className="truncate text-xs text-muted leading-snug">
             {conversation.isTyping ? (
-              <span className="font-medium text-cyan-400 animate-pulse">digitando...</span>
+              <span className="font-medium text-brand animate-pulse">digitando...</span>
             ) : (
               conversation.lastMessagePreview || 'Nenhuma mensagem recente'
             )}
@@ -84,7 +84,7 @@ export function ConversationListItem({
           {/* Tags e Indicador de Não Lidas */}
           <div className="mt-2 flex flex-wrap items-center gap-1">
             {conversation.queue && conversation.queue !== 'Geral' && (
-              <span className="inline-flex items-center rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-slate-300">
+              <span className="inline-flex items-center rounded-md bg-surface-2 border border-line-soft px-1.5 py-0.5 text-[10px] font-medium text-muted">
                 {conversation.queue}
               </span>
             )}
@@ -104,7 +104,7 @@ export function ConversationListItem({
             <LabelChips labels={conversation.labels} />
 
             {conversation.unreadCount > 0 && (
-              <span className="ml-auto flex min-w-4.5 h-4.5 items-center justify-center rounded-full bg-blue-600 px-1.5 text-[10px] font-bold text-white shadow-sm shadow-blue-600/30">
+              <span className="ml-auto flex min-w-5 h-5 items-center justify-center rounded-full bg-brand px-1.5 text-[10px] font-bold text-white shadow-xs">
                 {conversation.unreadCount}
               </span>
             )}

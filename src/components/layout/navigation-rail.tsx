@@ -77,8 +77,8 @@ export function NavigationRail({
   const whatsappDot = (
     <span
       className={cn(
-        'absolute top-1.5 right-1.5 size-2 rounded-full border border-[#0a0f1d]',
-        waConnected ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50 animate-pulse' : 'bg-amber-400',
+        'absolute top-1.5 right-1.5 size-2 rounded-full border border-surface',
+        waConnected ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50 animate-pulse' : 'bg-amber-500',
       )}
     />
   );
@@ -90,7 +90,7 @@ export function NavigationRail({
       {/* ---------- Desktop: rail vertical ---------- */}
       <nav
         aria-label="Navegação principal"
-        className="hidden w-16 shrink-0 flex-col items-center justify-between border-r border-white/[0.06] bg-[#0a0f1d] py-3.5 shadow-sm md:flex"
+        className="hidden w-16 shrink-0 flex-col items-center justify-between border-r border-line bg-surface py-3.5 shadow-xs md:flex"
       >
         <div className="flex w-full flex-col items-center gap-2">
           {/* Logo Solint */}
@@ -116,8 +116,8 @@ export function NavigationRail({
                 className={cn(
                   'group relative flex size-10 items-center justify-center rounded-xl transition-all duration-150',
                   active
-                    ? 'bg-blue-600/15 font-semibold text-blue-400 border border-blue-500/30 shadow-sm'
-                    : 'text-slate-400 hover:bg-white/[0.06] hover:text-white border border-transparent',
+                    ? 'bg-brand/12 font-semibold text-brand border border-brand/25 shadow-xs'
+                    : 'text-muted hover:bg-surface-2 hover:text-ink border border-transparent',
                 )}
               >
                 <Icon className="size-[19px] transition-transform group-hover:scale-110" />
@@ -138,7 +138,7 @@ export function NavigationRail({
             onClick={() => setIsWhatsAppModalOpen(true)}
             title={whatsappTitle}
             aria-label="Status do WhatsApp"
-            className="group relative flex size-9 items-center justify-center rounded-xl text-slate-400 transition-all hover:bg-white/[0.06] hover:text-white border border-transparent hover:border-white/[0.06]"
+            className="group relative flex size-9 items-center justify-center rounded-xl text-muted transition-all hover:bg-surface-2 hover:text-ink border border-transparent hover:border-line-soft"
           >
             <QrCode className="size-[18px] transition-transform group-hover:scale-105" />
             {whatsappDot}
@@ -150,7 +150,7 @@ export function NavigationRail({
             href="/perfil"
             aria-label={`Perfil de ${userName}`}
             title={userName}
-            className="rounded-full ring-2 ring-transparent transition-all hover:ring-blue-500/40"
+            className="rounded-full ring-2 ring-transparent transition-all hover:ring-brand/40"
           >
             <Avatar name={userName} tone={userTone} size="sm" availability={availability} />
           </Link>
@@ -158,13 +158,13 @@ export function NavigationRail({
       </nav>
 
       {/* ---------- Mobile: barra de topo ---------- */}
-      <header className="flex h-13 shrink-0 items-center gap-2 border-b border-white/[0.06] bg-[#0a0f1d] px-3 md:hidden">
+      <header className="flex h-13 shrink-0 items-center gap-2 border-b border-line bg-surface px-3 md:hidden">
         <button
           type="button"
           onClick={() => setDrawerOpen(true)}
           aria-label="Abrir navegação"
           aria-expanded={drawerOpen}
-          className="relative flex size-9 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/[0.06] hover:text-white"
+          className="relative flex size-9 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-ink"
         >
           <Menu className="size-5" />
           {unreadCount > 0 && (
@@ -186,7 +186,7 @@ export function NavigationRail({
             onClick={() => setIsWhatsAppModalOpen(true)}
             title={whatsappTitle}
             aria-label="Status do WhatsApp"
-            className="relative flex size-9 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/[0.06] hover:text-white"
+            className="relative flex size-9 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-ink"
           >
             <QrCode className="size-[18px]" />
             {whatsappDot}
@@ -209,17 +209,17 @@ export function NavigationRail({
           />
           <nav
             aria-label="Navegação principal"
-            className="relative flex h-full w-64 flex-col border-r border-white/[0.06] bg-[#0d1424] shadow-2xl animate-in slide-in-from-left duration-200"
+            className="relative flex h-full w-64 flex-col border-r border-line bg-surface shadow-2xl animate-in slide-in-from-left duration-200"
           >
-            <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
-              <span className="font-display text-base font-bold tracking-tight text-white">
+            <div className="flex items-center justify-between border-b border-line px-4 py-3">
+              <span className="font-display text-base font-bold tracking-tight text-ink">
                 Solint CRM
               </span>
               <button
                 type="button"
                 onClick={() => setDrawerOpen(false)}
                 aria-label="Fechar navegação"
-                className="rounded-lg p-1 text-slate-400 transition-colors hover:bg-white/[0.06] hover:text-white"
+                className="rounded-lg p-1 text-muted transition-colors hover:bg-surface-2 hover:text-ink"
               >
                 <X className="size-4" />
               </button>
@@ -237,8 +237,8 @@ export function NavigationRail({
                       className={cn(
                         'flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-medium transition-colors',
                         active
-                          ? 'bg-blue-600/15 font-semibold text-blue-400 border border-blue-500/30'
-                          : 'text-slate-400 hover:bg-white/[0.04] hover:text-white border border-transparent',
+                          ? 'bg-brand/12 font-semibold text-brand border border-brand/25'
+                          : 'text-muted hover:bg-surface-2 hover:text-ink border border-transparent',
                       )}
                     >
                       <Icon className="size-[18px] shrink-0" />
@@ -254,17 +254,17 @@ export function NavigationRail({
               })}
             </ul>
 
-            <div className="border-t border-white/[0.06] p-2.5">
+            <div className="border-t border-line p-2.5">
               <Link
                 href="/perfil"
-                className="flex items-center gap-3 rounded-xl px-2.5 py-2 transition-colors hover:bg-white/[0.04]"
+                className="flex items-center gap-3 rounded-xl px-2.5 py-2 transition-colors hover:bg-surface-2"
               >
                 <Avatar name={userName} tone={userTone} size="sm" availability={availability} />
                 <span className="min-w-0">
-                  <span className="block truncate text-xs font-semibold text-white">
+                  <span className="block truncate text-xs font-semibold text-ink">
                     {userName}
                   </span>
-                  <span className="block text-[10px] text-slate-400">Ver perfil e preferências</span>
+                  <span className="block text-[10px] text-muted">Ver perfil e preferências</span>
                 </span>
               </Link>
               <LogoutButton variant="linha" className="mt-1 w-full" />

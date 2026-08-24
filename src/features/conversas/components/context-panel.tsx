@@ -52,11 +52,11 @@ export function ContextPanel({
   };
 
   return (
-    <aside className="flex h-full w-full flex-col overflow-y-auto border-l border-white/[0.06] bg-[#0c1220] xl:w-[330px] xl:shrink-0 text-slate-200 select-none">
+    <aside className="flex h-full w-full flex-col overflow-y-auto border-l border-line bg-surface xl:w-[330px] xl:shrink-0 text-ink select-none">
       {/* Topo / Cabeçalho do Painel com botão de fechar */}
-      <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3 bg-[#0e1626]">
-        <div className="flex items-center gap-2 text-xs font-semibold text-slate-300">
-          <Tag className="size-3.5 text-blue-400" />
+      <div className="flex items-center justify-between border-b border-line px-4 py-3 bg-surface-2/60">
+        <div className="flex items-center gap-2 text-xs font-semibold text-muted">
+          <Tag className="size-3.5 text-brand" />
           <span>Detalhes do Contato</span>
         </div>
 
@@ -66,7 +66,7 @@ export function ContextPanel({
             onClick={onClose}
             aria-label="Fechar painel de detalhes"
             title="Fechar detalhes"
-            className="flex size-7 items-center justify-center rounded-lg text-slate-400 hover:bg-white/[0.08] hover:text-white transition-colors"
+            className="flex size-7 items-center justify-center rounded-lg text-muted hover:bg-surface-2 hover:text-ink transition-colors"
           >
             <X className="size-4" />
           </button>
@@ -74,37 +74,37 @@ export function ContextPanel({
       </div>
 
       {/* Cartão de Perfil do Contato */}
-      <div className="flex flex-col items-center gap-3 border-b border-white/[0.06] px-5 py-6 text-center bg-white/[0.01]">
+      <div className="flex flex-col items-center gap-3 border-b border-line px-5 py-6 text-center bg-surface-2/30">
         <Avatar name={contact.name} tone={contact.avatarTone} src={contact.avatarUrl} size="lg" />
 
         <div className="w-full min-w-0">
-          <h3 className="truncate font-display text-sm font-bold text-slate-100">
+          <h3 className="truncate font-display text-sm font-bold text-ink">
             {contact.name}
           </h3>
 
           {isGroup ? (
             <div className="mt-1 flex flex-col items-center gap-1">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.06] px-2.5 py-0.5 text-xs text-slate-300">
-                <Users className="size-3 text-cyan-400" />
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-2 border border-line-soft px-2.5 py-0.5 text-xs text-muted">
+                <Users className="size-3 text-cyan-500" />
                 Grupo do WhatsApp
                 {contact.participantCount ? ` · ${contact.participantCount} membros` : ''}
               </span>
-              <p className="text-[11px] text-slate-400 mt-1">
+              <p className="text-[11px] text-muted mt-1">
                 Respostas enviadas são distribuídas a todos os participantes.
               </p>
             </div>
           ) : (
             <div className="mt-2 flex flex-col gap-1.5 text-left text-xs">
               {contact.company && (
-                <div className="flex items-center gap-2 text-slate-300">
-                  <Building className="size-3.5 shrink-0 text-slate-400" />
+                <div className="flex items-center gap-2 text-ink">
+                  <Building className="size-3.5 shrink-0 text-muted" />
                   <span className="truncate">{contact.company}</span>
                 </div>
               )}
 
-              <div className="flex items-center justify-between gap-2 text-slate-300">
+              <div className="flex items-center justify-between gap-2 text-ink">
                 <div className="flex items-center gap-2 min-w-0">
-                  <Phone className="size-3.5 shrink-0 text-slate-400" />
+                  <Phone className="size-3.5 shrink-0 text-muted" />
                   <span className="truncate font-mono text-[11px]">
                     {PhoneNumber.format(contact.phone) || 'Sem telefone'}
                   </span>
@@ -114,23 +114,23 @@ export function ContextPanel({
                     type="button"
                     onClick={copyPhone}
                     title="Copiar telefone"
-                    className="flex size-6 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-white/[0.08] hover:text-white"
+                    className="flex size-6 shrink-0 items-center justify-center rounded text-muted hover:bg-surface-2 hover:text-ink"
                   >
-                    {copied ? <Check className="size-3 text-emerald-400" /> : <Copy className="size-3" />}
+                    {copied ? <Check className="size-3 text-emerald-500" /> : <Copy className="size-3" />}
                   </button>
                 )}
               </div>
 
               {contact.email && (
-                <div className="flex items-center gap-2 text-slate-300">
-                  <Mail className="size-3.5 shrink-0 text-slate-400" />
+                <div className="flex items-center gap-2 text-ink">
+                  <Mail className="size-3.5 shrink-0 text-muted" />
                   <span className="truncate">{contact.email}</span>
                 </div>
               )}
 
               {(contact.location || contact.timezone) && (
-                <div className="flex items-center gap-2 text-slate-400 text-[11px]">
-                  <MapPin className="size-3.5 shrink-0 text-slate-400" />
+                <div className="flex items-center gap-2 text-muted text-[11px]">
+                  <MapPin className="size-3.5 shrink-0 text-muted" />
                   <span>{[contact.location, contact.timezone].filter(Boolean).join(' · ')}</span>
                 </div>
               )}
@@ -155,7 +155,7 @@ export function ContextPanel({
           {conversation.labels.length > 0 ? (
             <LabelChips labels={conversation.labels} />
           ) : (
-            <p className="text-xs text-slate-400">Nenhuma etiqueta neste atendimento.</p>
+            <p className="text-xs text-muted">Nenhuma etiqueta neste atendimento.</p>
           )}
         </CardSection>
 
@@ -173,20 +173,20 @@ export function ContextPanel({
           {contact.labels.length > 0 ? (
             <LabelChips labels={contact.labels} />
           ) : (
-            <p className="text-xs text-slate-400">Nenhuma etiqueta atribuída ao contato.</p>
+            <p className="text-xs text-muted">Nenhuma etiqueta atribuída ao contato.</p>
           )}
         </CardSection>
 
         {/* Seção 3: Campos Personalizados */}
         <CardSection title="Campos Personalizados">
           {contact.customFields.length === 0 ? (
-            <p className="text-xs text-slate-400">Nenhum campo personalizado.</p>
+            <p className="text-xs text-muted">Nenhum campo personalizado.</p>
           ) : (
             <dl className="flex flex-col gap-2 text-xs">
               {contact.customFields.map((field) => (
-                <div key={field.label} className="flex items-center justify-between gap-2 border-b border-white/[0.04] pb-1.5 last:border-0 last:pb-0">
-                  <dt className="text-slate-400">{field.label}</dt>
-                  <dd className="font-mono text-slate-200 font-medium">{field.value}</dd>
+                <div key={field.label} className="flex items-center justify-between gap-2 border-b border-line-soft pb-1.5 last:border-0 last:pb-0">
+                  <dt className="text-muted">{field.label}</dt>
+                  <dd className="font-mono text-ink font-medium">{field.value}</dd>
                 </div>
               ))}
             </dl>
@@ -200,13 +200,13 @@ export function ContextPanel({
               {conversation.protocols.map((protocol) => (
                 <li
                   key={protocol.code}
-                  className="flex items-center justify-between gap-2 rounded-lg bg-white/[0.02] border border-white/[0.04] p-2"
+                  className="flex items-center justify-between gap-2 rounded-lg bg-surface border border-line-soft p-2"
                 >
                   <div>
-                    <span className="block font-mono font-semibold text-slate-200">
+                    <span className="block font-mono font-semibold text-ink">
                       {protocol.code}
                     </span>
-                    <span className="block text-[10px] text-slate-400">{protocol.date}</span>
+                    <span className="block text-[10px] text-muted">{protocol.date}</span>
                   </div>
                   <Badge tone={protocol.status === 'Pendente' ? 'amber' : 'slate'}>
                     {protocol.status}
@@ -215,7 +215,7 @@ export function ContextPanel({
               ))}
             </ul>
           ) : (
-            <p className="text-xs text-slate-400">Primeiro atendimento deste contato.</p>
+            <p className="text-xs text-muted">Primeiro atendimento deste contato.</p>
           )}
         </CardSection>
 
@@ -223,19 +223,19 @@ export function ContextPanel({
         <CardSection title="Ações Rápidas">
           <div className="flex flex-col gap-1.5">
             <QuickActionButton
-              icon={<MessageSquarePlus className="size-3.5 text-blue-400" />}
+              icon={<MessageSquarePlus className="size-3.5 text-brand" />}
               label="Iniciar nova conversa"
               {...planned('Abertura de nova conversa')}
             />
             {!isGroup && (
               <>
                 <QuickActionButton
-                  icon={<Merge className="size-3.5 text-sky-400" />}
+                  icon={<Merge className="size-3.5 text-sky-500" />}
                   label="Mesclar contatos duplicados"
                   {...planned('Mesclagem de contatos')}
                 />
                 <QuickActionButton
-                  icon={<Ban className="size-3.5 text-red-400" />}
+                  icon={<Ban className="size-3.5 text-red-500" />}
                   label="Bloquear contato"
                   tone="danger"
                   {...planned('Bloqueio de contato')}
@@ -259,9 +259,9 @@ function CardSection({
   readonly children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3.5 flex flex-col gap-2.5">
+    <div className="rounded-xl border border-line-soft bg-surface-2/40 p-3.5 flex flex-col gap-2.5">
       <div className="flex items-center justify-between gap-2">
-        <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+        <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted">
           {title}
         </h4>
         {action}
@@ -293,10 +293,10 @@ function QuickActionButton({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        'flex w-full items-center gap-2 rounded-lg border border-white/[0.04] bg-white/[0.02] px-3 py-2 text-xs font-medium transition-all text-left disabled:opacity-40 disabled:pointer-events-none',
+        'flex w-full items-center gap-2 rounded-lg border border-line-soft bg-surface px-3 py-2 text-xs font-medium transition-all text-left disabled:opacity-40 disabled:pointer-events-none',
         tone === 'danger'
-          ? 'text-red-400 hover:bg-red-500/10 hover:border-red-500/20'
-          : 'text-slate-300 hover:bg-white/[0.06] hover:text-white hover:border-white/[0.08]',
+          ? 'text-red-500 hover:bg-red-500/10 hover:border-red-500/20'
+          : 'text-ink hover:bg-surface-2 hover:border-line',
       )}
     >
       {icon}
