@@ -1,29 +1,42 @@
 // Esquema de persistência do Solint CRM.
 //
-// SQLite de propósito: é um arquivo local, não pede credencial nenhuma, e o
-// caminho para Supabase/Postgres depois é trocar o `provider` abaixo e rodar
-// uma migração. Duas restrições do SQLite moldaram o desenho:
+// Postgres (Supabase). O SQLite foi o degrau: um arquivo local, sem credencial,
+// que permitiu construir a persistência antes de existir banco hospedado. A
+// troca custou o `provider` aqui, o adaptador em `infrastructure/db/prisma.ts`
+// e 26 colunas de `String` para `Json` — nenhuma linha de domínio, caso de uso
+// ou tela mudou.
 //
-//   1. Não há `enum`  -> todo estado de domínio é `String`, validado no domínio.
-//   2. Não há `Json`  -> agregados viram `String` com JSON dentro, sempre com
-//      sufixo `Json` no nome. Ao migrar para Postgres esses campos viram `Json`
-//      nativo; é uma troca mecânica, campo a campo.
+// Duas restrições do SQLite moldaram o desenho original, e vale registrar o que
+// aconteceu com cada uma:
+//
+//   1. Não havia `enum`  -> todo estado de domínio é `String`, validado no
+//      domínio. **Continua assim de propósito.** Postgres tem `enum`, mas cada
+//      valor novo viraria um `ALTER TYPE`, e o domínio já valida.
+//   2. Não havia `Json`  -> agregados eram `String` com JSON dentro. **Resolvido:**
+//      são `Json` nativo. Além de honesto, agora dá para consultar dentro do
+//      agregado (`content->>'kind'`), o que era impossível quando era texto.
 //
 // A regra de corte entre coluna relacional e coluna JSON: **é relacional o que
 // se consulta, filtra ou escreve individualmente**. É JSON o agregado que só é
 // lido e gravado inteiro (o horário comercial de uma caixa, as regras de
 // transferência de um agente, o histórico de um card). Normalizar esses
 // últimos criaria dez tabelas que nenhuma consulta jamais tocaria sozinhas.
+//
+// Essa regra tem gatilho: quando um agregado ganha escrita individual, vira
+// tabela. A Onda 3 dispara isso para `Team`, `Webhook`, `ApiToken`,
+// `CustomAttribute`, `CannedResponse`, `Macro` e `AuditLog` — ver a Fase 5 do
+// PLANO-BACKEND.md.
 
 generator client {
   provider = "prisma-client-js"
   output   = "../src/generated/prisma"
 }
 
-// O Prisma 7 tirou a `url` daqui: a conexão vem de `prisma.config.ts` (CLI) e
-// do adaptador passado ao `PrismaClient` (runtime).
+// O Prisma 7 tirou a `url` daqui: a conexão vem de `prisma.config.ts` (CLI, que
+// lê DIRECT_URL) e do adaptador passado ao `PrismaClient` (runtime, DATABASE_URL).
+// São URLs diferentes de propósito — ver .env.example.
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
 }
 
 // ---------------------------------------------------------------- conta e acesso
@@ -36,46 +49,90 @@ model Account {
 
   createdAt DateTime @default(now())
 
-  users         User[]
-  roles         Role[]
-  labels        Label[]
-  contacts      Contact[]
-  conversations Conversation[]
-  pipelines     Pipeline[]
-  deals         Deal[]
-  aiAgents      AiAgent[]
-  notifications Notification[]
-  automations   Automation[]
-  connections   ChannelConnection[]
-  categories    KnowledgeCategory[]
-  articles      KnowledgeArticle[]
-  settings      AccountSettings?
+  memberships      Membership[]
+  roles            Role[]
+  labels           Label[]
+  contacts         Contact[]
+  conversations    Conversation[]
+  pipelines        Pipeline[]
+  deals            Deal[]
+  aiAgents         AiAgent[]
+  notifications    Notification[]
+  automations      Automation[]
+  inboxes          Inbox[]
+  categories       KnowledgeCategory[]
+  articles         KnowledgeArticle[]
+  settings         AccountSettings?
+  teams            Team[]
+  webhooks         Webhook[]
+  apiTokens        ApiToken[]
+  customAttributes CustomAttributeDefinition[]
+  cannedResponses  CannedResponse[]
+  macros           Macro[]
+  auditLogs        AuditLogEntry[]
+  campaigns        Campaign[]
+  segments         Segment[]
+  messageTemplates MessageTemplate[]
+  invites          Invite[]
+  tasks            Task[]
+  mediaObjects     MediaObject[]
 }
 
+/// A pessoa. Nada aqui é específico de uma conta — o que é, mora em `Membership`.
 model User {
-  id        String  @id
-  accountId String
-  name      String
-  /// Identidade de login. Guardado em minúsculas para a busca ser case-insensitive.
-  email     String  @unique
+  id               String  @id
+  name             String
+  /// Identidade de login, global. Guardado em minúsculas para a busca ser
+  /// case-insensitive. É único no sistema inteiro, e não por conta: a pessoa é
+  /// uma só mesmo quando atende em dois workspaces.
+  email            String  @unique
   /// `scrypt` com sal por usuário. A senha em claro nunca é gravada nem logada.
-  passwordHash String
-  roleSlug     String
-  avatarTone   String
-  availability String  @default("disponivel")
-  /// JSON: string[]
-  teamsJson    String  @default("[]")
-  signature    String?
+  passwordHash     String
+  avatarTone       String
+  signature        String?
   twoFactorEnabled Boolean @default(false)
-  lastActiveAt String?
+  lastActiveAt     String?
 
   createdAt DateTime @default(now())
 
-  account       Account        @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  authSessions  AuthSession[]
-  conversations Conversation[]
-  notifications Notification[]
+  memberships    Membership[]
+  authSessions   AuthSession[]
+  conversations  Conversation[]
+  notifications  Notification[]
+  assignedTasks  Task[]         @relation("TaskAssignee")
+  createdInvites Invite[]       @relation("InviteCreator")
+}
 
+/// Vínculo entre uma pessoa e uma conta — "este usuário, neste workspace".
+///
+/// Existe porque três campos que estavam em `User` são, na verdade, propriedades
+/// do vínculo e não da pessoa: o **papel** (alguém pode ser administrador aqui e
+/// agente ali), as **equipes** (Comercial de uma conta não é a Comercial de
+/// outra) e a **disponibilidade** (dá para estar em atendimento num workspace e
+/// fora em outro). Mantê-los em `User` fazia o segundo workspace herdar o
+/// primeiro em silêncio.
+///
+/// O `Session` do domínio continua vendo um `User` com `accountId` e `roleSlug`:
+/// ele é montado a partir da pessoa mais o vínculo da conta ativa.
+model Membership {
+  id        String @id @default(cuid())
+  userId    String
+  accountId String
+
+  /// Aponta para `Role.slug` dentro desta conta. Não é chave estrangeira de
+  /// propósito: papel apagado deve virar "sem permissão", e não impedir a
+  /// exclusão do papel nem apagar o vínculo em cascata.
+  roleSlug     String
+  availability String @default("disponivel")
+  /// JSON: string[]
+  teams        Json   @default("[]")
+
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, accountId])
   @@index([accountId])
 }
 
@@ -104,7 +161,7 @@ model Role {
   name        String
   description String
   /// JSON: Permission[]
-  permissionsJson String
+  permissions Json
   isSystem    Boolean @default(false)
 
   account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
@@ -132,32 +189,33 @@ model Label {
 // ---------------------------------------------------------------- contatos
 
 model Contact {
-  id        String  @id
-  accountId String
-  name      String
+  id               String  @id
+  accountId        String
+  name             String
   /// E.164. Vazio quando `kind = grupo` — um grupo não tem telefone próprio.
-  phone     String
-  email     String?
-  company   String?
-  channel   String
-  avatarTone String
-  location  String?
-  timezone  String?
-  ownerName String?
+  phone            String
+  email            String?
+  company          String?
+  channel          String
+  avatarTone       String
+  location         String?
+  timezone         String?
+  ownerName        String?
   lastContactAt    String?
   lastContactLabel String?
   /// JSON: CustomField[]
-  customFieldsJson String @default("[]")
-  notes     String?
+  customFields     Json    @default("[]")
+  notes            String?
   /// JSON: TimelineEvent[]
-  timelineJson String?
-  kind      String? @default("pessoa")
-  avatarUrl String?
+  timeline         Json    @default("[]")
+  kind             String? @default("pessoa")
+  avatarUrl        String?
   participantCount Int?
 
-  account       Account        @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  labels        Label[]        @relation("ContactLabels")
-  conversations Conversation[]
+  account            Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  labels             Label[]             @relation("ContactLabels")
+  conversations      Conversation[]
+  campaignRecipients CampaignRecipient[]
 
   @@index([accountId])
 }
@@ -165,25 +223,25 @@ model Contact {
 // ---------------------------------------------------------------- conversas
 
 model Conversation {
-  id        String  @id
-  accountId String
-  contactId String
-  channel   String
-  inboxId   String
-  queue     String
-  status    String
-  statusLabel String
-  priority  String
-  assigneeId   String?
-  assigneeName String?
-  unreadCount  Int    @default(0)
-  lastMessagePreview String @default("")
+  id                 String    @id
+  accountId          String
+  contactId          String
+  channel            String
+  inboxId            String
+  queue              String
+  status             String
+  statusLabel        String
+  priority           String
+  assigneeId         String?
+  assigneeName       String?
+  unreadCount        Int       @default(0)
+  lastMessagePreview String    @default("")
   /// Rótulo de exibição ("14:32"). Nunca use para ordenar.
-  lastMessageAt      String @default("")
+  lastMessageAt      String    @default("")
   /// Instante real da última atividade — a única fonte de ordenação.
   lastActivityAt     DateTime?
   /// JSON: Protocol[]
-  protocolsJson      String @default("[]")
+  protocols          Json      @default("[]")
   slaDeadlineAt      String?
   slaLabel           String?
   slaBreached        Boolean?
@@ -196,23 +254,25 @@ model Conversation {
 
   account  Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
   contact  Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  inbox    Inbox     @relation(fields: [inboxId],   references: [id], onDelete: Restrict)
   assignee User?     @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
   labels   Label[]   @relation("ConversationLabels")
   messages Message[]
 
+  @@unique([inboxId, channelThreadId])
   @@index([accountId, lastActivityAt])
   @@index([contactId])
 }
 
 model Message {
-  id             String  @id
+  id             String   @id
   conversationId String
   author         String
   authorName     String?
   /// Tipo do conteúdo, duplicado fora do JSON para permitir consulta por mídia.
   contentType    String
   /// JSON: MessageContent
-  contentJson    String
+  content        Json
   /// Rótulo de exibição ("14:32").
   time           String
   /// Instante real. É daqui que saem os divisores de dia da timeline.
@@ -225,16 +285,23 @@ model Message {
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
+  /// Deduplicacao por construcao, e nao por sorte de agendamento.
+  ///
+  /// O WhatsApp reentrega eventos. Antes a checagem era consulta seguida de
+  /// insercao -- duas operacoes com uma janela entre elas. A escrita serializada
+  /// do SQLite escondia a corrida; em Postgres, dois eventos concorrentes viram
+  /// mensagem duplicada na tela. Com o unico, o `upsert` resolve no banco.
+  @@unique([conversationId, externalId])
   @@index([conversationId, createdAt])
-  @@index([externalId])
 }
 
 // ---------------------------------------------------------------- funil
 
 model Pipeline {
-  id        String @id
+  id        String  @id
   accountId String
   name      String
+  isDefault Boolean @default(false)
 
   account Account         @relation(fields: [accountId], references: [id], onDelete: Cascade)
   stages  PipelineStage[]
@@ -259,27 +326,28 @@ model PipelineStage {
 }
 
 model Deal {
-  id         String  @id
-  accountId  String
-  pipelineId String
-  stageId    String
-  contactId  String?
-  contactName String
-  company    String?
+  id             String  @id
+  accountId      String
+  pipelineId     String
+  stageId        String
+  contactId      String?
+  contactName    String
+  company        String?
   /// Centavos. Dinheiro nunca é float.
-  amountInCents Int
-  ownerName  String
-  priority   String
+  amountInCents  Int
+  ownerName      String
+  priority       String
   enteredStageAt String
   stageAgeLabel  String
   nextAction     String
   conversationId String?
   /// JSON: DealHistoryEntry[]
-  historyJson    String @default("[]")
+  history        Json    @default("[]")
 
   account  Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
   pipeline Pipeline      @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
   stage    PipelineStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  tasks    Task[]
 
   @@index([accountId, pipelineId])
   @@index([stageId])
@@ -288,24 +356,24 @@ model Deal {
 // ---------------------------------------------------------------- agentes de IA
 
 model AiAgent {
-  id        String  @id
-  accountId String
-  name      String
-  scope     String
-  active    Boolean @default(false)
-  persona   String
-  systemPrompt String
-  model     String
-  handledCount Int   @default(0)
-  transferRate String
+  id            String  @id
+  accountId     String
+  name          String
+  scope         String
+  active        Boolean @default(false)
+  persona       String
+  systemPrompt  String
+  model         String
+  handledCount  Int     @default(0)
+  transferRate  String
   /// JSON: KnowledgeDocument[]
-  knowledgeBaseJson String @default("[]")
+  knowledgeBase Json    @default("[]")
   /// JSON: TransferRule[]
-  transferRulesJson String @default("[]")
+  transferRules Json    @default("[]")
   /// JSON: AgentFlowBlock[]
-  flowJson          String @default("[]")
+  flow          Json    @default("[]")
   /// JSON: AiAgentLog[]
-  logsJson          String @default("[]")
+  logs          Json    @default("[]")
 
   account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
@@ -315,14 +383,14 @@ model AiAgent {
 // ---------------------------------------------------------------- notificações
 
 model Notification {
-  id        String  @id
+  id        String   @id
   accountId String
   /// Nulo = aviso da conta inteira, visível para todos os agentes.
   userId    String?
   kind      String
   text      String
   timeLabel String
-  read      Boolean @default(false)
+  read      Boolean  @default(false)
   href      String?
   createdAt DateTime @default(now())
 
@@ -335,43 +403,117 @@ model Notification {
 // ---------------------------------------------------------------- configurações
 
 model Automation {
-  id        String  @id
-  accountId String
-  name      String
-  trigger   String
+  id         String  @id
+  accountId  String
+  name       String
+  trigger    String
   /// JSON: AutomationCondition[]
-  conditionsJson String @default("[]")
+  conditions Json    @default("[]")
   /// JSON: AutomationAction[]
-  actionsJson    String @default("[]")
-  enabled   Boolean @default(true)
+  actions    Json    @default("[]")
+  enabled    Boolean @default(true)
   /// Decide quem vence um conflito de sobrescrita.
-  order     Int
+  order      Int
 
   account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
   @@index([accountId, order])
 }
 
-model ChannelConnection {
-  id         String  @id
-  accountId  String
-  name       String
-  channel    String
-  identifier String
-  status     String
-  provider   String
+model Inbox {
+  id            String  @id
+  accountId     String
+  name          String
+  channel       String
+  identifier    String
+  status        String
+  provider      String
+  teamName      String?
   /// JSON: BusinessHours
-  businessHoursJson String
+  businessHours Json
   /// JSON: AutoReply
-  awayMessageJson   String
+  awayMessage   Json
   /// JSON: AutoReply
-  greetingJson      String
-  webhookUrl String?
-  teamName   String?
+  greeting      Json
+  webhookUrl    String?
 
-  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  account       Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+  waConnection  WhatsAppConnection?
+  campaigns     Campaign[]
+  mediaObjects  MediaObject[]
 
   @@index([accountId])
+}
+
+/// Estado de uma sessão Baileys. Existe por caixa de entrada, não por conta:
+/// uma conta com três números tem três linhas aqui, cada uma com socket próprio.
+model WhatsAppConnection {
+  inboxId String @id
+
+  /// JID do número pareado. Nulo até o QR ser lido.
+  phoneJid        String?
+  profileName     String?
+  /// Quem do CRM pareou. É o dono operacional do canal.
+  pairedByUserId  String?
+  status          String    @default("desconectado")
+  lastError       String?
+  lastConnectedAt DateTime?
+  /// String do QR em pareamento.
+  qrPayload       String?
+  qrExpiresAt     DateTime?
+  /// Contador de tentativas — evita loop de reconexão infinito após ban.
+  retryCount      Int       @default(0)
+
+  /// `creds.json` do Baileys, cifrado com AES-256-GCM.
+  credsCipher Bytes?
+  credsIv     Bytes?
+  credsTag    Bytes?
+
+  /// Trava de posse: só o worker que gravou este id pode abrir o socket.
+  lockOwner     String?
+  lockExpiresAt DateTime?
+
+  updatedAt DateTime @updatedAt
+
+  inbox Inbox         @relation(fields: [inboxId], references: [id], onDelete: Cascade)
+  keys  WhatsAppKey[]
+}
+
+/// Material criptográfico de sessão. Milhares de linhas pequenas por conexão,
+/// gravadas em lote. Separado de `WhatsAppConnection` porque o perfil de escrita
+/// é o oposto: `creds` é raro e crítico; isto é frequente e reconstituível.
+model WhatsAppKey {
+  inboxId  String
+  /// pre-key | session | sender-key | app-state-sync-key | app-state-sync-version | sender-key-memory
+  category String
+  keyId    String
+
+  valueCipher Bytes
+  valueIv     Bytes
+  valueTag    Bytes
+
+  updatedAt DateTime @updatedAt
+
+  connection WhatsAppConnection @relation(fields: [inboxId], references: [inboxId], onDelete: Cascade)
+
+  @@id([inboxId, category, keyId])
+  @@index([inboxId, category])
+}
+
+/// Fila de comandos assíncronos enviados pelo Next.js para o Worker de WhatsApp.
+model WhatsAppCommand {
+  id        String   @id @default(cuid())
+  inboxId   String
+  kind      String   // connect | disconnect | send | read
+  payload   Json     @default("{}")
+  status    String   @default("pending") // pending | processing | completed | failed
+  error     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([inboxId, status])
+  @@index([status, createdAt])
 }
 
 model KnowledgeCategory {
@@ -388,21 +530,21 @@ model KnowledgeCategory {
 }
 
 model KnowledgeArticle {
-  id         String @id
-  accountId  String
-  categoryId String
-  title      String
-  slug       String
-  excerpt    String
-  content    String
-  status     String
+  id           String @id
+  accountId    String
+  categoryId   String
+  title        String
+  slug         String
+  excerpt      String
+  content      String
+  status       String
   updatedLabel String
-  authorName String
-  views      Int @default(0)
-  helpful    Int @default(0)
-  notHelpful Int @default(0)
+  authorName   String
+  views        Int    @default(0)
+  helpful      Int    @default(0)
+  notHelpful   Int    @default(0)
   /// JSON: string[]
-  tagsJson   String @default("[]")
+  tags         Json   @default("[]")
 
   account  Account           @relation(fields: [accountId], references: [id], onDelete: Cascade)
   category KnowledgeCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
@@ -410,33 +552,294 @@ model KnowledgeArticle {
   @@index([accountId, categoryId])
 }
 
-/// Resto das configurações da conta.
-///
-/// Uma linha por conta, com agregados em JSON. Estes campos são lidos inteiros
-/// e — com exceção de `assignmentMethod` — nunca escritos pela aplicação hoje.
-/// Normalizá-los em dez tabelas seria burocracia sem consulta que a justifique;
-/// quando algum deles ganhar escrita individual, vira tabela.
+/// Configurações gerais da conta.
 model AccountSettings {
-  accountId String @id
+  accountId        String @id
   assignmentMethod String @default("round_robin")
-  /// JSON: Macro[]
-  macrosJson           String @default("[]")
-  /// JSON: CannedResponse[]
-  cannedResponsesJson  String @default("[]")
-  /// JSON: Webhook[]
-  webhooksJson         String @default("[]")
-  /// JSON: ApiToken[]
-  apiTokensJson        String @default("[]")
-  /// JSON: Team[]
-  teamsJson            String @default("[]")
-  /// JSON: CustomAttributeDefinition[]
-  customAttributesJson String @default("[]")
   /// JSON: BillingInfo
-  billingJson          String
-  /// JSON: AuditLogEntry[]
-  auditLogJson         String @default("[]")
+  billing          Json
   /// JSON: ActiveSession[]
-  activeSessionsJson   String @default("[]")
+  activeSessions   Json   @default("[]")
 
   account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------- Onda 3: Entidades Relacionais Normalizadas
+
+model Team {
+  id          String   @id @default(cuid())
+  accountId   String
+  name        String
+  description String?
+  color       String
+  /// JSON: string[] (IDs de usuários membros)
+  members     Json     @default("[]")
+  /// JSON: string[] (IDs de caixas vinculadas)
+  inboxIds    Json     @default("[]")
+  createdAt   DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+}
+
+model Webhook {
+  id              String    @id @default(cuid())
+  accountId       String
+  name            String
+  url             String
+  /// JSON: string[] (eventos escutados)
+  events          Json      @default("[]")
+  secret          String?
+  isActive        Boolean   @default(true)
+  failureCount    Int       @default(0)
+  lastTriggeredAt DateTime?
+  createdAt       DateTime  @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+}
+
+model ApiToken {
+  id          String    @id @default(cuid())
+  accountId   String
+  name        String
+  /// SHA-256 do token
+  tokenHash   String    @unique
+  tokenPrefix String
+  /// JSON: string[] (permissões concedidas)
+  permissions Json      @default("[]")
+  lastUsedAt  DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+}
+
+model CustomAttributeDefinition {
+  id         String   @id @default(cuid())
+  accountId  String
+  /// contact | deal
+  target     String
+  name       String
+  key        String
+  /// text | number | select | date | boolean
+  type       String
+  /// JSON: string[] (opções para tipo select)
+  options    Json     @default("[]")
+  isRequired Boolean  @default(false)
+  order      Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, target, key])
+  @@index([accountId, target])
+}
+
+model CannedResponse {
+  id         String   @id @default(cuid())
+  accountId  String
+  shortcut   String
+  content    String
+  category   String?
+  /// JSON: string[]
+  tags       Json     @default("[]")
+  usageCount Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, shortcut])
+  @@index([accountId])
+}
+
+model Macro {
+  id          String   @id @default(cuid())
+  accountId   String
+  name        String
+  description String?
+  category    String?
+  shortcut    String?
+  /// JSON: MacroAction[]
+  actions     Json     @default("[]")
+  createdAt   DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+}
+
+model AuditLogEntry {
+  id         String   @id @default(cuid())
+  accountId  String
+  actorId    String
+  actorName  String
+  action     String
+  targetType String
+  targetId   String?
+  targetName String?
+  ip         String?
+  userAgent  String?
+  /// JSON: metadata
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, createdAt])
+}
+
+model Campaign {
+  id          String    @id @default(cuid())
+  accountId   String
+  inboxId     String
+  name        String
+  channel     String
+  /// draft | scheduled | running | paused | completed | canceled
+  status      String    @default("draft")
+  segmentId   String?
+  templateId  String?
+  scheduledAt DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+  /// JSON: CampaignStats
+  stats       Json      @default("{}")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  account    Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  inbox      Inbox               @relation(fields: [inboxId], references: [id], onDelete: Restrict)
+  segment    Segment?            @relation(fields: [segmentId], references: [id], onDelete: SetNull)
+  template   MessageTemplate?    @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  recipients CampaignRecipient[]
+
+  @@index([accountId, status])
+}
+
+model CampaignRecipient {
+  id          String    @id @default(cuid())
+  campaignId  String
+  contactId   String?
+  phone       String
+  name        String?
+  /// JSON: variables
+  variables   Json      @default("{}")
+  /// queued | sent | delivered | read | replied | failed
+  status      String    @default("queued")
+  externalId  String?
+  error       String?
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  readAt      DateTime?
+  repliedAt   DateTime?
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact  Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  @@index([campaignId, status])
+  @@index([externalId])
+}
+
+model Segment {
+  id           String   @id @default(cuid())
+  accountId    String
+  name         String
+  description  String?
+  /// JSON: SegmentFilter[]
+  filters      Json     @default("[]")
+  contactCount Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  account   Account    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  campaigns Campaign[]
+
+  @@index([accountId])
+}
+
+model MessageTemplate {
+  id                 String   @id @default(cuid())
+  accountId          String
+  name               String
+  category           String
+  language           String   @default("pt_BR")
+  body               String
+  headerType         String?
+  headerContent      String?
+  footer             String?
+  /// JSON: TemplateButton[]
+  buttons            Json     @default("[]")
+  /// JSON: string[]
+  variables          Json     @default("[]")
+  /// approved | rejected | pending
+  status             String   @default("approved")
+  externalTemplateId String?
+  createdAt          DateTime @default(now())
+
+  account   Account    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  campaigns Campaign[]
+
+  @@unique([accountId, name, language])
+  @@index([accountId])
+}
+
+model Invite {
+  id              String    @id @default(cuid())
+  accountId       String
+  email           String
+  roleSlug        String
+  tokenHash       String    @unique
+  invitedByUserId String
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  invitedBy User    @relation("InviteCreator", fields: [invitedByUserId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@index([email])
+}
+
+model Task {
+  id          String    @id @default(cuid())
+  accountId   String
+  dealId      String?
+  title       String
+  description String?
+  dueDate     DateTime?
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+  assigneeId  String?
+  priority    String    @default("media")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  account  Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  deal     Deal?   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  assignee User?   @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  @@index([accountId, completed, dueDate])
+  @@index([dealId])
+}
+
+model MediaObject {
+  id         String   @id @default(cuid())
+  accountId  String
+  inboxId    String?
+  bucketPath String   @unique
+  mimeType   String
+  fileName   String?
+  sizeBytes  Int
+  checksum   String?
+  createdAt  DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  inbox   Inbox?  @relation(fields: [inboxId], references: [id], onDelete: SetNull)
+
+  @@index([accountId, createdAt])
 }

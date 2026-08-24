@@ -1,15 +1,17 @@
 'use client';
 
-import { useState } from 'react';
-import { Plus } from 'lucide-react';
+import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import { Plus, Trash2 } from 'lucide-react';
 import type { Role, User } from '@/core/domain/user';
 import type { Team } from '@/core/domain/settings';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Modal } from '@/components/ui/modal';
 import { cn } from '@/lib/cn';
-import { planned } from '@/components/ui/planned';
+import { createTeamAction, deleteTeamAction } from '@/app/(workspace)/configuracoes/actions';
 
 interface TeamSectionProps {
   readonly members: readonly User[];
@@ -20,10 +22,102 @@ interface TeamSectionProps {
 type TeamSubTab = 'membros' | 'papeis' | 'equipes';
 
 export function TeamSection({ members, roles, teams }: TeamSectionProps) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
   const [subTab, setSubTab] = useState<TeamSubTab>('membros');
+
+  // Team Modal
+  const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
+  const [teamName, setTeamName] = useState('');
+  const [teamColor, setTeamColor] = useState('#3B82F6');
+  const [teamInboxes, setTeamInboxes] = useState<string>('WhatsApp · Comercial');
+  const [teamError, setTeamError] = useState<string | null>(null);
+
+  const handleCreateTeam = (e: React.FormEvent) => {
+    e.preventDefault();
+    setTeamError(null);
+    startTransition(async () => {
+      const res = await createTeamAction({
+        name: teamName,
+        color: teamColor,
+        inboxes: teamInboxes.split(',').map((s) => s.trim()).filter(Boolean),
+      });
+      if (res.ok) {
+        setIsTeamModalOpen(false);
+        setTeamName('');
+        router.refresh();
+      } else {
+        setTeamError(res.error ?? 'Erro ao criar equipe.');
+      }
+    });
+  };
+
+  const handleDeleteTeam = (teamId: string) => {
+    if (!confirm('Deseja realmente excluir esta equipe?')) return;
+    startTransition(async () => {
+      await deleteTeamAction({ teamId });
+      router.refresh();
+    });
+  };
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Modal Nova Equipe */}
+      <Modal
+        open={isTeamModalOpen}
+        onClose={() => setIsTeamModalOpen(false)}
+        title="Criar nova equipe"
+      >
+        <form onSubmit={handleCreateTeam} className="flex flex-col gap-4">
+          {teamError && (
+            <div className="rounded-md bg-danger/10 p-3 text-body text-danger">
+              {teamError}
+            </div>
+          )}
+          <div>
+            <label className="mb-1 block text-meta font-medium text-ink">Nome da equipe</label>
+            <input
+              type="text"
+              required
+              placeholder="Ex: Comercial, Suporte N2, Financeiro"
+              value={teamName}
+              onChange={(e) => setTeamName(e.target.value)}
+              className="w-full rounded-md border border-line bg-surface px-3 py-2 text-body text-ink focus:border-primary focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-meta font-medium text-ink">Cor de identificação</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={teamColor}
+                onChange={(e) => setTeamColor(e.target.value)}
+                className="h-9 w-12 cursor-pointer rounded border border-line bg-surface p-1"
+              />
+              <span className="font-mono text-meta text-muted">{teamColor}</span>
+            </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-meta font-medium text-ink">Caixas vinculadas (separadas por vírgula)</label>
+            <input
+              type="text"
+              placeholder="WhatsApp · Comercial, E-mail"
+              value={teamInboxes}
+              onChange={(e) => setTeamInboxes(e.target.value)}
+              className="w-full rounded-md border border-line bg-surface px-3 py-2 text-body text-ink focus:border-primary focus:outline-none"
+            />
+          </div>
+          <div className="mt-4 flex justify-end gap-2 border-t border-line-soft pt-3">
+            <Button variant="ghost" type="button" onClick={() => setIsTeamModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="submit" disabled={isPending || !teamName.trim()}>
+              {isPending ? 'Criando...' : 'Criar equipe'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-1 rounded-control bg-surface-2 p-1">
           <button
@@ -64,9 +158,9 @@ export function TeamSection({ members, roles, teams }: TeamSectionProps) {
           </button>
         </div>
 
-        {subTab === 'membros' ? (
-          <Button size="sm" icon={<Plus className="size-3.5" />} {...planned('Convidar um agente por e-mail')}>
-            Convidar membro
+        {subTab === 'equipes' ? (
+          <Button size="sm" icon={<Plus className="size-3.5" />} onClick={() => setIsTeamModalOpen(true)}>
+            Nova equipe
           </Button>
         ) : null}
       </div>
@@ -100,7 +194,11 @@ export function TeamSection({ members, roles, teams }: TeamSectionProps) {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-muted">{member.email}</td>
-                    <td className="px-4 py-3 capitalize text-ink">{member.roleSlug}</td>
+                    <td className="px-4 py-3">
+                      <Badge tone="blue" className="capitalize">
+                        {member.roleSlug}
+                      </Badge>
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1">
                         {member.teams.map((t) => (
@@ -111,8 +209,8 @@ export function TeamSection({ members, roles, teams }: TeamSectionProps) {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <Badge tone={member.twoFactorEnabled ? 'green' : 'amber'}>
-                        {member.twoFactorEnabled ? 'Ativo' : 'Pendente'}
+                      <Badge tone={member.twoFactorEnabled ? 'green' : 'slate'}>
+                        {member.twoFactorEnabled ? 'Ativo' : 'Inativo'}
                       </Badge>
                     </td>
                   </tr>
@@ -154,7 +252,15 @@ export function TeamSection({ members, roles, teams }: TeamSectionProps) {
           {teams.map((team) => (
             <Card key={team.id} className="flex flex-col justify-between p-4">
               <div>
-                <h3 className="text-ui font-semibold text-ink">{team.name}</h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-ui font-semibold text-ink">{team.name}</h3>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDeleteTeam(team.id)}
+                    icon={<Trash2 className="size-3.5 text-danger" />}
+                  />
+                </div>
                 <div className="mt-1 text-body text-muted">{team.memberCount} membros</div>
                 <div className="mt-2 text-meta text-dim">
                   <span className="font-semibold text-ink">Horário:</span> {team.businessHours}
@@ -171,11 +277,6 @@ export function TeamSection({ members, roles, teams }: TeamSectionProps) {
                     ))}
                   </div>
                 </div>
-              </div>
-              <div className="mt-4 border-t border-line pt-3">
-                <Button variant="secondary" size="sm" className="w-full" {...planned('Configurar esta fila de atendimento')}>
-                  Configurar fila
-                </Button>
               </div>
             </Card>
           ))}

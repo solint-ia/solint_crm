@@ -11,8 +11,14 @@ export async function POST() {
     if (!session) {
       return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 });
     }
+    // A conta vem da sessão, não de uma constante: é nela que as mensagens
+    // recebidas por este número passam a ser gravadas.
     const status = await whatsappService.startSession({
-      owner: { userId: session.user.id, userName: session.user.name },
+      owner: {
+        userId: session.user.id,
+        userName: session.user.name,
+        accountId: session.account.id,
+      },
     });
     return NextResponse.json({ ok: true, status });
   } catch (error) {

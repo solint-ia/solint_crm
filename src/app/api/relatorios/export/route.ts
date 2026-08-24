@@ -130,7 +130,8 @@ export async function GET(request: Request) {
         },
         {
           header: PREVIOUS_PERIOD_LABELS[period],
-          value: (row) => number(row.previous, row.decimals ?? 0) + (row.unit ? ` ${row.unit}` : ''),
+          value: (row) =>
+            number(row.previous, row.decimals ?? 0) + (row.unit ? ` ${row.unit}` : ''),
         },
         { header: 'Variação', value: (row) => compareRow(row).label },
         {

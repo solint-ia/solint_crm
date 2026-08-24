@@ -1,10 +1,8 @@
-import 'server-only';
-
 import type { Contact } from '@/core/domain/contact';
 import { PhoneNumber } from '@/core/domain/contact';
 import { ConflictError, DomainError, NotFoundError, type Id } from '@/core/domain/shared';
 import type { ContactFilter, ContactRepository } from '@/core/ports/contact-repository';
-import { prisma, toJson } from '@/infrastructure/db/prisma';
+import { prisma, asJson } from '@/infrastructure/db/prisma';
 import { contactRow } from './mappers';
 
 const INCLUDE = { labels: true } as const;
@@ -53,9 +51,9 @@ export class PrismaContactRepository implements ContactRepository {
         ownerName: input.ownerName ?? null,
         lastContactAt: input.lastContactAt ?? null,
         lastContactLabel: input.lastContactLabel ?? null,
-        customFieldsJson: toJson(input.customFields ?? []),
+        customFields: asJson(input.customFields ?? []),
         notes: input.notes ?? null,
-        timelineJson: input.timeline ? toJson(input.timeline) : null,
+        timeline: asJson(input.timeline ?? []),
         kind: input.kind ?? 'pessoa',
         avatarUrl: input.avatarUrl ?? null,
         participantCount: input.participantCount ?? null,
@@ -74,7 +72,7 @@ export class PrismaContactRepository implements ContactRepository {
     if (!exists) throw new NotFoundError('Contato', contactId);
 
     const row = await prisma.contact.update({
-      where: { id: contactId },
+      where: { id: contactId, accountId },
       data: {
         ...(patch.name === undefined ? {} : { name: patch.name }),
         ...(patch.phone === undefined ? {} : { phone: PhoneNumber.normalize(patch.phone) }),
@@ -83,9 +81,7 @@ export class PrismaContactRepository implements ContactRepository {
         ...(patch.notes === undefined ? {} : { notes: patch.notes ?? null }),
         ...(patch.ownerName === undefined ? {} : { ownerName: patch.ownerName ?? null }),
         ...(patch.avatarUrl === undefined ? {} : { avatarUrl: patch.avatarUrl ?? null }),
-        ...(patch.customFields === undefined
-          ? {}
-          : { customFieldsJson: toJson(patch.customFields) }),
+        ...(patch.customFields === undefined ? {} : { customFields: asJson(patch.customFields) }),
         ...(patch.labels === undefined
           ? {}
           : { labels: { set: patch.labels.map((label) => ({ id: label.id })) } }),
@@ -144,5 +140,17 @@ export class PrismaContactRepository implements ContactRepository {
     });
 
     return contactRow(row);
+  }
+
+  async delete(accountId: Id, contactId: Id): Promise<void> {
+    const exists = await prisma.contact.findFirst({
+      where: { id: contactId, accountId },
+      select: { id: true },
+    });
+    if (!exists) throw new NotFoundError('Contato', contactId);
+
+    await prisma.contact.delete({
+      where: { id: contactId, accountId },
+    });
   }
 }

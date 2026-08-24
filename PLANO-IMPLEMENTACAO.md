@@ -29,6 +29,9 @@ rotas dinâmicas respondem **404** para id inexistente (verificado em `next star
 >
 > O próximo passo combinado é o backend hospedado: **Supabase + Prisma**. O SQLite de hoje é o degrau
 > que torna essa migração mecânica — ver 5.5.
+>
+> **O plano do backend hospedado está em [`PLANO-BACKEND.md`](PLANO-BACKEND.md)** — sete fases,
+> da string de conexão até as N conexões de WhatsApp por conta. A Onda 3 é a última delas.
 
 ### O que mudou nos números da auditoria
 

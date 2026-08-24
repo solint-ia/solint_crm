@@ -1,9 +1,8 @@
-import 'server-only';
-
 import { randomUUID } from 'node:crypto';
 import { cookies } from 'next/headers';
-import type { Account, Permission, Role, Session, User } from '@/core/domain/user';
-import { prisma, fromJson } from '@/infrastructure/db/prisma';
+import type { Account, Permission, Role, Session } from '@/core/domain/user';
+import { prisma, readJson } from '@/infrastructure/db/prisma';
+import { userRow } from '@/infrastructure/repositories/prisma/mappers';
 import {
   SESSION_COOKIE,
   SESSION_TTL_SECONDS,
@@ -78,32 +77,6 @@ export const revokeAllSessions = async (userId: string): Promise<number> => {
   return count;
 };
 
-const toDomainUser = (row: {
-  id: string;
-  accountId: string;
-  name: string;
-  email: string;
-  roleSlug: string;
-  avatarTone: string;
-  availability: string;
-  teamsJson: string;
-  signature: string | null;
-  twoFactorEnabled: boolean;
-  lastActiveAt: string | null;
-}): User => ({
-  id: row.id,
-  accountId: row.accountId,
-  name: row.name,
-  email: row.email,
-  roleSlug: row.roleSlug,
-  avatarTone: row.avatarTone,
-  availability: row.availability as User['availability'],
-  teams: fromJson<readonly string[]>(row.teamsJson, []),
-  twoFactorEnabled: row.twoFactorEnabled,
-  ...(row.signature ? { signature: row.signature } : {}),
-  ...(row.lastActiveAt ? { lastActiveAt: row.lastActiveAt } : {}),
-});
-
 const toDomainAccount = (row: {
   id: string;
   name: string;
@@ -139,42 +112,50 @@ export const readSession = async (): Promise<Session | null> => {
     return null;
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: claims.sub },
-    include: { account: true },
+  // O `act` do token diz em que conta a sessão foi aberta; o vínculo é o que
+  // autoriza. Sem ele a pessoa não atende mais naquele workspace, e o token
+  // deixa de valer ali — mesmo com assinatura boa e sessão não revogada.
+  const membership = await prisma.membership.findUnique({
+    where: { userId_accountId: { userId: claims.sub, accountId: claims.act } },
+    include: { user: true, account: true },
   });
-  if (!user || user.accountId !== claims.act) return null;
+  if (!membership) return null;
 
-  const role: Role | null = await prisma.role.findUnique({
-    where: { accountId_slug: { accountId: user.accountId, slug: user.roleSlug } },
-  }).then((row) =>
-    row
-      ? {
-          id: row.id,
-          accountId: row.accountId,
-          slug: row.slug,
-          name: row.name,
-          description: row.description,
-          permissions: fromJson<readonly Permission[]>(row.permissionsJson, []),
-          isSystem: row.isSystem,
-        }
-      : null,
-  );
+  const role: Role | null = await prisma.role
+    .findUnique({
+      where: { accountId_slug: { accountId: membership.accountId, slug: membership.roleSlug } },
+    })
+    .then((row) =>
+      row
+        ? {
+            id: row.id,
+            accountId: row.accountId,
+            slug: row.slug,
+            name: row.name,
+            description: row.description,
+            permissions: readJson<readonly Permission[]>(row.permissions, []),
+            isSystem: row.isSystem,
+          }
+        : null,
+    );
 
-  const account = toDomainAccount(user.account);
+  // Todas as contas em que esta pessoa atende. É o que alimenta o seletor de
+  // workspace — que até aqui devolvia `[account]` porque não havia como saber.
+  // tenant-ok: deliberadamente entre contas — e a lista de workspaces da pessoa
+  // que alimenta o seletor. Escopar por conta aqui devolveria sempre uma opcao.
+  const all = await prisma.membership.findMany({
+    where: { userId: membership.userId },
+    include: { account: true },
+    orderBy: { createdAt: 'asc' },
+  });
 
   return {
-    user: toDomainUser(user),
-    account,
+    user: userRow(membership.user, membership),
+    account: toDomainAccount(membership.account),
     // Sem papel cadastrado o usuário fica sem permissão nenhuma. É o padrão
     // seguro: um papel apagado não deve virar acesso irrestrito.
     permissions: role?.permissions ?? [],
-    /**
-     * Uma conta por usuário neste modelo — o e-mail é único globalmente.
-     * Multi-workspace de verdade exige uma tabela de vínculo (Membership);
-     * fingir mais de uma conta aqui só encheria o seletor de opções falsas.
-     */
-    availableAccounts: [account],
+    availableAccounts: all.map((row) => toDomainAccount(row.account)),
   };
 };
 

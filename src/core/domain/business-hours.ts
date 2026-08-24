@@ -74,14 +74,19 @@ export const isWithinBusinessHours = (hours: BusinessHours, now: Date): boolean 
   const closes = minutesOf(today.closesAt);
 
   // Expediente que atravessa a meia-noite (22h às 02h) é um intervalo invertido.
-  return closes > opens ? current >= opens && current < closes : current >= opens || current < closes;
+  return closes > opens
+    ? current >= opens && current < closes
+    : current >= opens || current < closes;
 };
 
 /** "Seg a Sex, 08:00–18:00" quando os dias ativos compartilham o mesmo horário. */
 export const summarizeBusinessHours = (hours: BusinessHours): string => {
   const open = hours.days.filter((day) => day.enabled);
   if (open.length === 0) return 'Sempre fechado';
-  if (open.length === 7 && open.every((day) => day.opensAt === '00:00' && day.closesAt === '23:59')) {
+  if (
+    open.length === 7 &&
+    open.every((day) => day.opensAt === '00:00' && day.closesAt === '23:59')
+  ) {
     return 'Sempre aberto (24/7)';
   }
 
@@ -99,7 +104,9 @@ export const summarizeBusinessHours = (hours: BusinessHours): string => {
 
   // Sequência contígua de dias vira "Seg a Sex"; qualquer outra coisa é listada.
   const indices = open.map((day) => WEEKDAYS.indexOf(day.day)).sort((a, b) => a - b);
-  const contiguous = indices.every((value, index) => index === 0 || value === (indices[index - 1] ?? -9) + 1);
+  const contiguous = indices.every(
+    (value, index) => index === 0 || value === (indices[index - 1] ?? -9) + 1,
+  );
   const start = indices[0];
   const end = indices[indices.length - 1];
 

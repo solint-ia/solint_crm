@@ -23,4 +23,41 @@ export class InMemoryCampaignRepository implements CampaignRepository {
   async listTemplates(accountId: Id): Promise<readonly WhatsAppTemplate[]> {
     return TEMPLATES.filter((template) => template.accountId === accountId);
   }
+
+  async createCampaign(
+    accountId: Id,
+    draft: {
+      name: string;
+      segmentId?: Id;
+      templateId: Id;
+      scheduledAt?: string;
+      rateLimit?: number;
+      variables?: readonly string[];
+    },
+  ): Promise<Campaign> {
+    const campaign: Campaign = {
+      id: `cmp-${Date.now()}`,
+      accountId,
+      name: draft.name,
+      status: draft.scheduledAt ? 'agendada' : 'em_andamento',
+      segmentName: 'Base geral',
+      templateName: 'Template WhatsApp',
+      scheduledLabel: draft.scheduledAt ?? 'Hoje',
+      metrics: { recipients: 0, sent: 0, delivered: 0, read: 0, failed: 0 },
+    };
+    return campaign;
+  }
+
+  async toggleCampaignStatus(
+    accountId: Id,
+    campaignId: Id,
+    status: Campaign['status'],
+  ): Promise<Campaign> {
+    const found = await this.findById(accountId, campaignId);
+    if (!found) throw new Error('Campanha não encontrada');
+    return { ...found, status };
+  }
+
+  async deleteCampaign(_accountId: Id, _campaignId: Id): Promise<void> {}
 }
+

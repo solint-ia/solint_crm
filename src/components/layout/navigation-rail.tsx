@@ -42,14 +42,6 @@ interface NavigationRailProps {
   readonly availability: AvailabilityStatus;
 }
 
-/**
- * Navegação global.
- *
- * Duas formas para a mesma informação: no desktop, a rail de 64px sempre
- * visível; abaixo de `md`, uma barra de topo com gaveta. Trocar por uma barra
- * inferior de abas custaria caro aqui — são sete destinos mais perfil, tema e
- * WhatsApp, e barra de abas só funciona bem com quatro ou cinco.
- */
 export function NavigationRail({
   items,
   unreadCount,
@@ -62,7 +54,6 @@ export function NavigationRail({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { isConnected: waConnected, statusData } = useWhatsAppConnection();
 
-  // Navegar fecha a gaveta: deixá-la aberta sobre a tela nova seria um beco.
   useEffect(() => setDrawerOpen(false), [pathname]);
 
   useEffect(() => {
@@ -86,8 +77,8 @@ export function NavigationRail({
   const whatsappDot = (
     <span
       className={cn(
-        'absolute top-1.5 right-1.5 size-2 rounded-full border border-surface',
-        waConnected ? 'bg-status-open animate-pulse' : 'bg-status-pending',
+        'absolute top-1.5 right-1.5 size-2 rounded-full border border-[#0a0f1d]',
+        waConnected ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50 animate-pulse' : 'bg-amber-400',
       )}
     />
   );
@@ -99,17 +90,19 @@ export function NavigationRail({
       {/* ---------- Desktop: rail vertical ---------- */}
       <nav
         aria-label="Navegação principal"
-        className="hidden w-16 shrink-0 flex-col items-center justify-between border-r border-line bg-surface py-3.5 shadow-2xs md:flex"
+        className="hidden w-16 shrink-0 flex-col items-center justify-between border-r border-white/[0.06] bg-[#0a0f1d] py-3.5 shadow-sm md:flex"
       >
-        <div className="flex w-full flex-col items-center gap-1.5">
+        <div className="flex w-full flex-col items-center gap-2">
+          {/* Logo Solint */}
           <Link
             href="/dashboard"
             aria-label="Solint CRM"
-            className="mb-2 flex size-9.5 items-center justify-center rounded-surface bg-brand-gradient font-display text-title font-bold text-white shadow-xs transition-transform hover:scale-105 active:scale-95"
+            className="mb-2 flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 font-display text-base font-bold text-white shadow-md shadow-blue-500/25 transition-transform hover:scale-105 active:scale-95"
           >
             S
           </Link>
 
+          {/* Itens de Navegação */}
           {items.map((item) => {
             const Icon = ICONS[item.icon];
             const active = isActive(item);
@@ -121,30 +114,31 @@ export function NavigationRail({
                 aria-label={item.label}
                 aria-current={active ? 'page' : undefined}
                 className={cn(
-                  'group relative flex size-10 items-center justify-center rounded-surface transition-all duration-150',
+                  'group relative flex size-10 items-center justify-center rounded-xl transition-all duration-150',
                   active
-                    ? 'bg-accent-soft font-semibold text-brand shadow-2xs'
-                    : 'text-dim hover:bg-surface-2 hover:text-ink',
+                    ? 'bg-blue-600/15 font-semibold text-blue-400 border border-blue-500/30 shadow-sm'
+                    : 'text-slate-400 hover:bg-white/[0.06] hover:text-white border border-transparent',
                 )}
               >
-                <Icon className="size-[19px] transition-transform group-hover:scale-105" />
-                {item.id === 'conversas' && unreadCount > 0 ? (
-                  <span className="absolute top-1 right-1 flex min-w-4 items-center justify-center rounded-full bg-brand px-1 text-micro font-bold text-white shadow-xs">
+                <Icon className="size-[19px] transition-transform group-hover:scale-110" />
+                {item.id === 'conversas' && unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 flex min-w-4.5 h-4.5 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-bold text-white shadow-sm shadow-blue-600/40">
                     {unreadCount}
                   </span>
-                ) : null}
+                )}
               </Link>
             );
           })}
         </div>
 
+        {/* Rodapé da Barra Lateral */}
         <div className="flex flex-col items-center gap-2.5">
           <button
             type="button"
             onClick={() => setIsWhatsAppModalOpen(true)}
             title={whatsappTitle}
             aria-label="Status do WhatsApp"
-            className="group relative flex size-9 items-center justify-center rounded-surface text-dim transition-all hover:bg-surface-2 hover:text-ink"
+            className="group relative flex size-9 items-center justify-center rounded-xl text-slate-400 transition-all hover:bg-white/[0.06] hover:text-white border border-transparent hover:border-white/[0.06]"
           >
             <QrCode className="size-[18px] transition-transform group-hover:scale-105" />
             {whatsappDot}
@@ -156,7 +150,7 @@ export function NavigationRail({
             href="/perfil"
             aria-label={`Perfil de ${userName}`}
             title={userName}
-            className="rounded-full ring-2 ring-transparent transition-all hover:ring-brand/30"
+            className="rounded-full ring-2 ring-transparent transition-all hover:ring-blue-500/40"
           >
             <Avatar name={userName} tone={userTone} size="sm" availability={availability} />
           </Link>
@@ -164,24 +158,24 @@ export function NavigationRail({
       </nav>
 
       {/* ---------- Mobile: barra de topo ---------- */}
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line bg-surface px-3 md:hidden">
+      <header className="flex h-13 shrink-0 items-center gap-2 border-b border-white/[0.06] bg-[#0a0f1d] px-3 md:hidden">
         <button
           type="button"
           onClick={() => setDrawerOpen(true)}
           aria-label="Abrir navegação"
           aria-expanded={drawerOpen}
-          className="relative flex size-9 items-center justify-center rounded-control text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+          className="relative flex size-9 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/[0.06] hover:text-white"
         >
           <Menu className="size-5" />
-          {unreadCount > 0 ? (
-            <span className="absolute top-1 right-1 size-2 rounded-full bg-brand" />
-          ) : null}
+          {unreadCount > 0 && (
+            <span className="absolute top-1 right-1 size-2 rounded-full bg-blue-500" />
+          )}
         </button>
 
         <Link
           href="/dashboard"
           aria-label="Solint CRM"
-          className="flex size-8 items-center justify-center rounded-surface bg-brand-gradient font-display text-body font-bold text-white"
+          className="flex size-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 font-display text-sm font-bold text-white"
         >
           S
         </Link>
@@ -192,7 +186,7 @@ export function NavigationRail({
             onClick={() => setIsWhatsAppModalOpen(true)}
             title={whatsappTitle}
             aria-label="Status do WhatsApp"
-            className="relative flex size-9 items-center justify-center rounded-control text-dim transition-colors hover:bg-surface-2 hover:text-ink"
+            className="relative flex size-9 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/[0.06] hover:text-white"
           >
             <QrCode className="size-[18px]" />
             {whatsappDot}
@@ -205,33 +199,33 @@ export function NavigationRail({
       </header>
 
       {/* ---------- Mobile: gaveta ---------- */}
-      {drawerOpen ? (
+      {drawerOpen && (
         <div className="fixed inset-0 z-50 md:hidden">
           <button
             type="button"
             aria-label="Fechar navegação"
             onClick={() => setDrawerOpen(false)}
-            className="absolute inset-0 bg-black/45"
+            className="absolute inset-0 bg-black/60 backdrop-blur-xs"
           />
           <nav
             aria-label="Navegação principal"
-            className="relative flex h-full w-64 flex-col border-r border-line bg-surface shadow-xl motion-safe:animate-[drawer-in_180ms_ease-out]"
+            className="relative flex h-full w-64 flex-col border-r border-white/[0.06] bg-[#0d1424] shadow-2xl animate-in slide-in-from-left duration-200"
           >
-            <div className="flex items-center justify-between border-b border-line px-4 py-3">
-              <span className="font-display text-title font-bold tracking-tight text-ink">
+            <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
+              <span className="font-display text-base font-bold tracking-tight text-white">
                 Solint CRM
               </span>
               <button
                 type="button"
                 onClick={() => setDrawerOpen(false)}
                 aria-label="Fechar navegação"
-                className="rounded-control p-1 text-dim transition-colors hover:bg-surface-2 hover:text-ink"
+                className="rounded-lg p-1 text-slate-400 transition-colors hover:bg-white/[0.06] hover:text-white"
               >
                 <X className="size-4" />
               </button>
             </div>
 
-            <ul className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-2">
+            <ul className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
               {items.map((item) => {
                 const Icon = ICONS[item.icon];
                 const active = isActive(item);
@@ -241,43 +235,43 @@ export function NavigationRail({
                       href={item.href}
                       aria-current={active ? 'page' : undefined}
                       className={cn(
-                        'flex items-center gap-3 rounded-control px-3 py-2.5 text-ui transition-colors',
+                        'flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-medium transition-colors',
                         active
-                          ? 'bg-accent-soft font-semibold text-brand'
-                          : 'text-muted hover:bg-surface-2 hover:text-ink',
+                          ? 'bg-blue-600/15 font-semibold text-blue-400 border border-blue-500/30'
+                          : 'text-slate-400 hover:bg-white/[0.04] hover:text-white border border-transparent',
                       )}
                     >
                       <Icon className="size-[18px] shrink-0" />
                       <span className="flex-1">{item.label}</span>
-                      {item.id === 'conversas' && unreadCount > 0 ? (
-                        <span className="rounded-full bg-brand px-1.5 text-micro font-bold text-white">
+                      {item.id === 'conversas' && unreadCount > 0 && (
+                        <span className="rounded-full bg-blue-600 px-1.5 text-[10px] font-bold text-white">
                           {unreadCount}
                         </span>
-                      ) : null}
+                      )}
                     </Link>
                   </li>
                 );
               })}
             </ul>
 
-            <div className="border-t border-line p-2">
+            <div className="border-t border-white/[0.06] p-2.5">
               <Link
                 href="/perfil"
-                className="flex items-center gap-3 rounded-control px-2 py-2 transition-colors hover:bg-surface-2"
+                className="flex items-center gap-3 rounded-xl px-2.5 py-2 transition-colors hover:bg-white/[0.04]"
               >
                 <Avatar name={userName} tone={userTone} size="sm" availability={availability} />
                 <span className="min-w-0">
-                  <span className="block truncate text-body font-semibold text-ink">
+                  <span className="block truncate text-xs font-semibold text-white">
                     {userName}
                   </span>
-                  <span className="block text-meta text-dim">Ver perfil e preferências</span>
+                  <span className="block text-[10px] text-slate-400">Ver perfil e preferências</span>
                 </span>
               </Link>
-              <LogoutButton variant="linha" className="mt-0.5 w-full" />
+              <LogoutButton variant="linha" className="mt-1 w-full" />
             </div>
           </nav>
         </div>
-      ) : null}
+      )}
     </>
   );
 }

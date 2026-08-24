@@ -1,12 +1,16 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowLeft, Search, SlidersHorizontal } from 'lucide-react';
+import {
+  ArrowLeft,
+  MessageSquare,
+  Search,
+  SlidersHorizontal,
+  X,
+} from 'lucide-react';
 import type { Conversation, ConversationStatus, Priority } from '@/core/domain/conversation';
 import type { Message } from '@/core/domain/message';
 import type { CannedResponse } from '@/core/domain/settings';
-import { EmptyState } from '@/components/ui/empty-state';
-import { SegmentedControl } from '@/components/ui/segmented-control';
 import { cn } from '@/lib/cn';
 import { ChatPanel } from './chat-panel';
 import type { InboxCatalog } from './conversation-toolbar';
@@ -64,10 +68,6 @@ interface InboxWorkspaceProps {
   readonly initialSelectedId?: string;
 }
 
-/**
- * `espera` existia no dominio desde o comeco e nao tinha aba: conversas nesse
- * estado sumiam de todas as abas de status, porque nenhuma as aceitava.
- */
 const STATUS_TABS = [
   { id: 'todas', label: 'Todas' },
   { id: 'aberta', label: 'Abertas' },
@@ -82,20 +82,12 @@ const SORT_OPTIONS = [
   { id: 'prioridade', label: 'Prioridade' },
 ] as const;
 
-/** Qual das três colunas ocupa a tela no celular. */
 type MobilePane = 'lista' | 'conversa' | 'contexto';
 
-/**
- * Orquestrador das 3 colunas de /conversas (a rail vem do layout).
- *
- * A partir de `lg` as três aparecem juntas. Abaixo disso viram uma pilha
- * navegável — lista → conversa → detalhes — porque três painéis de 340px não
- * cabem em 390px de largura, e encolher todos deixaria os três ilegíveis.
- * A troca é só de visibilidade: o estado da caixa continua o mesmo, então
- * voltar não recarrega nem perde posição.
- */
 export function InboxWorkspace(props: InboxWorkspaceProps) {
   const [pane, setPane] = useState<MobilePane>(props.initialSelectedId ? 'conversa' : 'lista');
+  // Por padrão, a barra de detalhes inicia FECHADA para dar 100% de amplitude ao chat central
+  const [isContextOpen, setIsContextOpen] = useState(false);
 
   const inbox = useInbox({
     initialConversations: props.conversations,
@@ -113,82 +105,123 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
     initialSelectedId: props.initialSelectedId,
   });
 
+  const filterCount = activeFilterCount(inbox.filters);
   const hasNarrowing =
-    activeFilterCount(inbox.filters) > 0 ||
+    filterCount > 0 ||
     inbox.search.trim().length > 0 ||
     inbox.statusTab !== 'todas';
 
   return (
-    <div className="flex h-full min-h-0 flex-1">
-      {/* ---------- Lista ---------- */}
+    <div className="flex h-full min-h-0 flex-1 overflow-hidden bg-[#080d19] text-slate-100">
+      {/* ============================================================ */}
+      {/* COLUNA 1: LISTA DE CONVERSAS (320px - 360px)                 */}
+      {/* ============================================================ */}
       <section
         className={cn(
-          'flex min-w-0 flex-col border-r border-line bg-surface',
-          'w-full lg:w-[340px] lg:shrink-0',
+          'flex min-w-0 flex-col border-r border-white/[0.06] bg-[#0c1322]',
+          'w-full lg:w-[340px] lg:shrink-0 xl:w-[360px]',
           pane !== 'lista' && 'hidden lg:flex',
         )}
       >
-        <div className="shrink-0 border-b border-line px-3 py-3">
-          <div className="relative mb-2.5">
-            <Search className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-dim" />
-            <input
-              type="search"
-              value={inbox.search}
-              onChange={(event) => inbox.setSearch(event.target.value)}
-              placeholder="Buscar conversas"
-              aria-label="Buscar conversas"
-              className="h-9 w-full rounded-control border border-line bg-surface-2 pr-3 pl-8 text-body text-ink outline-none placeholder:text-dim focus:border-brand"
+        {/* Cabeçalho da Lista: Busca e Filtros */}
+        <div className="flex flex-col gap-2.5 shrink-0 border-b border-white/[0.06] p-3 bg-[#0e1626]">
+          {/* Linha 1: Campo de Busca + Menu de Filtros + Ordenação */}
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1 min-w-0">
+              <Search className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-slate-400" />
+              <input
+                type="search"
+                value={inbox.search}
+                onChange={(event) => inbox.setSearch(event.target.value)}
+                placeholder="Buscar conversas..."
+                aria-label="Buscar conversas"
+                className="h-9 w-full rounded-xl border border-white/[0.08] bg-white/[0.03] pr-8 pl-9 text-xs text-slate-100 placeholder:text-slate-500 outline-none transition-all focus:border-blue-500/60 focus:bg-white/[0.06] focus:ring-2 focus:ring-blue-500/15"
+              />
+              {inbox.search && (
+                <button
+                  type="button"
+                  onClick={() => inbox.setSearch('')}
+                  aria-label="Limpar busca"
+                  className="absolute top-1/2 right-2.5 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                >
+                  <X className="size-3.5" />
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              <InboxFiltersMenu
+                filters={inbox.filters}
+                labels={props.catalog.labels}
+                onChange={inbox.setFilters}
+              />
+
+              <label className="flex items-center gap-1 rounded-lg border border-white/[0.08] bg-white/[0.03] px-2 py-1.5 text-[11px] text-slate-300 hover:bg-white/[0.06] cursor-pointer transition-colors" title="Ordenar lista">
+                <SlidersHorizontal className="size-3 text-slate-400" />
+                <span className="sr-only">Ordenar</span>
+                <select
+                  value={inbox.sort}
+                  onChange={(event) => inbox.setSort(event.target.value as SortKey)}
+                  className="bg-transparent text-[11px] text-slate-300 outline-none cursor-pointer"
+                >
+                  {SORT_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id} className="bg-[#0e1626] text-slate-200">
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </div>
+
+          {/* Linha 2: Abas de Escopo: Minhas / Não Atribuídas / Todas */}
+          <div className="grid grid-cols-3 gap-1 rounded-xl bg-white/[0.04] p-1 border border-white/[0.04]">
+            <ScopeTabButton
+              label="Minhas"
+              count={inbox.counts.minhas}
+              active={inbox.scope === 'minhas'}
+              onClick={() => inbox.setScope('minhas')}
+            />
+            <ScopeTabButton
+              label="Não atrib."
+              count={inbox.counts.nao_atribuidas}
+              active={inbox.scope === 'nao_atribuidas'}
+              onClick={() => inbox.setScope('nao_atribuidas')}
+            />
+            <ScopeTabButton
+              label="Todas"
+              count={inbox.counts.todas}
+              active={inbox.scope === 'todas'}
+              onClick={() => inbox.setScope('todas')}
             />
           </div>
 
-          <SegmentedControl
-            ariaLabel="Filtro de atribuição"
-            size="sm"
-            className="w-full"
-            value={inbox.scope}
-            onChange={inbox.setScope}
-            options={[
-              { id: 'minhas', label: 'Minhas', count: inbox.counts.minhas },
-              { id: 'nao_atribuidas', label: 'Não atrib.', count: inbox.counts.nao_atribuidas },
-              { id: 'todas', label: 'Todas', count: inbox.counts.todas },
-            ]}
-          />
-
-          <div className="mt-2 flex items-center gap-1.5 overflow-x-auto">
-            <SegmentedControl
-              ariaLabel="Filtro de status"
-              size="sm"
-              value={inbox.statusTab}
-              onChange={(value) => inbox.setStatusTab(value as StatusTab)}
-              options={STATUS_TABS.map((tab) => ({ id: tab.id, label: tab.label }))}
-            />
-            <span className="ml-auto flex shrink-0 items-center gap-1.5">
-            <InboxFiltersMenu
-              filters={inbox.filters}
-              labels={props.catalog.labels}
-              onChange={inbox.setFilters}
-            />
-            <label className="flex items-center gap-1 text-meta text-dim">
-              <SlidersHorizontal className="size-3" />
-              <span className="sr-only">Ordenar por</span>
-              <select
-                value={inbox.sort}
-                onChange={(event) => inbox.setSort(event.target.value as SortKey)}
-                className="rounded-control border border-line bg-surface px-1.5 py-1 text-meta text-ink outline-none focus:border-brand"
-              >
-                {SORT_OPTIONS.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            </span>
+          {/* Linha 3: Filtros de Status (Pílulas com 100% de largura e sem sobreposição) */}
+          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pt-0.5 pb-0.5">
+            {STATUS_TABS.map((tab) => {
+              const active = inbox.statusTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => inbox.setStatusTab(tab.id as StatusTab)}
+                  className={cn(
+                    'shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-semibold transition-all',
+                    active
+                      ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 shadow-xs'
+                      : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-200 border border-transparent',
+                  )}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
           </div>
         </div>
 
+        {/* Lista Rolável de Conversas */}
         {inbox.conversations.length > 0 ? (
-          <ul className="flex-1 overflow-y-auto">
+          <ul className="flex-1 overflow-y-auto divide-y divide-white/[0.02]">
             {inbox.conversations.map((conversation) => (
               <ConversationListItem
                 key={conversation.id}
@@ -202,50 +235,54 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
             ))}
           </ul>
         ) : (
-          <div className="flex-1 p-4">
-            {/* Distinguir vazio de escondido-pelo-filtro evita o susto de achar
-                que a fila zerou quando ha um recorte ativo. */}
-            <EmptyState
-              title={hasNarrowing ? 'Nenhuma conversa neste recorte' : 'Tudo limpo por aqui!'}
-              description={
-                hasNarrowing
-                  ? 'Ajuste os filtros, a busca ou a aba de status para ver outras conversas.'
-                  : 'Nenhuma mensagem aguardando atendimento na sua fila.'
-              }
-              action={
-                hasNarrowing ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      inbox.setFilters({});
-                      inbox.setSearch('');
-                      inbox.setStatusTab('todas');
-                    }}
-                    className="text-meta font-semibold text-brand hover:underline"
-                  >
-                    Limpar filtros
-                  </button>
-                ) : null
-              }
-            />
+          <div className="flex-1 flex items-center justify-center p-6 text-center">
+            <div className="flex flex-col items-center gap-2 max-w-xs">
+              <div className="flex size-10 items-center justify-center rounded-xl bg-white/[0.04] text-slate-400 border border-white/[0.06]">
+                <MessageSquare className="size-5" />
+              </div>
+              <h4 className="text-sm font-semibold text-slate-200">
+                {hasNarrowing ? 'Nenhuma conversa neste filtro' : 'Tudo limpo por aqui!'}
+              </h4>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                {hasNarrowing
+                  ? 'Ajuste os filtros, a busca ou a aba de status para ver outros atendimentos.'
+                  : 'Nenhuma mensagem aguardando atendimento na sua fila neste momento.'}
+              </p>
+              {hasNarrowing && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    inbox.setFilters({});
+                    inbox.setSearch('');
+                    inbox.setStatusTab('todas');
+                  }}
+                  className="mt-2 text-xs font-semibold text-blue-400 hover:text-blue-300 hover:underline"
+                >
+                  Limpar todos os filtros
+                </button>
+              )}
+            </div>
           </div>
         )}
       </section>
 
+      {/* ============================================================ */}
+      {/* COLUNA 2: ÁREA PRINCIPAL DA CONVERSA                         */}
+      {/* ============================================================ */}
       {inbox.selected ? (
         <>
-          {/* ---------- Conversa ---------- */}
           <div
             className={cn(
-              'min-w-0 flex-1 flex-col',
+              'min-w-0 flex-1 flex-col h-full overflow-hidden transition-all duration-200',
               pane === 'conversa' ? 'flex' : 'hidden lg:flex',
             )}
           >
-            {inbox.error ? (
-              <p role="alert" className="bg-red-soft px-4 py-2 text-meta text-red-text">
+            {inbox.error && (
+              <p role="alert" className="bg-red-950/70 border-b border-red-800/40 px-4 py-2 text-xs text-red-300">
                 {inbox.error}
               </p>
-            ) : null}
+            )}
+
             <ChatPanel
               conversation={inbox.selected}
               pending={inbox.pending}
@@ -260,41 +297,109 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
               onChangePriority={inbox.changePriority}
               onSetLabels={inbox.setLabels}
               onBack={() => setPane('lista')}
-              onOpenContext={() => setPane('contexto')}
+              isContextOpen={isContextOpen}
+              onToggleContext={() => {
+                setIsContextOpen((prev) => !prev);
+                if (pane === 'conversa' && window.innerWidth < 1024) {
+                  setPane('contexto');
+                }
+              }}
             />
           </div>
 
-          {/* ---------- Contexto ---------- */}
-          <div
-            className={cn(
-              'min-w-0 flex-col',
-              pane === 'contexto' ? 'flex flex-1' : 'hidden xl:flex',
-            )}
-          >
-            <button
-              type="button"
-              onClick={() => setPane('conversa')}
-              className="flex shrink-0 items-center gap-2 border-b border-line bg-surface px-3 py-2.5 text-body font-semibold text-muted transition-colors hover:text-ink xl:hidden"
-            >
-              <ArrowLeft className="size-4" />
-              Voltar para a conversa
-            </button>
-            <ContextPanel
-              conversation={inbox.selected}
-              labels={props.catalog.labels}
-              onSetConversationLabels={inbox.setLabels}
-              onSetContactLabels={inbox.setContactLabels}
-            />
-          </div>
+          {/* ============================================================ */}
+          {/* COLUNA 3: DETALHES DO CONTATO (RETRÁTIL / DRAWER)            */}
+          {/* ============================================================ */}
+          {/* Desktop & Notebook: Painel Retrátil deslizante */}
+          {isContextOpen && (
+            <div className="hidden lg:flex shrink-0 animate-in slide-in-from-right duration-200">
+              <ContextPanel
+                conversation={inbox.selected}
+                labels={props.catalog.labels}
+                onSetConversationLabels={inbox.setLabels}
+                onSetContactLabels={inbox.setContactLabels}
+                onClose={() => setIsContextOpen(false)}
+              />
+            </div>
+          )}
+
+          {/* Mobile: Painel de Contexto em tela inteira / Drawer */}
+          {pane === 'contexto' && (
+            <div className="flex flex-1 flex-col min-w-0 h-full overflow-hidden lg:hidden">
+              <div className="flex items-center gap-2 border-b border-white/[0.06] bg-[#0d1424] px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => setPane('conversa')}
+                  className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 hover:text-white"
+                >
+                  <ArrowLeft className="size-4" />
+                  <span>Voltar para a conversa</span>
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto">
+                <ContextPanel
+                  conversation={inbox.selected}
+                  labels={props.catalog.labels}
+                  onSetConversationLabels={inbox.setLabels}
+                  onSetContactLabels={inbox.setContactLabels}
+                  onClose={() => setPane('conversa')}
+                />
+              </div>
+            </div>
+          )}
         </>
       ) : (
-        <div className="hidden flex-1 items-center justify-center bg-chat p-8 lg:flex">
-          <EmptyState
-            title="Selecione uma conversa ao lado"
-            description="Escolha um atendimento na lista para começar a responder."
-          />
+        /* Estado Vazio: Nenhuma Conversa Selecionada */
+        <div className="hidden flex-1 items-center justify-center bg-[#090e1a] p-8 lg:flex">
+          <div className="flex flex-col items-center gap-3 text-center max-w-sm">
+            <div className="flex size-14 items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.03] text-slate-400 shadow-sm">
+              <MessageSquare className="size-7 text-blue-400/80" />
+            </div>
+            <h3 className="text-base font-bold text-slate-100 font-display">
+              Selecione uma conversa ao lado
+            </h3>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Escolha um atendimento na lista à esquerda para visualizar o histórico de mensagens e começar a responder.
+            </p>
+          </div>
         </div>
       )}
     </div>
+  );
+}
+
+function ScopeTabButton({
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  readonly label: string;
+  readonly count: number;
+  readonly active: boolean;
+  readonly onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-semibold transition-all',
+        active
+          ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/30'
+          : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]',
+      )}
+    >
+      <span>{label}</span>
+      <span
+        className={cn(
+          'rounded-full px-1.5 py-0.2 text-[10px] tabular-nums font-bold',
+          active ? 'bg-white/20 text-white' : 'bg-white/[0.08] text-slate-300',
+        )}
+      >
+        {count}
+      </span>
+    </button>
   );
 }

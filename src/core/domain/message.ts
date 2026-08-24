@@ -64,7 +64,8 @@ export interface MessageDayDivider {
   readonly label: string;
 }
 
-export type TimelineItem = { readonly kind: 'message'; readonly message: Message } | MessageDayDivider;
+export type TimelineItem =
+  { readonly kind: 'message'; readonly message: Message } | MessageDayDivider;
 
 /** Uma nota interna nunca pode ter status de entrega em canal externo. */
 export const isDeliverable = (message: Message): boolean => !message.isPrivate;

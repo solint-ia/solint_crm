@@ -1,111 +1,72 @@
 import Image from 'next/image';
 import Link from 'next/link';
-import { Bot, MessageSquareText, TrendingUp } from 'lucide-react';
-import { InboxVignette } from './inbox-vignette';
+import { AbstractGraphic } from './abstract-graphic';
 
 interface AuthSplitLayoutProps {
   readonly children: React.ReactNode;
 }
 
-/** Provas curtas, em linguagem de operação — não adjetivos de marketing. */
-const PROOFS = [
-  { icon: MessageSquareText, label: 'WhatsApp, Instagram, e-mail e webchat numa fila só' },
-  { icon: Bot, label: 'Agentes de IA que sabem a hora de chamar um humano' },
-  { icon: TrendingUp, label: 'Funil, SLA e satisfação medidos no mesmo lugar' },
-] as const;
-
-/**
- * Casca das telas de entrada.
- *
- * Antes eram duas metades: gradiente de marca em 44% da largura e o fundo claro
- * do app no resto, com uma emenda vertical dura no meio. Agora é **uma
- * superfície só** — o gradiente atravessa a página na diagonal e o formulário
- * flutua sobre ele em vidro. O que separa marca de formulário passou a ser
- * elevação e desfoque, não uma linha onde a cor troca.
- *
- * O escopo de tokens em `.auth-shell` (ver `globals.css`) faz os mesmos
- * componentes de formulário do produto renderizarem em modo escuro aqui, sem
- * que nenhum deles tenha sido alterado.
- */
 export function AuthSplitLayout({ children }: AuthSplitLayoutProps) {
   return (
     <div className="auth-shell relative flex min-h-screen w-full flex-col overflow-hidden lg:flex-row">
-      <div className="auth-grid" />
+      {/* Iluminação ambiente suave */}
       <div className="auth-aurora" />
 
-      {/* ---------- Marca ---------- */}
-      <section className="relative flex flex-col justify-between gap-10 px-6 pt-10 pb-6 lg:w-[54%] lg:px-14 lg:py-12 xl:px-20">
-        <Link
-          href="/login"
-          aria-label="Solint CRM"
-          className="auth-rise inline-flex w-fit items-center transition-opacity hover:opacity-85"
-          style={{ animationDelay: '60ms' }}
-        >
-          <Image
-            src="/logo.png"
-            alt="Solint CRM"
-            width={2246}
-            height={600}
-            priority
-            className="auth-logo h-7 w-auto lg:h-9"
-          />
-        </Link>
+      {/* ---------- Lado Esquerdo: Branding Institucional & Tecnologia ---------- */}
+      <section className="relative z-10 flex flex-col justify-between gap-10 px-6 pt-10 pb-8 lg:w-[52%] lg:px-14 lg:py-14 xl:px-20">
+        <div>
+          {/* Logotipo Solint com escala ampliada e grande presença */}
+          <Link
+            href="/login"
+            aria-label="Solint CRM"
+            className="inline-flex items-center gap-4 transition-opacity hover:opacity-90"
+          >
+            <Image
+              src="/logo.png"
+              alt="Solint CRM"
+              width={2246}
+              height={600}
+              priority
+              className="h-14 w-auto sm:h-16 lg:h-20 drop-shadow-md transition-all"
+            />
+            <span className="hidden sm:inline-flex rounded-full border border-white/20 bg-white/10 px-3.5 py-1 text-xs font-semibold text-sky-100 tracking-wide shadow-sm">
+              Para Empresas
+            </span>
+          </Link>
+        </div>
 
-        <div className="flex flex-col gap-7">
+        <div className="flex flex-col gap-8 my-auto max-w-xl">
           <div>
-            <p
-              className="auth-rise font-mono text-micro tracking-[0.22em] text-cyan-200/80 uppercase"
-              style={{ animationDelay: '160ms' }}
-            >
-              Solint CRM · atendimento omnichannel
+            <p className="text-xs font-bold tracking-[0.2em] text-cyan-300 uppercase font-mono">
+              Solint CRM · Atendimento & Vendas
             </p>
 
-            <h1
-              className="auth-rise mt-3 max-w-[16ch] font-display text-display leading-[1.05] font-bold tracking-tight text-white lg:text-hero"
-              style={{ animationDelay: '240ms' }}
-            >
-              Nenhuma conversa
-              <span className="block bg-gradient-to-r from-cyan-200 via-sky-200 to-white bg-clip-text text-transparent">
-                fica sem resposta.
+            <h1 className="mt-4 font-display text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-white leading-[1.14]">
+              Conecte sua operação.
+              <span className="block mt-1 bg-gradient-to-r from-cyan-200 via-sky-200 to-white bg-clip-text text-transparent">
+                Potencialize seus resultados.
               </span>
             </h1>
 
-            <p
-              className="auth-rise mt-4 max-w-md text-ui leading-relaxed text-sky-100/75"
-              style={{ animationDelay: '320ms' }}
-            >
-              Toda mensagem que chega vira um atendimento com dono, prazo e histórico. O resto —
-              funil, campanhas, relatórios — nasce daí.
+            <p className="mt-4 text-sm sm:text-base leading-relaxed text-sky-100/85">
+              A plataforma completa para centralizar conversas do WhatsApp, organizar o contato com seus clientes e acelerar as vendas da sua equipe em um único lugar.
             </p>
           </div>
 
-          <ul className="auth-rise flex flex-col gap-2.5" style={{ animationDelay: '400ms' }}>
-            {PROOFS.map((proof) => (
-              <li key={proof.label} className="flex items-center gap-2.5 text-body text-sky-100/70">
-                <span className="flex size-6 shrink-0 items-center justify-center rounded-control border border-white/12 bg-white/6">
-                  <proof.icon className="size-3 text-cyan-200" />
-                </span>
-                {proof.label}
-              </li>
-            ))}
-          </ul>
-
-          <div className="auth-rise hidden lg:block" style={{ animationDelay: '520ms' }}>
-            <InboxVignette />
+          {/* Gráfico abstrato estático com termos claros */}
+          <div className="hidden lg:block">
+            <AbstractGraphic />
           </div>
         </div>
 
-        <p className="auth-rise text-meta text-sky-100/45" style={{ animationDelay: '600ms' }}>
-          © 2026 Solint CRM · Termos de uso · Privacidade
-        </p>
+        <div className="text-xs text-sky-200/60">
+          © 2026 Solint CRM · Todos os direitos reservados
+        </div>
       </section>
 
-      {/* ---------- Formulário ---------- */}
-      <section className="relative flex flex-1 items-center justify-center px-5 pt-2 pb-12 lg:px-10 lg:py-12">
-        <div
-          className="auth-rise auth-panel w-full max-w-[420px] rounded-float p-6 sm:p-8"
-          style={{ animationDelay: '340ms' }}
-        >
+      {/* ---------- Lado Direito: Card Branco Centralizado com Formulário ---------- */}
+      <section className="relative z-10 flex flex-1 items-center justify-center px-4 py-10 sm:px-8 lg:px-12 lg:py-16">
+        <div className="auth-panel w-full max-w-[440px]">
           {children}
         </div>
       </section>

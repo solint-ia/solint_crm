@@ -2,13 +2,7 @@ import type { Route } from 'next';
 import type { Permission } from '@/core/domain/user';
 
 export type NavIcon =
-  | 'inbox'
-  | 'contacts'
-  | 'kanban'
-  | 'ai'
-  | 'campaigns'
-  | 'dashboard'
-  | 'settings';
+  'inbox' | 'contacts' | 'kanban' | 'ai' | 'campaigns' | 'dashboard' | 'settings';
 
 export interface NavItem {
   readonly id: string;
@@ -22,13 +16,50 @@ export interface NavItem {
 
 /** Rail de 7 icones (SKILL.md secao 4.1). Fonte unica da navegacao global. */
 export const NAV_ITEMS: readonly NavItem[] = [
-  { id: 'conversas', label: 'Caixa de entrada', href: '/conversas', icon: 'inbox', permission: 'conversas:ler' },
-  { id: 'contatos', label: 'Contatos', href: '/contatos', icon: 'contacts', permission: 'contatos:ler' },
+  {
+    id: 'conversas',
+    label: 'Caixa de entrada',
+    href: '/conversas',
+    icon: 'inbox',
+    permission: 'conversas:ler',
+  },
+  {
+    id: 'contatos',
+    label: 'Contatos',
+    href: '/contatos',
+    icon: 'contacts',
+    permission: 'contatos:ler',
+  },
   { id: 'kanban', label: 'Kanban', href: '/kanban', icon: 'kanban', permission: 'kanban:ler' },
-  { id: 'agentes-ia', label: 'Agentes de IA', href: '/agentes-ia', icon: 'ai', permission: 'agentes-ia:ler' },
-  { id: 'campanhas', label: 'Campanhas', href: '/campanhas', icon: 'campaigns', permission: 'campanhas:ler' },
-  { id: 'dashboard', label: 'Dashboard e relatórios', href: '/dashboard', icon: 'dashboard', permission: 'relatorios:ler', matches: ['/relatorios'] },
-  { id: 'configuracoes', label: 'Configurações', href: '/configuracoes', icon: 'settings', permission: 'configuracoes:ler' },
+  {
+    id: 'agentes-ia',
+    label: 'Agentes de IA',
+    href: '/agentes-ia',
+    icon: 'ai',
+    permission: 'agentes-ia:ler',
+  },
+  {
+    id: 'campanhas',
+    label: 'Campanhas',
+    href: '/campanhas',
+    icon: 'campaigns',
+    permission: 'campanhas:ler',
+  },
+  {
+    id: 'dashboard',
+    label: 'Dashboard e relatórios',
+    href: '/dashboard',
+    icon: 'dashboard',
+    permission: 'relatorios:ler',
+    matches: ['/relatorios'],
+  },
+  {
+    id: 'configuracoes',
+    label: 'Configurações',
+    href: '/configuracoes',
+    icon: 'settings',
+    permission: 'configuracoes:ler',
+  },
 ];
 
 export const SETTINGS_SECTIONS = [

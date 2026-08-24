@@ -21,9 +21,7 @@ const RENDERABLE = /^(image|video|audio)\//;
 
 const dispositionFor = (mimeType: string, fileName?: string): string => {
   const mode = RENDERABLE.test(mimeType) ? 'inline' : 'attachment';
-  return fileName
-    ? `${mode}; filename*=UTF-8''${encodeURIComponent(fileName)}`
-    : mode;
+  return fileName ? `${mode}; filename*=UTF-8''${encodeURIComponent(fileName)}` : mode;
 };
 
 /**
@@ -33,10 +31,7 @@ const dispositionFor = (mimeType: string, fileName?: string): string => {
  * hoje a sessão de demonstracao e estatica, mas o ponto de verificacao precisa
  * existir para não virar um diretorio público quando a autenticacao real entrar.
  */
-export async function GET(
-  _request: Request,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!isSafeMediaId(id)) {
     return NextResponse.json({ ok: false, error: 'Mídia inválida' }, { status: 400 });

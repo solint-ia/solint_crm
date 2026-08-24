@@ -1,5 +1,3 @@
-import 'server-only';
-
 import type { AiAgentRepository, AiAgentSandbox } from '@/core/ports/ai-agent-repository';
 import type { AnalyticsRepository } from '@/core/ports/analytics-repository';
 import type { CampaignRepository } from '@/core/ports/campaign-repository';
@@ -21,8 +19,8 @@ import {
   createSetConversationLabels,
 } from '@/core/use-cases/triage-conversation';
 import { EchoAiAgentSandbox } from './repositories/in-memory/ai-agent-repository';
-import { InMemoryAnalyticsRepository } from './repositories/in-memory/analytics-repository';
-import { InMemoryCampaignRepository } from './repositories/in-memory/campaign-repository';
+import { PrismaAnalyticsRepository } from './repositories/prisma/analytics-repository';
+import { PrismaCampaignRepository } from './repositories/prisma/campaign-repository';
 import { PrismaContactRepository } from './repositories/prisma/contact-repository';
 import { PrismaConversationRepository } from './repositories/prisma/conversation-repository';
 import {
@@ -60,20 +58,13 @@ export interface Container {
 
 /**
  * Composition root (DIP): o unico lugar que conhece implementacoes concretas.
- *
- * Foi exatamente para isto que ele existe: a troca do store em memoria pelo
- * Prisma aconteceu aqui, em oito linhas, sem que nenhuma tela, caso de uso ou
- * regra de dominio mudasse.
- *
- * `analytics` e `campaigns` seguem em memoria de proposito: sao somente
- * leitura, nenhuma escrita passa por eles, e portanto nao ha nada a perder num
- * reinicio. Viram tabela quando ganharem escrita.
  */
 const buildContainer = (): Container => {
   const conversations = new PrismaConversationRepository();
   const contacts = new PrismaContactRepository();
   const pipelines = new PrismaPipelineRepository();
   const aiAgents = new PrismaAiAgentRepository();
+  const campaigns = new PrismaCampaignRepository();
 
   return {
     session: new CookieSessionProvider(),
@@ -82,8 +73,8 @@ const buildContainer = (): Container => {
     pipelines,
     aiAgents,
     aiSandbox: new EchoAiAgentSandbox(),
-    campaigns: new InMemoryCampaignRepository(),
-    analytics: new InMemoryAnalyticsRepository(),
+    campaigns,
+    analytics: new PrismaAnalyticsRepository(),
     notifications: new PrismaNotificationRepository(),
     settings: new PrismaSettingsRepository(),
     useCases: {

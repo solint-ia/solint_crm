@@ -1,6 +1,10 @@
-import 'server-only';
-
-import type { AgentFlowBlock, AiAgent, AiAgentLog, KnowledgeDocument, TransferRule } from '@/core/domain/ai-agent';
+import type {
+  AgentFlowBlock,
+  AiAgent,
+  AiAgentLog,
+  KnowledgeDocument,
+  TransferRule,
+} from '@/core/domain/ai-agent';
 import type { Automation, AutomationAction, AutomationCondition } from '@/core/domain/automation';
 import type { AutoReply, BusinessHours } from '@/core/domain/business-hours';
 import type { Channel } from '@/core/domain/channel';
@@ -18,29 +22,41 @@ import type { AppNotification, NotificationKind } from '@/core/domain/notificati
 import type { Deal, Pipeline } from '@/core/domain/pipeline';
 import type { ChannelConnection } from '@/core/domain/settings';
 import type { User } from '@/core/domain/user';
-import { fromJson } from '@/infrastructure/db/prisma';
-import type { Prisma } from '@/generated/prisma';
+import { readJson } from '@/infrastructure/db/prisma';
+import type {
+  AiAgent as DbAiAgent,
+  Automation as DbAutomation,
+  Inbox as DbInbox,
+  Deal as DbDeal,
+  KnowledgeArticle as DbArticle,
+  KnowledgeCategory as DbCategory,
+  Label as DbLabel,
+  Membership as DbMembership,
+  Message as DbMessage,
+  Notification as DbNotification,
+  Prisma,
+  User as DbUser,
+} from '@/generated/prisma';
 
 /**
  * Tradução entre linha do banco e objeto de domínio.
  *
  * Fica num arquivo só de propósito: é aqui que mora todo o conhecimento sobre
- * o formato das colunas `*Json` e sobre os campos opcionais. Se este mapa
+ * o formato das colunas `Json` e sobre os campos opcionais. Se este mapa
  * estiver certo, nenhum repositório precisa saber que existe um banco.
+ *
+ * **Os tipos de entrada vêm do cliente gerado (`DbLabel`, `DbMessage`…), não
+ * escritos à mão.** Antes eram literais, e o custo apareceu na migração para
+ * Postgres: `content: string` continuou compilando depois de a coluna virar
+ * `Json`, e só o comportamento denunciaria. Com o tipo gerado, mudar o esquema
+ * quebra a compilação exatamente onde precisa ser lido de outro jeito.
  *
  * Uma regra vale para todos: **coluna nula não vira propriedade `undefined`**.
  * O projeto usa `exactOptionalPropertyTypes`, então `{ email: undefined }` não
  * é o mesmo que `{}` — e o segundo é o que o domínio espera para "não tem".
  */
 
-export const labelRow = (row: {
-  id: string;
-  accountId: string;
-  name: string;
-  tone: string;
-  description: string | null;
-  usageCount: number | null;
-}): Label => ({
+export const labelRow = (row: DbLabel): Label => ({
   id: row.id,
   accountId: row.accountId,
   name: row.name,
@@ -59,7 +75,7 @@ export const contactRow = (row: ContactWithLabels): Contact => ({
   channel: row.channel as Channel,
   avatarTone: row.avatarTone,
   labels: row.labels.map(labelRow),
-  customFields: fromJson<readonly CustomField[]>(row.customFieldsJson, []),
+  customFields: readJson<readonly CustomField[]>(row.customFields, []),
   ...(row.email ? { email: row.email } : {}),
   ...(row.company ? { company: row.company } : {}),
   ...(row.location ? { location: row.location } : {}),
@@ -68,31 +84,17 @@ export const contactRow = (row: ContactWithLabels): Contact => ({
   ...(row.lastContactAt ? { lastContactAt: row.lastContactAt } : {}),
   ...(row.lastContactLabel ? { lastContactLabel: row.lastContactLabel } : {}),
   ...(row.notes ? { notes: row.notes } : {}),
-  ...(row.timelineJson
-    ? { timeline: fromJson<readonly TimelineEvent[]>(row.timelineJson, []) }
-    : {}),
+  ...(row.timeline ? { timeline: readJson<readonly TimelineEvent[]>(row.timeline, []) } : {}),
   ...(row.kind ? { kind: row.kind as Contact['kind'] } : {}),
   ...(row.avatarUrl ? { avatarUrl: row.avatarUrl } : {}),
   ...(row.participantCount === null ? {} : { participantCount: row.participantCount }),
 });
 
-export const messageRow = (row: {
-  id: string;
-  conversationId: string;
-  author: string;
-  authorName: string | null;
-  contentJson: string;
-  time: string;
-  deliveryStatus: string | null;
-  isPrivate: boolean;
-  replyToId: string | null;
-  externalId: string | null;
-  origin: string | null;
-}): Message => ({
+export const messageRow = (row: DbMessage): Message => ({
   id: row.id,
   conversationId: row.conversationId,
   author: row.author as Message['author'],
-  content: fromJson<MessageContent>(row.contentJson, { type: 'text', text: '' }),
+  content: readJson<MessageContent>(row.content, { type: 'text', text: '' }),
   time: row.time,
   isPrivate: row.isPrivate,
   ...(row.authorName ? { authorName: row.authorName } : {}),
@@ -123,7 +125,8 @@ const dayLabel = (date: Date, today: number): string => {
   return date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
 };
 
-type MessageRow = Parameters<typeof messageRow>[0] & { createdAt: Date };
+/** `createdAt` ja faz parte do modelo: e dele que saem os divisores de dia. */
+type MessageRow = DbMessage;
 
 /** Monta a timeline intercalando divisores de dia entre as mensagens. */
 export const buildTimeline = (
@@ -168,7 +171,7 @@ export const conversationRow = (row: ConversationWithRelations): Conversation =>
   lastMessagePreview: row.lastMessagePreview,
   lastMessageAt: row.lastMessageAt,
   labels: row.labels.map(labelRow),
-  protocols: fromJson<readonly Protocol[]>(row.protocolsJson, []),
+  protocols: readJson<readonly Protocol[]>(row.protocols, []),
   timeline: buildTimeline(row.messages),
   ...(row.assigneeId ? { assigneeId: row.assigneeId } : {}),
   ...(row.assigneeName ? { assigneeName: row.assigneeName } : {}),
@@ -189,27 +192,23 @@ export const CONVERSATION_INCLUDE = {
   messages: { orderBy: { createdAt: 'asc' } },
 } as const;
 
-export const userRow = (row: {
-  id: string;
-  accountId: string;
-  name: string;
-  email: string;
-  roleSlug: string;
-  avatarTone: string;
-  availability: string;
-  teamsJson: string;
-  signature: string | null;
-  twoFactorEnabled: boolean;
-  lastActiveAt: string | null;
-}): User => ({
+/**
+ * A pessoa mais o vínculo viram o `User` do domínio.
+ *
+ * São dois parâmetros e não um porque papel, equipes e disponibilidade
+ * pertencem ao vínculo, não à pessoa: o mesmo `DbUser` produz um administrador
+ * numa conta e um agente em outra. O domínio continua vendo um objeto só — é a
+ * fronteira fazendo o trabalho dela.
+ */
+export const userRow = (row: DbUser, membership: DbMembership): User => ({
   id: row.id,
-  accountId: row.accountId,
+  accountId: membership.accountId,
   name: row.name,
   email: row.email,
-  roleSlug: row.roleSlug,
+  roleSlug: membership.roleSlug,
   avatarTone: row.avatarTone,
-  availability: row.availability as User['availability'],
-  teams: fromJson<readonly string[]>(row.teamsJson, []),
+  availability: membership.availability as User['availability'],
+  teams: readJson<readonly string[]>(membership.teams, []),
   twoFactorEnabled: row.twoFactorEnabled,
   ...(row.signature ? { signature: row.signature } : {}),
   ...(row.lastActiveAt ? { lastActiveAt: row.lastActiveAt } : {}),
@@ -234,23 +233,7 @@ export const pipelineRow = (row: PipelineWithStages): Pipeline => ({
     })),
 });
 
-export const dealRow = (row: {
-  id: string;
-  accountId: string;
-  pipelineId: string;
-  stageId: string;
-  contactId: string | null;
-  contactName: string;
-  company: string | null;
-  amountInCents: number;
-  ownerName: string;
-  priority: string;
-  enteredStageAt: string;
-  stageAgeLabel: string;
-  nextAction: string;
-  conversationId: string | null;
-  historyJson: string;
-}): Deal => ({
+export const dealRow = (row: DbDeal): Deal => ({
   id: row.id,
   accountId: row.accountId,
   pipelineId: row.pipelineId,
@@ -262,28 +245,13 @@ export const dealRow = (row: {
   enteredStageAt: row.enteredStageAt,
   stageAgeLabel: row.stageAgeLabel,
   nextAction: row.nextAction,
-  history: fromJson<Deal['history']>(row.historyJson, []),
+  history: readJson<Deal['history']>(row.history, []),
   ...(row.contactId ? { contactId: row.contactId } : {}),
   ...(row.company ? { company: row.company } : {}),
   ...(row.conversationId ? { conversationId: row.conversationId } : {}),
 });
 
-export const aiAgentRow = (row: {
-  id: string;
-  accountId: string;
-  name: string;
-  scope: string;
-  active: boolean;
-  persona: string;
-  systemPrompt: string;
-  model: string;
-  handledCount: number;
-  transferRate: string;
-  knowledgeBaseJson: string;
-  transferRulesJson: string;
-  flowJson: string;
-  logsJson: string;
-}): AiAgent => ({
+export const aiAgentRow = (row: DbAiAgent): AiAgent => ({
   id: row.id,
   accountId: row.accountId,
   name: row.name,
@@ -294,21 +262,13 @@ export const aiAgentRow = (row: {
   model: row.model,
   handledCount: row.handledCount,
   transferRate: row.transferRate,
-  knowledgeBase: fromJson<readonly KnowledgeDocument[]>(row.knowledgeBaseJson, []),
-  transferRules: fromJson<readonly TransferRule[]>(row.transferRulesJson, []),
-  flow: fromJson<readonly AgentFlowBlock[]>(row.flowJson, []),
-  logs: fromJson<readonly AiAgentLog[]>(row.logsJson, []),
+  knowledgeBase: readJson<readonly KnowledgeDocument[]>(row.knowledgeBase, []),
+  transferRules: readJson<readonly TransferRule[]>(row.transferRules, []),
+  flow: readJson<readonly AgentFlowBlock[]>(row.flow, []),
+  logs: readJson<readonly AiAgentLog[]>(row.logs, []),
 });
 
-export const notificationRow = (row: {
-  id: string;
-  accountId: string;
-  kind: string;
-  text: string;
-  timeLabel: string;
-  read: boolean;
-  href: string | null;
-}): AppNotification => ({
+export const notificationRow = (row: DbNotification): AppNotification => ({
   id: row.id,
   accountId: row.accountId,
   kind: row.kind as NotificationKind,
@@ -318,62 +278,35 @@ export const notificationRow = (row: {
   ...(row.href ? { href: row.href } : {}),
 });
 
-export const automationRow = (row: {
-  id: string;
-  accountId: string;
-  name: string;
-  trigger: string;
-  conditionsJson: string;
-  actionsJson: string;
-  enabled: boolean;
-  order: number;
-}): Automation => ({
+export const automationRow = (row: DbAutomation): Automation => ({
   id: row.id,
   accountId: row.accountId,
   name: row.name,
   trigger: row.trigger as Automation['trigger'],
-  conditions: fromJson<readonly AutomationCondition[]>(row.conditionsJson, []),
-  actions: fromJson<readonly AutomationAction[]>(row.actionsJson, []),
+  conditions: readJson<readonly AutomationCondition[]>(row.conditions, []),
+  actions: readJson<readonly AutomationAction[]>(row.actions, []),
   enabled: row.enabled,
   order: row.order,
 });
 
-export const connectionRow = (row: {
-  id: string;
-  name: string;
-  channel: string;
-  identifier: string;
-  status: string;
-  provider: string;
-  businessHoursJson: string;
-  awayMessageJson: string;
-  greetingJson: string;
-  webhookUrl: string | null;
-  teamName: string | null;
-}): ChannelConnection => ({
+export const connectionRow = (row: DbInbox): ChannelConnection => ({
   id: row.id,
   name: row.name,
   channel: row.channel as Channel,
   identifier: row.identifier,
   status: row.status as ChannelConnection['status'],
   provider: row.provider,
-  businessHours: fromJson<BusinessHours>(row.businessHoursJson, {
+  businessHours: readJson<BusinessHours>(row.businessHours, {
     timezone: 'America/Sao_Paulo',
     days: [],
   }),
-  awayMessage: fromJson<AutoReply>(row.awayMessageJson, { enabled: false, text: '' }),
-  greeting: fromJson<AutoReply>(row.greetingJson, { enabled: false, text: '' }),
+  awayMessage: readJson<AutoReply>(row.awayMessage, { enabled: false, text: '' }),
+  greeting: readJson<AutoReply>(row.greeting, { enabled: false, text: '' }),
   ...(row.webhookUrl ? { webhookUrl: row.webhookUrl } : {}),
   ...(row.teamName ? { teamName: row.teamName } : {}),
 });
 
-export const categoryRow = (row: {
-  id: string;
-  accountId: string;
-  name: string;
-  description: string;
-  order: number;
-}): KnowledgeCategory => ({
+export const categoryRow = (row: DbCategory): KnowledgeCategory => ({
   id: row.id,
   accountId: row.accountId,
   name: row.name,
@@ -381,22 +314,7 @@ export const categoryRow = (row: {
   order: row.order,
 });
 
-export const articleRow = (row: {
-  id: string;
-  accountId: string;
-  categoryId: string;
-  title: string;
-  slug: string;
-  excerpt: string;
-  content: string;
-  status: string;
-  updatedLabel: string;
-  authorName: string;
-  views: number;
-  helpful: number;
-  notHelpful: number;
-  tagsJson: string;
-}): KnowledgeArticle => ({
+export const articleRow = (row: DbArticle): KnowledgeArticle => ({
   id: row.id,
   accountId: row.accountId,
   categoryId: row.categoryId,
@@ -410,5 +328,5 @@ export const articleRow = (row: {
   views: row.views,
   helpful: row.helpful,
   notHelpful: row.notHelpful,
-  tags: fromJson<readonly string[]>(row.tagsJson, []),
+  tags: readJson<readonly string[]>(row.tags, []),
 });

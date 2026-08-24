@@ -1,5 +1,3 @@
-import 'server-only';
-
 import { redirect } from 'next/navigation';
 import type { Session } from '@/core/domain/user';
 import type { SessionProvider } from '@/core/ports/session-provider';

@@ -47,11 +47,9 @@ export async function GET(request: Request) {
   const hits: SearchHit[] = [];
 
   if (can(session, 'conversas:ler')) {
-    const conversations = await container.conversations.list(
-      session.account.id,
-      session.user.id,
-      { scope: 'todas' },
-    );
+    const conversations = await container.conversations.list(session.account.id, session.user.id, {
+      scope: 'todas',
+    });
 
     for (const conversation of conversations) {
       if (hits.length >= MAX_PER_GROUP) break;

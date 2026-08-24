@@ -83,6 +83,54 @@ export interface SettingsRepository {
 
   saveArticle(accountId: Id, draft: ArticleDraft): Promise<KnowledgeArticle>;
   deleteArticle(accountId: Id, articleId: Id): Promise<void>;
-  saveCategory(accountId: Id, name: string, description: string, id?: Id): Promise<KnowledgeCategory>;
+  saveCategory(
+    accountId: Id,
+    name: string,
+    description: string,
+    id?: Id,
+  ): Promise<KnowledgeCategory>;
   deleteCategory(accountId: Id, categoryId: Id): Promise<void>;
+
+  // Onda 3: Webhooks, Tokens, Respostas Rápidas, Atributos e Equipes
+  createWebhook(
+    accountId: Id,
+    draft: { name: string; url: string; events: readonly string[] },
+  ): Promise<Webhook>;
+  toggleWebhook(accountId: Id, webhookId: Id, enabled: boolean): Promise<Webhook>;
+  deleteWebhook(accountId: Id, webhookId: Id): Promise<void>;
+
+  createApiToken(
+    accountId: Id,
+    draft: { name: string; permissions?: readonly string[] },
+  ): Promise<{ token: ApiToken; rawSecret: string }>;
+  deleteApiToken(accountId: Id, tokenId: Id): Promise<void>;
+
+  createCannedResponse(
+    accountId: Id,
+    draft: { shortcut: string; content: string },
+  ): Promise<CannedResponse>;
+  deleteCannedResponse(accountId: Id, responseId: Id): Promise<void>;
+
+  createCustomAttribute(
+    accountId: Id,
+    draft: {
+      name: string;
+      key: string;
+      type: 'texto' | 'numero' | 'data' | 'lista' | 'booleano';
+      appliesTo: 'contato' | 'conversa';
+      options?: readonly string[];
+    },
+  ): Promise<CustomAttributeDefinition>;
+  deleteCustomAttribute(accountId: Id, attributeId: Id): Promise<void>;
+
+  createTeam(
+    accountId: Id,
+    draft: {
+      name: string;
+      color?: string;
+      members?: readonly string[];
+      inboxes?: readonly string[];
+    },
+  ): Promise<Team>;
+  deleteTeam(accountId: Id, teamId: Id): Promise<void>;
 }

@@ -1,5 +1,3 @@
-import 'server-only';
-
 import {
   WAMessageStatus,
   normalizeMessageContent,
@@ -225,7 +223,9 @@ export const mediaContent = (media: MediaRef, url: string): MessageContent => {
 };
 
 /** `proto.WebMessageInfo.Status` -> status de entrega do dominio. */
-export const deliveryStatusFrom = (status: number | null | undefined): DeliveryStatus | undefined => {
+export const deliveryStatusFrom = (
+  status: number | null | undefined,
+): DeliveryStatus | undefined => {
   switch (status) {
     case WAMessageStatus.ERROR:
       return 'falha';

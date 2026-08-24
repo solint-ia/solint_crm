@@ -79,9 +79,7 @@ const seriesFor = (period: PeriodKey, offset: number): readonly TimeSeriePoint[]
     day.setDate(day.getDate() - (offset + shape.points - 1 - index));
 
     const seasonal =
-      period === 'hoje'
-        ? (HOUR_SHAPE[index] ?? 1)
-        : (WEEKDAY_SHAPE[day.getDay()] ?? 1);
+      period === 'hoje' ? (HOUR_SHAPE[index] ?? 1) : (WEEKDAY_SHAPE[day.getDay()] ?? 1);
 
     const noise = 0.88 + next() * 0.24;
     return {

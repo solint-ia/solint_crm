@@ -74,7 +74,6 @@ export const isHsmWindowOpen = (
   return elapsedMs < HSM_WINDOW_HOURS * 60 * 60 * 1000;
 };
 
-
 /** Filtro rápido da lista de conversas. */
 export type InboxScope = 'minhas' | 'nao_atribuidas' | 'todas';
 

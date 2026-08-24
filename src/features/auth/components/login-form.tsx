@@ -4,20 +4,17 @@ import { useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AlertCircle, Eye, EyeOff } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Field, TextInput } from '@/components/ui/field';
+import { AlertCircle, Eye, EyeOff, Lock, Mail, Loader2, ArrowRight } from 'lucide-react';
 import { loginAction } from '@/app/(auth)/actions';
 
 export function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
-  // O middleware guarda o destino em `proximo` para devolver a pessoa ao lugar
-  // de onde ela foi barrada, em vez de despejá-la sempre no painel.
   const next = params.get('proximo');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -30,8 +27,6 @@ export function LoginForm() {
     try {
       const res = await loginAction({ email, password });
       if (res.ok) {
-        // `refresh` antes de navegar: sem ele o Next serve o layout do cache,
-        // renderizado quando ainda não havia sessão.
         router.refresh();
         router.push((next && next.startsWith('/') ? next : '/dashboard') as Route);
       } else {
@@ -39,43 +34,73 @@ export function LoginForm() {
         setLoading(false);
       }
     } catch {
-      setError('Ocorreu um erro ao tentar entrar.');
+      setError('Ocorreu um erro ao tentar entrar. Verifique sua conexão.');
       setLoading(false);
     }
   };
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6">
+      {/* Cabeçalho do formulário */}
       <div>
-        <h2 className="font-display text-display font-bold text-ink">Entrar</h2>
-        <p className="mt-1 text-ui text-muted">
-          Acesse sua conta para continuar o atendimento.
+        <h2 className="text-2xl font-bold tracking-tight text-slate-900 font-display">
+          Acesse sua conta
+        </h2>
+        <p className="mt-1.5 text-sm text-slate-500">
+          Entre com suas credenciais para acessar a plataforma.
         </p>
       </div>
 
-      {error ? (
-        <div className="flex items-center gap-2.5 rounded-control border border-red-line bg-red-soft p-3 text-body text-red-text">
-          <AlertCircle className="size-4 shrink-0" />
-          <span>{error}</span>
+      {/* Alerta de erro */}
+      {error && (
+        <div className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+          <AlertCircle className="size-4 shrink-0 text-red-500 mt-0.5" />
+          <span className="font-medium leading-relaxed">{error}</span>
         </div>
-      ) : null}
+      )}
 
+      {/* Formulário */}
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <Field label="Email" htmlFor="login-email">
-          <TextInput
-            id="login-email"
-            type="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="você@empresa.com"
-            autoComplete="email"
-          />
-        </Field>
-
-        <Field label="Senha" htmlFor="login-password">
+        {/* Campo E-mail */}
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="login-email" className="text-xs font-semibold text-slate-700">
+            E-mail de acesso
+          </label>
           <div className="relative">
-            <TextInput
+            <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+              <Mail className="size-4" />
+            </div>
+            <input
+              id="login-email"
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="seu.email@empresa.com"
+              autoComplete="email"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50/50 py-2.5 pr-3.5 pl-9 text-sm text-slate-900 outline-none transition-all placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-600/10"
+            />
+          </div>
+        </div>
+
+        {/* Campo Senha */}
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <label htmlFor="login-password" className="text-xs font-semibold text-slate-700">
+              Senha
+            </label>
+            <Link
+              href="/recuperar-senha"
+              className="text-xs font-medium text-blue-600 hover:text-blue-700 hover:underline"
+            >
+              Esqueci a senha
+            </Link>
+          </div>
+          <div className="relative">
+            <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+              <Lock className="size-4" />
+            </div>
+            <input
               id="login-password"
               type={showPassword ? 'text' : 'password'}
               value={password}
@@ -83,44 +108,59 @@ export function LoginForm() {
               placeholder="••••••••"
               autoComplete="current-password"
               required
-              className="pr-10"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50/50 py-2.5 pr-10 pl-9 text-sm text-slate-900 outline-none transition-all placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-600/10"
             />
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
               aria-label={showPassword ? 'Ocultar senha' : 'Exibir senha'}
-              className="absolute top-1/2 right-3 -translate-y-1/2 text-dim hover:text-ink transition-colors"
+              className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600 transition-colors"
             >
               {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
             </button>
           </div>
-        </Field>
-
-        <div className="flex items-center justify-between text-body">
-          <label className="flex items-center gap-2 cursor-pointer text-muted">
-            <input type="checkbox" defaultChecked className="accent-brand rounded" />
-            <span>Lembrar de mim</span>
-          </label>
-          <Link
-            href="/recuperar-senha"
-            className="font-semibold text-brand hover:underline"
-          >
-            Esqueci minha senha
-          </Link>
         </div>
 
-        <Button
+        {/* Lembrar de mim */}
+        <div className="flex items-center">
+          <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-slate-600">
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              className="size-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+            />
+            <span>Lembrar meus dados neste dispositivo</span>
+          </label>
+        </div>
+
+        {/* Botão de Entrar */}
+        <button
           type="submit"
           disabled={loading}
-          className="mt-2 w-full justify-center h-10 text-title"
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-700 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-600/25 transition-all hover:from-blue-700 hover:to-indigo-800 hover:shadow-blue-600/35 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-70"
         >
-          {loading ? 'Entrando...' : 'Entrar'}
-        </Button>
+          {loading ? (
+            <>
+              <Loader2 className="size-4 animate-spin" />
+              <span>Entrando...</span>
+            </>
+          ) : (
+            <>
+              <span>Entrar na plataforma</span>
+              <ArrowRight className="size-4" />
+            </>
+          )}
+        </button>
       </form>
 
-      <div className="mt-2 text-center text-body text-muted">
-        Ainda não tem conta?{' '}
-        <Link href="/cadastro" className="font-semibold text-brand hover:underline">
+      {/* Rodapé do card */}
+      <div className="border-t border-slate-100 pt-4 text-center text-xs text-slate-500">
+        Não possui uma conta?{' '}
+        <Link
+          href="/cadastro"
+          className="font-semibold text-blue-600 hover:text-blue-700 hover:underline"
+        >
           Criar conta grátis
         </Link>
       </div>

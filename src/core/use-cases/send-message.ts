@@ -37,9 +37,7 @@ export const createSendMessage =
       return fail(new DomainError('A mensagem não pode estar vazia.', 'EMPTY_MESSAGE'));
     }
     if (content.length > MAX_MESSAGE_LENGTH) {
-      return fail(
-        new DomainError('A mensagem excede o limite de caracteres.', 'MESSAGE_TOO_LONG'),
-      );
+      return fail(new DomainError('A mensagem excede o limite de caracteres.', 'MESSAGE_TOO_LONG'));
     }
 
     const conversation = await repository.findById(session.account.id, conversationId);
@@ -57,6 +55,7 @@ export const createSendMessage =
     }
 
     const message = await repository.appendMessage({
+      accountId: session.account.id,
       conversationId,
       text: content,
       isPrivate,

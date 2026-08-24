@@ -12,8 +12,7 @@ export const formatMoneyFromCents = (cents: number): string => BRL.format(cents 
 export const formatCompactNumber = (value: number): string =>
   new Intl.NumberFormat('pt-BR', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
 
-export const formatNumber = (value: number): string =>
-  new Intl.NumberFormat('pt-BR').format(value);
+export const formatNumber = (value: number): string => new Intl.NumberFormat('pt-BR').format(value);
 
 export const initialsOf = (name: string): string => {
   const parts = name.trim().split(/\s+/);

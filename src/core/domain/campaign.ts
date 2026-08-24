@@ -1,12 +1,7 @@
 import type { Id } from './shared';
 
 export type CampaignStatus =
-  | 'rascunho'
-  | 'agendada'
-  | 'em_andamento'
-  | 'pausada'
-  | 'concluida'
-  | 'cancelada';
+  'rascunho' | 'agendada' | 'em_andamento' | 'pausada' | 'concluida' | 'cancelada';
 
 export interface CampaignMetrics {
   readonly recipients: number;

@@ -101,7 +101,11 @@ export interface BillingInfo {
   readonly planName: string;
   readonly priceLabel: string;
   readonly renewalLabel: string;
-  readonly usage: readonly { readonly label: string; readonly used: number; readonly limit: number }[];
+  readonly usage: readonly {
+    readonly label: string;
+    readonly used: number;
+    readonly limit: number;
+  }[];
   readonly invoices: readonly {
     readonly id: Id;
     readonly reference: string;

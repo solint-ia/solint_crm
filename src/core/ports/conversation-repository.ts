@@ -1,4 +1,9 @@
-import type { Conversation, ConversationFilter, ConversationStatus, Priority } from '../domain/conversation';
+import type {
+  Conversation,
+  ConversationFilter,
+  ConversationStatus,
+  Priority,
+} from '../domain/conversation';
 import type { Contact } from '../domain/contact';
 import type { Label } from '../domain/label';
 import type { Message } from '../domain/message';
@@ -17,6 +22,7 @@ export interface Assignee {
 }
 
 export interface NewMessageInput {
+  readonly accountId: Id;
   readonly conversationId: Id;
   readonly text: string;
   readonly isPrivate: boolean;
@@ -26,7 +32,11 @@ export interface NewMessageInput {
 
 /** Leitura de conversas (ISP: quem só lista não depende de escrita). */
 export interface ConversationReader {
-  list(accountId: Id, currentUserId: Id, filter: ConversationFilter): Promise<readonly Conversation[]>;
+  list(
+    accountId: Id,
+    currentUserId: Id,
+    filter: ConversationFilter,
+  ): Promise<readonly Conversation[]>;
   findById(accountId: Id, conversationId: Id): Promise<Conversation | null>;
 }
 
@@ -38,8 +48,17 @@ export interface ConversationWriter {
    * Sem esse vinculo os recibos de entrega/leitura do canal não encontram
    * a mensagem na timeline e os ticks ficam congelados.
    */
-  attachExternalId(conversationId: Id, messageId: Id, externalId: string): Promise<void>;
-  changeStatus(accountId: Id, conversationId: Id, status: ConversationStatus): Promise<Conversation>;
+  attachExternalId(
+    accountId: Id,
+    conversationId: Id,
+    messageId: Id,
+    externalId: string,
+  ): Promise<void>;
+  changeStatus(
+    accountId: Id,
+    conversationId: Id,
+    status: ConversationStatus,
+  ): Promise<Conversation>;
   changePriority(accountId: Id, conversationId: Id, priority: Priority): Promise<Conversation>;
   assign(accountId: Id, conversationId: Id, assignee: Assignee | null): Promise<Conversation>;
   setLabels(accountId: Id, conversationId: Id, labels: readonly Label[]): Promise<Conversation>;
@@ -50,7 +69,7 @@ export interface ConversationWriter {
    */
   syncContact(accountId: Id, contact: Contact): Promise<void>;
   /** Anexa uma mensagem já montada (mídia, template) sem passar por texto puro. */
-  appendRichMessage(conversationId: Id, message: Message): Promise<Message>;
+  appendRichMessage(accountId: Id, conversationId: Id, message: Message): Promise<Message>;
   markAsRead(accountId: Id, conversationId: Id): Promise<void>;
 }
 

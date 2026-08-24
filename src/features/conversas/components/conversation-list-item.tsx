@@ -1,3 +1,5 @@
+'use client';
+
 import { Users } from 'lucide-react';
 import type { Conversation } from '@/core/domain/conversation';
 import { isGroupContact } from '@/core/domain/contact';
@@ -28,61 +30,84 @@ export function ConversationListItem({
         onClick={() => onSelect(conversation.id)}
         aria-current={selected ? 'true' : undefined}
         className={cn(
-          'flex w-full gap-2.5 border-b border-line-soft px-3.5 py-2.5 text-left transition-all duration-150',
+          'group relative flex w-full gap-3 border-b border-white/[0.04] p-3 text-left transition-all duration-150',
           selected
-            ? 'bg-selected border-l-3 border-l-brand pl-[11px]'
-            : 'hover:bg-surface-2/70',
+            ? 'bg-blue-600/[0.08] border-l-2 border-l-blue-500 pl-[10px]'
+            : 'hover:bg-white/[0.03] active:bg-white/[0.05]',
         )}
       >
-        <Avatar
-          name={conversation.contact.name}
-          tone={conversation.contact.avatarTone}
-          src={conversation.contact.avatarUrl}
-          size="md"
-        />
-
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
+        {/* Avatar com status */}
+        <div className="relative shrink-0">
+          <Avatar
+            name={conversation.contact.name}
+            tone={conversation.contact.avatarTone}
+            src={conversation.contact.avatarUrl}
+            size="md"
+          />
+          {/* Ponto indicador de canal / online */}
+          <div className="absolute -bottom-0.5 -right-0.5 flex size-3.5 items-center justify-center rounded-full bg-surface ring-2 ring-surface">
             <ChannelDot channel={conversation.channel} />
-            {isGroup ? (
-              <Users className="size-3 shrink-0 text-dim" aria-label="Conversa em grupo" />
-            ) : null}
-            <span className="truncate text-ui font-bold text-ink tracking-tight">
-              {conversation.contact.name}
-            </span>
-            <span className="ml-auto shrink-0 font-mono text-meta tabular-nums text-dim">
+          </div>
+        </div>
+
+        {/* Informações da conversa */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-1.5 mb-0.5">
+            <div className="flex items-center gap-1.5 min-w-0">
+              {isGroup && (
+                <Users className="size-3 shrink-0 text-slate-400" aria-label="Grupo" />
+              )}
+              <span
+                className={cn(
+                  'truncate text-xs font-semibold tracking-tight transition-colors',
+                  selected ? 'text-blue-400' : 'text-slate-200 group-hover:text-white',
+                )}
+              >
+                {conversation.contact.name}
+              </span>
+            </div>
+
+            <span className="shrink-0 font-mono text-[11px] tabular-nums text-slate-400">
               {conversation.lastMessageAt}
             </span>
           </div>
 
-          <p className="truncate text-body text-muted">
+          {/* Prévia da mensagem */}
+          <p className="truncate text-xs text-slate-400 leading-snug">
             {conversation.isTyping ? (
-              <span className="font-medium text-brand animate-pulse">digitando...</span>
+              <span className="font-medium text-cyan-400 animate-pulse">digitando...</span>
             ) : (
-              conversation.lastMessagePreview
+              conversation.lastMessagePreview || 'Nenhuma mensagem recente'
             )}
           </p>
 
-          <div className="mt-1.5 flex flex-wrap items-center gap-1">
-            {conversation.queue !== 'Geral' ? (
-              <Badge tone="slate">{conversation.queue}</Badge>
-            ) : null}
-            {conversation.priority !== 'baixa' ? (
+          {/* Tags e Indicador de Não Lidas */}
+          <div className="mt-2 flex flex-wrap items-center gap-1">
+            {conversation.queue && conversation.queue !== 'Geral' && (
+              <span className="inline-flex items-center rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-slate-300">
+                {conversation.queue}
+              </span>
+            )}
+
+            {conversation.priority && conversation.priority !== 'baixa' && (
               <Badge tone={PRIORITY_TONE[conversation.priority]}>
                 {PRIORITY_LABEL[conversation.priority]}
               </Badge>
-            ) : null}
-            {conversation.slaLabel ? (
+            )}
+
+            {conversation.slaLabel && (
               <Badge tone={conversation.slaBreached ? 'red' : 'amber'}>
                 {conversation.slaLabel}
               </Badge>
-            ) : null}
+            )}
+
             <LabelChips labels={conversation.labels} />
-            {conversation.unreadCount > 0 ? (
-              <span className="ml-auto flex min-w-4.5 h-4.5 items-center justify-center rounded-full bg-brand px-1.5 text-micro font-bold text-white shadow-xs">
+
+            {conversation.unreadCount > 0 && (
+              <span className="ml-auto flex min-w-4.5 h-4.5 items-center justify-center rounded-full bg-blue-600 px-1.5 text-[10px] font-bold text-white shadow-sm shadow-blue-600/30">
                 {conversation.unreadCount}
               </span>
-            ) : null}
+            )}
           </div>
         </div>
       </button>

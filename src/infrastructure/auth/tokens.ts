@@ -4,8 +4,8 @@ import { jwtVerify, SignJWT } from 'jose';
  * Emissão e verificação do token de sessão.
  *
  * Este módulo **não toca no banco** de propósito: ele roda também no
- * middleware, que executa no runtime Edge, onde o driver nativo do SQLite não
- * existe. A consequência é uma divisão clara de responsabilidade:
+ * middleware, que executa no runtime Edge — onde não há socket TCP e portanto
+ * não há Prisma. A consequência é uma divisão clara de responsabilidade:
  *
  *   - aqui verifica-se a **assinatura e a validade** do token (barato, Edge);
  *   - em `session.ts` verifica-se a **revogação** contra o banco (autoritativo).

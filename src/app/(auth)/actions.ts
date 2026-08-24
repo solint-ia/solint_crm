@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { PERMISSIONS } from '@/core/domain/user';
 import { hashPassword, passwordProblem, verifyPassword } from '@/infrastructure/auth/password';
 import { createSession, destroyCurrentSession, touchUser } from '@/infrastructure/auth/session';
-import { prisma, toJson } from '@/infrastructure/db/prisma';
+import { prisma, asJson } from '@/infrastructure/db/prisma';
 
 export interface AuthActionResult {
   readonly ok: boolean;
@@ -60,8 +60,25 @@ export async function loginAction(input: unknown): Promise<AuthActionResult> {
   const matches = await verifyPassword(parsed.data.password, user.passwordHash);
   if (!matches) return settle(started, invalid);
 
+  // Em qual workspace abrir. O mais antigo é o padrão razoável; trocar de conta
+  // é uma ação depois de entrar, não uma escolha na tela de login.
+  // tenant-ok: entre contas por necessidade — no login ainda nao ha conta ativa,
+  // e e justamente esta consulta que decide qual sera.
+  const membership = await prisma.membership.findFirst({
+    where: { userId: user.id },
+    orderBy: { createdAt: 'asc' },
+  });
+  if (!membership) {
+    // Aqui a senha já está certa, então não há mais o que proteger contra
+    // enumeração: vale dizer a verdade em vez de repetir "e-mail ou senha".
+    return settle(started, {
+      ok: false,
+      error: 'Sua conta não está vinculada a nenhum workspace. Fale com o administrador.',
+    });
+  }
+
   const meta = await requestMeta();
-  await createSession(user.id, user.accountId, meta);
+  await createSession(user.id, membership.accountId, meta);
   await touchUser(user.id);
 
   return { ok: true };
@@ -116,31 +133,74 @@ export async function signupAction(input: unknown): Promise<AuthActionResult> {
         slug: 'administrador',
         name: 'Administrador',
         description: 'Acesso total, incluindo faturamento, integrações e segurança.',
-        permissionsJson: toJson(PERMISSIONS),
+        permissions: asJson(PERMISSIONS),
         isSystem: true,
       },
     });
     await tx.user.create({
       data: {
         id: userId,
-        accountId,
         name: parsed.data.name,
         email: parsed.data.email,
         passwordHash,
-        roleSlug: 'administrador',
         avatarTone: 'var(--color-brand-deep)',
+      },
+    });
+    // Quem cria a conta é administrador dela. Papel, equipes e disponibilidade
+    // vivem no vínculo: são do par pessoa+conta, não da pessoa.
+    await tx.membership.create({
+      data: {
+        userId,
+        accountId,
+        roleSlug: 'administrador',
         availability: 'disponivel',
-        teamsJson: '[]',
+        teams: asJson([]),
       },
     });
     await tx.accountSettings.create({
-      data: { accountId, billingJson: toJson({
-        planName: 'Starter',
-        priceLabel: 'Gratuito',
-        renewalLabel: '—',
-        usage: [],
-        invoices: [],
-      }) },
+      data: {
+        accountId,
+        billing: asJson({
+          planName: 'Starter',
+          priceLabel: 'Gratuito',
+          renewalLabel: '—',
+          usage: [],
+          invoices: [],
+        }),
+      },
+    });
+    // Caixa de entrada padrão
+    await tx.inbox.create({
+      data: {
+        id: `ibx-${accountId}`,
+        accountId,
+        name: 'WhatsApp Principal',
+        channel: 'whatsapp',
+        identifier: 'whatsapp-primary',
+        status: 'ativo',
+        provider: 'baileys',
+        businessHours: asJson({ enabled: false, timezone: 'America/Sao_Paulo', schedule: [] }),
+        awayMessage: asJson({ enabled: false, message: '' }),
+        greeting: asJson({ enabled: false, message: '' }),
+      },
+    });
+    // Funil de vendas comercial padrão
+    const pipelineId = `pip-${accountId}`;
+    await tx.pipeline.create({
+      data: {
+        id: pipelineId,
+        accountId,
+        name: 'Funil Comercial',
+      },
+    });
+    await tx.pipelineStage.createMany({
+      data: [
+        { id: `stg-1-${accountId}`, pipelineId, name: 'Novo Lead', order: 1, color: '#3b82f6' },
+        { id: `stg-2-${accountId}`, pipelineId, name: 'Qualificação', order: 2, color: '#f59e0b' },
+        { id: `stg-3-${accountId}`, pipelineId, name: 'Proposta', order: 3, color: '#8b5cf6' },
+        { id: `stg-4-${accountId}`, pipelineId, name: 'Negociação', order: 4, color: '#ec4899' },
+        { id: `stg-5-${accountId}`, pipelineId, name: 'Fechado', order: 5, color: '#10b981', isWon: true },
+      ],
     });
   });
 

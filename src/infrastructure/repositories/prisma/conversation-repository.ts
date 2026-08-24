@@ -1,5 +1,3 @@
-import 'server-only';
-
 import type {
   Conversation,
   ConversationFilter,
@@ -15,7 +13,7 @@ import type {
   ConversationRepository,
   NewMessageInput,
 } from '@/core/ports/conversation-repository';
-import { prisma, toJson } from '@/infrastructure/db/prisma';
+import { prisma, asJson } from '@/infrastructure/db/prisma';
 import { CONVERSATION_INCLUDE, conversationRow } from './mappers';
 
 const nowLabel = (): string =>
@@ -65,11 +63,11 @@ export class PrismaConversationRepository implements ConversationRepository {
       origin: 'crm',
       ...(input.isPrivate ? {} : { deliveryStatus: 'enviando' as const }),
     };
-    return this.persistMessage(input.conversationId, message);
+    return this.persistMessage(input.accountId, input.conversationId, message);
   }
 
-  async appendRichMessage(conversationId: Id, message: Message): Promise<Message> {
-    return this.persistMessage(conversationId, message);
+  async appendRichMessage(accountId: Id, conversationId: Id, message: Message): Promise<Message> {
+    return this.persistMessage(accountId, conversationId, message);
   }
 
   /**
@@ -79,9 +77,13 @@ export class PrismaConversationRepository implements ConversationRepository {
    * `lastActivityAt` sumiria do topo da caixa de entrada, e um resumo
    * atualizado sem a mensagem prometeria um texto que não existe na timeline.
    */
-  private async persistMessage(conversationId: Id, message: Message): Promise<Message> {
-    const exists = await prisma.conversation.findUnique({
-      where: { id: conversationId },
+  private async persistMessage(
+    accountId: Id,
+    conversationId: Id,
+    message: Message,
+  ): Promise<Message> {
+    const exists = await prisma.conversation.findFirst({
+      where: { id: conversationId, accountId },
       select: { id: true, lastMessagePreview: true },
     });
     if (!exists) throw new NotFoundError('Conversa', conversationId);
@@ -94,7 +96,7 @@ export class PrismaConversationRepository implements ConversationRepository {
           author: message.author,
           authorName: message.authorName ?? null,
           contentType: message.content.type,
-          contentJson: toJson(message.content),
+          content: asJson(message.content),
           time: message.time,
           deliveryStatus: message.deliveryStatus ?? null,
           isPrivate: message.isPrivate,
@@ -104,7 +106,7 @@ export class PrismaConversationRepository implements ConversationRepository {
         },
       }),
       prisma.conversation.update({
-        where: { id: conversationId },
+        where: { id: conversationId, accountId },
         data: {
           lastMessagePreview: message.isPrivate
             ? exists.lastMessagePreview
@@ -118,9 +120,17 @@ export class PrismaConversationRepository implements ConversationRepository {
     return message;
   }
 
-  async attachExternalId(conversationId: Id, messageId: Id, externalId: string): Promise<void> {
+  async attachExternalId(
+    accountId: Id,
+    conversationId: Id,
+    messageId: Id,
+    externalId: string,
+  ): Promise<void> {
+    // `conversation: { accountId }` e nao um `assert` antes: a posse e condicao
+    // do proprio UPDATE. Um id de outra conta simplesmente nao casa nenhuma
+    // linha, e nada acontece.
     await prisma.message.updateMany({
-      where: { id: messageId, conversationId },
+      where: { id: messageId, conversationId, conversation: { accountId } },
       data: { externalId, deliveryStatus: 'enviado' },
     });
   }
@@ -197,7 +207,7 @@ export class PrismaConversationRepository implements ConversationRepository {
     if (!exists) throw new NotFoundError('Conversa', conversationId);
 
     const row = await prisma.conversation.update({
-      where: { id: conversationId },
+      where: { id: conversationId, accountId },
       data,
       include: CONVERSATION_INCLUDE,
     });

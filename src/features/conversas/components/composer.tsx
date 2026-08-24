@@ -10,7 +10,7 @@ import {
 } from 'react';
 import {
   CalendarClock,
-  FileText,
+  Loader2,
   Lock,
   Mic,
   Paperclip,
@@ -21,7 +21,6 @@ import {
 } from 'lucide-react';
 import type { CannedResponse } from '@/core/domain/settings';
 import { MAX_MESSAGE_LENGTH } from '@/core/use-cases/send-message';
-import { Button } from '@/components/ui/button';
 import { planned } from '@/components/ui/planned';
 import { cn } from '@/lib/cn';
 
@@ -56,14 +55,6 @@ const humanSize = (bytes: number): string =>
 const clock = (seconds: number): string =>
   `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 
-/**
- * Preferência de container para a gravação de voz.
- *
- * O WhatsApp toca opus em ogg; o Chrome só grava opus em webm. Pedimos ogg
- * primeiro e caímos para webm — que o Baileys envia, mas que pode não tocar em
- * todos os aparelhos sem transcodificação no servidor. É a limitação conhecida
- * desta entrega, e é melhor gravar em webm do que não gravar.
- */
 const RECORDING_TYPES = ['audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm'];
 
 const pickRecordingType = (): string | undefined => {
@@ -71,7 +62,6 @@ const pickRecordingType = (): string | undefined => {
   return RECORDING_TYPES.find((type) => MediaRecorder.isTypeSupported(type));
 };
 
-/** Barra de composicao com alternancia Mensagem pública / Nota interna. */
 export function Composer({
   disabledReason,
   onSend,
@@ -99,10 +89,6 @@ export function Composer({
   const blocked = Boolean(disabledReason) && !isNote;
   const hasMedia = Boolean(attachment ?? recording);
 
-  /**
-   * Respostas rápidas: só quando a mensagem inteira começa com `/`.
-   * Disparar no meio do texto transformaria qualquer URL numa gaveta aberta.
-   */
   const cannedQuery = text.startsWith('/') && !text.includes('\n') ? text.slice(1) : undefined;
   const cannedMatches = useMemo(() => {
     if (cannedQuery === undefined) return [];
@@ -118,7 +104,6 @@ export function Composer({
 
   useEffect(() => setCannedIndex(0), [cannedQuery]);
 
-  // Cronômetro da gravação. Vive aqui e não no recorder para poder ser exibido.
   useEffect(() => {
     if (!isRecording) return;
     const timer = setInterval(
@@ -128,7 +113,6 @@ export function Composer({
     return () => clearInterval(timer);
   }, [isRecording]);
 
-  // Soltar o microfone ao desmontar: um stream esquecido mantém o LED aceso.
   useEffect(
     () => () => {
       recorderRef.current?.stream.getTracks().forEach((track) => track.stop());
@@ -172,7 +156,6 @@ export function Composer({
       setIsRecording(true);
       setElapsed(0);
     } catch {
-      // Negar o microfone é uma escolha legítima — não é um erro para logar.
       setMediaError('Permissão de microfone negada.');
     }
   };
@@ -262,7 +245,6 @@ export function Composer({
       }
     }
 
-    // Enter envia, Shift+Enter quebra linha — convenção de todo chat.
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       void submit(event as unknown as FormEvent);
@@ -270,21 +252,24 @@ export function Composer({
   };
 
   const canSubmit = hasMedia ? !uploading : text.trim().length > 0;
+  const isBusy = uploading || pending;
 
   return (
     <form
       onSubmit={submit}
       className={cn(
-        'relative shrink-0 border-t border-line px-3 py-3 md:px-4',
-        isNote ? 'bg-note' : 'bg-surface',
+        'relative flex flex-col gap-2 rounded-2xl border transition-all duration-200 p-2.5 sm:p-3 shadow-sm',
+        isNote
+          ? 'border-amber-500/30 bg-amber-950/20'
+          : 'border-white/[0.08] bg-[#0f172a]/60 focus-within:border-blue-500/50 focus-within:ring-2 focus-within:ring-blue-500/10',
       )}
     >
-      {/* ---------- Respostas rápidas ---------- */}
-      {cannedMatches.length > 0 ? (
+      {/* Respostas rápidas popup */}
+      {cannedMatches.length > 0 && (
         <ul
           role="listbox"
           aria-label="Respostas rápidas"
-          className="absolute bottom-full left-3 z-20 mb-1 w-[min(28rem,calc(100%-1.5rem))] overflow-hidden rounded-float border border-line bg-surface shadow-xl"
+          className="absolute bottom-full left-0 z-20 mb-2 w-[min(32rem,100%)] overflow-hidden rounded-xl border border-white/[0.08] bg-[#0e1626] shadow-2xl backdrop-blur-md"
         >
           {cannedMatches.map((response, index) => (
             <li key={response.id}>
@@ -295,244 +280,260 @@ export function Composer({
                 onMouseEnter={() => setCannedIndex(index)}
                 onClick={() => applyCanned(response)}
                 className={cn(
-                  'flex w-full flex-col gap-0.5 border-b border-line-soft px-3 py-2 text-left last:border-0 transition-colors',
-                  index === cannedIndex ? 'bg-accent-soft' : 'hover:bg-surface-2',
+                  'flex w-full flex-col gap-0.5 border-b border-white/[0.04] px-3.5 py-2.5 text-left last:border-0 transition-colors',
+                  index === cannedIndex ? 'bg-blue-600/20 text-white' : 'text-slate-300 hover:bg-white/[0.04]',
                 )}
               >
-                <span className="font-mono text-meta font-bold text-brand">
+                <span className="font-mono text-xs font-bold text-blue-400">
                   {response.shortcut}
                 </span>
-                <span className="line-clamp-2 text-body text-muted">{response.content}</span>
+                <span className="line-clamp-2 text-xs text-slate-400">{response.content}</span>
               </button>
             </li>
           ))}
-          <li className="bg-surface-2 px-3 py-1 text-micro text-dim">
+          <li className="bg-white/[0.02] px-3.5 py-1.5 text-[10px] text-slate-500 font-mono">
             ↑↓ navega · Enter insere · Esc cancela
           </li>
         </ul>
-      ) : null}
+      )}
 
-      <div className="mb-2 flex items-center gap-1">
-        <ModeButton active={!isNote} onClick={() => setMode('publica')}>
-          Mensagem pública
-        </ModeButton>
-        <ModeButton active={isNote} onClick={() => setMode('nota')} icon={<Lock className="size-3" />}>
-          Nota interna
-        </ModeButton>
-        {cannedResponses.length > 0 ? (
-          <span className="ml-auto hidden text-meta text-dim sm:block">
-            Digite <kbd className="font-mono font-semibold">/</kbd> para respostas rápidas
+      {/* Topo do compositor: Alternância de Modo */}
+      <div className="flex items-center justify-between gap-2 border-b border-white/[0.04] pb-2">
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setMode('publica')}
+            className={cn(
+              'flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-all',
+              !isNote
+                ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
+                : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-200 border border-transparent',
+            )}
+          >
+            <span>Mensagem pública</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMode('nota')}
+            className={cn(
+              'flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-all',
+              isNote
+                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-200 border border-transparent',
+            )}
+          >
+            <Lock className="size-3 text-amber-400" />
+            <span>Nota interna</span>
+          </button>
+        </div>
+
+        {cannedResponses.length > 0 && (
+          <span className="hidden text-[11px] text-slate-500 sm:block font-mono">
+            Atalho <kbd className="rounded bg-white/[0.08] px-1 py-0.5 text-slate-300">/</kbd>
           </span>
-        ) : null}
+        )}
       </div>
 
-      {blocked ? (
-        <p className="mb-2 rounded-control border border-note-line bg-note px-3 py-2 text-meta text-note-text">
+      {blocked && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
           {disabledReason}
-        </p>
-      ) : null}
+        </div>
+      )}
 
-      {/* ---------- Anexo escolhido ---------- */}
-      {attachment ? (
-        <AttachmentPreview
-          name={attachment.name}
-          detail={`${kindOf(attachment.type)} · ${humanSize(attachment.size)}`}
-          onRemove={clearMedia}
-        />
-      ) : null}
+      {/* Prévia de Anexo */}
+      {attachment && (
+        <div className="flex items-center justify-between rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-xs text-slate-200">
+          <div className="flex items-center gap-2 min-w-0">
+            <Paperclip className="size-4 shrink-0 text-blue-400" />
+            <span className="truncate font-medium">{attachment.name}</span>
+            <span className="text-[10px] text-slate-400 shrink-0">
+              ({kindOf(attachment.type)} · {humanSize(attachment.size)})
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={clearMedia}
+            aria-label="Remover anexo"
+            className="flex size-5 items-center justify-center rounded text-slate-400 hover:text-red-400"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      )}
 
-      {recording ? (
-        <AttachmentPreview
-          name={`Mensagem de voz · ${clock(recording.seconds)}`}
-          detail={humanSize(recording.blob.size)}
-          onRemove={clearMedia}
-        />
-      ) : null}
+      {/* Prévia de Gravação */}
+      {recording && (
+        <div className="flex items-center justify-between rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-xs text-slate-200">
+          <div className="flex items-center gap-2 min-w-0">
+            <Mic className="size-4 shrink-0 text-cyan-400" />
+            <span className="truncate font-medium">Áudio gravado ({clock(recording.seconds)})</span>
+            <span className="text-[10px] text-slate-400 shrink-0">({humanSize(recording.blob.size)})</span>
+          </div>
+          <button
+            type="button"
+            onClick={clearMedia}
+            aria-label="Descartar gravação"
+            className="flex size-5 items-center justify-center rounded text-slate-400 hover:text-red-400"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      )}
 
-      {mediaError ? (
-        <p role="alert" className="mb-2 text-meta font-medium text-red-text">
+      {mediaError && (
+        <p role="alert" className="text-xs font-medium text-red-400">
           {mediaError}
         </p>
-      ) : null}
+      )}
 
-      {isRecording ? (
-        <div className="mb-2 flex items-center gap-3 rounded-control border border-red-line/50 bg-red-soft px-3 py-2">
-          <span className="size-2 shrink-0 animate-pulse rounded-full bg-red-text" />
-          <span className="font-mono text-body font-semibold text-red-text tabular-nums">
+      {/* Painel Gravando Áudio */}
+      {isRecording && (
+        <div className="flex items-center gap-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3.5 py-2 text-xs text-red-300">
+          <span className="size-2 shrink-0 animate-pulse rounded-full bg-red-500" />
+          <span className="font-mono font-bold text-red-200 tabular-nums">
             {clock(elapsed)}
           </span>
-          <span className="flex-1 text-meta text-red-text">Gravando…</span>
+          <span className="flex-1 font-medium">Gravando áudio...</span>
           <button
             type="button"
             onClick={cancelRecording}
-            className="text-meta font-semibold text-red-text hover:underline"
+            className="font-medium text-red-300 hover:text-red-100 hover:underline"
           >
             Descartar
           </button>
-          <Button
-            size="sm"
-            variant="secondary"
-            icon={<Square className="size-3" />}
+          <button
+            type="button"
             onClick={() => recorderRef.current?.stop()}
+            className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-red-500 transition-colors"
           >
-            Parar
-          </Button>
+            <Square className="size-3" />
+            <span>Concluir</span>
+          </button>
         </div>
-      ) : null}
+      )}
 
-      <div className="flex items-end gap-2">
-        <textarea
-          ref={textareaRef}
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={onKeyDown}
-          maxLength={MAX_MESSAGE_LENGTH}
-          rows={2}
-          disabled={blocked || isRecording}
-          aria-label={isNote ? 'Nota interna' : 'Mensagem para o cliente'}
-          placeholder={
-            hasMedia
-              ? 'Legenda do anexo (opcional)…'
-              : isNote
-                ? 'Escreva uma nota visível apenas para a equipe...'
-                : 'Escreva sua mensagem...'
-          }
-          className={cn(
-            'flex-1 resize-none rounded-control border px-3 py-2 text-ui text-ink outline-none placeholder:text-dim focus:border-brand disabled:opacity-60',
-            isNote ? 'border-note-line bg-surface' : 'border-line bg-surface',
-          )}
-        />
+      {/* Campo de Texto Principal */}
+      <textarea
+        ref={textareaRef}
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={onKeyDown}
+        maxLength={MAX_MESSAGE_LENGTH}
+        rows={2}
+        disabled={blocked || isRecording}
+        aria-label={isNote ? 'Nota interna' : 'Mensagem para o cliente'}
+        placeholder={
+          hasMedia
+            ? 'Legenda do anexo (opcional)...'
+            : isNote
+              ? 'Escreva uma nota interna visível apenas para a equipe...'
+              : 'Escreva sua mensagem... (Enter para enviar, Shift+Enter para nova linha)'
+        }
+        className="w-full resize-none bg-transparent px-1 py-1 text-sm text-slate-100 placeholder:text-slate-500 outline-none disabled:opacity-50 min-h-[44px] max-h-36 leading-relaxed"
+      />
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          className="hidden"
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (!file) return;
-            setRecording(undefined);
-            setMediaError(undefined);
-            setAttachment(file);
-          }}
-        />
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (!file) return;
+          setRecording(undefined);
+          setMediaError(undefined);
+          setAttachment(file);
+        }}
+      />
 
-        <div className="flex items-center gap-0.5 pb-1">
-          <IconButton
+      {/* Barra de Ferramentas Inferior */}
+      <div className="flex items-center justify-between gap-2 pt-1 border-t border-white/[0.04]">
+        <div className="flex items-center gap-1">
+          <ToolbarButton
             label="Anexar arquivo"
             disabled={blocked || isRecording || !onSendMedia}
             onClick={() => fileInputRef.current?.click()}
           >
             <Paperclip className="size-4" />
-          </IconButton>
-          <IconButton label="Inserir emoji" hint="Escolher um emoji">
+          </ToolbarButton>
+
+          <ToolbarButton
+            label="Inserir emoji"
+            {...planned('Seleção de emojis')}
+          >
             <Smile className="size-4" />
-          </IconButton>
-          <IconButton
+          </ToolbarButton>
+
+          <ToolbarButton
             label={isRecording ? 'Parar gravação' : 'Gravar áudio'}
             disabled={blocked || !onSendMedia}
             onClick={() => (isRecording ? recorderRef.current?.stop() : void startRecording())}
-            className={isRecording ? 'text-red-text' : undefined}
+            active={isRecording}
           >
             <Mic className="size-4" />
-          </IconButton>
-          <IconButton label="Agendar envio" hint="Programar a mensagem para depois">
-            <CalendarClock className="size-4" />
-          </IconButton>
-          <Button
-            type="submit"
-            size="sm"
-            className="ml-1"
-            disabled={blocked || pending || uploading || !canSubmit}
-            icon={<Send className="size-3.5" />}
+          </ToolbarButton>
+
+          <ToolbarButton
+            label="Agendar mensagem"
+            {...planned('Agendamento de mensagem')}
           >
-            {uploading ? 'Enviando' : pending ? 'Enviando' : 'Enviar'}
-          </Button>
+            <CalendarClock className="size-4" />
+          </ToolbarButton>
         </div>
+
+        {/* Botão de Envio */}
+        <button
+          type="submit"
+          disabled={blocked || isBusy || !canSubmit}
+          className={cn(
+            'flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold text-white shadow-md transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40',
+            isNote
+              ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-600/25'
+              : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-blue-600/30',
+          )}
+        >
+          {isBusy ? (
+            <>
+              <Loader2 className="size-3.5 animate-spin" />
+              <span>Enviando...</span>
+            </>
+          ) : (
+            <>
+              <span>{isNote ? 'Salvar nota' : 'Enviar'}</span>
+              <Send className="size-3.5" />
+            </>
+          )}
+        </button>
       </div>
     </form>
   );
 }
 
-function AttachmentPreview({
-  name,
-  detail,
-  onRemove,
-}: {
-  readonly name: string;
-  readonly detail: string;
-  readonly onRemove: () => void;
-}) {
-  return (
-    <div className="mb-2 flex items-center gap-2.5 rounded-control border border-line bg-surface-2 px-3 py-2">
-      <FileText className="size-4 shrink-0 text-dim" />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-body font-medium text-ink">{name}</span>
-        <span className="block text-meta text-dim">{detail}</span>
-      </span>
-      <button
-        type="button"
-        onClick={onRemove}
-        aria-label="Remover anexo"
-        className="rounded-control p-1 text-dim transition-colors hover:bg-surface hover:text-red-text"
-      >
-        <X className="size-3.5" />
-      </button>
-    </div>
-  );
-}
-
-function ModeButton({
+function ToolbarButton({
+  children,
+  label,
+  disabled,
   active,
   onClick,
-  children,
-  icon,
+  title,
 }: {
-  readonly active: boolean;
-  readonly onClick: () => void;
   readonly children: React.ReactNode;
-  readonly icon?: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        'flex items-center gap-1.5 rounded-control px-2.5 py-1 text-meta font-semibold transition-colors',
-        active ? 'bg-accent-soft text-brand' : 'text-muted hover:bg-surface-2',
-      )}
-    >
-      {icon}
-      {children}
-    </button>
-  );
-}
-
-function IconButton({
-  label,
-  hint,
-  onClick,
-  disabled,
-  className,
-  children,
-}: {
   readonly label: string;
-  /** Quando presente, o recurso ainda não existe: o botão fica honestamente desabilitado. */
-  readonly hint?: string;
-  readonly onClick?: () => void;
   readonly disabled?: boolean;
-  readonly className?: string;
-  readonly children: React.ReactNode;
+  readonly active?: boolean;
+  readonly onClick?: () => void;
+  readonly title?: string;
 }) {
   return (
     <button
       type="button"
+      title={title ?? label}
       aria-label={label}
+      disabled={disabled}
       onClick={onClick}
-      {...(hint ? planned(hint) : { disabled, title: label })}
       className={cn(
-        'flex size-8 items-center justify-center rounded-control text-dim transition-colors hover:bg-surface-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent',
-        className,
+        'flex size-8 items-center justify-center rounded-lg transition-all text-slate-400 hover:bg-white/[0.06] hover:text-white disabled:opacity-40 disabled:pointer-events-none',
+        active && 'bg-red-500/20 text-red-400 border border-red-500/30',
       )}
     >
       {children}

@@ -2,11 +2,46 @@ import type { AnalyticsReport, DashboardOverview } from '@/core/domain/analytics
 
 export const OVERVIEW: DashboardOverview = {
   kpis: [
-    { id: 'abertas', label: 'Conversas abertas', value: '23', delta: '4 vs. ontem', deltaDirection: 'negativo', series: [14, 18, 16, 21, 19, 26, 23] },
-    { id: 'tpr', label: 'Tempo 1ª resposta', value: '2m 41s', delta: '12% no período', deltaDirection: 'positivo', series: [205, 198, 212, 187, 176, 168, 161] },
-    { id: 'tmr', label: 'Tempo de resolução', value: '38m', delta: '6% no período', deltaDirection: 'negativo', series: [31, 33, 30, 34, 36, 35, 38] },
-    { id: 'csat', label: 'CSAT', value: '4,6', delta: '0,2 no período', deltaDirection: 'positivo', series: [42, 43, 44, 43, 45, 45, 46] },
-    { id: 'resolvidas', label: 'Resolvidas hoje', value: '47', delta: '18% vs. ontem', deltaDirection: 'positivo', series: [28, 35, 22, 19, 41, 44, 47] },
+    {
+      id: 'abertas',
+      label: 'Conversas abertas',
+      value: '23',
+      delta: '4 vs. ontem',
+      deltaDirection: 'negativo',
+      series: [14, 18, 16, 21, 19, 26, 23],
+    },
+    {
+      id: 'tpr',
+      label: 'Tempo 1ª resposta',
+      value: '2m 41s',
+      delta: '12% no período',
+      deltaDirection: 'positivo',
+      series: [205, 198, 212, 187, 176, 168, 161],
+    },
+    {
+      id: 'tmr',
+      label: 'Tempo de resolução',
+      value: '38m',
+      delta: '6% no período',
+      deltaDirection: 'negativo',
+      series: [31, 33, 30, 34, 36, 35, 38],
+    },
+    {
+      id: 'csat',
+      label: 'CSAT',
+      value: '4,6',
+      delta: '0,2 no período',
+      deltaDirection: 'positivo',
+      series: [42, 43, 44, 43, 45, 45, 46],
+    },
+    {
+      id: 'resolvidas',
+      label: 'Resolvidas hoje',
+      value: '47',
+      delta: '18% vs. ontem',
+      deltaDirection: 'positivo',
+      series: [28, 35, 22, 19, 41, 44, 47],
+    },
   ],
   volume: [
     { label: 'Qui', value: 142 },
@@ -24,28 +59,85 @@ export const OVERVIEW: DashboardOverview = {
     { channelLabel: 'E-mail', percentage: 5, colorVar: 'var(--color-blue-text)' },
   ],
   agents: [
-    { id: 'user-camila', name: 'Camila Reis', avatarTone: '#8B5CF6', handled: 58, averageResponse: '2m 05s', csat: '4,8', csatTone: 'green' },
-    { id: 'user-rafael', name: 'Rafael Souza', avatarTone: 'var(--color-brand-deep)', handled: 44, averageResponse: '2m 48s', csat: '4,6', csatTone: 'green' },
-    { id: 'user-diego', name: 'Diego Martins', avatarTone: 'var(--color-slate-text)', handled: 31, averageResponse: '3m 22s', csat: '4,1', csatTone: 'amber' },
+    {
+      id: 'user-camila',
+      name: 'Camila Reis',
+      avatarTone: '#8B5CF6',
+      handled: 58,
+      averageResponse: '2m 05s',
+      csat: '4,8',
+      csatTone: 'green',
+    },
+    {
+      id: 'user-rafael',
+      name: 'Rafael Souza',
+      avatarTone: 'var(--color-brand-deep)',
+      handled: 44,
+      averageResponse: '2m 48s',
+      csat: '4,6',
+      csatTone: 'green',
+    },
+    {
+      id: 'user-diego',
+      name: 'Diego Martins',
+      avatarTone: 'var(--color-slate-text)',
+      handled: 31,
+      averageResponse: '3m 22s',
+      csat: '4,1',
+      csatTone: 'amber',
+    },
   ],
   funnel: [
     { stage: 'Novo Lead', count: 2, amountInCents: 400_000, colorVar: '#94A3B8' },
     { stage: 'Qualificação', count: 2, amountInCents: 750_000, colorVar: 'var(--color-blue-text)' },
-    { stage: 'Proposta Enviada', count: 2, amountInCents: 2_140_000, colorVar: 'var(--color-violet-text)' },
+    {
+      stage: 'Proposta Enviada',
+      count: 2,
+      amountInCents: 2_140_000,
+      colorVar: 'var(--color-violet-text)',
+    },
     { stage: 'Negociação', count: 1, amountInCents: 430_000, colorVar: 'var(--color-brand-amber)' },
-    { stage: 'Fechado Ganho', count: 1, amountInCents: 160_000, colorVar: 'var(--color-status-open)' },
+    {
+      stage: 'Fechado Ganho',
+      count: 1,
+      amountInCents: 160_000,
+      colorVar: 'var(--color-status-open)',
+    },
   ],
   pendings: [
-    { conversationId: 'cv-joao', contactName: 'João Pedro Silva', waitingLabel: '5h 42m', tone: 'red' },
-    { conversationId: 'cv-roberta', contactName: 'Roberta Dias', waitingLabel: '3h 10m', tone: 'amber' },
-    { conversationId: 'cv-pedro', contactName: 'Pedro Henrique', waitingLabel: '1h 25m', tone: 'slate' },
+    {
+      conversationId: 'cv-joao',
+      contactName: 'João Pedro Silva',
+      waitingLabel: '5h 42m',
+      tone: 'red',
+    },
+    {
+      conversationId: 'cv-roberta',
+      contactName: 'Roberta Dias',
+      waitingLabel: '3h 10m',
+      tone: 'amber',
+    },
+    {
+      conversationId: 'cv-pedro',
+      contactName: 'Pedro Henrique',
+      waitingLabel: '1h 25m',
+      tone: 'slate',
+    },
   ],
 };
 
 export const REPORT: Omit<AnalyticsReport, 'volume' | 'previousVolume' | 'comparison'> = {
   agents: [
     ...OVERVIEW.agents,
-    { id: 'ai-suporte', name: 'Agente IA · Suporte N1', avatarTone: 'var(--color-brand-cyan)', handled: 687, averageResponse: '4s', csat: '4,3', csatTone: 'green' },
+    {
+      id: 'ai-suporte',
+      name: 'Agente IA · Suporte N1',
+      avatarTone: 'var(--color-brand-cyan)',
+      handled: 687,
+      averageResponse: '4s',
+      csat: '4,3',
+      csatTone: 'green',
+    },
   ],
   conversions: [
     { stage: 'Novo Lead para Qualificação', rate: '64%', average: '2,1 dias na etapa' },
@@ -67,8 +159,23 @@ export const REPORT: Omit<AnalyticsReport, 'volume' | 'previousVolume' | 'compar
     { stars: 1, percentage: 2, tone: 'red' },
   ],
   csatComments: [
-    { id: 'cs-1', contactName: 'Mariana Costa', stars: 5, comment: 'Atendimento rápido e resolveram tudo pelo WhatsApp mesmo. Excelente!' },
-    { id: 'cs-2', contactName: 'Carlos Eduardo Nunes', stars: 5, comment: 'Negociação transparente e sem enrolação. Recomendo.' },
-    { id: 'cs-3', contactName: 'Pedro Henrique', stars: 3, comment: 'Demoraram um pouco para responder no início, mas depois foi tranquilo.' },
+    {
+      id: 'cs-1',
+      contactName: 'Mariana Costa',
+      stars: 5,
+      comment: 'Atendimento rápido e resolveram tudo pelo WhatsApp mesmo. Excelente!',
+    },
+    {
+      id: 'cs-2',
+      contactName: 'Carlos Eduardo Nunes',
+      stars: 5,
+      comment: 'Negociação transparente e sem enrolação. Recomendo.',
+    },
+    {
+      id: 'cs-3',
+      contactName: 'Pedro Henrique',
+      stars: 3,
+      comment: 'Demoraram um pouco para responder no início, mas depois foi tranquilo.',
+    },
   ],
 };

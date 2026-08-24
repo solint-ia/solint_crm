@@ -49,8 +49,7 @@ export interface Contact {
   readonly participantCount?: number;
 }
 
-export const isGroupContact = (contact: Pick<Contact, 'kind'>): boolean =>
-  contact.kind === 'grupo';
+export const isGroupContact = (contact: Pick<Contact, 'kind'>): boolean => contact.kind === 'grupo';
 
 const E164 = /^\+[1-9]\d{7,14}$/;
 

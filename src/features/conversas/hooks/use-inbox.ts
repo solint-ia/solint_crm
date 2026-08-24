@@ -49,7 +49,9 @@ interface UseInboxParams {
     templateId: string;
     values: readonly string[];
   }) => Promise<{ ok: boolean; error?: string; message?: Message }>;
-  readonly sendMedia?: (form: FormData) => Promise<{ ok: boolean; error?: string; message?: Message }>;
+  readonly sendMedia?: (
+    form: FormData,
+  ) => Promise<{ ok: boolean; error?: string; message?: Message }>;
   readonly setContactLabels?: (input: {
     conversationId: string;
     contactId: string;
@@ -150,8 +152,7 @@ export function useInbox({
         lastMessagePreview: previewOfMessage(message),
         lastMessageAt: message.time,
         lastActivityAt: new Date().toISOString(),
-        unreadCount:
-          message.author === 'contact' ? existing.unreadCount + 1 : existing.unreadCount,
+        unreadCount: message.author === 'contact' ? existing.unreadCount + 1 : existing.unreadCount,
       });
     });
   });
@@ -181,7 +182,9 @@ export function useInbox({
     });
 
     if (sort === 'prioridade') {
-      return [...filtered].sort((a, b) => PRIORITY_WEIGHT[b.priority] - PRIORITY_WEIGHT[a.priority]);
+      return [...filtered].sort(
+        (a, b) => PRIORITY_WEIGHT[b.priority] - PRIORITY_WEIGHT[a.priority],
+      );
     }
     // `lastMessageAt` e apenas um rotulo ("14:32"): ordenar por ele misturaria dias.
     if (sort === 'antigas') {
@@ -361,10 +364,8 @@ export function useInbox({
     (assignee: { id: string; name: string } | null) => {
       if (!selected || !assign) return;
       const id = selected.id;
-      optimistic(
-        id,
-        { assigneeId: assignee?.id, assigneeName: assignee?.name },
-        () => assign({ conversationId: id, assigneeId: assignee?.id ?? null }),
+      optimistic(id, { assigneeId: assignee?.id, assigneeName: assignee?.name }, () =>
+        assign({ conversationId: id, assigneeId: assignee?.id ?? null }),
       );
     },
     [selected, assign, optimistic],

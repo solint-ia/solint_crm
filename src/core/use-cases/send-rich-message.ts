@@ -77,7 +77,7 @@ export const createSendTemplate =
       deliveryStatus: 'enviando',
     };
 
-    return ok(await repository.appendRichMessage(conversationId, message));
+    return ok(await repository.appendRichMessage(session.account.id, conversationId, message));
   };
 
 export interface SendMediaInput {
@@ -121,5 +121,5 @@ export const createSendMedia =
       deliveryStatus: isPrivate ? undefined : 'enviando',
     };
 
-    return ok(await repository.appendRichMessage(conversationId, message));
+    return ok(await repository.appendRichMessage(session.account.id, conversationId, message));
   };

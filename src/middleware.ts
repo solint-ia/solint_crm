@@ -26,8 +26,6 @@ const PROTECTED = [
   '/perfil',
 ];
 
-const AUTH_PAGES = ['/login', '/cadastro', '/recuperar-senha'];
-
 export async function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   const token = request.cookies.get(SESSION_COOKIE)?.value;
@@ -44,10 +42,6 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (claims && AUTH_PAGES.includes(pathname)) {
-    return NextResponse.redirect(new URL('/dashboard', request.url));
-  }
-
   return NextResponse.next();
 }
 
@@ -58,5 +52,7 @@ export const config = {
    * As de API ficam de fora porque um redirecionamento HTML não serve a um
    * cliente que espera JSON — cada uma responde 401 por conta própria.
    */
-  matcher: ['/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
+  matcher: [
+    '/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+  ],
 };

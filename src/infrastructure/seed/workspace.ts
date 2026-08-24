@@ -111,7 +111,13 @@ export const CURRENT_USER = USERS[0] as User;
 
 export const LABELS: readonly Label[] = [
   { id: 'lbl-vip', accountId: ACCOUNT_ID, name: 'VIP', tone: 'amber', usageCount: 184 },
-  { id: 'lbl-recorrente', accountId: ACCOUNT_ID, name: 'Recorrente', tone: 'blue', usageCount: 312 },
+  {
+    id: 'lbl-recorrente',
+    accountId: ACCOUNT_ID,
+    name: 'Recorrente',
+    tone: 'blue',
+    usageCount: 312,
+  },
   {
     id: 'lbl-proposta',
     accountId: ACCOUNT_ID,

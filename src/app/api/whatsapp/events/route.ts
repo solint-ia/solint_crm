@@ -10,16 +10,12 @@ export async function GET(request: Request) {
     start(controller) {
       // 1. Envia estado inicial imediatamente
       const initialStatus = whatsappService.getStatus();
-      controller.enqueue(
-        encoder.encode(`data: ${JSON.stringify(initialStatus)}\n\n`),
-      );
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(initialStatus)}\n\n`));
 
       // 2. Registra listener para atualizações
       const onStatus = (payload: WhatsAppStatusPayload) => {
         try {
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(payload)}\n\n`),
-          );
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
         } catch {
           // Stream fechada pelo cliente
         }

@@ -1,10 +1,7 @@
 import type { Id } from './shared';
 
 export type AutomationTrigger =
-  | 'conversa_criada'
-  | 'mensagem_recebida'
-  | 'conversa_pendente'
-  | 'conversa_resolvida';
+  'conversa_criada' | 'mensagem_recebida' | 'conversa_pendente' | 'conversa_resolvida';
 
 export const AUTOMATION_TRIGGER_LABELS: Readonly<Record<AutomationTrigger, string>> = {
   conversa_criada: 'Quando uma conversa é criada',
@@ -14,12 +11,7 @@ export const AUTOMATION_TRIGGER_LABELS: Readonly<Record<AutomationTrigger, strin
 };
 
 export type AutomationConditionField =
-  | 'canal'
-  | 'etiqueta'
-  | 'fila'
-  | 'prioridade'
-  | 'horario'
-  | 'palavra_chave';
+  'canal' | 'etiqueta' | 'fila' | 'prioridade' | 'horario' | 'palavra_chave';
 
 export const AUTOMATION_FIELD_LABELS: Readonly<Record<AutomationConditionField, string>> = {
   canal: 'Canal',

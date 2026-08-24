@@ -109,7 +109,10 @@ export const CONVERSATIONS: readonly Conversation[] = [
       divider('Hoje'),
       message('cv-joao', {
         author: 'contact',
-        content: { type: 'text', text: 'Ainda não recebi o boleto da minha compra, pode reenviar?' },
+        content: {
+          type: 'text',
+          text: 'Ainda não recebi o boleto da minha compra, pode reenviar?',
+        },
         time: '08:02',
       }),
       message('cv-joao', {

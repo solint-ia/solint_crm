@@ -38,9 +38,7 @@ export interface CsvColumn<T> {
  */
 export const toCsv = <T>(rows: readonly T[], columns: readonly CsvColumn<T>[]): string => {
   const header = columns.map((column) => escapeCell(column.header)).join(';');
-  const body = rows.map((row) =>
-    columns.map((column) => escapeCell(column.value(row))).join(';'),
-  );
+  const body = rows.map((row) => columns.map((column) => escapeCell(column.value(row))).join(';'));
   return BOM + [header, ...body].join('\r\n') + '\r\n';
 };
 

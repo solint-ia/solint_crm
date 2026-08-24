@@ -324,112 +324,56 @@
    ========================================================================== */
 
 .auth-shell {
-  /*
-   * Escopo de tokens: dentro da casca de entrada, os mesmos componentes de
-   * formulário do resto do produto passam a renderizar em modo escuro.
-   * Nenhum `Field`, `TextInput` ou `Button` precisou ser alterado — eles
-   * continuam lendo as variáveis, que aqui valem outra coisa.
-   */
-  --surface: rgba(255, 255, 255, 0.05);
-  --surface-2: rgba(255, 255, 255, 0.08);
-  --border: rgba(148, 197, 255, 0.22);
-  --border-soft: rgba(148, 197, 255, 0.12);
-  --text: #f4f8ff;
-  --text-muted: #a8c2e8;
-  --text-dim: #7e9bc4;
-  --toggle-off: rgba(255, 255, 255, 0.18);
-
-  --accent-soft: rgba(53, 217, 255, 0.16);
-  --accent-soft-text: #9adcff;
-  --selected-bg: rgba(22, 140, 255, 0.16);
-  --accent-border: rgba(53, 217, 255, 0.4);
-
-  --green-soft: rgba(16, 185, 129, 0.16);
-  --green-text: #5eead4;
-  --green-border: rgba(16, 185, 129, 0.4);
-  --red-soft: rgba(239, 68, 68, 0.18);
-  --red-text: #fca5a5;
-  --red-border: rgba(239, 68, 68, 0.45);
-  --amber-soft: rgba(245, 158, 11, 0.16);
-  --amber-text: #fcd34d;
-
   position: relative;
   isolation: isolate;
-  background:
-    /* halo por trás do formulário: puxa o olho para a direita sem emenda */
-    radial-gradient(120% 90% at 88% 42%, rgba(22, 140, 255, 0.34) 0%, transparent 62%),
-    /* brilho de marca no canto de origem */
-    radial-gradient(80% 70% at 6% 4%, rgba(23, 78, 255, 0.42) 0%, transparent 58%),
-    /* base diagonal: da noite à esquerda para o azul de marca à direita */
-    linear-gradient(118deg, #04070f 0%, #070b14 22%, #0b1a38 48%, #10306e 72%, #12459d 100%);
-  color: #f4f8ff;
+  min-height: 100vh;
+  /* Gradiente orgânico premium: Azul vibrante na esquerda fluindo para branco na direita */
+  background: linear-gradient(
+    115deg,
+    #07193d 0%,
+    #0c2d6e 24%,
+    #12439c 44%,
+    #2563eb 62%,
+    #bfdbfe 78%,
+    #eff6ff 88%,
+    #ffffff 98%
+  );
+  color: #0f172a;
 }
 
-/*
- * Grade de fundo.
- *
- * Uma trama fina de 1px, não um padrão decorativo: dá profundidade e escala à
- * superfície sem competir com o conteúdo. Some suavemente nas bordas para não
- * criar uma segunda emenda onde a primeira foi removida.
- */
-.auth-grid {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background-image:
-    linear-gradient(rgba(148, 197, 255, 0.06) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(148, 197, 255, 0.06) 1px, transparent 1px);
-  background-size: 56px 56px;
-  mask-image: radial-gradient(120% 100% at 20% 0%, #000 0%, transparent 75%);
-  -webkit-mask-image: radial-gradient(120% 100% at 20% 0%, #000 0%, transparent 75%);
-}
-
-/*
- * Aurora: duas manchas que respiram devagar sobre o gradiente.
- *
- * 26 e 34 segundos, deslocamento pequeno. O objetivo é que a tela pareça viva
- * quando olhada, não que chame atenção enquanto se digita uma senha.
- */
+/* Aurora suave para dar vida ao azul da esquerda sem ruído */
 .auth-aurora {
   position: absolute;
-  inset: -20%;
-  z-index: -1;
+  inset: -10%;
+  z-index: 0;
   pointer-events: none;
   background:
-    radial-gradient(38% 42% at 30% 30%, rgba(53, 217, 255, 0.22) 0%, transparent 70%),
-    radial-gradient(34% 40% at 70% 65%, rgba(23, 78, 255, 0.28) 0%, transparent 70%);
-  filter: blur(30px);
-  animation: auth-aurora 26s ease-in-out infinite alternate;
+    radial-gradient(40% 45% at 18% 28%, rgba(56, 189, 248, 0.26) 0%, transparent 70%),
+    radial-gradient(35% 40% at 38% 60%, rgba(99, 102, 241, 0.22) 0%, transparent 70%);
+  filter: blur(40px);
+  animation: auth-aurora 20s ease-in-out infinite alternate;
 }
 
 @keyframes auth-aurora {
   from {
-    transform: translate3d(-2%, -1%, 0) scale(1);
+    transform: translate3d(-1%, -1%, 0) scale(1);
   }
   to {
-    transform: translate3d(3%, 2%, 0) scale(1.08);
+    transform: translate3d(2%, 1.5%, 0) scale(1.05);
   }
 }
 
-/* O painel do formulário: vidro sobre o gradiente, nunca um bloco opaco. */
+/* O painel do formulário: card branco elevado, nítido e com alta definição */
 .auth-panel {
-  background: linear-gradient(
-    160deg,
-    rgba(255, 255, 255, 0.11) 0%,
-    rgba(255, 255, 255, 0.05) 55%,
-    rgba(255, 255, 255, 0.03) 100%
-  );
-  border: 1px solid rgba(148, 197, 255, 0.2);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  background: #ffffff;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  border-radius: 1.25rem;
+  padding: 2.25rem 2.25rem;
   box-shadow:
-    0 1px 0 0 rgba(255, 255, 255, 0.14) inset,
-    0 24px 60px -20px rgba(2, 6, 20, 0.7);
-}
-
-/* Marca-d'água da logo: presença, não protagonismo. */
-.auth-logo {
-  filter: brightness(0) invert(1) drop-shadow(0 0 22px rgba(53, 217, 255, 0.35));
+    0 25px 50px -12px rgba(15, 23, 42, 0.12),
+    0 4px 16px -2px rgba(15, 23, 42, 0.05),
+    0 0 0 1px rgba(226, 232, 240, 0.6);
+  color: #0f172a;
 }
 
 /* Entrada encadeada. O atraso vem do `style` de cada elemento. */

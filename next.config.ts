@@ -44,14 +44,14 @@ const nextConfig: NextConfig = {
   /**
    * Pacotes que o bundler nao deve empacotar.
    *
-   * `better-sqlite3` e um addon nativo: empacotado, o Next perde o caminho do
-   * `.node` e o servidor sobe sem conseguir abrir o banco. O Prisma entra pelo
-   * mesmo motivo — carrega binarios em tempo de execucao.
+   * O Prisma carrega binarios em tempo de execucao, e o `pg` abre socket TCP:
+   * empacotados, o Next perde o caminho e o servidor sobe sem conseguir falar
+   * com o banco.
    */
   serverExternalPackages: [
     '@prisma/client',
-    '@prisma/adapter-better-sqlite3',
-    'better-sqlite3',
+    '@prisma/adapter-pg',
+    'pg',
     '@whiskeysockets/baileys',
     'pino',
     'pino-pretty',

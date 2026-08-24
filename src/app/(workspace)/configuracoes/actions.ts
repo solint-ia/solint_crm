@@ -203,10 +203,9 @@ export async function updateInboxAction(input: unknown): Promise<ActionResult> {
     const first = parsed.error.issues[0];
     return {
       ok: false,
-      error:
-        first?.path.includes('webhookUrl')
-          ? 'A URL do webhook precisa começar com http:// ou https://.'
-          : 'Dados inválidos para a caixa de entrada.',
+      error: first?.path.includes('webhookUrl')
+        ? 'A URL do webhook precisa começar com http:// ou https://.'
+        : 'Dados inválidos para a caixa de entrada.',
     };
   }
 
@@ -304,5 +303,206 @@ export async function deleteCategoryAction(input: unknown): Promise<ActionResult
     return { ok: true };
   } catch (error) {
     return failureOf(error, 'Erro ao excluir a categoria.');
+  }
+}
+
+// ---------------------------------------------------------------- Onda 3: Webhooks
+
+const createWebhookSchema = z.object({
+  name: z.string().trim().min(2).max(80),
+  url: z.string().trim().url(),
+  events: z.array(z.string().min(1)).min(1),
+});
+
+export async function createWebhookAction(input: unknown): Promise<ActionResult> {
+  const parsed = createWebhookSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Dados do webhook inválidos.' };
+
+  try {
+    const session = await assertCanWrite();
+    await container.settings.createWebhook(session.account.id, parsed.data);
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao criar webhook.');
+  }
+}
+
+const toggleWebhookSchema = z.object({
+  webhookId: z.string().min(1),
+  enabled: z.boolean(),
+});
+
+export async function toggleWebhookAction(input: unknown): Promise<ActionResult> {
+  const parsed = toggleWebhookSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Dados inválidos.' };
+
+  try {
+    const session = await assertCanWrite();
+    await container.settings.toggleWebhook(session.account.id, parsed.data.webhookId, parsed.data.enabled);
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao alterar status do webhook.');
+  }
+}
+
+const deleteWebhookSchema = z.object({ webhookId: z.string().min(1) });
+
+export async function deleteWebhookAction(input: unknown): Promise<ActionResult> {
+  const parsed = deleteWebhookSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Webhook inválido.' };
+
+  try {
+    const session = await assertCanWrite();
+    await container.settings.deleteWebhook(session.account.id, parsed.data.webhookId);
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao excluir webhook.');
+  }
+}
+
+// ---------------------------------------------------------------- Onda 3: Tokens de API
+
+const createApiTokenSchema = z.object({
+  name: z.string().trim().min(2).max(80),
+  permissions: z.array(z.string()).optional(),
+});
+
+export async function createApiTokenAction(
+  input: unknown,
+): Promise<ActionResult & { rawSecret?: string }> {
+  const parsed = createApiTokenSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Nome do token inválido.' };
+
+  try {
+    const session = await assertCanWrite();
+    const { rawSecret } = await container.settings.createApiToken(session.account.id, parsed.data);
+    return { ok: true, rawSecret };
+  } catch (error) {
+    return failureOf(error, 'Erro ao gerar token de API.');
+  }
+}
+
+const deleteApiTokenSchema = z.object({ tokenId: z.string().min(1) });
+
+export async function deleteApiTokenAction(input: unknown): Promise<ActionResult> {
+  const parsed = deleteApiTokenSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Token inválido.' };
+
+  try {
+    const session = await assertCanWrite();
+    await container.settings.deleteApiToken(session.account.id, parsed.data.tokenId);
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao revogar token de API.');
+  }
+}
+
+// ---------------------------------------------------------------- Onda 3: Respostas Rápidas
+
+const createCannedResponseSchema = z.object({
+  shortcut: z.string().trim().min(1).max(30),
+  content: z.string().trim().min(1).max(2000),
+});
+
+export async function createCannedResponseAction(input: unknown): Promise<ActionResult> {
+  const parsed = createCannedResponseSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Atalho ou conteúdo inválido.' };
+
+  try {
+    const session = await assertCanWrite();
+    await container.settings.createCannedResponse(session.account.id, parsed.data);
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao salvar resposta rápida.');
+  }
+}
+
+const deleteCannedResponseSchema = z.object({ responseId: z.string().min(1) });
+
+export async function deleteCannedResponseAction(input: unknown): Promise<ActionResult> {
+  const parsed = deleteCannedResponseSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Resposta rápida inválida.' };
+
+  try {
+    const session = await assertCanWrite();
+    await container.settings.deleteCannedResponse(session.account.id, parsed.data.responseId);
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao excluir resposta rápida.');
+  }
+}
+
+// ---------------------------------------------------------------- Onda 3: Atributos Customizados
+
+const createCustomAttributeSchema = z.object({
+  name: z.string().trim().min(2).max(60),
+  key: z.string().trim().min(2).max(40).regex(/^[a-z0-9_]+$/, 'A chave deve conter apenas letras minúsculas, números e sublinhados.'),
+  type: z.enum(['texto', 'numero', 'data', 'lista', 'booleano'] as const),
+  appliesTo: z.enum(['contato', 'conversa'] as const),
+  options: z.array(z.string().trim()).optional(),
+});
+
+export async function createCustomAttributeAction(input: unknown): Promise<ActionResult> {
+  const parsed = createCustomAttributeSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
+
+  try {
+    const session = await assertCanWrite();
+    await container.settings.createCustomAttribute(session.account.id, parsed.data);
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao criar atributo customizado.');
+  }
+}
+
+const deleteCustomAttributeSchema = z.object({ attributeId: z.string().min(1) });
+
+export async function deleteCustomAttributeAction(input: unknown): Promise<ActionResult> {
+  const parsed = deleteCustomAttributeSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Atributo inválido.' };
+
+  try {
+    const session = await assertCanWrite();
+    await container.settings.deleteCustomAttribute(session.account.id, parsed.data.attributeId);
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao excluir atributo.');
+  }
+}
+
+// ---------------------------------------------------------------- Onda 3: Equipes
+
+const createTeamSchema = z.object({
+  name: z.string().trim().min(2).max(60),
+  color: z.string().trim().optional(),
+  members: z.array(z.string()).optional(),
+  inboxes: z.array(z.string()).optional(),
+});
+
+export async function createTeamAction(input: unknown): Promise<ActionResult> {
+  const parsed = createTeamSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Nome da equipe inválido.' };
+
+  try {
+    const session = await assertCanWrite();
+    await container.settings.createTeam(session.account.id, parsed.data);
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao criar equipe.');
+  }
+}
+
+const deleteTeamSchema = z.object({ teamId: z.string().min(1) });
+
+export async function deleteTeamAction(input: unknown): Promise<ActionResult> {
+  const parsed = deleteTeamSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Equipe inválida.' };
+
+  try {
+    const session = await assertCanWrite();
+    await container.settings.deleteTeam(session.account.id, parsed.data.teamId);
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao excluir equipe.');
   }
 }

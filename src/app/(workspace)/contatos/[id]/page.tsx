@@ -11,6 +11,7 @@ import { Topbar } from '@/components/layout/topbar';
 import { PageShell } from '@/components/layout/page-shell';
 import { ContactTimeline } from '@/features/contatos/components/contact-timeline';
 import { ContactDetailSkeleton } from '@/features/contatos/components/contacts-skeleton';
+import { ContactDetailActions } from '@/features/contatos/components/contact-detail-actions';
 import { can } from '@/core/domain/user';
 import { AccessDenied } from '@/components/layout/access-denied';
 import { container } from '@/infrastructure/container';
@@ -57,13 +58,16 @@ async function ContatoDetalhe({ contactId }: { readonly contactId: string }) {
         accounts={session.availableAccounts}
         notifications={notifications}
         actions={
-          <Link
-            href="/contatos"
-            className="flex items-center gap-1.5 rounded-control border border-line px-3 py-2 text-body font-semibold text-ink transition-colors hover:bg-surface-2"
-          >
-            <ArrowLeft className="size-3.5" />
-            Voltar
-          </Link>
+          <div className="flex items-center gap-2">
+            <ContactDetailActions contact={contact} />
+            <Link
+              href="/contatos"
+              className="flex items-center gap-1.5 rounded-control border border-line px-3 py-2 text-body font-semibold text-ink transition-colors hover:bg-surface-2"
+            >
+              <ArrowLeft className="size-3.5" />
+              Voltar
+            </Link>
+          </div>
         }
       />
 

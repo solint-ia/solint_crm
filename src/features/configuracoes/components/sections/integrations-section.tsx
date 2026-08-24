@@ -1,17 +1,25 @@
 'use client';
 
-import { useState } from 'react';
-import { Plus, QrCode } from 'lucide-react';
+import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import { Check, Copy, Plus, QrCode, Trash2 } from 'lucide-react';
 import type { ApiToken, ChannelConnection, Webhook } from '@/core/domain/settings';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Modal } from '@/components/ui/modal';
 import {
   CONNECTION_STATUS_LABEL,
   CONNECTION_STATUS_TONE,
 } from '@/components/domain/presentation-maps';
 import { WhatsAppModal } from '@/features/whatsapp/components/whatsapp-modal';
-import { planned } from '@/components/ui/planned';
+import {
+  createApiTokenAction,
+  createWebhookAction,
+  deleteApiTokenAction,
+  deleteWebhookAction,
+  toggleWebhookAction,
+} from '@/app/(workspace)/configuracoes/actions';
 
 interface IntegrationsSectionProps {
   readonly connections: readonly ChannelConnection[];
@@ -19,12 +27,99 @@ interface IntegrationsSectionProps {
   readonly apiTokens: readonly ApiToken[];
 }
 
+const AVAILABLE_EVENTS = [
+  'conversa.criada',
+  'conversa.resolvida',
+  'contato.criado',
+  'mensagem.recebida',
+] as const;
+
 export function IntegrationsSection({
   connections,
   webhooks,
   apiTokens,
 }: IntegrationsSectionProps) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
+
+  // Webhook Modal
+  const [isWebhookModalOpen, setIsWebhookModalOpen] = useState(false);
+  const [webhookName, setWebhookName] = useState('');
+  const [webhookUrl, setWebhookUrl] = useState('');
+  const [webhookEvents, setWebhookEvents] = useState<string[]>(['conversa.criada']);
+  const [webhookError, setWebhookError] = useState<string | null>(null);
+
+  // Token Modal
+  const [isTokenModalOpen, setIsTokenModalOpen] = useState(false);
+  const [tokenName, setTokenName] = useState('');
+  const [tokenError, setTokenError] = useState<string | null>(null);
+  const [generatedSecret, setGeneratedSecret] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const handleCreateWebhook = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setWebhookError(null);
+    startTransition(async () => {
+      const res = await createWebhookAction({
+        name: webhookName,
+        url: webhookUrl,
+        events: webhookEvents,
+      });
+      if (res.ok) {
+        setIsWebhookModalOpen(false);
+        setWebhookName('');
+        setWebhookUrl('');
+        router.refresh();
+      } else {
+        setWebhookError(res.error ?? 'Erro ao criar webhook.');
+      }
+    });
+  };
+
+  const handleToggleWebhook = (webhookId: string, currentStatus: boolean) => {
+    startTransition(async () => {
+      await toggleWebhookAction({ webhookId, enabled: !currentStatus });
+      router.refresh();
+    });
+  };
+
+  const handleDeleteWebhook = (webhookId: string) => {
+    if (!confirm('Deseja realmente excluir este webhook?')) return;
+    startTransition(async () => {
+      await deleteWebhookAction({ webhookId });
+      router.refresh();
+    });
+  };
+
+  const handleCreateToken = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTokenError(null);
+    startTransition(async () => {
+      const res = await createApiTokenAction({ name: tokenName });
+      if (res.ok && res.rawSecret) {
+        setGeneratedSecret(res.rawSecret);
+        router.refresh();
+      } else {
+        setTokenError(res.error ?? 'Erro ao gerar token.');
+      }
+    });
+  };
+
+  const handleDeleteToken = (tokenId: string) => {
+    if (!confirm('Deseja realmente revogar este token de API?')) return;
+    startTransition(async () => {
+      await deleteApiTokenAction({ tokenId });
+      router.refresh();
+    });
+  };
+
+  const handleCopySecret = () => {
+    if (!generatedSecret) return;
+    navigator.clipboard.writeText(generatedSecret);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   return (
     <div className="flex max-w-4xl flex-col gap-8">
@@ -32,6 +127,147 @@ export function IntegrationsSection({
         open={isWhatsAppModalOpen}
         onClose={() => setIsWhatsAppModalOpen(false)}
       />
+
+      {/* Modal Novo Webhook */}
+      <Modal
+        open={isWebhookModalOpen}
+        onClose={() => setIsWebhookModalOpen(false)}
+        title="Cadastrar novo webhook"
+      >
+        <form onSubmit={handleCreateWebhook} className="flex flex-col gap-4">
+          {webhookError && (
+            <div className="rounded-md bg-danger/10 p-3 text-body text-danger">
+              {webhookError}
+            </div>
+          )}
+          <div>
+            <label className="mb-1 block text-meta font-medium text-ink">Nome da integração</label>
+            <input
+              type="text"
+              required
+              placeholder="Ex: ERP Solint"
+              value={webhookName}
+              onChange={(e) => setWebhookName(e.target.value)}
+              className="w-full rounded-md border border-line bg-surface px-3 py-2 text-body text-ink focus:border-primary focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-meta font-medium text-ink">URL de destino (POST)</label>
+            <input
+              type="url"
+              required
+              placeholder="https://seu-sistema.com/api/webhook"
+              value={webhookUrl}
+              onChange={(e) => setWebhookUrl(e.target.value)}
+              className="w-full rounded-md border border-line bg-surface px-3 py-2 font-mono text-body text-ink focus:border-primary focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="mb-2 block text-meta font-medium text-ink">Eventos escutados</label>
+            <div className="grid grid-cols-2 gap-2">
+              {AVAILABLE_EVENTS.map((ev) => (
+                <label key={ev} className="flex items-center gap-2 text-body text-ink cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={webhookEvents.includes(ev)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setWebhookEvents([...webhookEvents, ev]);
+                      } else {
+                        setWebhookEvents(webhookEvents.filter((item) => item !== ev));
+                      }
+                    }}
+                    className="rounded border-line text-primary focus:ring-primary"
+                  />
+                  <span className="font-mono text-meta">{ev}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="mt-4 flex justify-end gap-2 border-t border-line-soft pt-3">
+            <Button variant="ghost" type="button" onClick={() => setIsWebhookModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="submit" disabled={isPending || webhookEvents.length === 0}>
+              {isPending ? 'Salvando...' : 'Salvar webhook'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal Gerar Token */}
+      <Modal
+        open={isTokenModalOpen}
+        onClose={() => {
+          setIsTokenModalOpen(false);
+          setGeneratedSecret(null);
+          setTokenName('');
+        }}
+        title={generatedSecret ? 'Token de API gerado com sucesso' : 'Gerar novo token de API'}
+      >
+        {generatedSecret ? (
+          <div className="flex flex-col gap-4">
+            <div className="rounded-md bg-amber-500/10 p-3 text-body text-amber-600 dark:text-amber-400">
+              ⚠️ <strong>Atenção:</strong> Esta chave não será exibida novamente. Copie e guarde em um local seguro.
+            </div>
+            <div>
+              <label className="mb-1 block text-meta font-medium text-ink">Chave de acesso secreta</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={generatedSecret}
+                  className="w-full rounded-md border border-line bg-surface-2 px-3 py-2 font-mono text-body text-ink select-all"
+                />
+                <Button variant="secondary" onClick={handleCopySecret} icon={copied ? <Check className="size-4 text-green-500" /> : <Copy className="size-4" />}>
+                  {copied ? 'Copiado' : 'Copiar'}
+                </Button>
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end border-t border-line-soft pt-3">
+              <Button
+                onClick={() => {
+                  setIsTokenModalOpen(false);
+                  setGeneratedSecret(null);
+                  setTokenName('');
+                }}
+              >
+                Concluir
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={handleCreateToken} className="flex flex-col gap-4">
+            {tokenError && (
+              <div className="rounded-md bg-danger/10 p-3 text-body text-danger">
+                {tokenError}
+              </div>
+            )}
+            <div>
+              <label className="mb-1 block text-meta font-medium text-ink">Identificação do token</label>
+              <input
+                type="text"
+                required
+                placeholder="Ex: Integração n8n ou Zapier"
+                value={tokenName}
+                onChange={(e) => setTokenName(e.target.value)}
+                className="w-full rounded-md border border-line bg-surface px-3 py-2 text-body text-ink focus:border-primary focus:outline-none"
+              />
+            </div>
+            <p className="text-meta text-muted">
+              O token terá permissão total para ler e gravar contatos, conversas e oportunidades via API REST.
+            </p>
+            <div className="mt-4 flex justify-end gap-2 border-t border-line-soft pt-3">
+              <Button variant="ghost" type="button" onClick={() => setIsTokenModalOpen(false)}>
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={isPending || !tokenName.trim()}>
+                {isPending ? 'Gerando...' : 'Gerar token'}
+              </Button>
+            </div>
+          </form>
+        )}
+      </Modal>
 
       <div>
         <div className="mb-4 flex items-center justify-between">
@@ -89,7 +325,6 @@ export function IntegrationsSection({
         </div>
       </div>
 
-
       <div>
         <div className="mb-4 flex items-center justify-between">
           <div>
@@ -100,37 +335,58 @@ export function IntegrationsSection({
               Notificações de eventos em tempo real para URLs externas.
             </p>
           </div>
-          <Button variant="secondary" size="sm" icon={<Plus className="size-3.5" />} {...planned('Cadastrar um webhook de saída')}>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Plus className="size-3.5" />}
+            onClick={() => setIsWebhookModalOpen(true)}
+          >
             Novo webhook
           </Button>
         </div>
 
         <div className="overflow-hidden rounded-surface border border-line bg-surface shadow-xs">
           <div className="divide-y divide-line-soft">
-            {webhooks.map((wh) => (
-              <div
-                key={wh.id}
-                className="flex items-center justify-between gap-4 p-4 transition-colors hover:bg-surface-2/60"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="font-mono text-body font-semibold text-ink truncate">
-                    {wh.url}
+            {webhooks.length === 0 ? (
+              <div className="p-4 text-center text-body text-muted">Nenhum webhook cadastrado.</div>
+            ) : (
+              webhooks.map((wh) => (
+                <div
+                  key={wh.id}
+                  className="flex items-center justify-between gap-4 p-4 transition-colors hover:bg-surface-2/60"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="font-mono text-body font-semibold text-ink truncate">
+                      {wh.url}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {wh.events.map((ev) => (
+                        <Badge key={ev} tone="blue">
+                          {ev}
+                        </Badge>
+                      ))}
+                    </div>
                   </div>
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {wh.events.map((ev) => (
-                      <Badge key={ev} tone="blue">
-                        {ev}
+                  <div className="flex items-center gap-3 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleWebhook(wh.id, wh.enabled)}
+                      className="cursor-pointer"
+                    >
+                      <Badge tone={wh.enabled ? 'green' : 'slate'}>
+                        {wh.enabled ? 'Ativo' : 'Pausado'}
                       </Badge>
-                    ))}
+                    </button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDeleteWebhook(wh.id)}
+                      icon={<Trash2 className="size-3.5 text-danger" />}
+                    />
                   </div>
                 </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  <Badge tone={wh.enabled ? 'green' : 'slate'}>
-                    {wh.enabled ? 'Ativo' : 'Pausado'}
-                  </Badge>
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       </div>
@@ -145,34 +401,47 @@ export function IntegrationsSection({
               Chaves de acesso programático para integrações e rotinas automatizadas.
             </p>
           </div>
-          <Button variant="secondary" size="sm" icon={<Plus className="size-3.5" />} {...planned('Gerar um token de API')}>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Plus className="size-3.5" />}
+            onClick={() => setIsTokenModalOpen(true)}
+          >
             Gerar token
           </Button>
         </div>
 
         <div className="overflow-hidden rounded-surface border border-line bg-surface shadow-xs">
           <div className="divide-y divide-line-soft">
-            {apiTokens.map((token) => (
-              <div
-                key={token.id}
-                className="flex items-center justify-between gap-4 p-4 transition-colors hover:bg-surface-2/60"
-              >
-                <div>
-                  <div className="text-ui font-bold text-ink tracking-tight">
-                    {token.name}
+            {apiTokens.length === 0 ? (
+              <div className="p-4 text-center text-body text-muted">Nenhum token gerado.</div>
+            ) : (
+              apiTokens.map((token) => (
+                <div
+                  key={token.id}
+                  className="flex items-center justify-between gap-4 p-4 transition-colors hover:bg-surface-2/60"
+                >
+                  <div>
+                    <div className="text-ui font-bold text-ink tracking-tight">
+                      {token.name}
+                    </div>
+                    <div className="mt-1 font-mono text-body text-muted font-medium">
+                      {token.maskedValue}
+                    </div>
+                    <div className="mt-1.5 text-meta text-dim">
+                      Criado em {token.createdLabel} · Último uso: {token.lastUsedLabel}
+                    </div>
                   </div>
-                  <div className="mt-1 font-mono text-body text-muted font-medium">
-                    {token.maskedValue}
-                  </div>
-                  <div className="mt-1.5 text-meta text-dim">
-                    Criado em {token.createdLabel} · Último uso: {token.lastUsedLabel}
-                  </div>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() => handleDeleteToken(token.id)}
+                  >
+                    Revogar
+                  </Button>
                 </div>
-                <Button variant="danger" size="sm" {...planned('Revogar este token de API')}>
-                  Revogar
-                </Button>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       </div>

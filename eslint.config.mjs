@@ -25,6 +25,34 @@ const config = [
     },
   },
   {
+    /**
+     * A conta nao pode voltar a ser uma constante.
+     *
+     * `ACCOUNT_ID` existe para a carga inicial (`prisma/seed.ts`, fora de `src`).
+     * Importa-lo em codigo de runtime foi exatamente o defeito da Fase 2: toda
+     * mensagem recebida do WhatsApp era gravada na conta de demonstracao,
+     * qualquer que fosse a conta de quem conectou. A conta vem da sessao, da
+     * `Inbox` ou de um parametro -- nunca de um modulo de seed.
+     */
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/infrastructure/seed/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@/infrastructure/seed/workspace',
+              importNames: ['ACCOUNT_ID', 'ACCOUNTS', 'USERS', 'ROLES', 'LABELS'],
+              message:
+                'A conta vem da sessao, da Inbox ou de um parametro. Ver PLANO-BACKEND.md, Fase 2.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // A camada de dominio nao pode depender de framework nem de infraestrutura (DIP).
     files: ['src/core/**/*.ts'],
     rules: {

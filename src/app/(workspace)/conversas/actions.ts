@@ -38,11 +38,6 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
   }
 
   const session = await container.session.getCurrentSession();
-  const conversation = await container.conversations.findById(
-    session.account.id,
-    parsed.data.conversationId,
-  );
-
   const result = await container.useCases.sendMessage({ session, ...parsed.data });
 
   if (!result.ok) {
@@ -53,43 +48,46 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
   let dispatchError: string | undefined;
 
   // Nota interna nunca sai para o canal externo (REGRAS-GLOBAIS.md secao 4.1).
-  if (!parsed.data.isPrivate && conversation?.channel === 'whatsapp') {
-    if (whatsappService.getStatus().status === 'conectado') {
-      const sent = await whatsappService.sendTextMessage(
-        { channelThreadId: conversation.channelThreadId, phone: conversation.contact.phone },
-        parsed.data.text,
-      );
+  if (!parsed.data.isPrivate) {
+    const conversation = await container.conversations.findById(
+      session.account.id,
+      parsed.data.conversationId,
+    );
 
-      if (sent.ok && sent.externalId) {
-        // Sem o id externo os recibos do WhatsApp não encontram esta mensagem.
-        await container.conversations.attachExternalId(
-          conversation.id,
-          message.id,
-          sent.externalId,
+    if (conversation?.channel === 'whatsapp') {
+      if (whatsappService.getStatus().status === 'conectado') {
+        const sent = await whatsappService.sendTextMessage(
+          { channelThreadId: conversation.channelThreadId, phone: conversation.contact.phone },
+          parsed.data.text,
         );
-        message = { ...message, externalId: sent.externalId, deliveryStatus: 'enviado' };
-      } else if (!sent.ok) {
-        dispatchError = sent.error;
+
+        if (sent.ok && sent.externalId) {
+          await container.conversations.attachExternalId(
+            session.account.id,
+            conversation.id,
+            message.id,
+            sent.externalId,
+          );
+          message = { ...message, externalId: sent.externalId, deliveryStatus: 'enviado' };
+        } else if (!sent.ok) {
+          dispatchError = sent.error;
+          message = { ...message, deliveryStatus: 'falha' };
+        }
+      } else {
+        dispatchError = 'WhatsApp desconectado: a mensagem não foi entregue.';
         message = { ...message, deliveryStatus: 'falha' };
       }
-    } else {
-      dispatchError = 'WhatsApp desconectado: a mensagem não foi entregue.';
-      message = { ...message, deliveryStatus: 'falha' };
     }
-  }
 
-  // O evento carrega a conversa inteira para que os clientes apenas substituam
-  // o estado local — e assim descartem a bolha otimista sem duplicar.
-  const updated = await container.conversations.findById(
-    session.account.id,
-    parsed.data.conversationId,
-  );
-  waEventBus.emitConversation({
-    type: 'new_message',
-    conversationId: parsed.data.conversationId,
-    message,
-    conversation: updated ?? undefined,
-  });
+    // Emite o evento em tempo real reutilizando o objeto atualizado
+    waEventBus.emitConversation({
+      type: 'new_message',
+      accountId: session.account.id,
+      conversationId: parsed.data.conversationId,
+      message,
+      conversation: conversation ?? undefined,
+    });
+  }
 
   return dispatchError ? { ok: false, error: dispatchError, message } : { ok: true, message };
 }
@@ -111,6 +109,7 @@ export async function changeConversationStatusAction(input: unknown): Promise<Ac
 
   waEventBus.emitConversation({
     type: 'conversation_updated',
+    accountId: session.account.id,
     conversationId: parsed.data.conversationId,
     conversation: result.value,
   });
@@ -142,6 +141,7 @@ export async function markConversationReadAction(input: unknown): Promise<Action
   if (updated) {
     waEventBus.emitConversation({
       type: 'conversation_updated',
+      accountId: session.account.id,
       conversationId: updated.id,
       conversation: updated,
     });
@@ -161,6 +161,7 @@ const broadcast = async (conversationId: string) => {
   if (updated) {
     waEventBus.emitConversation({
       type: 'conversation_updated',
+      accountId: session.account.id,
       conversationId: updated.id,
       conversation: updated,
     });
@@ -330,6 +331,7 @@ export async function sendTemplateAction(input: unknown): Promise<SendMessageRes
       );
       if (sent.ok && sent.externalId) {
         await container.conversations.attachExternalId(
+          session.account.id,
           conversation.id,
           message.id,
           sent.externalId,
@@ -351,6 +353,7 @@ export async function sendTemplateAction(input: unknown): Promise<SendMessageRes
   );
   waEventBus.emitConversation({
     type: 'new_message',
+    accountId: session.account.id,
     conversationId: parsed.data.conversationId,
     message,
     conversation: updated ?? undefined,
@@ -416,7 +419,9 @@ const secondsLabel = (seconds: number): string => {
 export async function sendMediaAction(form: FormData): Promise<SendMessageResult> {
   const conversationId = String(form.get('conversationId') ?? '');
   const kindRaw = String(form.get('kind') ?? '');
-  const caption = String(form.get('caption') ?? '').trim().slice(0, 1024);
+  const caption = String(form.get('caption') ?? '')
+    .trim()
+    .slice(0, 1024);
   const isPrivate = form.get('isPrivate') === 'true';
   const voice = form.get('voice') === 'true';
   const durationSeconds = Number(form.get('durationSeconds') ?? 0);
@@ -508,6 +513,7 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
       );
       if (sent.ok && sent.externalId) {
         await container.conversations.attachExternalId(
+          session.account.id,
           conversation.id,
           message.id,
           sent.externalId,
@@ -526,6 +532,7 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
   const updated = await container.conversations.findById(session.account.id, conversationId);
   waEventBus.emitConversation({
     type: 'new_message',
+    accountId: session.account.id,
     conversationId,
     message,
     conversation: updated ?? undefined,

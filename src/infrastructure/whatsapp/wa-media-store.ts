@@ -1,5 +1,3 @@
-import 'server-only';
-
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -52,11 +50,7 @@ export const mediaStore = {
   },
 
   /** Grava a midia decifrada e devolve a URL local, ou `undefined` se recusada. */
-  async save(
-    id: string,
-    data: Buffer,
-    meta: MediaMeta,
-  ): Promise<string | undefined> {
+  async save(id: string, data: Buffer, meta: MediaMeta): Promise<string | undefined> {
     if (!isSafeMediaId(id) || data.length === 0 || data.length > MAX_MEDIA_BYTES) {
       return undefined;
     }
