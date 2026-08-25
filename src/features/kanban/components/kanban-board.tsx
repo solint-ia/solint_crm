@@ -2,294 +2,391 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, Settings2 } from 'lucide-react';
+import { CheckCircle2, Settings2 } from 'lucide-react';
 import type { Deal, Pipeline } from '@/core/domain/pipeline';
+
+import type { AppNotification } from '@/core/domain/notification';
+import type { Account } from '@/core/domain/user';
+import type { NavItem } from '@/config/navigation';
 import { Button } from '@/components/ui/button';
-import { Modal } from '@/components/ui/modal';
-import { EmptyState } from '@/components/ui/empty-state';
-import { formatMoneyFromCents } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import { DealCard } from './deal-card';
+import { KanbanHeader } from './kanban-header';
+import { KanbanMetricsStrip } from './kanban-metrics-strip';
+import { KanbanToolbar } from './kanban-toolbar';
+import { KanbanColumn } from './kanban-column';
 import { DealDetailPanel } from './deal-detail-panel';
+import { NewDealModal } from './new-deal-modal';
+import { EditDealModal } from './edit-deal-modal';
 import { StagesModal } from './stages-modal';
+import { EmptyBoardState } from './empty-board-state';
 import { useBoard } from '../hooks/use-board';
-import { createDealAction } from '@/app/(workspace)/kanban/actions';
+import {
+  createDealAction,
+  deleteDealAction,
+  updateDealAction,
+  updateStagesAction,
+} from '@/app/(workspace)/kanban/actions';
 
 interface KanbanBoardProps {
   readonly pipelines: readonly Pipeline[];
   readonly pipeline: Pipeline;
   readonly deals: readonly Deal[];
+  readonly account: Account;
+  readonly accounts: readonly Account[];
+  readonly notifications: readonly AppNotification[];
+  readonly navItems: readonly NavItem[];
   readonly moveDeal: (input: {
     dealId: string;
     targetStageId: string;
   }) => Promise<{ ok: boolean; error?: string }>;
 }
 
-export function KanbanBoard({ pipeline, deals, moveDeal }: KanbanBoardProps) {
+export function KanbanBoard({
+  pipelines,
+  pipeline,
+  deals,
+  account,
+  accounts,
+  notifications,
+  navItems,
+  moveDeal,
+}: KanbanBoardProps) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
+
   const board = useBoard({ initialDeals: deals, stages: pipeline.stages, moveDeal });
-  const [stagesModalOpen, setStagesModalOpen] = useState(false);
 
-  // New Deal Modal
-  const [isNewDealOpen, setIsNewDealOpen] = useState(false);
-  const [title, setTitle] = useState('');
-  const [valueStr, setValueStr] = useState('');
-  const [stageId, setStageId] = useState(pipeline.stages[0]?.id ?? '');
-  const [contactName, setContactName] = useState('');
-  const [companyName, setCompanyName] = useState('');
-  const [ownerName, setOwnerName] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  // Modo Mobile: seleção de etapa ativa na visualização compacta
+  const [mobileActiveStageId, setMobileActiveStageId] = useState<string>(
+    pipeline.stages[0]?.id ?? '',
+  );
 
-  const handleCreateDeal = (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    const parsedValue = Math.round((parseFloat(valueStr.replace(',', '.')) || 0) * 100);
+  // Ação de Criar Oportunidade
+  const handleCreateDeal = async (data: {
+    title: string;
+    valueInCents: number;
+    stageId: string;
+    contactName?: string;
+    companyName?: string;
+    ownerName?: string;
+    priority?: 'baixa' | 'media' | 'alta' | 'urgente';
+    probability?: number;
+    source?: string;
+    nextAction?: string;
+  }) => {
+    const res = await createDealAction(pipeline.id, {
+      title: data.title,
+      value: data.valueInCents,
+      stageId: data.stageId,
+      contactName: data.contactName,
+      companyName: data.companyName,
+      ownerName: data.ownerName,
+      priority: data.priority,
+      probability: data.probability,
+      source: data.source,
+      nextAction: data.nextAction,
+    });
 
+    if (res.ok && res.deal) {
+      board.handleOptimisticCreate(res.deal);
+      router.refresh();
+    } else if (res.ok) {
+      router.refresh();
+    } else {
+      throw new Error(res.error ?? 'Erro ao criar oportunidade.');
+    }
+  };
+
+  // Ação de Editar Oportunidade
+  const handleEditDeal = async (data: {
+    dealId: string;
+    title: string;
+    valueInCents: number;
+    stageId: string;
+    contactName?: string;
+    companyName?: string;
+    ownerName?: string;
+    priority?: 'baixa' | 'media' | 'alta' | 'urgente';
+    probability?: number;
+    source?: string;
+    nextAction?: string;
+  }) => {
+    const res = await updateDealAction({
+      dealId: data.dealId,
+      title: data.title,
+      value: data.valueInCents,
+      stageId: data.stageId,
+      contactName: data.contactName,
+      companyName: data.companyName,
+      ownerName: data.ownerName,
+      priority: data.priority,
+      probability: data.probability,
+      source: data.source,
+      nextAction: data.nextAction,
+    });
+
+    if (res.ok && res.deal) {
+      board.handleOptimisticUpdate(res.deal);
+      router.refresh();
+    } else if (res.ok) {
+      router.refresh();
+    } else {
+      throw new Error(res.error ?? 'Erro ao atualizar oportunidade.');
+    }
+  };
+
+
+  // Ação de Excluir Oportunidade
+  const handleDeleteDeal = async (dealId: string) => {
+    board.handleOptimisticDelete(dealId);
     startTransition(async () => {
-      const res = await createDealAction(pipeline.id, {
-        stageId,
-        title,
-        value: parsedValue,
-        contactName: contactName || undefined,
-        companyName: companyName || undefined,
-        ownerName: ownerName || undefined,
-      });
-      if (res.ok) {
-        setIsNewDealOpen(false);
-        setTitle('');
-        setValueStr('');
-        setContactName('');
-        setCompanyName('');
-        setOwnerName('');
-        router.refresh();
-      } else {
-        setError(res.error ?? 'Erro ao criar oportunidade.');
-      }
+      await deleteDealAction({ dealId });
+      router.refresh();
     });
   };
 
+  // Ação de Salvar Etapas
+  const handleSaveStages = async (
+    updatedStages: readonly {
+      id?: string;
+      name: string;
+      order: number;
+      color: string;
+      isWon: boolean;
+      isLost: boolean;
+      defaultProbability?: number;
+    }[],
+  ) => {
+    const res = await updateStagesAction(pipeline.id, { stages: updatedStages });
+    if (res.ok) {
+      board.setStages(
+        updatedStages.map((s, idx) => ({
+          id: s.id ?? `st-stage-${idx}`,
+          pipelineId: pipeline.id,
+          name: s.name,
+          order: s.order,
+          color: s.color,
+          isWon: s.isWon,
+          isLost: s.isLost,
+          defaultProbability: s.defaultProbability,
+        })),
+      );
+      router.refresh();
+    } else {
+      throw new Error(res.error ?? 'Erro ao atualizar etapas.');
+    }
+  };
+
+  const isFiltered =
+    Boolean(board.filters.searchQuery.trim()) ||
+    Boolean(board.filters.owner) ||
+    Boolean(board.filters.team) ||
+    Boolean(board.filters.source) ||
+    Boolean(board.filters.priority) ||
+    Boolean(board.filters.period && board.filters.period !== 'todos') ||
+    Boolean(board.filters.valueRange && board.filters.valueRange !== 'todos');
+
   return (
-    <div className="flex min-h-0 flex-1">
-      {/* Modal Nova Oportunidade */}
-      <Modal
-        open={isNewDealOpen}
-        onClose={() => setIsNewDealOpen(false)}
-        title="Nova oportunidade de negócio"
-      >
-        <form onSubmit={handleCreateDeal} className="flex flex-col gap-4">
-          {error && (
-            <div className="rounded-md bg-danger/10 p-3 text-body text-danger">
-              {error}
-            </div>
-          )}
-          <div>
-            <label className="mb-1 block text-meta font-medium text-ink">Título da oportunidade</label>
-            <input
-              type="text"
-              required
-              placeholder="Ex: Contrato Anual - Empresa XPTO"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="w-full rounded-md border border-line bg-surface px-3 py-2 text-body text-ink focus:border-primary focus:outline-none"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-meta font-medium text-ink">Valor estimado (R$)</label>
-              <input
-                type="text"
-                placeholder="5000,00"
-                value={valueStr}
-                onChange={(e) => setValueStr(e.target.value)}
-                className="w-full rounded-md border border-line bg-surface px-3 py-2 font-mono text-body text-ink focus:border-primary focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-meta font-medium text-ink">Etapa inicial</label>
-              <select
-                value={stageId}
-                onChange={(e) => setStageId(e.target.value)}
-                className="w-full rounded-md border border-line bg-surface px-3 py-2 text-body text-ink focus:border-primary focus:outline-none"
-              >
-                {pipeline.stages.map((st) => (
-                  <option key={st.id} value={st.id}>
-                    {st.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-meta font-medium text-ink">Contato principal</label>
-              <input
-                type="text"
-                placeholder="Nome do cliente"
-                value={contactName}
-                onChange={(e) => setContactName(e.target.value)}
-                className="w-full rounded-md border border-line bg-surface px-3 py-2 text-body text-ink focus:border-primary focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-meta font-medium text-ink">Empresa</label>
-              <input
-                type="text"
-                placeholder="Razão Social ou Fantasia"
-                value={companyName}
-                onChange={(e) => setCompanyName(e.target.value)}
-                className="w-full rounded-md border border-line bg-surface px-3 py-2 text-body text-ink focus:border-primary focus:outline-none"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="mb-1 block text-meta font-medium text-ink">Vendedor responsável</label>
-            <input
-              type="text"
-              placeholder="Nome do vendedor"
-              value={ownerName}
-              onChange={(e) => setOwnerName(e.target.value)}
-              className="w-full rounded-md border border-line bg-surface px-3 py-2 text-body text-ink focus:border-primary focus:outline-none"
-            />
-          </div>
-          <div className="mt-4 flex justify-end gap-2 border-t border-line-soft pt-3">
-            <Button variant="ghost" type="button" onClick={() => setIsNewDealOpen(false)}>
-              Cancelar
-            </Button>
-            <Button type="submit" disabled={isPending || !title.trim()}>
-              {isPending ? 'Salvando...' : 'Criar oportunidade'}
-            </Button>
-          </div>
-        </form>
-      </Modal>
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-app">
+      {/* Nível 1: Cabeçalho Principal do Funil */}
+      <KanbanHeader
+        currentPipeline={pipeline}
+        pipelines={pipelines}
+        account={account}
+        accounts={accounts}
+        notifications={notifications}
+        navItems={navItems}
+      />
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex flex-wrap items-center gap-2 border-b border-line bg-surface px-6 py-3">
-          <label className="flex items-center gap-1.5 text-meta text-muted">
-            Responsável
-            <select
-              value={board.ownerFilter ?? ''}
-              onChange={(event) => board.setOwnerFilter(event.target.value || null)}
-              className="rounded-control border border-line bg-surface px-2 py-1.5 text-meta text-ink outline-none focus:border-brand"
-            >
-              <option value="">Todos</option>
-              {board.owners.map((owner) => (
-                <option key={owner} value={owner}>
-                  {owner}
-                </option>
-              ))}
-            </select>
-          </label>
+      {/* Faixa de Resumo do Funil (KPIs) */}
+      <KanbanMetricsStrip summary={board.summary} isFiltered={isFiltered} />
 
-          <div className="ml-auto flex items-center gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              icon={<Settings2 className="size-3.5" />}
-              onClick={() => setStagesModalOpen(true)}
-            >
-              Configurar etapas
-            </Button>
-            <Button
-              size="sm"
-              icon={<Plus className="size-3.5" />}
-              onClick={() => setIsNewDealOpen(true)}
-            >
-              Nova oportunidade
-            </Button>
-          </div>
+      {/* Nível 2: Barra de Filtros e Ações */}
+      <KanbanToolbar
+        filters={board.filters}
+        sortOption={board.sortOption}
+        owners={board.owners}
+        teams={board.teams}
+        onFilterChange={board.setFilter}
+        onSortChange={board.setSortOption}
+        onClearFilters={board.clearAllFilters}
+        onOpenStagesModal={() => board.setStagesModalOpen(true)}
+        onOpenNewDealModal={() => {
+          board.setNewDealStageId(undefined);
+          board.setNewDealModalOpen(true);
+        }}
+      />
+
+      {/* Toast Notificação de Movimentação */}
+      {board.notification && (
+        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-lg bg-ink px-4 py-2.5 text-body font-medium text-white shadow-xl animate-in fade-in slide-in-from-bottom-2 duration-150">
+          <CheckCircle2 className="size-4 text-emerald-400 shrink-0" />
+          <span>{board.notification}</span>
         </div>
+      )}
 
-        {board.error ? (
-          <p role="alert" className="bg-red-soft px-6 py-2 text-meta text-red-text">
-            {board.error}
-          </p>
-        ) : null}
-
-        <div className="flex flex-1 gap-3 overflow-x-auto bg-app p-4">
-          {board.columns.map(({ stage, deals: stageDeals, count, total }) => (
-            <section
-              key={stage.id}
-              onDragOver={(event) => {
-                event.preventDefault();
-                board.setDragOverStageId(stage.id);
-              }}
-              onDragLeave={() => board.setDragOverStageId(null)}
-              onDrop={() => board.drop(stage.id)}
-              className={cn(
-                'flex w-[280px] shrink-0 flex-col rounded-surface border bg-surface-2 p-2.5 transition-colors',
-                board.dragOverStageId === stage.id
-                  ? 'border-brand bg-selected'
-                  : 'border-transparent',
-              )}
-            >
-              <header className="mb-2.5 flex items-center gap-2 px-1">
-                <span
-                  className="size-2 rounded-full"
-                  style={{ backgroundColor: stage.color }}
-                />
-                <h2 className="font-display text-body font-semibold text-ink">{stage.name}</h2>
-                <span className="ml-auto text-meta text-dim">{count}</span>
-              </header>
-              <p className="mb-2.5 px-1 font-mono text-meta text-muted">
-                {formatMoneyFromCents(total)}
-              </p>
-
-              {stageDeals.length > 0 ? (
-                <ul className="flex flex-col gap-2">
-                  {stageDeals.map((deal) => (
-                    <DealCard
-                      key={deal.id}
-                      deal={deal}
-                      stale={board.isStale(deal)}
-                      dragging={board.draggingId === deal.id}
-                      onDragStart={board.setDraggingId}
-                      onDragEnd={() => board.setDraggingId(null)}
-                      onOpen={board.setOpenDealId}
-                    />
-                  ))}
-                </ul>
-              ) : (
-                <p className="rounded-control border border-dashed border-line px-3 py-6 text-center text-meta text-dim">
-                  Arraste um card para esta etapa
-                </p>
-              )}
-            </section>
-          ))}
-
-          {board.columns.length === 0 ? (
-            <EmptyState
-              className="w-full"
-              title="Este funil ainda não tem etapas"
-              description="Crie as etapas do processo — por exemplo: Novo lead, Proposta, Negociação, Ganho — para começar a mover oportunidades."
-              action={
-                <Button
-                  size="sm"
-                  icon={<Settings2 className="size-3.5" />}
-                  onClick={() => setStagesModalOpen(true)}
-                >
-                  Configurar etapas
-                </Button>
-              }
-            />
-          ) : null}
+      {/* Mensagem de Erro */}
+      {board.error ? (
+        <div role="alert" className="border-b border-red-line/50 bg-red-soft px-6 py-2 text-meta text-red-text">
+          {board.error}
         </div>
-      </div>
-
-      {board.openDeal ? (
-        <DealDetailPanel
-          deal={board.openDeal}
-          stageName={
-            pipeline.stages.find((stage) => stage.id === board.openDeal?.stageId)?.name ?? '—'
-          }
-          onClose={() => board.setOpenDealId(null)}
-        />
       ) : null}
 
+      {/* Seletor de Abas em Telas Mobile / Pequenas */}
+      <div className="flex items-center gap-1 overflow-x-auto border-b border-line bg-surface px-4 py-2 md:hidden">
+        {board.columns.map(({ stage, count }) => (
+          <button
+            key={stage.id}
+            type="button"
+            onClick={() => setMobileActiveStageId(stage.id)}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-meta font-semibold transition-all shrink-0',
+              mobileActiveStageId === stage.id
+                ? 'bg-brand text-white shadow-xs'
+                : 'bg-surface-2 text-muted hover:text-ink',
+            )}
+          >
+            <span className="size-2 rounded-full" style={{ backgroundColor: stage.color }} />
+            <span>{stage.name}</span>
+            <span
+              className={cn(
+                'rounded-full px-1.5 text-[10px]',
+                mobileActiveStageId === stage.id ? 'bg-white/20 text-white' : 'bg-line text-dim',
+              )}
+            >
+              {count}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {/* Nível 3: Quadro Kanban Principal */}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        {board.columns.length === 0 ? (
+          /* Estado Vazio quando não há etapas no funil */
+          <div className="flex flex-1 items-center justify-center p-6">
+            <div className="max-w-md text-center">
+              <h3 className="font-display text-title font-bold text-ink">
+                Este funil ainda não possui etapas
+              </h3>
+              <p className="mt-1 text-body text-muted">
+                Adicione as etapas do seu processo comercial para começar a visualizar e movimentar
+                as oportunidades.
+              </p>
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<Settings2 className="size-3.5" />}
+                onClick={() => board.setStagesModalOpen(true)}
+                className="mt-4"
+              >
+                Configurar etapas do funil
+              </Button>
+            </div>
+          </div>
+        ) : board.visibleDeals.length === 0 ? (
+          /* Estado Vazio quando não há oportunidades (ou filtros zeraram) */
+          <EmptyBoardState
+            isFiltered={isFiltered}
+            onOpenNewDealModal={() => {
+              board.setNewDealStageId(undefined);
+              board.setNewDealModalOpen(true);
+            }}
+            onClearFilters={board.clearAllFilters}
+          />
+        ) : (
+          /* Quadro com Colunas */
+          <main
+            aria-label="Quadro de oportunidades"
+            className="flex flex-1 gap-3.5 overflow-x-auto p-4 sm:p-5 md:gap-4"
+          >
+            {/* Em Desktop / Tablet: exibe todas as colunas com rolagem lateral */}
+            {board.columns.map(({ stage, deals: stageDeals, count, total }) => {
+              const isMobileHidden =
+                typeof window !== 'undefined' &&
+                window.innerWidth < 768 &&
+                mobileActiveStageId &&
+                mobileActiveStageId !== stage.id;
+
+              return (
+                <div key={stage.id} className={cn(isMobileHidden ? 'hidden md:flex' : 'flex')}>
+                  <KanbanColumn
+                    stage={stage}
+                    deals={stageDeals}
+                    count={count}
+                    total={total}
+                    isStale={board.isStale}
+                    isDragging={board.draggingId !== null}
+                    isDragOver={board.dragOverStageId === stage.id}
+                    draggingId={board.draggingId}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      board.setDragOverStageId(stage.id);
+                    }}
+                    onDragLeave={() => board.setDragOverStageId(null)}
+                    onDrop={() => board.drop(stage.id)}
+                    onDragStart={board.setDraggingId}
+                    onDragEnd={() => board.setDraggingId(null)}
+                    onOpenDeal={board.setOpenDealId}
+                    onEditDeal={(deal) => board.setEditingDeal(deal)}
+                    onDeleteDeal={handleDeleteDeal}
+                    onAddDealToStage={(stId) => {
+                      board.setNewDealStageId(stId);
+                      board.setNewDealModalOpen(true);
+                    }}
+                    onOpenStagesModal={() => board.setStagesModalOpen(true)}
+                  />
+                </div>
+              );
+            })}
+          </main>
+        )}
+
+        {/* Painel Lateral de Detalhes da Oportunidade */}
+        {board.openDeal && (
+          <DealDetailPanel
+            deal={board.openDeal}
+            stages={board.stages}
+            onClose={() => board.setOpenDealId(null)}
+            onEdit={(deal) => board.setEditingDeal(deal)}
+            onDelete={handleDeleteDeal}
+            onMoveStage={(dealId, targetStageId) => {
+              board.setDraggingId(dealId);
+              board.drop(targetStageId);
+            }}
+          />
+        )}
+      </div>
+
+      {/* Modal Nova Oportunidade */}
+      <NewDealModal
+        open={board.newDealModalOpen}
+        onClose={() => {
+          board.setNewDealModalOpen(false);
+          board.setNewDealStageId(undefined);
+        }}
+        stages={board.stages}
+        initialStageId={board.newDealStageId}
+        owners={board.owners}
+        onSubmit={handleCreateDeal}
+      />
+
+      {/* Modal Editar Oportunidade */}
+      <EditDealModal
+        open={board.editingDeal !== null}
+        deal={board.editingDeal}
+        stages={board.stages}
+        owners={board.owners}
+        onClose={() => board.setEditingDeal(null)}
+        onSubmit={handleEditDeal}
+      />
+
+      {/* Modal Configuração de Etapas */}
       <StagesModal
-        open={stagesModalOpen}
-        onClose={() => setStagesModalOpen(false)}
-        stages={pipeline.stages}
+        open={board.stagesModalOpen}
+        stages={board.stages}
+        onClose={() => board.setStagesModalOpen(false)}
+        onSaveStages={handleSaveStages}
       />
     </div>
   );

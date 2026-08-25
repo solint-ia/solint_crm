@@ -66,7 +66,17 @@ const SHAPES: Readonly<Record<PeriodKey, PeriodShape>> = {
       return `${pad(day.getDate())}/${pad(day.getMonth() + 1)}`;
     },
   },
+  mes: {
+    points: 30,
+    base: 152,
+    labelAt: (index, offset) => {
+      const day = new Date(2026, 7, 21);
+      day.setDate(day.getDate() - (offset + 29 - index));
+      return `${pad(day.getDate())}/${pad(day.getMonth() + 1)}`;
+    },
+  },
 };
+
 
 const seriesFor = (period: PeriodKey, offset: number): readonly TimeSeriePoint[] => {
   const shape = SHAPES[period];

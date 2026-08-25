@@ -17,12 +17,16 @@ import type { InboxCatalog } from './conversation-toolbar';
 import { InboxFiltersMenu } from './inbox-filters';
 import { ContextPanel } from './context-panel';
 import { ConversationListItem } from './conversation-list-item';
+import { InboxDisconnectedState } from './inbox-disconnected-state';
+import { useWhatsAppConnection } from '@/features/whatsapp/hooks/use-whatsapp-connection';
+
 import {
   activeFilterCount,
   useInbox,
   type SortKey,
   type StatusTab,
 } from '../hooks/use-inbox';
+
 
 interface InboxWorkspaceProps {
   readonly conversations: readonly Conversation[];
@@ -85,6 +89,7 @@ const SORT_OPTIONS = [
 type MobilePane = 'lista' | 'conversa' | 'contexto';
 
 export function InboxWorkspace(props: InboxWorkspaceProps) {
+  const { isConnected } = useWhatsAppConnection(true);
   const [pane, setPane] = useState<MobilePane>(props.initialSelectedId ? 'conversa' : 'lista');
   // Por padrão, a barra de detalhes inicia FECHADA para dar 100% de amplitude ao chat central
   const [isContextOpen, setIsContextOpen] = useState(false);
@@ -111,8 +116,13 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
     inbox.search.trim().length > 0 ||
     inbox.statusTab !== 'todas';
 
+  if (!isConnected) {
+    return <InboxDisconnectedState />;
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-1 overflow-hidden bg-app text-ink">
+
       {/* ============================================================ */}
       {/* COLUNA 1: LISTA DE CONVERSAS (320px - 360px)                 */}
       {/* ============================================================ */}

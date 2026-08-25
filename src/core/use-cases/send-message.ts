@@ -14,6 +14,22 @@ export interface SendMessageInput {
 export const MAX_MESSAGE_LENGTH = 4096;
 
 /**
+ * A conversa acompanha a mensagem no retorno.
+ *
+ * Ela já foi carregada aqui dentro para a checagem da janela HSM, e quem chama
+ * precisa dela em seguida para saber para onde despachar (`channelThreadId`,
+ * telefone do contato). Devolvê-la evita que a Server Action repita a mesma
+ * consulta — que não é barata: traz a timeline junto.
+ *
+ * É o retrato **anterior** ao envio: a mensagem nova não está na timeline dela.
+ * Serve para decidir o despacho, não para publicar como estado da conversa.
+ */
+export interface SendMessageOutput {
+  readonly message: Message;
+  readonly conversation: Conversation;
+}
+
+/**
  * Envia mensagem publica ou registra nota interna.
  * Regras aplicadas (REGRAS-GLOBAIS.md secao 4):
  *  1. exige permissao conversas:responder;
@@ -27,7 +43,7 @@ export const createSendMessage =
     conversationId,
     text,
     isPrivate,
-  }: SendMessageInput): Promise<Result<Message>> => {
+  }: SendMessageInput): Promise<Result<SendMessageOutput>> => {
     if (!can(session, 'conversas:responder')) {
       return fail(new DomainError('Sem permissão para responder conversas.', 'FORBIDDEN'));
     }
@@ -63,7 +79,7 @@ export const createSendMessage =
       authorName: session.user.name,
     });
 
-    return ok(message);
+    return ok({ message, conversation });
   };
 
 export const canSendFreeText = (conversation: Conversation): boolean =>

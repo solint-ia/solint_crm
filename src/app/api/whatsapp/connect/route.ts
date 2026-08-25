@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { container } from '@/infrastructure/container';
-import { whatsappService } from '@/infrastructure/whatsapp/whatsapp-service';
+import { getWhatsAppChannel } from '@/infrastructure/whatsapp/channel-provider';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,16 +11,17 @@ export async function POST() {
     if (!session) {
       return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 });
     }
+
     // A conta vem da sessão, não de uma constante: é nela que as mensagens
     // recebidas por este número passam a ser gravadas.
-    const status = await whatsappService.startSession({
-      owner: {
-        userId: session.user.id,
-        userName: session.user.name,
-        accountId: session.account.id,
-      },
+    const channel = await getWhatsAppChannel();
+    const status = await channel.startSession({
+      userId: session.user.id,
+      userName: session.user.name,
+      accountId: session.account.id,
     });
-    return NextResponse.json({ ok: true, status });
+
+    return NextResponse.json({ ok: true, engine: channel.engine, status });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Falha ao iniciar sessão do WhatsApp';
     return NextResponse.json({ ok: false, error: message }, { status: 500 });

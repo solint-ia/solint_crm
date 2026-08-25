@@ -172,7 +172,8 @@ export const conversationRow = (row: ConversationWithRelations): Conversation =>
   lastMessageAt: row.lastMessageAt,
   labels: row.labels.map(labelRow),
   protocols: readJson<readonly Protocol[]>(row.protocols, []),
-  timeline: buildTimeline(row.messages),
+  // As mensagens chegam da mais nova para a mais antiga (ver CONVERSATION_INCLUDE).
+  timeline: buildTimeline([...row.messages].reverse()),
   ...(row.assigneeId ? { assigneeId: row.assigneeId } : {}),
   ...(row.assigneeName ? { assigneeName: row.assigneeName } : {}),
   ...(row.lastActivityAt ? { lastActivityAt: row.lastActivityAt.toISOString() } : {}),
@@ -186,10 +187,27 @@ export const conversationRow = (row: ConversationWithRelations): Conversation =>
   ...(row.channelThreadId ? { channelThreadId: row.channelThreadId } : {}),
 });
 
+/**
+ * Teto de mensagens carregadas por conversa.
+ *
+ * Sem teto, `messages` trazia a timeline inteira — e não só na tela da conversa.
+ * A lista da caixa de entrada (`list`) usa o mesmo `include`, então abrir a
+ * caixa arrastava todas as mensagens de todas as conversas. Pior: o WhatsApp
+ * chama `loadConversation` a cada mensagem nova e a **cada recibo de entrega**
+ * (dois por mensagem: entregue e lido), e o resultado inteiro ainda viaja pelo
+ * SSE até o navegador. Uma conversa antiga tornava cada tique duplo caro.
+ */
+export const CONVERSATION_TIMELINE_LIMIT = 200;
+
+/**
+ * `desc` + `take` traz as N mensagens **mais recentes**; a ordem cronológica é
+ * restaurada em `conversationRow`. Com `asc` o `take` traria as N mais antigas,
+ * que é exatamente o oposto do que a tela precisa mostrar.
+ */
 export const CONVERSATION_INCLUDE = {
   contact: { include: { labels: true } },
   labels: true,
-  messages: { orderBy: { createdAt: 'asc' } },
+  messages: { orderBy: { createdAt: 'desc' }, take: CONVERSATION_TIMELINE_LIMIT },
 } as const;
 
 /**

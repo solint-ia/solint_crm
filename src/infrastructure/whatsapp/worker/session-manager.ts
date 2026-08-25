@@ -1,9 +1,18 @@
 import { randomBytes } from 'node:crypto';
 import { prisma } from '@/infrastructure/db/prisma';
+import { hasPairedSession } from '../auth/postgres-auth-state';
 import { WhatsAppSession } from './session';
 
 const LOCK_TTL_MS = 30_000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
+
+/**
+ * Tentativas de restauração por caixa.
+ *
+ * Três cobrem com folga o caso real — esperar uma trava de 30 s vencer — sem
+ * transformar uma disputa legítima entre dois workers vivos num laço eterno.
+ */
+const RESTORE_MAX_ATTEMPTS = 3;
 
 export class WhatsAppSessionManager {
   readonly workerId: string;
@@ -155,17 +164,71 @@ export class WhatsAppSessionManager {
         select: { inboxId: true },
       });
 
-      console.log(`[WhatsAppSessionManager] Restaurando ${persisted.length} conexões salvas...`);
-
+      // `credsCipher` preenchido nao quer dizer sessao pareada: o Baileys grava
+      // credenciais durante a tentativa, antes de ela concluir. Restaurar uma
+      // caixa que nunca foi pareada abria um socket para mostrar um QR que
+      // ninguem esta olhando; o servidor do WhatsApp encerrava o fluxo (codigo
+      // 428) e o worker reconectava, em laco, indefinidamente. Era ruido no log
+      // e escrita no banco a cada ciclo, sem chance nenhuma de dar certo.
+      const paired: { inboxId: string }[] = [];
       for (const conn of persisted) {
-        try {
-          await this.start(conn.inboxId);
-        } catch (err) {
-          console.error(`[WhatsAppSessionManager] Falha ao restaurar conexão ${conn.inboxId}:`, err);
-        }
+        if (await hasPairedSession(conn.inboxId)) paired.push(conn);
+      }
+
+      const skipped = persisted.length - paired.length;
+      console.log(
+        `[WhatsAppSessionManager] Restaurando ${paired.length} conexões salvas` +
+          (skipped > 0 ? ` (${skipped} aguardando leitura do QR, ignorada(s))` : '') +
+          '...',
+      );
+
+      for (const conn of paired) {
+        await this.restoreOne(conn.inboxId, 0);
       }
     } catch (err) {
       console.error('[WhatsAppSessionManager] Erro ao listar sessões salvas:', err);
+    }
+  }
+
+  /**
+   * Restaura uma caixa, insistindo enquanto a trava for de um worker morto.
+   *
+   * Um worker que morre sem chance de encerrar — `kill -9`, contêiner
+   * reiniciado, computador desligado no botão — deixa a trava presa até
+   * expirar. O worker seguinte subia dentro dessa janela, `acquireLock` recusava
+   * corretamente, e a restauração **desistia na primeira tentativa**. O
+   * resultado era uma sessão pareada e saudável que só voltava quando alguém
+   * clicasse em "Conectar" — e nada na tela explicava por quê.
+   *
+   * Insistir é a resposta certa porque a condição é temporária por construção:
+   * a trava tem prazo, e quem a segurava já não existe. Fora esse caso, o erro
+   * é reportado e a tentativa encerra — insistir num `Caixa não encontrada` não
+   * levaria a lugar nenhum.
+   */
+  private async restoreOne(inboxId: string, attempt: number): Promise<void> {
+    try {
+      await this.start(inboxId);
+      if (attempt > 0) {
+        console.log(`[WhatsAppSessionManager] Conexão ${inboxId} restaurada na tentativa ${attempt + 1}.`);
+      }
+    } catch (err) {
+      const disputa = err instanceof Error && err.message.includes('já está operando');
+
+      if (!disputa || attempt >= RESTORE_MAX_ATTEMPTS - 1) {
+        console.error(`[WhatsAppSessionManager] Falha ao restaurar conexão ${inboxId}:`, err);
+        return;
+      }
+
+      // Espera a trava vencer. O acréscimo cobre o desvio de relógio entre o
+      // processo e o banco, que é quem carimba o prazo.
+      const espera = LOCK_TTL_MS + 2_000;
+      console.warn(
+        `[WhatsAppSessionManager] Trava de ${inboxId} ainda presa por um worker anterior. ` +
+          `Nova tentativa em ${Math.round(espera / 1000)}s (${attempt + 2}/${RESTORE_MAX_ATTEMPTS}).`,
+      );
+
+      const timer = setTimeout(() => void this.restoreOne(inboxId, attempt + 1), espera);
+      timer.unref?.();
     }
   }
 

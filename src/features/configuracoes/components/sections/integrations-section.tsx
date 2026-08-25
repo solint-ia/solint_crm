@@ -8,10 +8,13 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Modal } from '@/components/ui/modal';
+import { ConfirmModal } from '@/components/ui/confirm-modal';
+
 import {
   CONNECTION_STATUS_LABEL,
   CONNECTION_STATUS_TONE,
 } from '@/components/domain/presentation-maps';
+
 import { WhatsAppModal } from '@/features/whatsapp/components/whatsapp-modal';
 import {
   createApiTokenAction,
@@ -45,6 +48,7 @@ export function IntegrationsSection({
 
   // Webhook Modal
   const [isWebhookModalOpen, setIsWebhookModalOpen] = useState(false);
+  const [deletingWebhook, setDeletingWebhook] = useState<Webhook | null>(null);
   const [webhookName, setWebhookName] = useState('');
   const [webhookUrl, setWebhookUrl] = useState('');
   const [webhookEvents, setWebhookEvents] = useState<string[]>(['conversa.criada']);
@@ -52,6 +56,7 @@ export function IntegrationsSection({
 
   // Token Modal
   const [isTokenModalOpen, setIsTokenModalOpen] = useState(false);
+  const [revokingToken, setRevokingToken] = useState<ApiToken | null>(null);
   const [tokenName, setTokenName] = useState('');
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [generatedSecret, setGeneratedSecret] = useState<string | null>(null);
@@ -70,6 +75,7 @@ export function IntegrationsSection({
         setIsWebhookModalOpen(false);
         setWebhookName('');
         setWebhookUrl('');
+        setWebhookEvents(['conversa.criada']);
         router.refresh();
       } else {
         setWebhookError(res.error ?? 'Erro ao criar webhook.');
@@ -84,10 +90,11 @@ export function IntegrationsSection({
     });
   };
 
-  const handleDeleteWebhook = (webhookId: string) => {
-    if (!confirm('Deseja realmente excluir este webhook?')) return;
+  const handleConfirmDeleteWebhook = async () => {
+    if (!deletingWebhook) return;
     startTransition(async () => {
-      await deleteWebhookAction({ webhookId });
+      await deleteWebhookAction({ webhookId: deletingWebhook.id });
+      setDeletingWebhook(null);
       router.refresh();
     });
   };
@@ -106,10 +113,11 @@ export function IntegrationsSection({
     });
   };
 
-  const handleDeleteToken = (tokenId: string) => {
-    if (!confirm('Deseja realmente revogar este token de API?')) return;
+  const handleConfirmRevokeToken = async () => {
+    if (!revokingToken) return;
     startTransition(async () => {
-      await deleteApiTokenAction({ tokenId });
+      await deleteApiTokenAction({ tokenId: revokingToken.id });
+      setRevokingToken(null);
       router.refresh();
     });
   };
@@ -380,7 +388,8 @@ export function IntegrationsSection({
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => handleDeleteWebhook(wh.id)}
+                      aria-label="Excluir webhook"
+                      onClick={() => setDeletingWebhook(wh)}
                       icon={<Trash2 className="size-3.5 text-danger" />}
                     />
                   </div>
@@ -435,7 +444,7 @@ export function IntegrationsSection({
                   <Button
                     variant="danger"
                     size="sm"
-                    onClick={() => handleDeleteToken(token.id)}
+                    onClick={() => setRevokingToken(token)}
                   >
                     Revogar
                   </Button>
@@ -445,6 +454,43 @@ export function IntegrationsSection({
           </div>
         </div>
       </div>
+
+      {/* Modal Confirmação Exclusão Webhook */}
+      <ConfirmModal
+        open={deletingWebhook !== null}
+        title="Excluir webhook"
+        description={
+          <span>
+            Tem certeza que deseja excluir o webhook para a URL{' '}
+            <strong className="font-mono text-ink text-meta">{deletingWebhook?.url}</strong>? Disparos de eventos para este destino serão interrompidos imediatamente.
+          </span>
+        }
+        confirmLabel="Excluir webhook"
+        variant="danger"
+        isLoading={isPending}
+        onClose={() => setDeletingWebhook(null)}
+        onConfirm={handleConfirmDeleteWebhook}
+      />
+
+      {/* Modal Confirmação Revogação Token API */}
+      <ConfirmModal
+        open={revokingToken !== null}
+        title="Revogar token de API"
+        description={
+          <span>
+            Tem certeza que deseja revogar o token{' '}
+            <strong className="text-ink">{revokingToken?.name}</strong> (
+            <code className="font-mono text-dim">{revokingToken?.maskedValue}</code>)? Qualquer aplicação externa ou script utilizando esta chave perderá o acesso instantaneamente.
+          </span>
+        }
+        confirmLabel="Revogar acesso"
+        variant="danger"
+        icon="warning"
+        isLoading={isPending}
+        onClose={() => setRevokingToken(null)}
+        onConfirm={handleConfirmRevokeToken}
+      />
     </div>
   );
 }
+

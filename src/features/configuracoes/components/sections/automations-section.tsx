@@ -23,7 +23,10 @@ import { ASSIGNMENT_METHOD_LABELS } from '@/core/domain/settings';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { ConfirmModal } from '@/components/ui/confirm-modal';
 import { EmptyState } from '@/components/ui/empty-state';
+
+
 import { SectionTitle } from '@/components/ui/section';
 import { SegmentedControl } from '@/components/ui/segmented-control';
 import { Toggle } from '@/components/ui/toggle';
@@ -68,6 +71,7 @@ export function AutomationsSection({
     useState<AssignmentMethod>(initialAssignmentMethod);
   const [builderOpen, setBuilderOpen] = useState(false);
   const [editing, setEditing] = useState<Automation | undefined>();
+  const [deletingAutomation, setDeletingAutomation] = useState<Automation | null>(null);
   const { show } = useToast();
 
   const ordered = useMemo(
@@ -87,8 +91,9 @@ export function AutomationsSection({
     const result = await mutate();
     if (!result.ok) {
       show({ tone: 'erro', title: 'Não foi possível salvar', description: result.error });
+      return false;
     }
-    return result.ok;
+    return true;
   };
 
   const handleToggleAutomation = async (id: string, current: boolean) => {
@@ -155,7 +160,10 @@ export function AutomationsSection({
     return { ok: true };
   };
 
-  const handleDelete = async (automation: Automation) => {
+  const handleConfirmDelete = async () => {
+    if (!deletingAutomation) return;
+    const automation = deletingAutomation;
+    setDeletingAutomation(null);
     const snapshot = automations;
     setAutomations((prev) => prev.filter((item) => item.id !== automation.id));
     const ok = await refresh(() => deleteAutomationAction({ automationId: automation.id }));
@@ -349,11 +357,12 @@ export function AutomationsSection({
                         <button
                           type="button"
                           aria-label={`Excluir ${automation.name}`}
-                          onClick={() => handleDelete(automation)}
+                          onClick={() => setDeletingAutomation(automation)}
                           className="rounded-control p-1.5 text-dim transition-colors hover:bg-red-soft hover:text-red-text"
                         >
                           <Trash2 className="size-3.5" />
                         </button>
+
                         <Toggle
                           checked={automation.enabled}
                           onChange={() => handleToggleAutomation(automation.id, automation.enabled)}
@@ -457,6 +466,23 @@ export function AutomationsSection({
           })}
         </div>
       ) : null}
+
+      {/* Modal de Confirmação de Exclusão de Automação */}
+      <ConfirmModal
+        open={deletingAutomation !== null}
+        title="Excluir regra de automação"
+        description={
+          <span>
+            Tem certeza que deseja excluir a regra{' '}
+            <strong className="text-ink">&ldquo;{deletingAutomation?.name}&rdquo;</strong>? As ações automáticas vinculadas ao gatilho deixarão de ser disparadas.
+
+          </span>
+        }
+        confirmLabel="Excluir regra"
+        variant="danger"
+        onClose={() => setDeletingAutomation(null)}
+        onConfirm={handleConfirmDelete}
+      />
     </div>
   );
 }

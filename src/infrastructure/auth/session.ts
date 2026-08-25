@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { cookies } from 'next/headers';
+import { cache } from 'react';
 import type { Account, Permission, Role, Session } from '@/core/domain/user';
 import { prisma, readJson } from '@/infrastructure/db/prisma';
 import { userRow } from '@/infrastructure/repositories/prisma/mappers';
@@ -98,8 +99,18 @@ const toDomainAccount = (row: {
  *
  * Devolve `null` em vez de lançar: quem chama decide se redireciona (páginas)
  * ou responde 401 (rotas de API).
+ *
+ * Memorizado por requisição com `cache()`. Uma única tela resolve a sessão
+ * várias vezes — o layout, a página e cada Server Action disparada por ela — e
+ * com o banco a ~130ms de distância isso custava mais do que o trabalho que a
+ * requisição vinha fazer. O `cache()` do React vive no escopo da requisição:
+ * duas requisições nunca compartilham sessão, e uma revogação passa a valer na
+ * requisição seguinte.
+ *
+ * Dentro da função, o que não depende de nada vai junto (ver abaixo): eram
+ * quatro idas ao banco em série, hoje são duas.
  */
-export const readSession = async (): Promise<Session | null> => {
+export const readSession = cache(async (): Promise<Session | null> => {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
   if (!token) return null;
@@ -107,7 +118,27 @@ export const readSession = async (): Promise<Session | null> => {
   const claims = await verifySessionToken(token);
   if (!claims) return null;
 
-  const authSession = await prisma.authSession.findUnique({ where: { tokenId: claims.jti } });
+  // As três consultas partem do mesmo token e não dependem entre si: a linha de
+  // revogação vem de `jti`, o vínculo de `sub`+`act`, e a lista de workspaces de
+  // `sub`. Em série custavam três idas ao banco; juntas, uma. Só o papel precisa
+  // esperar, porque a chave dele sai do vínculo.
+  const [authSession, membership, all] = await Promise.all([
+    prisma.authSession.findUnique({ where: { tokenId: claims.jti } }),
+    prisma.membership.findUnique({
+      where: { userId_accountId: { userId: claims.sub, accountId: claims.act } },
+      include: { user: true, account: true },
+    }),
+    // Todas as contas em que esta pessoa atende. É o que alimenta o seletor de
+    // workspace — que até aqui devolvia `[account]` porque não havia como saber.
+    // tenant-ok: deliberadamente entre contas — e a lista de workspaces da pessoa
+    // que alimenta o seletor. Escopar por conta aqui devolveria sempre uma opcao.
+    prisma.membership.findMany({
+      where: { userId: claims.sub },
+      include: { account: true },
+      orderBy: { createdAt: 'asc' },
+    }),
+  ]);
+
   if (!authSession || authSession.revokedAt || authSession.expiresAt.getTime() < Date.now()) {
     return null;
   }
@@ -115,10 +146,6 @@ export const readSession = async (): Promise<Session | null> => {
   // O `act` do token diz em que conta a sessão foi aberta; o vínculo é o que
   // autoriza. Sem ele a pessoa não atende mais naquele workspace, e o token
   // deixa de valer ali — mesmo com assinatura boa e sessão não revogada.
-  const membership = await prisma.membership.findUnique({
-    where: { userId_accountId: { userId: claims.sub, accountId: claims.act } },
-    include: { user: true, account: true },
-  });
   if (!membership) return null;
 
   const role: Role | null = await prisma.role
@@ -139,16 +166,6 @@ export const readSession = async (): Promise<Session | null> => {
         : null,
     );
 
-  // Todas as contas em que esta pessoa atende. É o que alimenta o seletor de
-  // workspace — que até aqui devolvia `[account]` porque não havia como saber.
-  // tenant-ok: deliberadamente entre contas — e a lista de workspaces da pessoa
-  // que alimenta o seletor. Escopar por conta aqui devolveria sempre uma opcao.
-  const all = await prisma.membership.findMany({
-    where: { userId: membership.userId },
-    include: { account: true },
-    orderBy: { createdAt: 'asc' },
-  });
-
   return {
     user: userRow(membership.user, membership),
     account: toDomainAccount(membership.account),
@@ -157,7 +174,7 @@ export const readSession = async (): Promise<Session | null> => {
     permissions: role?.permissions ?? [],
     availableAccounts: all.map((row) => toDomainAccount(row.account)),
   };
-};
+});
 
 /** Marca a atividade do usuário. Falha em silêncio: é dado auxiliar. */
 export const touchUser = async (userId: string): Promise<void> => {

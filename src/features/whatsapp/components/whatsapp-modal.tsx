@@ -64,11 +64,12 @@ export function WhatsAppModal({ open, onClose }: WhatsAppModalProps) {
           )}
         </div>
 
-        {errorMessage ? (
+        {errorMessage && !isConnecting && !isAwaitingQR && !isConnected ? (
           <p className="w-full rounded-control border border-red-line bg-red-soft px-3 py-2 text-center text-body text-red-text">
             {errorMessage}
           </p>
         ) : null}
+
 
         {/* Cenário 1: Conectado com sucesso */}
         {isConnected ? (
@@ -118,7 +119,7 @@ export function WhatsAppModal({ open, onClose }: WhatsAppModalProps) {
         ) : null}
 
         {/* Cenário 2: Exibição do QR Code */}
-        {!isConnected && isAwaitingQR ? (
+        {!isConnected && isAwaitingQR && statusData.qr ? (
           <div className="flex flex-col items-center gap-4 text-center">
             <div className="relative rounded-float border-2 border-brand/30 bg-white p-3 shadow-md transition-transform hover:scale-[1.01]">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -158,7 +159,7 @@ export function WhatsAppModal({ open, onClose }: WhatsAppModalProps) {
         ) : null}
 
         {/* Cenário 3: Inicializando / Gerando QR */}
-        {!isConnected && !isAwaitingQR && isConnecting ? (
+        {!isConnected && isConnecting ? (
           <div className="flex size-60 flex-col items-center justify-center gap-3 rounded-float border border-line bg-surface-2 p-6 text-center">
             <Loader2 className="size-8 animate-spin text-brand" />
             <p className="text-body font-semibold text-ink">Iniciando sessão do WhatsApp...</p>
@@ -173,6 +174,7 @@ export function WhatsAppModal({ open, onClose }: WhatsAppModalProps) {
           <div className="flex w-full flex-col items-center gap-4 rounded-surface border border-line bg-surface-2 p-6 text-center">
             <div className="flex size-12 items-center justify-center rounded-surface bg-accent-soft text-brand">
               <QrCode className="size-6" />
+
             </div>
 
             <div>

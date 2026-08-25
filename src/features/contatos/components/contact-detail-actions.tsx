@@ -2,10 +2,12 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+
 import { Edit2, Trash2 } from 'lucide-react';
 import type { Contact } from '@/core/domain/contact';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
+import { ConfirmModal } from '@/components/ui/confirm-modal';
 import { updateContactAction, deleteContactAction } from '@/app/(workspace)/contatos/actions';
 
 interface ContactDetailActionsProps {
@@ -16,6 +18,7 @@ export function ContactDetailActions({ contact }: ContactDetailActionsProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [isEditOpen, setIsEditOpen] = useState(false);
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [name, setName] = useState(contact.name);
   const [phone, setPhone] = useState(contact.phone);
   const [email, setEmail] = useState(contact.email ?? '');
@@ -44,17 +47,18 @@ export function ContactDetailActions({ contact }: ContactDetailActionsProps) {
     });
   };
 
-  const handleDelete = () => {
-    if (!confirm('Deseja realmente excluir este contato e todo o histórico vinculado?')) return;
+  const handleConfirmDelete = async () => {
     startTransition(async () => {
       const res = await deleteContactAction({ contactId: contact.id });
       if (res.ok) {
+        setIsDeleteOpen(false);
         router.push('/contatos');
       } else {
-        alert(res.error ?? 'Erro ao excluir contato.');
+        setError(res.error ?? 'Erro ao excluir contato.');
       }
     });
   };
+
 
   return (
     <>
@@ -137,10 +141,27 @@ export function ContactDetailActions({ contact }: ContactDetailActionsProps) {
         <Button
           variant="ghost"
           size="sm"
-          onClick={handleDelete}
+          aria-label={`Excluir contato ${contact.name}`}
+          onClick={() => setIsDeleteOpen(true)}
           icon={<Trash2 className="size-3.5 text-danger" />}
         />
       </div>
+
+      <ConfirmModal
+        open={isDeleteOpen}
+        title="Excluir contato"
+        description={
+          <span>
+            Tem certeza que deseja excluir o contato <strong className="text-ink">{contact.name}</strong>? Todo o histórico de mensagens, notas e negócios vinculados serão permanentemente apagados.
+          </span>
+        }
+        confirmLabel="Excluir contato"
+        variant="danger"
+        isLoading={isPending}
+        onClose={() => setIsDeleteOpen(false)}
+        onConfirm={handleConfirmDelete}
+      />
     </>
   );
 }
+

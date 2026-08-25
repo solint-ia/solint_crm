@@ -1,13 +1,15 @@
 'use client';
 
-import { useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+
 import { Pause, Play, Trash2 } from 'lucide-react';
 import type { Campaign } from '@/core/domain/campaign';
 import { CAMPAIGN_STATUS_LABELS, rate } from '@/core/domain/campaign';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { ConfirmModal } from '@/components/ui/confirm-modal';
 import { EmptyState } from '@/components/ui/empty-state';
 import { CAMPAIGN_STATUS_TONE } from '@/components/domain/presentation-maps';
 import {
@@ -18,6 +20,7 @@ import {
 export function CampaignTable({ campaigns }: { readonly campaigns: readonly Campaign[] }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [deletingCampaign, setDeletingCampaign] = useState<Campaign | null>(null);
 
   const handleToggleStatus = (campaign: Campaign) => {
     const nextStatus = campaign.status === 'em_andamento' ? 'pausada' : 'em_andamento';
@@ -27,13 +30,15 @@ export function CampaignTable({ campaigns }: { readonly campaigns: readonly Camp
     });
   };
 
-  const handleDelete = (campaignId: string) => {
-    if (!confirm('Deseja realmente excluir esta campanha?')) return;
+  const handleConfirmDelete = async () => {
+    if (!deletingCampaign) return;
     startTransition(async () => {
-      await deleteCampaignAction({ campaignId });
+      await deleteCampaignAction({ campaignId: deletingCampaign.id });
+      setDeletingCampaign(null);
       router.refresh();
     });
   };
+
 
   if (campaigns.length === 0) {
     return (
@@ -102,7 +107,8 @@ export function CampaignTable({ campaigns }: { readonly campaigns: readonly Camp
                     variant="ghost"
                     size="sm"
                     disabled={isPending}
-                    onClick={() => handleDelete(campaign.id)}
+                    aria-label={`Excluir campanha ${campaign.name}`}
+                    onClick={() => setDeletingCampaign(campaign)}
                     icon={<Trash2 className="size-3.5 text-danger" />}
                   />
                 </div>
@@ -111,7 +117,24 @@ export function CampaignTable({ campaigns }: { readonly campaigns: readonly Camp
           ))}
         </tbody>
       </table>
+
+      <ConfirmModal
+        open={deletingCampaign !== null}
+        title="Excluir campanha"
+        description={
+          <span>
+            Tem certeza que deseja excluir a campanha{' '}
+            <strong className="text-ink">{deletingCampaign?.name}</strong>? Os relatórios e métricas de envio desta campanha serão removidos permanentemente.
+          </span>
+        }
+        confirmLabel="Excluir campanha"
+        variant="danger"
+        isLoading={isPending}
+        onClose={() => setDeletingCampaign(null)}
+        onConfirm={handleConfirmDelete}
+      />
     </Card>
   );
 }
+
 

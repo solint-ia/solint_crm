@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import pino from 'pino';
-import QRCode from 'qrcode';
 import makeWASocket, {
   DisconnectReason,
   makeCacheableSignalKeyStore,
@@ -47,43 +46,18 @@ import {
 } from './wa-message-content';
 import { mediaStore, mediaUrlFor } from './wa-media-store';
 
+import {
+  AVATAR_TTL_MS,
+  extractStatusCode,
+  fallbackPersonName,
+  GROUP_METADATA_TTL_MS,
+  MAX_INLINE_MEDIA_BYTES,
+  MAX_TRACKED_SENT_IDS,
+  timeLabel,
+  toneFor,
+} from './wa-format';
+
 const SESSIONS_DIR = path.resolve(process.cwd(), '.sessions', 'whatsapp-default');
-
-const AVATAR_TONES = ['#168cff', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
-
-/** Tom estavel por chave: o mesmo contato mantem a mesma cor entre reinicios. */
-const toneFor = (key: string): string => {
-  let hash = 0;
-  for (let index = 0; index < key.length; index += 1) {
-    hash = (hash * 31 + key.charCodeAt(index)) >>> 0;
-  }
-  return AVATAR_TONES[hash % AVATAR_TONES.length] as string;
-};
-
-const GROUP_METADATA_TTL_MS = 10 * 60 * 1000;
-const AVATAR_TTL_MS = 60 * 60 * 1000;
-const MAX_TRACKED_SENT_IDS = 500;
-/** Acima disso a midia não e baixada: a conversa não pode ficar esperando um vídeo enorme. */
-const MAX_INLINE_MEDIA_BYTES = 16 * 1024 * 1024;
-
-const timeLabel = (date: Date): string =>
-  date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-
-const extractStatusCode = (error: unknown): number | undefined => {
-  if (!error) return undefined;
-  const err = error as Record<string, unknown>;
-  const output = err['output'] as Record<string, unknown> | undefined;
-  if (output && typeof output['statusCode'] === 'number') {
-    return output['statusCode'];
-  }
-  if (typeof err['statusCode'] === 'number') return err['statusCode'];
-  if (typeof err['code'] === 'number') return err['code'];
-  return undefined;
-};
-
-/** Nome legivel de um contato pessoal quando o proprio pushName não esta disponível. */
-const fallbackPersonName = (phone: string, jid: string): string =>
-  phone ? PhoneNumber.format(phone) : `Contato ${userOf(jid).slice(-6)}`;
 
 export class WhatsAppService {
   private socket: WASocket | null = null;
@@ -106,6 +80,8 @@ export class WhatsAppService {
    * a conta de demonstração.
    */
   private owner: WhatsAppOwner | undefined = readOwner(SESSIONS_DIR);
+  /** Caixa de entrada por conta — ver `activeInboxId()`. */
+  private readonly inboxIdCache = new Map<string, string>();
   private readonly groupCache = new Map<string, { subject: string; size: number; at: number }>();
   private readonly avatarCache = new Map<string, { url?: string; at: number }>();
   /** Ids de mensagens despachadas por esta plataforma — usados para ignorar o eco. */
@@ -118,21 +94,41 @@ export class WhatsAppService {
     // O store de conversas e volatil, o disco não: descarta midia orfa antiga.
     void mediaStore.prune();
 
-    // Restaura automaticamente no boot se houver credenciais salvas no Postgres
+    // Restaura automaticamente no boot se houver credenciais salvas no Postgres.
+    //
+    // A escolha e deterministica (a conexao mais recente) porque este servico
+    // mantem **uma** sessao por processo. Com `findFirst` sem ordem, duas contas
+    // com WhatsApp salvo faziam o banco decidir qual delas seria atendida — e a
+    // resposta podia mudar a cada reinicio, sem aviso. Atender varias caixas ao
+    // mesmo tempo e o papel do worker (`src/worker.ts`), nao deste servico.
     setTimeout(async () => {
       try {
-        const conn = await prisma.whatsAppConnection.findFirst({
-          where: {
-            credsCipher: { not: null },
-          },
+        const saved = await prisma.whatsAppConnection.findMany({
+          where: { credsCipher: { not: null } },
           include: { inbox: true },
+          orderBy: { updatedAt: 'desc' },
         });
-        if (conn?.credsCipher && conn.inbox) {
-          this.owner = {
-            userId: conn.pairedByUserId ?? 'system',
-            userName: conn.profileName ?? 'Administrador',
-            accountId: conn.inbox.accountId,
-          };
+
+        if (saved.length > 1) {
+          console.warn(
+            `[WhatsAppService] ${saved.length} conexoes salvas e este servico atende uma so. ` +
+              'Restaurando a mais recente; para atender todas, use o worker.',
+          );
+        }
+
+        const conn = saved[0];
+        if (conn?.inbox) {
+          // A conta vem da `Inbox` da propria conexao — e um fato do banco, nao
+          // um palpite. O dono lido do disco so prevalece se for da mesma conta.
+          const accountId = conn.inbox.accountId;
+          this.owner =
+            this.owner?.accountId === accountId
+              ? this.owner
+              : {
+                  userId: conn.pairedByUserId ?? 'system',
+                  userName: conn.profileName ?? 'Administrador',
+                  accountId,
+                };
           await this.startSession({ owner: this.owner, resetAttempts: false });
         }
       } catch (err) {
@@ -147,21 +143,44 @@ export class WhatsAppService {
 
   /**
    * Conta em que gravar o que chega do canal.
+   *
+   * Sem dono resolvido, devolve `undefined` — nunca um palpite. O padrao
+   * anterior era cair em `'acc-solint'`, a conta de demonstracao do seed: uma
+   * sessao que reconectasse antes de o dono ser lido gravaria conversa real de
+   * cliente na conta errada, e nada no sistema acusaria o engano. Quem chama
+   * agora precisa decidir o que fazer sem conta, e a decisao certa e recusar.
+   *
+   * E a mesma regra que `wa-owner.ts` ja aplicava ao ler o arquivo do dono:
+   * recusar e melhor do que adivinhar.
    */
-  private accountId(): string {
-    return this.owner?.accountId ?? 'acc-solint';
+  private accountId(): string | undefined {
+    return this.owner?.accountId;
   }
 
   /**
    * Caixa de entrada associada à conta ativa.
+   *
+   * Memorizado por conta: isto era consultado no banco **a cada mensagem
+   * recebida**, e a caixa de uma conta não muda entre reconexões. A um custo de
+   * ~130ms por ida ao Supabase, era a query mais cara do caminho quente pelo que
+   * ela entregava. O cache é limpo no `disconnect`/`resetCaches`.
    */
-  private async activeInboxId(): Promise<string> {
+  private async activeInboxId(): Promise<string | undefined> {
     const accId = this.accountId();
+    if (!accId) return undefined;
+
+    const cached = this.inboxIdCache.get(accId);
+    if (cached) return cached;
+
     const inbox = await prisma.inbox.findFirst({
       where: { accountId: accId, channel: 'whatsapp' },
       select: { id: true },
     });
-    return inbox?.id ?? `ibx-${accId}`;
+    const resolved = inbox?.id ?? `ibx-${accId}`;
+    // Só memoriza o que veio do banco: o palpite `ibx-<conta>` é um fallback de
+    // emergência e não deve congelar caso a caixa apareça depois.
+    if (inbox?.id) this.inboxIdCache.set(accId, resolved);
+    return resolved;
   }
 
   private updateStatus(patch: Partial<WhatsAppStatusPayload>) {
@@ -171,12 +190,52 @@ export class WhatsAppService {
       updatedAt: new Date().toISOString(),
     };
     waEventBus.emitStatus(this.currentStatus);
+    // Espelha no banco sem bloquear: quem observa o status pela rota por caixa
+    // (e qualquer outra instância) lê a linha, não a memória deste processo.
+    // Fica fora do `await` de propósito — o status é informativo e não deve
+    // somar ~130ms a cada transição de conexão.
+    void this.persistStatus();
   }
 
+  /**
+   * Grava o status corrente na `WhatsAppConnection`.
+   *
+   * Nunca toca nas colunas de credencial: `updateMany` com campos nomeados, e
+   * não `upsert`, justamente para que uma transição de status não possa apagar
+   * o `credsCipher` de uma sessão válida.
+   */
+  private async persistStatus(): Promise<void> {
+    try {
+      const inboxId = await this.activeInboxId();
+      if (!inboxId) return;
+      // Carimba a caixa no status corrente: quem escuta por caixa precisa saber
+      // de quem e o evento (ver `WhatsAppStatusPayload.inboxId`).
+      if (this.currentStatus.inboxId !== inboxId) {
+        this.currentStatus = { ...this.currentStatus, inboxId };
+      }
+
+      await prisma.whatsAppConnection.updateMany({
+        where: { inboxId },
+        data: {
+          status: this.currentStatus.status,
+          lastError: this.currentStatus.error ?? null,
+          qrPayload: this.currentStatus.qr ?? null,
+        },
+      });
+    } catch {
+      // O status é dado auxiliar: não vale derrubar a conexão porque o
+      // espelhamento no banco falhou.
+    }
+  }
+
+  /**
+   * @param forceFresh descarta a sessão salva e força um novo pareamento.
+   *   Só quem sabe que a credencial não presta deve pedir isso — ver abaixo.
+   */
   async startSession(
-    options: { owner?: WhatsAppOwner; resetAttempts?: boolean } = {},
+    options: { owner?: WhatsAppOwner; resetAttempts?: boolean; forceFresh?: boolean } = {},
   ): Promise<WhatsAppStatusPayload> {
-    const { owner, resetAttempts = true } = options;
+    const { owner, resetAttempts = true, forceFresh = false } = options;
     if (owner) {
       this.owner = owner;
       // Gravado junto das credenciais para sobreviver a reinício: é o par
@@ -209,9 +268,24 @@ export class WhatsAppService {
 
     try {
       const inboxId = await this.activeInboxId();
-      const { state, saveCreds } = await initPostgresAuthState(inboxId, {
-        forceFresh: resetAttempts && !this.isAuthenticated,
-      });
+      if (!inboxId) {
+        throw new Error(
+          'Nao foi possivel identificar a caixa de entrada: conecte a partir de uma sessao do CRM.',
+        );
+      }
+
+      // `forceFresh` é explícito e nunca derivado de `isAuthenticated`.
+      //
+      // A regra anterior (`resetAttempts && !this.isAuthenticated`) tornava
+      // destrutivo o caso mais comum de todos: `resetAttempts` é o padrão de
+      // `startSession()`, e `isAuthenticated` volta a `false` a cada reinício do
+      // processo — inclusive num hot-reload do `next dev`. Ou seja, clicar em
+      // "Conectar" depois de editar um arquivo apagava as credenciais e as
+      // chaves de uma sessão perfeitamente válida.
+      //
+      // Sessão não pareada já é tratada sem ajuda: `initPostgresAuthState`
+      // devolve credenciais novas quando não há material decifrável no banco.
+      const { state, saveCreds } = await initPostgresAuthState(inboxId, { forceFresh });
 
       const { version } = await fetchLatestBaileysVersion().catch(() => ({
         version: [2, 3000, 1043857760] as [number, number, number],
@@ -225,12 +299,15 @@ export class WhatsAppService {
           keys: makeCacheableSignalKeyStore(state.keys, this.logger),
         },
         browser: Browsers.macOS('Desktop'),
-        syncFullHistory: Boolean(state.creds.registered),
+
+        syncFullHistory: false,
         generateHighQualityLinkPreview: true,
+        markOnlineOnConnect: true,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
         keepAliveIntervalMs: 25000,
         qrTimeout: 60000,
+
       });
 
       this.socket = sock;
@@ -241,18 +318,11 @@ export class WhatsAppService {
         void this.handleConnectionUpdate(sock, update);
       });
 
-      sock.ev.on('messaging-history.set', async ({ chats, contacts, messages }) => {
-        console.log(
-          `[WhatsAppService] Histórico inicial recebido: ${chats.length} conversas, ${contacts.length} contatos, ${messages.length} mensagens`,
-        );
-        for (const msg of messages) {
-          if (msg.message && isSupportedChatJid(msg.key.remoteJid)) {
-            await this.handleIncomingMessage(msg).catch((err) => {
-              console.error('[WhatsAppService] Erro ao sincronizar mensagem histórica:', err);
-            });
-          }
-        }
+      sock.ev.on('messaging-history.set', async () => {
+        // Ignora histórico antigo recebido do celular — apenas mensagens novas pós-conexão
+        console.log('[WhatsAppService] Histórico antigo ignorado (processando apenas novas mensagens privadas 1x1).');
       });
+
 
       sock.ev.on('messages.upsert', ({ messages, type }) => {
         if (type !== 'notify' && type !== 'append') return;
@@ -314,16 +384,9 @@ export class WhatsAppService {
 
     if (qr) {
       this.qrAttempts = 0;
-      try {
-        const qrDataUrl = await QRCode.toDataURL(qr, { margin: 2, scale: 7 });
-        this.updateStatus({
-          status: 'aguardando_leitura',
-          qr: qrDataUrl,
-          error: undefined,
-        });
-      } catch (qrErr) {
-        console.error('[WhatsAppService] Erro ao gerar QR Code DataURL:', qrErr);
-      }
+      // Guarda a string crua. A imagem é gerada na borda que responde ao
+      // navegador (`qr-image.ts`) — ver a explicação do teto do `pg_notify` lá.
+      this.updateStatus({ status: 'aguardando_leitura', qr, error: undefined });
     }
 
     if (connection === 'connecting') {
@@ -341,6 +404,12 @@ export class WhatsAppService {
       console.log(`[WhatsAppService] Conectado com sucesso ao número: ${phone}`);
 
       const inboxId = await this.activeInboxId();
+      const accountId = this.accountId();
+      if (!inboxId || !accountId) {
+        console.error('[WhatsAppService] Conectado sem dono resolvido — nada foi gravado.');
+        return;
+      }
+
       await prisma.whatsAppConnection.upsert({
         where: { inboxId },
         create: {
@@ -360,7 +429,7 @@ export class WhatsAppService {
       });
 
       await prisma.inbox.updateMany({
-        where: { id: inboxId, accountId: this.accountId() },
+        where: { id: inboxId, accountId },
         data: {
           status: 'conectado',
           identifier: phone ? `+${phone}` : 'whatsapp-connected',
@@ -379,7 +448,7 @@ export class WhatsAppService {
 
       // Foto de perfil da conta conectada, exibida no perfil do usuário do CRM.
       if (userJid) {
-        const avatarUrl = await this.fetchAvatar(jidNormalizedUser(userJid));
+        const avatarUrl = await this.fetchAvatar(accountId, jidNormalizedUser(userJid));
         if (avatarUrl) this.updateStatus({ avatarUrl });
       }
     }
@@ -464,6 +533,22 @@ export class WhatsAppService {
     const messageId = msg.key.id;
     if (!messageId) return;
 
+    // Sem conta resolvida a mensagem e descartada, de proposito.
+    //
+    // Gravar exige saber de quem e a conversa, e a unica fonte disso e o dono da
+    // sessao. Antes existia um padrao (`acc-solint`, do seed) que fazia a
+    // mensagem ser gravada de qualquer jeito — na conta errada, em silencio.
+    // Perder uma mensagem e ruim; escrever a conversa de um cliente na conta de
+    // outra empresa e pior, e muito mais dificil de descobrir.
+    const accountId = this.accountId();
+    const inboxId = await this.activeInboxId();
+    if (!accountId || !inboxId) {
+      console.warn(
+        '[WhatsAppService] Mensagem recebida sem dono de sessao resolvido — descartada.',
+      );
+      return;
+    }
+
     const fromMe = Boolean(msg.key.fromMe);
 
     // Mensagem despachada por esta plataforma: ja esta na timeline e o eco so
@@ -479,12 +564,12 @@ export class WhatsAppService {
     console.log(`[WhatsAppService] Nova mensagem de ${chat.phone || chat.jid} (ID: ${messageId})`);
 
     const at = new Date(timestampOf(msg));
-    const contact = await this.resolveContact(chat, msg, fromMe);
+    const contact = await this.resolveContact(accountId, chat, msg, fromMe);
     const authorName = await this.resolveAuthorName(chat, msg, fromMe, contact.name);
     // A midia do WhatsApp e criptografada: sem decifrar e gravar localmente,
     // o navegador não tem como exibir foto, figurinha, GIF ou áudio.
     const content = decoded.media
-      ? await this.materializeMedia(msg, messageId, decoded.media, decoded.content)
+      ? await this.materializeMedia(accountId, inboxId, msg, messageId, decoded.media, decoded.content)
       : decoded.content;
 
     const appMessage: Message = {
@@ -505,8 +590,8 @@ export class WhatsAppService {
     }
 
     await persistMessage({
-      accountId: this.accountId(),
-      inboxId: await this.activeInboxId(),
+      accountId,
+      inboxId,
       chat,
       contact,
       message: appMessage,
@@ -518,7 +603,7 @@ export class WhatsAppService {
     console.log(`[WhatsAppService] Conversa ${chat.conversationId} persistida com sucesso!`);
 
     // A foto de perfil chega depois: atualiza a conversa quando resolver.
-    void this.hydrateAvatar(chat);
+    void this.hydrateAvatar(accountId, chat);
   }
 
   /**
@@ -527,6 +612,8 @@ export class WhatsAppService {
    * fallback, entao a conversa nunca perde um evento por causa de um download.
    */
   private async materializeMedia(
+    accountId: string,
+    inboxId: string,
     msg: WAMessage,
     messageId: string,
     media: MediaRef,
@@ -535,7 +622,7 @@ export class WhatsAppService {
     if (media.fileLength > MAX_INLINE_MEDIA_BYTES) return fallback;
 
     // Reprocessamento da mesma mensagem (reconexão, `append`) reusa o arquivo.
-    if (mediaStore.has(messageId)) return mediaContent(media, mediaUrlFor(messageId));
+    if (await mediaStore.has(messageId)) return mediaContent(media, mediaUrlFor(messageId));
 
     const socket = this.socket;
     if (!socket) return fallback;
@@ -547,10 +634,12 @@ export class WhatsAppService {
         {},
         { logger: this.logger, reuploadRequest: socket.updateMediaMessage },
       );
-      const url = await mediaStore.save(messageId, buffer, {
-        mimeType: media.mimeType,
-        fileName: media.fileName,
-      });
+      const url = await mediaStore.save(
+        messageId,
+        buffer,
+        { mimeType: media.mimeType, ...(media.fileName ? { fileName: media.fileName } : {}) },
+        { accountId, inboxId, kind: 'mensagem' },
+      );
       return url ? mediaContent(media, url) : fallback;
     } catch (error) {
       console.warn('[WhatsAppService] Não foi possível baixar a mídia:', error);
@@ -567,18 +656,19 @@ export class WhatsAppService {
    * conversa nova com o meu proprio nome e grupo nomeado por quem falou.
    */
   private async resolveContact(
+    accountId: string,
     chat: ChatIdentity,
     msg: WAMessage,
     fromMe: boolean,
   ): Promise<Contact> {
-    const existing = await loadStoredContact(this.accountId(), chat);
+    const existing = await loadStoredContact(accountId, chat);
 
     // O que ja existe no CRM (empresa, e-mail, etiquetas, notas) e preservado:
     // o canal so contribui com o que ele realmente conhece.
     const base = {
       ...existing,
       id: chat.contactId,
-      accountId: this.accountId(),
+      accountId,
       channel: 'whatsapp',
       avatarTone: existing?.avatarTone ?? toneFor(chat.key),
       avatarUrl: existing?.avatarUrl ?? this.avatarCache.get(chat.jid)?.url,
@@ -677,13 +767,13 @@ export class WhatsAppService {
     });
   }
 
-  private async hydrateAvatar(chat: ChatIdentity) {
+  private async hydrateAvatar(accountId: string, chat: ChatIdentity) {
     const cached = this.avatarCache.get(chat.jid);
     if (cached && Date.now() - cached.at < AVATAR_TTL_MS) return;
 
-    const url = await this.fetchAvatar(chat.jid);
+    const url = await this.fetchAvatar(accountId, chat.jid);
     if (!url) return;
-    if (!(await conversationExists(this.accountId(), chat.conversationId))) return;
+    if (!(await conversationExists(accountId, chat.conversationId))) return;
     await patchContact(chat.conversationId, { avatarUrl: url });
   }
 
@@ -694,7 +784,7 @@ export class WhatsAppService {
    * direto faria os avatares quebrarem sozinhos com o tempo. Por isso a imagem
    * e copiada uma vez para o deposito local e servida pela aplicacao.
    */
-  private async fetchAvatar(jid: string): Promise<string | undefined> {
+  private async fetchAvatar(accountId: string, jid: string): Promise<string | undefined> {
     const cached = this.avatarCache.get(jid);
     if (cached && Date.now() - cached.at < AVATAR_TTL_MS) return cached.url;
 
@@ -708,27 +798,36 @@ export class WhatsAppService {
         return undefined;
       }
 
-      const localUrl = await this.mirrorAvatar(mediaId, remoteUrl);
-      const url = localUrl ?? remoteUrl;
+      // Sem cópia própria, o `avatarUrl` gravado seria a URL assinada do
+      // WhatsApp: ela expira em horas e o avatar quebra sozinho no banco.
+      const ownUrl = await this.mirrorAvatar(accountId, mediaId, remoteUrl);
+      const url = ownUrl ?? remoteUrl;
       this.avatarCache.set(jid, { url, at: Date.now() });
       return url;
     } catch {
-      // Foto privada ou indisponivel: mantem a copia local se ja houver uma.
-      const fallback = mediaStore.has(mediaId) ? mediaUrlFor(mediaId) : undefined;
+      // Foto privada ou indisponível: mantém a cópia que já existir.
+      const fallback = (await mediaStore.has(mediaId)) ? mediaUrlFor(mediaId) : undefined;
       this.avatarCache.set(jid, { url: fallback, at: Date.now() });
       return fallback;
     }
   }
 
   /** Copia a foto assinada para o deposito local; devolve a URL estavel. */
-  private async mirrorAvatar(mediaId: string, remoteUrl: string): Promise<string | undefined> {
+  private async mirrorAvatar(
+    accountId: string,
+    mediaId: string,
+    remoteUrl: string,
+  ): Promise<string | undefined> {
     try {
       const response = await fetch(remoteUrl);
       if (!response.ok) return undefined;
       const buffer = Buffer.from(await response.arrayBuffer());
-      return await mediaStore.save(mediaId, buffer, {
-        mimeType: response.headers.get('content-type') ?? 'image/jpeg',
-      });
+      return await mediaStore.save(
+        mediaId,
+        buffer,
+        { mimeType: response.headers.get('content-type') ?? 'image/jpeg' },
+        { accountId, kind: 'avatar' },
+      );
     } catch {
       return undefined;
     }
@@ -923,6 +1022,7 @@ export class WhatsAppService {
   }
 
   private resetCaches() {
+    this.inboxIdCache.clear();
     this.groupCache.clear();
     this.avatarCache.clear();
     this.crmSentIds.clear();

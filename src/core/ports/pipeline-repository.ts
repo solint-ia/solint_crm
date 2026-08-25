@@ -1,4 +1,4 @@
-import type { Deal, Pipeline } from '../domain/pipeline';
+import type { Deal, Pipeline, PipelineStage } from '../domain/pipeline';
 import type { Id } from '../domain/shared';
 
 export interface PipelineRepository {
@@ -15,9 +15,42 @@ export interface PipelineRepository {
       contactName?: string;
       companyName?: string;
       ownerName?: string;
+      priority?: string;
       probability?: number;
+      source?: string;
+      nextAction?: string;
+    },
+  ): Promise<Deal>;
+  updateDeal(
+    accountId: Id,
+    dealId: Id,
+    patch: {
+      title?: string;
+      value?: number;
+      stageId?: string;
+      contactName?: string;
+      companyName?: string;
+      ownerName?: string;
+      priority?: string;
+      probability?: number;
+      source?: string;
+      nextAction?: string;
     },
   ): Promise<Deal>;
   deleteDeal(accountId: Id, dealId: Id): Promise<void>;
+  updateStages(
+    accountId: Id,
+    pipelineId: Id,
+    stages: readonly {
+      id?: string;
+      name: string;
+      order: number;
+      color: string;
+      isWon: boolean;
+      isLost: boolean;
+      defaultProbability?: number;
+    }[],
+  ): Promise<readonly PipelineStage[]>;
 }
+
 

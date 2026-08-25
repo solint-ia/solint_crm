@@ -2,12 +2,14 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+
 import { Plus, Trash2 } from 'lucide-react';
 import type { CustomAttributeDefinition } from '@/core/domain/settings';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Modal } from '@/components/ui/modal';
+import { ConfirmModal } from '@/components/ui/confirm-modal';
 import {
   createCustomAttributeAction,
   deleteCustomAttributeAction,
@@ -21,6 +23,7 @@ export function CustomAttributesSection({ attributes }: CustomAttributesSectionP
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [deletingAttribute, setDeletingAttribute] = useState<CustomAttributeDefinition | null>(null);
   const [name, setName] = useState('');
   const [key, setKey] = useState('');
   const [type, setType] = useState<CustomAttributeDefinition['type']>('texto');
@@ -48,13 +51,15 @@ export function CustomAttributesSection({ attributes }: CustomAttributesSectionP
     });
   };
 
-  const handleDelete = (attributeId: string) => {
-    if (!confirm('Deseja realmente excluir este atributo?')) return;
+  const handleConfirmDelete = async () => {
+    if (!deletingAttribute) return;
     startTransition(async () => {
-      await deleteCustomAttributeAction({ attributeId });
+      await deleteCustomAttributeAction({ attributeId: deletingAttribute.id });
+      setDeletingAttribute(null);
       router.refresh();
     });
   };
+
 
   return (
     <div className="flex max-w-3xl flex-col gap-4">
@@ -178,7 +183,8 @@ export function CustomAttributesSection({ attributes }: CustomAttributesSectionP
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => handleDelete(attr.id)}
+                        aria-label={`Excluir atributo ${attr.name}`}
+                        onClick={() => setDeletingAttribute(attr)}
                         icon={<Trash2 className="size-3.5 text-danger" />}
                       />
                     </td>
@@ -189,6 +195,24 @@ export function CustomAttributesSection({ attributes }: CustomAttributesSectionP
           </table>
         </div>
       </Card>
+
+      <ConfirmModal
+        open={deletingAttribute !== null}
+        title="Excluir atributo personalizado"
+        description={
+          <span>
+            Tem certeza que deseja excluir o atributo{' '}
+            <strong className="text-ink">{deletingAttribute?.name}</strong> (
+            <code className="font-mono text-dim">{deletingAttribute?.key}</code>)? Os valores preenchidos nos contatos vinculados serão descontinuados.
+          </span>
+        }
+        confirmLabel="Excluir atributo"
+        variant="danger"
+        isLoading={isPending}
+        onClose={() => setDeletingAttribute(null)}
+        onConfirm={handleConfirmDelete}
+      />
     </div>
   );
+
 }

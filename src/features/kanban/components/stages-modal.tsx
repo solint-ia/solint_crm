@@ -1,69 +1,341 @@
 'use client';
 
-import { GripVertical, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import type { PipelineStage } from '@/core/domain/pipeline';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { STAGE_COLOR_PRESETS } from '@/core/domain/pipeline';
 import { Modal } from '@/components/ui/modal';
-import { planned } from '@/components/ui/planned';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/cn';
+
 
 interface StagesModalProps {
   readonly open: boolean;
   readonly onClose: () => void;
   readonly stages: readonly PipelineStage[];
+  readonly onSaveStages: (
+    updatedStages: readonly {
+      id?: string;
+      name: string;
+      order: number;
+      color: string;
+      isWon: boolean;
+      isLost: boolean;
+      defaultProbability?: number;
+    }[],
+  ) => Promise<void>;
 }
 
-/** Configuração de etapas do funil (renomear, cor, ordem, ganho/perda). */
-export function StagesModal({ open, onClose, stages }: StagesModalProps) {
+export function StagesModal({
+  open,
+  onClose,
+  stages: initialStages,
+  onSaveStages,
+}: StagesModalProps) {
+  const [stages, setStages] = useState<
+    {
+      id: string;
+      name: string;
+      order: number;
+      color: string;
+      isWon: boolean;
+      isLost: boolean;
+      defaultProbability: number;
+    }[]
+  >(
+    initialStages.map((s, idx) => ({
+      id: s.id,
+      name: s.name,
+      order: s.order ?? idx + 1,
+      color: s.color,
+      isWon: s.isWon ?? false,
+      isLost: s.isLost ?? false,
+      defaultProbability: s.defaultProbability ?? (s.isWon ? 100 : s.isLost ? 0 : 50),
+    })),
+  );
+
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Mover etapa para cima
+  const moveUp = (index: number) => {
+    if (index === 0) return;
+    setStages((prev) => {
+      const copy = [...prev];
+      const temp = copy[index - 1]!;
+      copy[index - 1] = copy[index]!;
+      copy[index] = temp;
+      return copy.map((st, i) => ({ ...st, order: i + 1 }));
+    });
+  };
+
+  // Mover etapa para baixo
+  const moveDown = (index: number) => {
+    if (index === stages.length - 1) return;
+    setStages((prev) => {
+      const copy = [...prev];
+      const temp = copy[index + 1]!;
+      copy[index + 1] = copy[index]!;
+      copy[index] = temp;
+      return copy.map((st, i) => ({ ...st, order: i + 1 }));
+    });
+  };
+
+  // Alterar cor da etapa
+  const updateColor = (index: number, color: string) => {
+    setStages((prev) =>
+      prev.map((st, i) => (i === index ? { ...st, color } : st)),
+    );
+  };
+
+  // Alterar nome
+  const updateName = (index: number, name: string) => {
+    setStages((prev) =>
+      prev.map((st, i) => (i === index ? { ...st, name } : st)),
+    );
+  };
+
+  // Alterar probabilidade padrão
+  const updateProbability = (index: number, defaultProbability: number) => {
+    setStages((prev) =>
+      prev.map((st, i) => (i === index ? { ...st, defaultProbability } : st)),
+    );
+  };
+
+  // Alternar Ganho / Perda
+  const toggleWon = (index: number) => {
+    setStages((prev) =>
+      prev.map((st, i) => {
+        if (i !== index) return st;
+        const willBeWon = !st.isWon;
+        return {
+          ...st,
+          isWon: willBeWon,
+          isLost: willBeWon ? false : st.isLost,
+          defaultProbability: willBeWon ? 100 : st.defaultProbability,
+        };
+      }),
+    );
+  };
+
+  const toggleLost = (index: number) => {
+    setStages((prev) =>
+      prev.map((st, i) => {
+        if (i !== index) return st;
+        const willBeLost = !st.isLost;
+        return {
+          ...st,
+          isLost: willBeLost,
+          isWon: willBeLost ? false : st.isWon,
+          defaultProbability: willBeLost ? 0 : st.defaultProbability,
+        };
+      }),
+    );
+  };
+
+  // Excluir etapa
+  const removeStage = (index: number) => {
+    if (stages.length <= 1) {
+      setError('O funil deve conter no mínimo 1 etapa.');
+      return;
+    }
+    setStages((prev) =>
+      prev.filter((_, i) => i !== index).map((st, i) => ({ ...st, order: i + 1 })),
+    );
+  };
+
+  // Adicionar nova etapa
+  const addStage = () => {
+    const nextOrder = stages.length + 1;
+    const defaultColor = STAGE_COLOR_PRESETS[stages.length % STAGE_COLOR_PRESETS.length]?.value ?? '#3B82F6';
+    setStages((prev) => [
+      ...prev,
+      {
+        id: `st-new-${Date.now()}`,
+        name: `Nova Etapa ${nextOrder}`,
+        order: nextOrder,
+        color: defaultColor,
+        isWon: false,
+        isLost: false,
+        defaultProbability: 50,
+      },
+    ]);
+  };
+
+  const handleSave = async () => {
+    setError(null);
+    setIsSaving(true);
+    try {
+      await onSaveStages(stages);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao salvar configuração de etapas.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title="Configurar etapas"
-      description="Renomeie, reordene e defina quais etapas representam ganho ou perda."
-      footer={
-        <>
-          <Button variant="secondary" size="sm" onClick={onClose}>
+      title="Configuração das Etapas do Funil"
+      description="Personalize o nome, cor, ordem e probabilidade de cada etapa do processo comercial."
+      className="max-w-2xl"
+    >
+      <div className="flex flex-col gap-4">
+        {error && (
+          <div className="rounded-md bg-red-soft p-3 text-body text-red-text border border-red-line/50">
+            {error}
+          </div>
+        )}
+
+        <ul className="flex flex-col gap-2.5 max-h-[50vh] overflow-y-auto pr-1">
+          {stages.map((stage, index) => (
+            <li
+              key={stage.id}
+              className="flex flex-col gap-2 rounded-lg border border-line bg-surface-2/60 p-3 transition-colors hover:border-line"
+            >
+              <div className="flex items-center gap-2">
+                {/* Controles de Ordem */}
+                <div className="flex flex-col gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => moveUp(index)}
+                    disabled={index === 0}
+                    title="Mover para cima"
+                    className="rounded p-0.5 text-dim hover:text-ink disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <ArrowUp className="size-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveDown(index)}
+                    disabled={index === stages.length - 1}
+                    title="Mover para baixo"
+                    className="rounded p-0.5 text-dim hover:text-ink disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <ArrowDown className="size-3" />
+                  </button>
+                </div>
+
+                {/* Seletor de Cor da Etapa */}
+                <div className="relative flex items-center">
+                  <input
+                    type="color"
+                    aria-label={`Cor da etapa ${stage.name}`}
+                    value={stage.color.startsWith('#') ? stage.color : '#3B82F6'}
+                    onChange={(e) => updateColor(index, e.target.value)}
+                    className="size-7 cursor-pointer rounded-full border border-line p-0 bg-transparent"
+                  />
+                </div>
+
+                {/* Nome da Etapa */}
+                <input
+                  type="text"
+                  value={stage.name}
+                  onChange={(e) => updateName(index, e.target.value)}
+                  placeholder="Nome da etapa"
+                  className="flex-1 min-w-[140px] rounded-control border border-line bg-surface px-2.5 py-1.5 text-body font-semibold text-ink outline-none focus:border-brand"
+                />
+
+                {/* Probabilidade Padrão */}
+                <div className="flex items-center gap-1 min-w-[90px]">
+                  <span className="text-micro text-dim font-medium">% Prob:</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={stage.defaultProbability}
+                    onChange={(e) => updateProbability(index, parseInt(e.target.value, 10) || 0)}
+                    className="w-13 rounded-control border border-line bg-surface px-1.5 py-1 text-center text-body font-mono font-semibold text-ink outline-none focus:border-brand"
+                  />
+                </div>
+
+                {/* Botão Ganho */}
+                <button
+                  type="button"
+                  onClick={() => toggleWon(index)}
+                  className={cn(
+                    'rounded-control px-2 py-1 text-micro font-semibold transition-colors',
+                    stage.isWon
+                      ? 'bg-emerald-500 text-white'
+                      : 'bg-surface border border-line text-dim hover:text-ink',
+                  )}
+                >
+                  Ganho
+                </button>
+
+                {/* Botão Perda */}
+                <button
+                  type="button"
+                  onClick={() => toggleLost(index)}
+                  className={cn(
+                    'rounded-control px-2 py-1 text-micro font-semibold transition-colors',
+                    stage.isLost
+                      ? 'bg-red-500 text-white'
+                      : 'bg-surface border border-line text-dim hover:text-ink',
+                  )}
+                >
+                  Perda
+                </button>
+
+                {/* Excluir */}
+                <button
+                  type="button"
+                  onClick={() => removeStage(index)}
+                  title="Excluir etapa"
+                  className="rounded-control p-1 text-dim transition-colors hover:bg-red-soft hover:text-red-text"
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              </div>
+
+              {/* Atalho de Cores Rápidas */}
+              <div className="flex items-center gap-1.5 pl-7">
+                <span className="text-micro text-dim">Cores sugeridas:</span>
+                <div className="flex items-center gap-1">
+                  {STAGE_COLOR_PRESETS.map((preset) => (
+                    <button
+                      key={preset.name}
+                      type="button"
+                      onClick={() => updateColor(index, preset.value)}
+                      title={preset.name}
+                      style={{ backgroundColor: preset.value }}
+                      className={cn(
+                        'size-3.5 rounded-full ring-1 ring-white/20 transition-transform hover:scale-125',
+                        stage.color.toLowerCase() === preset.value.toLowerCase() &&
+                          'ring-2 ring-brand scale-110',
+                      )}
+                    />
+                  ))}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+
+        {/* Botão Adicionar Nova Etapa */}
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<Plus className="size-3.5" />}
+          onClick={addStage}
+          className="border-dashed"
+        >
+          Adicionar nova etapa ao funil
+        </Button>
+
+        {/* Rodapé */}
+        <div className="mt-2 flex items-center justify-end gap-2.5 border-t border-line-soft pt-3">
+          <Button variant="ghost" type="button" onClick={onClose} disabled={isSaving}>
             Cancelar
           </Button>
-          <Button size="sm" onClick={onClose} {...planned('Salvar a configuração das etapas')}>
-            Salvar alterações
+          <Button type="button" variant="primary" onClick={handleSave} disabled={isSaving}>
+            {isSaving ? 'Salvando...' : 'Salvar alterações'}
           </Button>
-        </>
-      }
-    >
-      <ul className="flex flex-col gap-2">
-        {stages.map((stage) => (
-          <li
-            key={stage.id}
-            className="flex items-center gap-2 rounded-control border border-line px-3 py-2"
-          >
-            <GripVertical className="size-4 shrink-0 text-dim" />
-            <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: stage.color }} />
-            <input
-              defaultValue={stage.name}
-              readOnly
-              aria-label={`Nome da etapa ${stage.name}`}
-              title="Renomear etapa — em desenvolvimento, ainda não disponível."
-              className="min-w-0 flex-1 rounded-control border border-transparent bg-transparent px-1.5 py-1 text-body text-ink outline-none focus:border-line focus:bg-surface-2"
-            />
-            {stage.isWon ? <Badge tone="green">Ganho</Badge> : null}
-            {stage.isLost ? <Badge tone="slate">Perda</Badge> : null}
-            <button
-              type="button"
-              aria-label={`Excluir etapa ${stage.name}`}
-              {...planned('Excluir esta etapa do funil')}
-              className="rounded-control p-1 text-dim transition-colors hover:bg-red-soft hover:text-red-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
-            >
-              <Trash2 className="size-3.5" />
-            </button>
-          </li>
-        ))}
-      </ul>
-
-      <Button variant="secondary" size="sm" className="mt-3" fullWidth {...planned('Adicionar uma etapa ao funil')}>
-        Adicionar etapa
-      </Button>
+        </div>
+      </div>
     </Modal>
   );
 }

@@ -1,6 +1,6 @@
 import type { AgentFlowBlock, AiAgent } from '@/core/domain/ai-agent';
 import type { AppNotification } from '@/core/domain/notification';
-import type { Deal, Pipeline } from '@/core/domain/pipeline';
+import type { Deal, Pipeline, PipelineStage } from '@/core/domain/pipeline';
 import { DomainError, NotFoundError, type Id } from '@/core/domain/shared';
 import type { AiAgentRepository } from '@/core/ports/ai-agent-repository';
 import type { NotificationRepository } from '@/core/ports/notification-repository';
@@ -68,7 +68,10 @@ export class PrismaPipelineRepository implements PipelineRepository {
       contactName?: string;
       companyName?: string;
       ownerName?: string;
+      priority?: string;
       probability?: number;
+      source?: string;
+      nextAction?: string;
     },
   ): Promise<Deal> {
     const stage = await prisma.pipelineStage.findFirst({
@@ -87,8 +90,8 @@ export class PrismaPipelineRepository implements PipelineRepository {
         company: draft.companyName ?? null,
         amountInCents: draft.value,
         ownerName: draft.ownerName ?? 'Não atribuído',
-        priority: 'media',
-        nextAction: 'Entrar em contato para qualificação',
+        priority: draft.priority ?? 'media',
+        nextAction: draft.nextAction ?? 'Entrar em contato para qualificação',
         enteredStageAt: now.toISOString(),
         stageAgeLabel: 'hoje',
         history: asJson([
@@ -102,6 +105,45 @@ export class PrismaPipelineRepository implements PipelineRepository {
     return dealRow(row);
   }
 
+  async updateDeal(
+    accountId: Id,
+    dealId: Id,
+    patch: {
+      title?: string;
+      value?: number;
+      stageId?: string;
+      contactName?: string;
+      companyName?: string;
+      ownerName?: string;
+      priority?: string;
+      probability?: number;
+      source?: string;
+      nextAction?: string;
+    },
+  ): Promise<Deal> {
+    const deal = await prisma.deal.findFirst({ where: { id: dealId, accountId } });
+    if (!deal) throw new NotFoundError('Oportunidade', dealId);
+
+    const data: Record<string, unknown> = {};
+    if (patch.value !== undefined) data.amountInCents = patch.value;
+    if (patch.contactName !== undefined) data.contactName = patch.contactName;
+    if (patch.companyName !== undefined) data.company = patch.companyName;
+    if (patch.ownerName !== undefined) data.ownerName = patch.ownerName;
+    if (patch.priority !== undefined) data.priority = patch.priority;
+    if (patch.nextAction !== undefined) data.nextAction = patch.nextAction;
+    if (patch.stageId && patch.stageId !== deal.stageId) {
+      data.stageId = patch.stageId;
+      data.enteredStageAt = new Date().toISOString();
+      data.stageAgeLabel = 'hoje';
+    }
+
+    const row = await prisma.deal.update({
+      where: { id: dealId, accountId },
+      data,
+    });
+    return dealRow(row);
+  }
+
   async deleteDeal(accountId: Id, dealId: Id): Promise<void> {
     const exists = await prisma.deal.findFirst({
       where: { id: dealId, accountId },
@@ -110,7 +152,62 @@ export class PrismaPipelineRepository implements PipelineRepository {
     if (!exists) throw new NotFoundError('Oportunidade', dealId);
     await prisma.deal.delete({ where: { id: dealId, accountId } });
   }
+
+  async updateStages(
+    accountId: Id,
+    pipelineId: Id,
+    stages: readonly {
+      id?: string;
+      name: string;
+      order: number;
+      color: string;
+      isWon: boolean;
+      isLost: boolean;
+      defaultProbability?: number;
+    }[],
+  ): Promise<readonly PipelineStage[]> {
+    const pipeline = await prisma.pipeline.findFirst({ where: { id: pipelineId, accountId } });
+    if (!pipeline) throw new NotFoundError('Funil', pipelineId);
+
+    // Upsert or create stages
+    const result: PipelineStage[] = [];
+    for (const [index, st] of stages.entries()) {
+      const stageId = st.id ?? `st-${Date.now().toString(36)}-${index}`;
+      const updated = await prisma.pipelineStage.upsert({
+        where: { id: stageId },
+        create: {
+          id: stageId,
+          pipelineId,
+          name: st.name,
+          order: st.order ?? index + 1,
+          color: st.color,
+          isWon: st.isWon ?? false,
+          isLost: st.isLost ?? false,
+        },
+        update: {
+          name: st.name,
+          order: st.order ?? index + 1,
+          color: st.color,
+          isWon: st.isWon ?? false,
+          isLost: st.isLost ?? false,
+        },
+      });
+      result.push({
+        id: updated.id,
+        pipelineId: updated.pipelineId,
+        name: updated.name,
+        order: updated.order,
+        color: updated.color,
+        isWon: updated.isWon,
+        isLost: updated.isLost,
+        defaultProbability: st.defaultProbability,
+      });
+    }
+
+    return result;
+  }
 }
+
 
 export class PrismaAiAgentRepository implements AiAgentRepository {
   async list(accountId: Id): Promise<readonly AiAgent[]> {

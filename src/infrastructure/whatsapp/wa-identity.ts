@@ -31,14 +31,16 @@ export interface ChatIdentity {
   readonly conversationId: string;
 }
 
-/** Chats que nunca viram atendimento: status, listas de transmissao e canais. */
+/** Chats que viram atendimento: exclusivamente mensagens privadas 1x1. Ignora grupos, status, transmissões e canais. */
 export const isSupportedChatJid = (jid: string | undefined | null): jid is string => {
   if (!jid) return false;
   if (isJidStatusBroadcast(jid)) return false;
   if (isJidBroadcast(jid)) return false;
   if (isJidNewsletter(jid)) return false;
+  if (isJidGroup(jid) || jid.endsWith('@g.us')) return false;
   return true;
 };
+
 
 export const userOf = (jid: string | undefined): string => jidDecode(jid)?.user ?? '';
 

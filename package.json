@@ -21,7 +21,9 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css,md}\"",
     "db:deploy": "node --env-file=.env node_modules/prisma/build/index.js migrate deploy",
     "check:tenant": "node scripts/check-tenant-isolation.mjs",
-    "worker": "node --env-file=.env node_modules/tsx/dist/cli.mjs src/worker.ts"
+    "worker:build": "node scripts/build-worker.mjs",
+    "worker": "node scripts/build-worker.mjs && node --env-file=.env .worker/worker.mjs",
+    "dev:all": "node --env-file=.env scripts/dev-all.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",

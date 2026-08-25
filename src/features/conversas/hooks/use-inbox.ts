@@ -146,9 +146,22 @@ export function useInbox({
         );
       }
 
+      // Se houver mensagem local otimista com mesmo conteúdo, substitui ela (evita bolha duplicada)
+      const timelineWithoutLocal =
+        message.author === 'agent'
+          ? existing.timeline.filter(
+              (item) =>
+                !(
+                  item.kind === 'message' &&
+                  item.message.id.startsWith('local-') &&
+                  JSON.stringify(item.message.content) === JSON.stringify(message.content)
+                ),
+            )
+          : existing.timeline;
+
       return upsertConversation(current, {
         ...existing,
-        timeline: [...existing.timeline, { kind: 'message', message }],
+        timeline: [...timelineWithoutLocal, { kind: 'message', message }],
         lastMessagePreview: previewOfMessage(message),
         lastMessageAt: message.time,
         lastActivityAt: new Date().toISOString(),
@@ -156,6 +169,7 @@ export function useInbox({
       });
     });
   });
+
 
   const visibleConversations = useMemo(() => {
     const term = search.trim().toLowerCase();

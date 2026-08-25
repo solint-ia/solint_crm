@@ -7,8 +7,9 @@ import type { Message, MessageContent } from '@/core/domain/message';
 import { can } from '@/core/domain/user';
 import { canSendFreeText, MAX_MESSAGE_LENGTH } from '@/core/use-cases/send-message';
 import { container } from '@/infrastructure/container';
+import type { DispatchResult } from '@/infrastructure/whatsapp/channel';
+import { getWhatsAppChannel } from '@/infrastructure/whatsapp/channel-provider';
 import { mediaStore } from '@/infrastructure/whatsapp/wa-media-store';
-import { whatsappService } from '@/infrastructure/whatsapp/whatsapp-service';
 import { waEventBus } from '@/infrastructure/whatsapp/whatsapp-events';
 
 export interface ActionResult {
@@ -19,6 +20,40 @@ export interface ActionResult {
 export interface SendMessageResult extends ActionResult {
   /** Mensagem persistida — o cliente troca a bolha otimista por esta. */
   readonly message?: Message;
+}
+
+/**
+ * Traduz a resposta do canal para o estado da bolha na tela.
+ *
+ * Os tres caminhos de envio (texto, template, anexo) faziam esta mesma traducao
+ * copiada. Agora ela mora num lugar so — inclusive o caso novo, `queued`.
+ *
+ * `queued` e o motor worker dizendo "aceitei, ainda nao enviei". A bolha fica em
+ * "enviando" e quem a promove a "enviado" e o proprio worker, por um evento
+ * `message_updated`, quando o WhatsApp confirmar. Tratar isso como sucesso
+ * imediato exibiria um "enviado" que ninguem verificou.
+ */
+async function applyDispatch(
+  accountId: string,
+  conversationId: string,
+  message: Message,
+  sent: DispatchResult,
+): Promise<{ message: Message; error?: string }> {
+  if (sent.ok && sent.externalId) {
+    await container.conversations.attachExternalId(
+      accountId,
+      conversationId,
+      message.id,
+      sent.externalId,
+    );
+    return { message: { ...message, externalId: sent.externalId, deliveryStatus: 'enviado' } };
+  }
+
+  if (sent.ok && sent.queued) {
+    return { message: { ...message, deliveryStatus: 'enviando' } };
+  }
+
+  return { message: { ...message, deliveryStatus: 'falha' }, ...(sent.error ? { error: sent.error } : {}) };
 }
 
 /**
@@ -44,48 +79,53 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
     return { ok: false, error: result.error.message };
   }
 
-  let message = result.value;
+  // A conversa vem do proprio caso de uso, que ja a carregou para checar a
+  // janela HSM. Buscar de novo aqui era repetir a consulta mais cara do caminho
+  // — ela traz a timeline junto.
+  const { conversation } = result.value;
+  let message = result.value.message;
   let dispatchError: string | undefined;
 
   // Nota interna nunca sai para o canal externo (REGRAS-GLOBAIS.md secao 4.1).
   if (!parsed.data.isPrivate) {
-    const conversation = await container.conversations.findById(
-      session.account.id,
-      parsed.data.conversationId,
-    );
+    if (conversation.channel === 'whatsapp') {
+      const channel = await getWhatsAppChannel();
+      const channelStatus = await channel.getStatus(session.account.id);
 
-    if (conversation?.channel === 'whatsapp') {
-      if (whatsappService.getStatus().status === 'conectado') {
-        const sent = await whatsappService.sendTextMessage(
+      if (channelStatus.status === 'conectado') {
+        const sent = await channel.sendText(
+          {
+            accountId: session.account.id,
+            conversationId: conversation.id,
+            messageId: message.id,
+          },
           { channelThreadId: conversation.channelThreadId, phone: conversation.contact.phone },
           parsed.data.text,
         );
-
-        if (sent.ok && sent.externalId) {
-          await container.conversations.attachExternalId(
-            session.account.id,
-            conversation.id,
-            message.id,
-            sent.externalId,
-          );
-          message = { ...message, externalId: sent.externalId, deliveryStatus: 'enviado' };
-        } else if (!sent.ok) {
-          dispatchError = sent.error;
-          message = { ...message, deliveryStatus: 'falha' };
-        }
+        const applied = await applyDispatch(session.account.id, conversation.id, message, sent);
+        message = applied.message;
+        dispatchError = applied.error;
       } else {
-        dispatchError = 'WhatsApp desconectado: a mensagem não foi entregue.';
+        dispatchError =
+          channelStatus.error ?? 'WhatsApp desconectado: a mensagem não foi entregue.';
         message = { ...message, deliveryStatus: 'falha' };
       }
     }
 
-    // Emite o evento em tempo real reutilizando o objeto atualizado
+    // Só a mensagem — deliberadamente sem `conversation`.
+    //
+    // Quem escuta substitui a conversa inteira quando ela vem no payload
+    // (ver `use-inbox`), e a que temos aqui é o retrato de antes do envio: a
+    // mensagem nova não está na timeline dela. Publicá-la faria a bolha recém
+    // enviada desaparecer da tela de quem enviou. Sem ela, o cliente anexa a
+    // mensagem à conversa que já tem — que é o comportamento correto para um
+    // envio, e ainda poupa uma releitura do banco.
     waEventBus.emitConversation({
       type: 'new_message',
       accountId: session.account.id,
       conversationId: parsed.data.conversationId,
+      messageId: message.id,
       message,
-      conversation: conversation ?? undefined,
     });
   }
 
@@ -133,7 +173,8 @@ export async function markConversationReadAction(input: unknown): Promise<Action
 
   await container.conversations.markAsRead(session.account.id, conversation.id);
   if (conversation.channel === 'whatsapp') {
-    await whatsappService.markConversationAsRead(conversation.id);
+    const channel = await getWhatsAppChannel();
+    await channel.markRead(session.account.id, conversation.id);
   }
 
   // Os demais atendentes precisam ver que a conversa deixou de estar não lida.
@@ -324,25 +365,24 @@ export async function sendTemplateAction(input: unknown): Promise<SendMessageRes
 
   if (conversation?.channel === 'whatsapp' && message.content.type === 'template') {
     const text = message.content.text;
-    if (whatsappService.getStatus().status === 'conectado') {
-      const sent = await whatsappService.sendTextMessage(
+    const channel = await getWhatsAppChannel();
+    const channelStatus = await channel.getStatus(session.account.id);
+
+    if (channelStatus.status === 'conectado') {
+      const sent = await channel.sendText(
+        {
+          accountId: session.account.id,
+          conversationId: conversation.id,
+          messageId: message.id,
+        },
         { channelThreadId: conversation.channelThreadId, phone: conversation.contact.phone },
         text,
       );
-      if (sent.ok && sent.externalId) {
-        await container.conversations.attachExternalId(
-          session.account.id,
-          conversation.id,
-          message.id,
-          sent.externalId,
-        );
-        message = { ...message, externalId: sent.externalId, deliveryStatus: 'enviado' };
-      } else if (!sent.ok) {
-        dispatchError = sent.error;
-        message = { ...message, deliveryStatus: 'falha' };
-      }
+      const applied = await applyDispatch(session.account.id, conversation.id, message, sent);
+      message = applied.message;
+      dispatchError = applied.error;
     } else {
-      dispatchError = 'WhatsApp desconectado: o template não foi entregue.';
+      dispatchError = channelStatus.error ?? 'WhatsApp desconectado: o template não foi entregue.';
       message = { ...message, deliveryStatus: 'falha' };
     }
   }
@@ -355,6 +395,7 @@ export async function sendTemplateAction(input: unknown): Promise<SendMessageRes
     type: 'new_message',
     accountId: session.account.id,
     conversationId: parsed.data.conversationId,
+    messageId: message.id,
     message,
     conversation: updated ?? undefined,
   });
@@ -463,7 +504,15 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
 
   const data = Buffer.from(await file.arrayBuffer());
   const mediaId = `out-${randomUUID()}`;
-  const url = await mediaStore.save(mediaId, data, { mimeType, fileName: file.name });
+  // O anexo enviado tambem vai para o Storage: e o que permite o worker — que
+  // roda noutro processo, e pode rodar noutra maquina — ler os bytes que esta
+  // requisicao acabou de receber.
+  const url = await mediaStore.save(
+    mediaId,
+    data,
+    { mimeType, fileName: file.name },
+    { accountId: session.account.id, inboxId: conversation.inboxId, kind: 'mensagem' },
+  );
   if (!url) return { ok: false, error: 'Não foi possível guardar o anexo.' };
 
   const content: MessageContent =
@@ -499,32 +548,33 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
 
   // Nota interna nunca sai para o canal externo — vale para anexo também.
   if (!isPrivate && conversation.channel === 'whatsapp') {
-    if (whatsappService.getStatus().status === 'conectado') {
-      const sent = await whatsappService.sendMediaMessage(
+    const channel = await getWhatsAppChannel();
+    const channelStatus = await channel.getStatus(session.account.id);
+
+    if (channelStatus.status === 'conectado') {
+      // Só o identificador viaja para o canal: os bytes já estão no depósito
+      // (`mediaStore.save` acima), e é de lá que os dois motores os leem.
+      const sent = await channel.sendMedia(
+        {
+          accountId: session.account.id,
+          conversationId: conversation.id,
+          messageId: message.id,
+        },
         { channelThreadId: conversation.channelThreadId, phone: conversation.contact.phone },
         {
           kind,
-          data,
+          mediaId,
           mimeType: file.type || mimeType,
-          fileName: file.name,
+          ...(file.name ? { fileName: file.name } : {}),
           ...(caption ? { caption } : {}),
           ...(voice ? { voice: true } : {}),
         },
       );
-      if (sent.ok && sent.externalId) {
-        await container.conversations.attachExternalId(
-          session.account.id,
-          conversation.id,
-          message.id,
-          sent.externalId,
-        );
-        message = { ...message, externalId: sent.externalId, deliveryStatus: 'enviado' };
-      } else if (!sent.ok) {
-        dispatchError = sent.error;
-        message = { ...message, deliveryStatus: 'falha' };
-      }
+      const applied = await applyDispatch(session.account.id, conversation.id, message, sent);
+      message = applied.message;
+      dispatchError = applied.error;
     } else {
-      dispatchError = 'WhatsApp desconectado: o anexo não foi entregue.';
+      dispatchError = channelStatus.error ?? 'WhatsApp desconectado: o anexo não foi entregue.';
       message = { ...message, deliveryStatus: 'falha' };
     }
   }
@@ -534,6 +584,7 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
     type: 'new_message',
     accountId: session.account.id,
     conversationId,
+    messageId: message.id,
     message,
     conversation: updated ?? undefined,
   });

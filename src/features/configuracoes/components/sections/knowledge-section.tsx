@@ -19,7 +19,13 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, TextArea, TextInput } from '@/components/ui/field';
 import { Modal } from '@/components/ui/modal';
+import { ConfirmModal } from '@/components/ui/confirm-modal';
 import { SectionTitle } from '@/components/ui/section';
+
+
+
+
+
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/cn';
 import {
@@ -62,6 +68,8 @@ export function KnowledgeSection({ knowledge }: { readonly knowledge: KnowledgeB
   const [term, setTerm] = useState('');
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<KnowledgeArticle | undefined>();
+  const [deletingArticle, setDeletingArticle] = useState<KnowledgeArticle | null>(null);
+  const [deletingCategory, setDeletingCategory] = useState<KnowledgeCategory | null>(null);
   const [categoryModal, setCategoryModal] = useState<
     { readonly mode: 'nova' } | { readonly mode: 'editar'; readonly category: KnowledgeCategory } | undefined
   >();
@@ -131,7 +139,7 @@ export function KnowledgeSection({ knowledge }: { readonly knowledge: KnowledgeB
         notHelpful: 0,
         tags: draft.tags,
       };
-      return [created, ...current];
+      return [...current, created];
     });
 
     show({
@@ -145,7 +153,10 @@ export function KnowledgeSection({ knowledge }: { readonly knowledge: KnowledgeB
     return { ok: true };
   };
 
-  const handleDeleteArticle = async (article: KnowledgeArticle) => {
+  const handleConfirmDeleteArticle = async () => {
+    if (!deletingArticle) return;
+    const article = deletingArticle;
+    setDeletingArticle(null);
     const snapshot = articles;
     setArticles((current) => current.filter((item) => item.id !== article.id));
     const result = await deleteArticleAction({ articleId: article.id });
@@ -157,7 +168,10 @@ export function KnowledgeSection({ knowledge }: { readonly knowledge: KnowledgeB
     }
   };
 
-  const handleDeleteCategory = async (category: KnowledgeCategory) => {
+  const handleConfirmDeleteCategory = async () => {
+    if (!deletingCategory) return;
+    const category = deletingCategory;
+    setDeletingCategory(null);
     const result = await deleteCategoryAction({ categoryId: category.id });
     if (!result.ok) {
       // A recusa do domínio é informação útil: diz quantos artigos travam a exclusão.
@@ -313,11 +327,12 @@ export function KnowledgeSection({ knowledge }: { readonly knowledge: KnowledgeB
                       <button
                         type="button"
                         aria-label={`Excluir categoria ${category.name}`}
-                        onClick={() => handleDeleteCategory(category)}
+                        onClick={() => setDeletingCategory(category)}
                         className="rounded-control p-1 text-dim hover:text-red-text"
                       >
                         <Trash2 className="size-3" />
                       </button>
+
                     </span>
                   </div>
                 </li>
@@ -462,7 +477,7 @@ export function KnowledgeSection({ knowledge }: { readonly knowledge: KnowledgeB
                       <button
                         type="button"
                         aria-label={`Excluir ${article.title}`}
-                        onClick={() => handleDeleteArticle(article)}
+                        onClick={() => setDeletingArticle(article)}
                         className="rounded-control p-1.5 text-dim transition-colors hover:bg-red-soft hover:text-red-text"
                       >
                         <Trash2 className="size-3.5" />
@@ -475,9 +490,43 @@ export function KnowledgeSection({ knowledge }: { readonly knowledge: KnowledgeB
           )}
         </div>
       </div>
+
+      {/* Modal de Confirmação de Exclusão de Artigo */}
+      <ConfirmModal
+        open={deletingArticle !== null}
+        title="Excluir artigo"
+        description={
+          <span>
+            Tem certeza que deseja excluir o artigo{' '}
+            <strong className="text-ink">&ldquo;{deletingArticle?.title}&rdquo;</strong>? Ele deixará de ser exibido na central de ajuda e nas respostas sugeridas.
+
+          </span>
+        }
+        confirmLabel="Excluir artigo"
+        variant="danger"
+        onClose={() => setDeletingArticle(null)}
+        onConfirm={handleConfirmDeleteArticle}
+      />
+
+      {/* Modal de Confirmação de Exclusão de Categoria */}
+      <ConfirmModal
+        open={deletingCategory !== null}
+        title="Excluir categoria"
+        description={
+          <span>
+            Tem certeza que deseja excluir a categoria{' '}
+            <strong className="text-ink">{deletingCategory?.name}</strong>? Apenas categorias sem artigos vinculados podem ser excluídas.
+          </span>
+        }
+        confirmLabel="Excluir categoria"
+        variant="danger"
+        onClose={() => setDeletingCategory(null)}
+        onConfirm={handleConfirmDeleteCategory}
+      />
     </div>
   );
 }
+
 
 function Stat({
   label,

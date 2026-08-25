@@ -6,6 +6,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import type { CannedResponse } from '@/core/domain/settings';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
+import { ConfirmModal } from '@/components/ui/confirm-modal';
 import {
   createCannedResponseAction,
   deleteCannedResponseAction,
@@ -19,6 +20,7 @@ export function CannedResponsesSection({ cannedResponses }: CannedResponsesSecti
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [deletingResponse, setDeletingResponse] = useState<CannedResponse | null>(null);
   const [shortcut, setShortcut] = useState('');
   const [content, setContent] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -39,13 +41,15 @@ export function CannedResponsesSection({ cannedResponses }: CannedResponsesSecti
     });
   };
 
-  const handleDelete = (responseId: string) => {
-    if (!confirm('Deseja realmente excluir esta resposta rápida?')) return;
+  const handleConfirmDelete = async () => {
+    if (!deletingResponse) return;
     startTransition(async () => {
-      await deleteCannedResponseAction({ responseId });
+      await deleteCannedResponseAction({ responseId: deletingResponse.id });
+      setDeletingResponse(null);
       router.refresh();
     });
   };
+
 
   const handleOpenNew = () => {
     setShortcut('/');
@@ -147,7 +151,8 @@ export function CannedResponsesSection({ cannedResponses }: CannedResponsesSecti
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => handleDelete(item.id)}
+                      aria-label={`Excluir resposta rápida ${item.shortcut}`}
+                      onClick={() => setDeletingResponse(item)}
                       icon={<Trash2 className="size-3.5 text-danger" />}
                     />
                   </div>
@@ -158,6 +163,23 @@ export function CannedResponsesSection({ cannedResponses }: CannedResponsesSecti
           )}
         </div>
       </div>
+
+      <ConfirmModal
+        open={deletingResponse !== null}
+        title="Excluir resposta rápida"
+        description={
+          <span>
+            Tem certeza que deseja excluir o atalho{' '}
+            <strong className="font-mono text-ink">{deletingResponse?.shortcut}</strong>? Ele não estará mais disponível para autocompletar no chat.
+          </span>
+        }
+        confirmLabel="Excluir resposta rápida"
+        variant="danger"
+        isLoading={isPending}
+        onClose={() => setDeletingResponse(null)}
+        onConfirm={handleConfirmDelete}
+      />
     </div>
+
   );
 }

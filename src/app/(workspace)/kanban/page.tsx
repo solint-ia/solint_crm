@@ -1,14 +1,13 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { Topbar } from '@/components/layout/topbar';
 import { KanbanBoard } from '@/features/kanban/components/kanban-board';
-import { PipelineSelector } from '@/features/kanban/components/pipeline-selector';
 import { can } from '@/core/domain/user';
+import { NAV_ITEMS } from '@/config/navigation';
 import { AccessDenied } from '@/components/layout/access-denied';
 import { container } from '@/infrastructure/container';
 import { moveDealAction } from './actions';
 
-export const metadata: Metadata = { title: 'Kanban' };
+export const metadata: Metadata = { title: 'Funil de Oportunidades · Solint CRM' };
 
 export default async function KanbanPage({
   searchParams,
@@ -19,8 +18,9 @@ export default async function KanbanPage({
   const requestedPipeline = Array.isArray(params.funil) ? params.funil[0] : params.funil;
 
   const session = await container.session.getCurrentSession();
-  // A rail ja esconde o item; sem esta checagem, a URL direta entraria.
+  // A rail já esconde o item; sem esta checagem, a URL direta entraria.
   if (!can(session, 'kanban:ler')) return <AccessDenied permission="kanban:ler" />;
+
   const pipelines = await container.pipelines.listPipelines(session.account.id);
   const pipeline = pipelines.find((item) => item.id === requestedPipeline) ?? pipelines[0];
   if (!pipeline) notFound();
@@ -30,23 +30,19 @@ export default async function KanbanPage({
     container.notifications.list(session.account.id, session.user.id),
   ]);
 
-  return (
-    <>
-      <Topbar
-        title="Funil de oportunidades"
-        subtitle="Arraste os cards entre etapas para atualizar o funil"
-        account={session.account}
-        accounts={session.availableAccounts}
-        notifications={notifications}
-        actions={<PipelineSelector pipelines={pipelines} currentId={pipeline.id} />}
-      />
+  const navItems = NAV_ITEMS.filter((item) => can(session, item.permission));
 
-      <KanbanBoard
-        pipelines={pipelines}
-        pipeline={pipeline}
-        deals={deals}
-        moveDeal={moveDealAction.bind(null, pipeline.id)}
-      />
-    </>
+  return (
+    <KanbanBoard
+      pipelines={pipelines}
+      pipeline={pipeline}
+      deals={deals}
+      account={session.account}
+      accounts={session.availableAccounts}
+      notifications={notifications}
+      navItems={navItems}
+      moveDeal={moveDealAction.bind(null, pipeline.id)}
+    />
   );
 }
+

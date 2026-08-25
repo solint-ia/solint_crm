@@ -106,8 +106,9 @@ export const commitMessage = async (input: CommitInput): Promise<void> => {
   if (existing) {
     try {
       await prisma.$transaction([
-        prisma.message.create({
-          data: {
+        prisma.message.upsert({
+          where: { id: message.id },
+          create: {
             id: message.id,
             conversationId: chat.conversationId,
             author: message.author,
@@ -120,6 +121,10 @@ export const commitMessage = async (input: CommitInput): Promise<void> => {
             isPrivate: message.isPrivate,
             externalId: message.externalId ?? null,
             origin: message.origin ?? null,
+          },
+          update: {
+            deliveryStatus: message.deliveryStatus ?? undefined,
+            authorName: message.authorName ?? undefined,
           },
         }),
         prisma.conversation.update({
@@ -143,6 +148,7 @@ export const commitMessage = async (input: CommitInput): Promise<void> => {
       }
       throw error;
     }
+
 
     await publish(input.accountId, 'new_message', chat.conversationId, message);
     return;
@@ -222,6 +228,7 @@ export const applyDeliveryUpdate = async (
     type: 'message_updated',
     accountId: row.conversation.accountId,
     conversationId: row.conversationId,
+    messageId: row.id,
     message: message?.kind === 'message' ? message.message : undefined,
     conversation: updated,
   });
@@ -281,6 +288,18 @@ export const conversationExists = async (
 ): Promise<boolean> =>
   (await prisma.conversation.count({ where: { id: conversationId, accountId } })) > 0;
 
+/**
+ * Conversa pronta para viajar num evento de tempo real.
+ *
+ * Exposta porque o worker precisa da mesma leitura ao concluir um envio: e ele
+ * quem carimba o id do canal na mensagem e anuncia a mudanca. Duplicar a
+ * consulta la faria a forma do evento divergir entre os dois motores.
+ */
+export const loadConversationForEvent = (
+  accountId: string,
+  conversationId: string,
+): Promise<Conversation | null> => loadConversation(accountId, conversationId);
+
 const loadConversation = async (
   accountId: string,
   conversationId: string,
@@ -303,16 +322,35 @@ const publish = async (
   message: Message,
   inboxId?: string,
 ): Promise<void> => {
-  const conversation = await loadConversation(accountId, conversationId);
+  if (type === 'new_conversation') {
+    const conversation = await loadConversation(accountId, conversationId);
+    waEventBus.emitConversation({
+      type,
+      accountId,
+      conversationId,
+      inboxId,
+      messageId: message.id,
+      message,
+      conversation: conversation
+        ? { ...conversation, timeline: [{ kind: 'message' as const, message }] }
+        : undefined,
+    });
+    return;
+  }
+
+  // O `messageId` acompanha o evento porque é ele que sobrevive à travessia do
+  // `NOTIFY`: o objeto da mensagem fica para trás, e é por este id que o outro
+  // processo a encontra ao reidratar.
   waEventBus.emitConversation({
     type,
     accountId,
     conversationId,
     inboxId,
+    messageId: message.id,
     message,
-    conversation: conversation ?? undefined,
   });
 };
+
 
 /**
  * Recupera o conteúdo de uma mensagem enviada anteriormente para atender

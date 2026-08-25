@@ -61,18 +61,15 @@ export const activityTimeOf = (conversation: Pick<Conversation, 'lastActivityAt'
 export const HSM_WINDOW_HOURS = 24;
 
 /**
- * Regra WhatsApp: fora da janela de 24h desde a última mensagem do contato,
- * só é permitido enviar template HSM aprovado.
+ * Janela de 24h do WhatsApp:
+ * No WhatsApp Direto (via Baileys / QR Code), não há restrição de 24h da Meta Cloud API.
+ * O atendente pode conversar livremente a qualquer momento.
  */
 export const isHsmWindowOpen = (
-  conversation: Pick<Conversation, 'channel' | 'lastInboundAt'>,
-  now: Date = new Date(),
-): boolean => {
-  if (conversation.channel !== 'whatsapp') return true;
-  if (!conversation.lastInboundAt) return true;
-  const elapsedMs = now.getTime() - new Date(conversation.lastInboundAt).getTime();
-  return elapsedMs < HSM_WINDOW_HOURS * 60 * 60 * 1000;
-};
+  _conversation: Pick<Conversation, 'channel' | 'lastInboundAt'>,
+  _now: Date = new Date(),
+): boolean => true;
+
 
 /** Filtro rápido da lista de conversas. */
 export type InboxScope = 'minhas' | 'nao_atribuidas' | 'todas';

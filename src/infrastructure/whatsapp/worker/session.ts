@@ -15,7 +15,7 @@ import type { Contact } from '@/core/domain/contact';
 import type { Message, MessageContent } from '@/core/domain/message';
 import { PhoneNumber } from '@/core/domain/contact';
 import { prisma } from '@/infrastructure/db/prisma';
-import { initPostgresAuthState } from '../auth/postgres-auth-state';
+import { initPostgresAuthState, isPairedCreds } from '../auth/postgres-auth-state';
 import {
   applyDeliveryUpdate,
   commitMessage,
@@ -39,40 +39,20 @@ import {
   type MediaRef,
 } from '../wa-message-content';
 import { mediaStore, mediaUrlFor } from '../wa-media-store';
+import { baileysLogLevel, waLog } from '../wa-log';
+
 import { waEventBus, type WhatsAppStatusPayload } from '../whatsapp-events';
+import {
+  AVATAR_TTL_MS,
+  extractStatusCode,
+  fallbackPersonName,
+  GROUP_METADATA_TTL_MS,
+  MAX_INLINE_MEDIA_BYTES,
+  MAX_TRACKED_SENT_IDS,
+  timeLabel,
+  toneFor,
+} from '../wa-format';
 
-const GROUP_METADATA_TTL_MS = 10 * 60 * 1000;
-const AVATAR_TTL_MS = 60 * 60 * 1000;
-const MAX_TRACKED_SENT_IDS = 500;
-const MAX_INLINE_MEDIA_BYTES = 16 * 1024 * 1024;
-
-const AVATAR_TONES = ['#168cff', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
-
-const toneFor = (key: string): string => {
-  let hash = 0;
-  for (let i = 0; i < key.length; i += 1) {
-    hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
-  }
-  return AVATAR_TONES[hash % AVATAR_TONES.length] as string;
-};
-
-const timeLabel = (date: Date): string =>
-  date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-
-const extractStatusCode = (error: unknown): number | undefined => {
-  if (!error) return undefined;
-  const err = error as Record<string, unknown>;
-  const output = err['output'] as Record<string, unknown> | undefined;
-  if (output && typeof output['statusCode'] === 'number') {
-    return output['statusCode'];
-  }
-  if (typeof err['statusCode'] === 'number') return err['statusCode'];
-  if (typeof err['code'] === 'number') return err['code'];
-  return undefined;
-};
-
-const fallbackPersonName = (phone: string, jid: string): string =>
-  phone ? PhoneNumber.format(phone) : `Contato ${userOf(jid).slice(-6)}`;
 
 export class WhatsAppSession {
   readonly inboxId: string;
@@ -82,21 +62,42 @@ export class WhatsAppSession {
   private isInitializing = false;
   private isAuthenticated = false;
   private retryCount = 0;
+  private qrAttempts = 0;
+  /**
+   * A sessao ja foi pareada alguma vez?
+   *
+   * Lido das credenciais a cada `start()`. E o que separa dois casos que a
+   * mesma queda de conexao produz: uma sessao pareada que caiu deve reconectar
+   * sozinha; uma que nunca foi pareada nao tem o que reconectar — falta alguem
+   * ler o QR, e insistir so gera ruido.
+   */
+  private isPaired = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
-  private currentStatus: WhatsAppStatusPayload = {
-    status: 'desconectado',
-    updatedAt: new Date().toISOString(),
-  };
+  private currentStatus: WhatsAppStatusPayload;
 
   private readonly groupCache = new Map<string, { subject: string; size: number; at: number }>();
   private readonly avatarCache = new Map<string, { url?: string; at: number }>();
   private readonly crmSentIds = new Set<string>();
   private readonly lastInboundKey = new Map<string, WAMessageKey>();
-  private readonly logger = pino({ level: 'silent' });
+  /**
+   * Silencioso por padrão, verboso sob demanda.
+   *
+   * Era `pino({ level: 'silent' })` fixo, e foi por isso que uma saturação do
+   * keystore que atrasava os envios em minutos não deixou rastro nenhum — o
+   * diagnóstico teve de ser feito lendo o banco por fora. A partir de
+   * `WA_LOG_LEVEL=debug` o Baileys registra inclusive falha de decifra, que é o
+   * que separa "a mensagem não chegou" de "chegou e não pôde ser lida".
+   */
+  private readonly logger = pino({ level: baileysLogLevel() });
 
   constructor(inboxId: string, accountId: string) {
     this.inboxId = inboxId;
     this.accountId = accountId;
+    this.currentStatus = {
+      inboxId,
+      status: 'desconectado',
+      updatedAt: new Date().toISOString(),
+    };
   }
 
   getStatus(): WhatsAppStatusPayload {
@@ -107,6 +108,8 @@ export class WhatsAppSession {
     this.currentStatus = {
       ...this.currentStatus,
       ...patch,
+      // Nunca sobrescrito por um patch: e a identidade da sessao, nao um estado.
+      inboxId: this.inboxId,
       updatedAt: new Date().toISOString(),
     };
 
@@ -128,10 +131,18 @@ export class WhatsAppSession {
   }
 
   async start(): Promise<WhatsAppStatusPayload> {
+    // Sessão já de pé, ou já subindo: não há o que iniciar — mas há o que
+    // corrigir. Quem enfileirou o `connect` gravou `conectando` na linha do
+    // banco antes de mandar o comando, e sair daqui em silêncio deixava esse
+    // `conectando` para sempre. O efeito aparecia longe: `getStatus` lia a
+    // linha, via `conectando`, e a Server Action recusava todo envio com
+    // "WhatsApp desconectado" numa sessão que estava conectada o tempo todo.
     if (this.socket && this.isAuthenticated) {
+      await this.updateStatus({});
       return this.currentStatus;
     }
     if (this.isInitializing) {
+      await this.updateStatus({});
       return this.currentStatus;
     }
 
@@ -141,10 +152,17 @@ export class WhatsAppSession {
       this.reconnectTimer = null;
     }
 
+    // Fecha o socket anterior antes de abrir outro.
+    this.teardownSocket();
+
     try {
       await this.updateStatus({ status: 'conectando', error: undefined });
 
       const { state, saveCreds } = await initPostgresAuthState(this.inboxId);
+      // `registered` sozinho não responde a esta pergunta para quem pareou por
+      // QR — ver a nota em `isPairedCreds`. Era por isso que uma sessão pareada
+      // que caía ia parar no ramo do QR em vez de reconectar.
+      this.isPaired = isPairedCreds(state.creds);
       const { version } = await fetchLatestBaileysVersion().catch(() => ({
         version: [2, 3000, 1043857760] as [number, number, number],
       }));
@@ -156,11 +174,24 @@ export class WhatsAppSession {
           keys: makeCacheableSignalKeyStore(state.keys, this.logger),
         },
         browser: Browsers.macOS('Desktop'),
+
         logger: this.logger,
-        syncFullHistory: true,
-        markOnlineOnConnect: false,
+        syncFullHistory: false,
+        generateHighQualityLinkPreview: true,
+        markOnlineOnConnect: true,
         connectTimeoutMs: 60_000,
-        defaultQueryTimeoutMs: 60_000,
+        /**
+         * Um minuto era tempo demais para descobrir que uma consulta não vai
+         * ser respondida. Como a fila de comandos é serial, cada espera dessas
+         * segurava tudo o que viesse atrás — foi assim que um envio isolado
+         * virou 300 segundos de atraso acumulado. Falhar em 20 s deixa a
+         * mensagem ser marcada como falha e libera a fila.
+         */
+        defaultQueryTimeoutMs: 20_000,
+        keepAliveIntervalMs: 25_000,
+        qrTimeout: 60_000,
+
+
         getMessage: async (key) => findSentMessage(this.inboxId, key),
         cachedGroupMetadata: async (jid) => {
           const cached = this.groupCache.get(jid);
@@ -193,6 +224,8 @@ export class WhatsAppSession {
 
       if (qr) {
         this.isInitializing = false;
+        this.qrAttempts = 0;
+        console.log(`[WhatsAppSession ${this.inboxId}] QR Code recebido com sucesso.`);
         await this.updateStatus({
           status: 'aguardando_leitura',
           qr,
@@ -242,6 +275,29 @@ export class WhatsAppSession {
           await prisma.whatsAppKey.deleteMany({ where: { inboxId: this.inboxId } });
         }
 
+        // Handshake transitório inicial do WebSocket WhatsApp para sessões não pareadas:
+        // O servidor WhatsApp rotineiramente encerra o primeiro socket (código 428/515)
+        // antes de despachar o QR. Reconectamos automaticamente para receber o código.
+        if (!this.isPaired && !this.isAuthenticated) {
+          if ((statusCode === 428 || statusCode === 515 || statusCode === DisconnectReason.restartRequired) && this.qrAttempts < 8) {
+            this.qrAttempts += 1;
+            console.log(
+              `[WhatsAppSession ${this.inboxId}] Handshake transitório (${statusCode}). Tentativa ${this.qrAttempts}/8 gerando QR...`,
+            );
+            await this.updateStatus({ status: 'gerando_qr' });
+            this.reconnectTimer = setTimeout(() => void this.start(), 1500);
+            return;
+          }
+
+          this.qrAttempts = 0;
+          await this.updateStatus({
+            status: 'desconectado',
+            qr: undefined,
+            error: 'O QR expirou sem ser lido. Clique em conectar para gerar outro.',
+          });
+          return;
+        }
+
         if (shouldReconnect) {
           this.retryCount += 1;
           const delays = [3000, 8000, 20000, 60000];
@@ -261,9 +317,11 @@ export class WhatsAppSession {
       if (connection === 'open') {
         this.isInitializing = false;
         this.isAuthenticated = true;
+        this.qrAttempts = 0;
         this.retryCount = 0;
 
         const userJid = this.socket?.user?.id ? jidNormalizedUser(this.socket.user.id) : undefined;
+
         const ownerName = this.socket?.user?.name ?? (userJid ? PhoneNumber.format(userOf(userJid)) : 'WhatsApp');
 
         await this.updateStatus({
@@ -281,23 +339,16 @@ export class WhatsAppSession {
         });
 
         console.log(`[WhatsAppSession ${this.inboxId}] Conectado com sucesso como ${ownerName}`);
+        void this.socket?.sendPresenceUpdate('available');
       }
     });
 
-    this.socket.ev.on('messaging-history.set', async ({ chats, contacts, messages }) => {
-      console.log(
-        `[WhatsAppSession ${this.inboxId}] Histórico recebido: ${chats.length} conversas, ${contacts.length} contatos, ${messages.length} mensagens`,
-      );
-      for (const msg of messages) {
-        if (msg.message && isSupportedChatJid(msg.key.remoteJid)) {
-          try {
-            await this.handleIncomingMessage(msg);
-          } catch (err) {
-            console.error(`[WhatsAppSession ${this.inboxId}] Erro ao salvar mensagem do histórico:`, err);
-          }
-        }
-      }
+
+    this.socket.ev.on('messaging-history.set', async () => {
+      // Ignora histórico antigo recebido do celular — apenas mensagens novas pós-conexão
+      console.log(`[WhatsAppSession ${this.inboxId}] Histórico antigo ignorado (apenas mensagens novas pós-conexão serão processadas).`);
     });
+
 
     this.socket.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify' && type !== 'append') return;
@@ -359,6 +410,7 @@ export class WhatsAppSession {
       this.lastInboundKey.set(chat.conversationId, msg.key);
     }
 
+    const medir = waLog.timer(`[sessão ${this.inboxId}] commitMessage`);
     await commitMessage({
       accountId: this.accountId,
       inboxId: this.inboxId,
@@ -369,8 +421,16 @@ export class WhatsAppSession {
       at,
       fromMe,
     });
+    medir(`${fromMe ? 'saída' : 'entrada'} em ${chat.conversationId}`);
 
-    void this.hydrateAvatar(chat);
+    // A foto só é buscada de quem ainda não tem uma.
+    //
+    // Antes isto rodava a cada mensagem recebida, e `profilePictureUrl` é uma
+    // consulta ao servidor do WhatsApp pelo mesmo socket que entrega as
+    // mensagens: numa conversa ativa, cada mensagem disputava a linha com o
+    // próprio tráfego que a trouxe. O cache negativo dentro de `hydrateAvatar`
+    // cobre quem não tem foto; esta condição cobre quem já tem.
+    if (!contact.avatarUrl) void this.hydrateAvatar(chat);
   }
 
   private async resolveContact(
@@ -463,14 +523,41 @@ export class WhatsAppSession {
     const cached = this.avatarCache.get(chat.jid);
     if (cached && Date.now() - cached.at < AVATAR_TTL_MS) return;
 
+    const mediaId = `pp-${userOf(chat.jid) || 'me'}`;
+
     try {
-      const url = await this.socket.profilePictureUrl(chat.jid, 'preview');
-      this.avatarCache.set(chat.jid, { url: url || undefined, at: Date.now() });
-      if (url) {
-        await patchContact(chat.conversationId, { avatarUrl: url });
+      // Teto próprio, menor que o da sessão: uma foto de perfil não vale
+      // segurar recurso do socket. Quem não responder rápido cai no cache
+      // negativo abaixo e será tentado de novo só depois do TTL.
+      const remoteUrl = await Promise.race([
+        this.socket.profilePictureUrl(chat.jid, 'image'),
+        new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 8_000)),
+      ]);
+      if (!remoteUrl) {
+        this.avatarCache.set(chat.jid, { url: undefined, at: Date.now() });
+        return;
       }
+
+      // Copia a imagem em vez de guardar a URL do WhatsApp: aquela e assinada e
+      // expira em horas, entao o `avatarUrl` gravado quebraria sozinho no dia
+      // seguinte. O motor in-process ja fazia isso; era a ultima divergencia.
+      const response = await fetch(remoteUrl);
+      const ownUrl = response.ok
+        ? await mediaStore.save(
+            mediaId,
+            Buffer.from(await response.arrayBuffer()),
+            { mimeType: response.headers.get('content-type') ?? 'image/jpeg' },
+            { accountId: this.accountId, kind: 'avatar' },
+          )
+        : undefined;
+
+      const url = ownUrl ?? remoteUrl;
+      this.avatarCache.set(chat.jid, { url, at: Date.now() });
+      await patchContact(chat.conversationId, { avatarUrl: url });
     } catch {
-      this.avatarCache.set(chat.jid, { url: undefined, at: Date.now() });
+      // Foto privada ou indisponivel: mantem a copia que ja existir.
+      const fallback = (await mediaStore.has(mediaId)) ? mediaUrlFor(mediaId) : undefined;
+      this.avatarCache.set(chat.jid, { url: fallback, at: Date.now() });
     }
   }
 
@@ -481,7 +568,8 @@ export class WhatsAppSession {
     fallback: MessageContent,
   ): Promise<MessageContent> {
     if (media.fileLength > MAX_INLINE_MEDIA_BYTES) return fallback;
-    if (mediaStore.has(messageId)) return mediaContent(media, mediaUrlFor(messageId));
+    if (await mediaStore.has(messageId)) return mediaContent(media, mediaUrlFor(messageId));
+
     const socket = this.socket;
     if (!socket) return fallback;
 
@@ -492,10 +580,12 @@ export class WhatsAppSession {
         {},
         { logger: this.logger, reuploadRequest: socket.updateMediaMessage },
       );
-      const url = await mediaStore.save(messageId, buffer, {
-        mimeType: media.mimeType,
-        fileName: media.fileName,
-      });
+      const url = await mediaStore.save(
+        messageId,
+        buffer,
+        { mimeType: media.mimeType, ...(media.fileName ? { fileName: media.fileName } : {}) },
+        { accountId: this.accountId, inboxId: this.inboxId, kind: 'mensagem' },
+      );
       return url ? mediaContent(media, url) : fallback;
     } catch (error) {
       console.warn(`[WhatsAppSession ${this.inboxId}] Falha ao baixar mídia:`, error);
@@ -504,7 +594,7 @@ export class WhatsAppSession {
   }
 
   async sendMessage(
-    recipient: { phone?: string; jid?: string },
+    recipient: { phone?: string; jid?: string; channelThreadId?: string },
     content: { text?: string },
     options: { paced?: boolean } = {},
   ): Promise<string> {
@@ -512,7 +602,8 @@ export class WhatsAppSession {
       throw new Error(`Sessão WhatsApp ${this.inboxId} não está conectada.`);
     }
 
-    const targetJid = recipient.jid ?? (recipient.phone ? jidFromPhone(recipient.phone) : undefined);
+    const raw = recipient.channelThreadId ?? recipient.jid ?? recipient.phone;
+    const targetJid = raw ? (isSupportedChatJid(raw) ? raw : jidFromPhone(raw)) : undefined;
     if (!targetJid) {
       throw new Error('Destinatário inválido: forneça telefone ou JID.');
     }
@@ -529,16 +620,80 @@ export class WhatsAppSession {
       await this.socket.sendPresenceUpdate('paused', targetJid);
     }
 
+    // Cronometrado à parte de propósito: é o que separa "o Baileys está lento"
+    // de "a fila está lenta". Sem esta medida, um envio de 3 minutos podia ser
+    // qualquer um dos dois, e a diferença muda inteiramente onde se procura.
+    const medir = waLog.timer(`[sessão ${this.inboxId}] socket.sendMessage`);
     const result = await this.socket.sendMessage(targetJid, { text });
+    medir(`texto de ${text.length} caractere(s) para ${targetJid}`);
+
     const msgId = result?.key.id ?? `sent-${Date.now()}`;
 
+    this.trackSentId(msgId);
+    return msgId;
+  }
+
+  /**
+   * Envio de anexo.
+   *
+   * Os bytes vem do deposito local (`wa-media-store`), nao da fila: um video em
+   * base64 dentro de uma coluna JSON incharia a tabela de comandos sem ganho
+   * nenhum. O `mimetype` vai explicito porque o Baileys nao o deduz do buffer, e
+   * o WhatsApp recusa o anexo se o tipo nao bater com o conteudo.
+   */
+  async sendMediaMessage(
+    recipient: { phone?: string; jid?: string; channelThreadId?: string },
+    media: {
+      kind: 'image' | 'video' | 'audio' | 'document';
+      data: Buffer;
+      mimeType: string;
+      fileName?: string;
+      caption?: string;
+      voice?: boolean;
+    },
+  ): Promise<string> {
+    if (!this.socket || !this.isAuthenticated) {
+      throw new Error(`Sessão WhatsApp ${this.inboxId} não está conectada.`);
+    }
+
+    const raw = recipient.channelThreadId ?? recipient.jid ?? recipient.phone;
+    const targetJid = raw ? (isSupportedChatJid(raw) ? raw : jidFromPhone(raw)) : undefined;
+    if (!targetJid) {
+      throw new Error('Destinatário inválido: forneça telefone ou JID.');
+    }
+
+
+    const caption = media.caption?.trim() || undefined;
+    const payload =
+      media.kind === 'image'
+        ? { image: media.data, mimetype: media.mimeType, ...(caption ? { caption } : {}) }
+        : media.kind === 'video'
+          ? { video: media.data, mimetype: media.mimeType, ...(caption ? { caption } : {}) }
+          : media.kind === 'audio'
+            ? { audio: media.data, mimetype: media.mimeType, ptt: media.voice === true }
+            : {
+                document: media.data,
+                mimetype: media.mimeType,
+                fileName: media.fileName ?? 'arquivo',
+                ...(caption ? { caption } : {}),
+              };
+
+    const medir = waLog.timer(`[sessão ${this.inboxId}] socket.sendMessage (anexo)`);
+    const result = await this.socket.sendMessage(targetJid, payload);
+    medir(`${media.kind} de ${media.data.length} byte(s) para ${targetJid}`);
+
+    const msgId = result?.key.id ?? `sent-${Date.now()}`;
+    this.trackSentId(msgId);
+    return msgId;
+  }
+
+  /** Janela deslizante: so o passado recente de envios precisa ser deduplicado. */
+  private trackSentId(msgId: string): void {
     this.crmSentIds.add(msgId);
     if (this.crmSentIds.size > MAX_TRACKED_SENT_IDS) {
       const oldest = this.crmSentIds.values().next().value;
       if (oldest) this.crmSentIds.delete(oldest);
     }
-
-    return msgId;
   }
 
   async markAsRead(conversationId: string): Promise<void> {
@@ -552,19 +707,28 @@ export class WhatsAppSession {
     }
   }
 
+  /** Encerra o socket corrente e solta os listeners presos a ele. */
+  private teardownSocket(): void {
+    if (!this.socket) return;
+    try {
+      this.socket.ev.removeAllListeners('connection.update');
+      this.socket.ev.removeAllListeners('creds.update');
+      this.socket.ev.removeAllListeners('messages.upsert');
+      this.socket.ev.removeAllListeners('messages.update');
+      this.socket.ev.removeAllListeners('messaging-history.set');
+      this.socket.end(undefined);
+    } catch {
+      // Ignora erro ao fechar socket
+    }
+    this.socket = null;
+  }
+
   async stop(): Promise<void> {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    if (this.socket) {
-      try {
-        this.socket.end(undefined);
-      } catch {
-        // Ignora erro ao fechar socket
-      }
-      this.socket = null;
-    }
+    this.teardownSocket();
     this.isAuthenticated = false;
     this.isInitializing = false;
     await this.updateStatus({ status: 'desconectado', qr: undefined });

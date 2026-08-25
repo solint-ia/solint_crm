@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus, Trash2 } from 'lucide-react';
+
 import type { Role, User } from '@/core/domain/user';
 import type { Team } from '@/core/domain/settings';
 import { Avatar } from '@/components/ui/avatar';
@@ -10,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Modal } from '@/components/ui/modal';
+import { ConfirmModal } from '@/components/ui/confirm-modal';
 import { cn } from '@/lib/cn';
 import { createTeamAction, deleteTeamAction } from '@/app/(workspace)/configuracoes/actions';
 
@@ -28,6 +30,7 @@ export function TeamSection({ members, roles, teams }: TeamSectionProps) {
 
   // Team Modal
   const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
+  const [deletingTeam, setDeletingTeam] = useState<Team | null>(null);
   const [teamName, setTeamName] = useState('');
   const [teamColor, setTeamColor] = useState('#3B82F6');
   const [teamInboxes, setTeamInboxes] = useState<string>('WhatsApp · Comercial');
@@ -52,10 +55,11 @@ export function TeamSection({ members, roles, teams }: TeamSectionProps) {
     });
   };
 
-  const handleDeleteTeam = (teamId: string) => {
-    if (!confirm('Deseja realmente excluir esta equipe?')) return;
+  const handleConfirmDeleteTeam = async () => {
+    if (!deletingTeam) return;
     startTransition(async () => {
-      await deleteTeamAction({ teamId });
+      await deleteTeamAction({ teamId: deletingTeam.id });
+      setDeletingTeam(null);
       router.refresh();
     });
   };
@@ -257,7 +261,8 @@ export function TeamSection({ members, roles, teams }: TeamSectionProps) {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => handleDeleteTeam(team.id)}
+                    aria-label={`Excluir equipe ${team.name}`}
+                    onClick={() => setDeletingTeam(team)}
                     icon={<Trash2 className="size-3.5 text-danger" />}
                   />
                 </div>
@@ -282,6 +287,23 @@ export function TeamSection({ members, roles, teams }: TeamSectionProps) {
           ))}
         </div>
       ) : null}
+
+      <ConfirmModal
+        open={deletingTeam !== null}
+        title="Excluir equipe"
+        description={
+          <span>
+            Tem certeza que deseja excluir a equipe{' '}
+            <strong className="text-ink">{deletingTeam?.name}</strong>? Os membros associados serão desvinculados desta equipe.
+          </span>
+        }
+        confirmLabel="Excluir equipe"
+        variant="danger"
+        isLoading={isPending}
+        onClose={() => setDeletingTeam(null)}
+        onConfirm={handleConfirmDeleteTeam}
+      />
     </div>
   );
 }
+

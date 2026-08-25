@@ -8,6 +8,8 @@
 /out/
 /build
 next-env.d.ts.bak
+# pacote do worker de WhatsApp (gerado por `npm run worker`)
+/.worker/
 
 # ambiente — NUNCA versionar segredos
 .env

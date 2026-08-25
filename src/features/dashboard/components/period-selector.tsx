@@ -1,5 +1,8 @@
+'use client';
+
 import Link from 'next/link';
 import type { Route } from 'next';
+import { Calendar } from 'lucide-react';
 import type { PeriodKey } from '@/core/domain/analytics';
 import { cn } from '@/lib/cn';
 
@@ -7,6 +10,7 @@ const PERIODS: readonly { id: PeriodKey; label: string }[] = [
   { id: 'hoje', label: 'Hoje' },
   { id: '7d', label: '7 dias' },
   { id: '30d', label: '30 dias' },
+  { id: 'mes', label: 'Este mês' },
 ];
 
 interface PeriodSelectorProps {
@@ -17,13 +21,15 @@ interface PeriodSelectorProps {
 
 /**
  * Seletor de período via URL: o servidor refaz a consulta,
- * o estado fica compartilhavel e o botao voltar funciona.
+ * o estado fica compartilhável e o botão voltar funciona nativamente.
  */
 export function PeriodSelector({ basePath, current, extraParams }: PeriodSelectorProps) {
   return (
-    <div className="inline-flex gap-1 rounded-control bg-surface-2 p-1">
+    <div className="flex items-center gap-1 rounded-xl border border-line bg-surface p-1 shadow-2xs">
+      <div className="flex items-center pl-2 pr-1 text-muted" title="Período de análise">
+        <Calendar className="size-3.5" />
+      </div>
       {PERIODS.map((period) => {
-        // A chave da URL e' `periodo` sem acento — e' o que a pagina le.
         const params = new URLSearchParams({ ...extraParams, periodo: period.id });
         const active = period.id === current;
         return (
@@ -32,8 +38,10 @@ export function PeriodSelector({ basePath, current, extraParams }: PeriodSelecto
             href={`${basePath}?${params.toString()}` as Route}
             aria-current={active ? 'true' : undefined}
             className={cn(
-              'rounded-control px-3 py-1.5 text-body font-semibold transition-colors',
-              active ? 'bg-surface text-brand shadow-xs' : 'text-muted hover:text-ink',
+              'rounded-lg px-3 py-1 text-xs font-semibold transition-all',
+              active
+                ? 'bg-brand text-white shadow-xs font-bold'
+                : 'text-muted hover:bg-surface-2 hover:text-ink',
             )}
           >
             {period.label}

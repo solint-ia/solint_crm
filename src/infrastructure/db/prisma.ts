@@ -18,8 +18,47 @@ import { type Prisma, PrismaClient } from '@/generated/prisma';
  * reavalia os módulos: sem isso, cada alteração de arquivo abriria um pool novo
  * e o teto de conexões do Supabase seria alcançado em poucos minutos.
  */
+/**
+ * Piso do pool fora de produção.
+ *
+ * `next dev` e o worker são **um processo longo**, não uma função por
+ * requisição: com o pool em 1, uma sincronização de histórico do WhatsApp
+ * seguraria a única conexão e as telas ficariam esperando atrás dela.
+ */
+const DEV_MIN_POOL = 10;
+
+/**
+ * Tamanho do pool, de fato aplicado.
+ *
+ * `connection_limit` na URL é convenção do *engine* do Prisma. Com o adaptador
+ * `pg` quem abre conexão é o `pg.Pool`, que lê `max` — e o `pg-connection-string`
+ * descarta em silêncio todo parâmetro que não reconhece. Ou seja: o
+ * `connection_limit=1` documentado no `.env.example` não tinha efeito algum e o
+ * pool subia com o padrão do `pg`, que é 10.
+ *
+ * Isso é inofensivo num processo longo e perigoso exatamente onde o limite foi
+ * escrito para valer — em serverless, onde cada instância abriria até 10
+ * conexões e o teto do Supabase cairia. Aqui o valor volta a ser respeitado.
+ *
+ * `DB_POOL_SIZE` tem a última palavra, para quando for preciso ajustar sem
+ * reescrever a URL de conexão.
+ */
+const poolSize = (connectionString: string): number => {
+  const explicit = Number(process.env.DB_POOL_SIZE);
+  if (Number.isInteger(explicit) && explicit > 0) return explicit;
+
+  const declared = Number(new URL(connectionString).searchParams.get('connection_limit'));
+  const fromUrl = Number.isInteger(declared) && declared > 0 ? declared : DEV_MIN_POOL;
+
+  return process.env.NODE_ENV === 'production' ? fromUrl : Math.max(fromUrl, DEV_MIN_POOL);
+};
+
 const createClient = (): PrismaClient => {
-  const connectionString = process.env.DATABASE_URL;
+  // O worker é um processo longo que mantém `LISTEN` e grava lotes de chaves:
+  // o pooler em modo transação não serve a ele. Ver `.env.example` item 3.
+  const connectionString =
+    (process.env.SOLINT_WORKER ? process.env.WORKER_DATABASE_URL : undefined) ??
+    process.env.DATABASE_URL;
 
   if (!connectionString) {
     throw new Error(
@@ -29,7 +68,7 @@ const createClient = (): PrismaClient => {
   }
 
   return new PrismaClient({
-    adapter: new PrismaPg({ connectionString }),
+    adapter: new PrismaPg({ connectionString, max: poolSize(connectionString) }),
     log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],
   });
 };

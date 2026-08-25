@@ -293,6 +293,14 @@ model Message {
   /// mensagem duplicada na tela. Com o unico, o `upsert` resolve no banco.
   @@unique([conversationId, externalId])
   @@index([conversationId, createdAt])
+  /// Recibo de entrega chega com o id do canal e mais nada.
+  ///
+  /// `applyDeliveryUpdate` procura por `externalId` sozinho, e o único índice
+  /// que o continha era o composto com `conversationId` na frente — inútil para
+  /// esta busca, porque o Postgres não consegue partir da segunda coluna. Cada
+  /// recibo virava varredura da tabela inteira, e o WhatsApp manda um por
+  /// mensagem entregue e outro por mensagem lida.
+  @@index([externalId])
 }
 
 // ---------------------------------------------------------------- funil
@@ -499,6 +507,12 @@ model WhatsAppKey {
 
   @@id([inboxId, category, keyId])
   @@index([inboxId, category])
+  /// Expiração do material de cache (`lid-mapping`, `tctoken`).
+  ///
+  /// A faxina horária procura por categoria e idade, e o índice acima começa
+  /// por `inboxId` — inútil para essa varredura. Sem este, a limpeza leria a
+  /// tabela inteira a cada hora, e ela é justamente a que mais cresce.
+  @@index([category, updatedAt])
 }
 
 /// Fila de comandos assíncronos enviados pelo Next.js para o Worker de WhatsApp.

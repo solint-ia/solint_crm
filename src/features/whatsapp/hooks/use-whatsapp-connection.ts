@@ -11,31 +11,63 @@ const INITIAL: WhatsAppStatusPayload = {
 type Listener = (status: WhatsAppStatusPayload) => void;
 
 /**
- * Uma unica conexao SSE de status para a aplicacao inteira.
- * Rail, modal de pareamento e perfil observam o mesmo canal: abrir um
- * EventSource por componente esgotaria o limite de conexoes do navegador e
- * ainda permitiria que duas telas mostrassem estados divergentes.
+ * Canal compartilhado de status do WhatsApp via Server-Sent Events (SSE).
+ * Sem loops de polling desnecessários durante a navegação normal.
  */
 const statusChannel = (() => {
   const listeners = new Set<Listener>();
   let source: EventSource | null = null;
   let last: WhatsAppStatusPayload = INITIAL;
 
-  const open = () => {
-    if (source || typeof window === 'undefined') return;
-    source = new EventSource('/api/whatsapp/events');
-    source.onmessage = (event) => {
-      try {
-        last = JSON.parse(event.data) as WhatsAppStatusPayload;
-      } catch {
-        return; // Heartbeat ou evento não-JSON
+  const notifyAll = (payload: WhatsAppStatusPayload) => {
+    last = payload;
+    for (const listener of listeners) listener(last);
+  };
+
+  const fetchStatus = async () => {
+    try {
+      const res = await fetch('/api/whatsapp/status', { cache: 'no-store' });
+      if (res.ok) {
+        const data = (await res.json()) as { ok: boolean; status?: WhatsAppStatusPayload };
+        if (data.ok && data.status) {
+          notifyAll(data.status);
+        }
       }
-      for (const listener of listeners) listener(last);
-    };
+    } catch {
+      // Silencioso
+    }
+  };
+
+  const open = () => {
+    if (typeof window === 'undefined') return;
+    if (source) return;
+
+    // Busca status inicial apenas uma vez ao abrir o canal
+    void fetchStatus();
+
+    try {
+      source = new EventSource('/api/whatsapp/events');
+
+      source.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data) as WhatsAppStatusPayload;
+          notifyAll(payload);
+        } catch {
+          // Heartbeat ou evento não-JSON
+        }
+      };
+
+      source.onerror = () => {
+        // Se a conexão SSE oscilar, tenta reconectar silenciosamente
+      };
+    } catch {
+      // EventSource não suportado
+    }
   };
 
   return {
     snapshot: () => last,
+    fetchNow: fetchStatus,
     subscribe(listener: Listener) {
       listeners.add(listener);
       open();
@@ -52,9 +84,9 @@ const statusChannel = (() => {
 })();
 
 /**
- * Estado da conexao do WhatsApp exposto para a interface.
+ * Estado da conexão do WhatsApp exposto para a interface.
  *
- * @param active desliga a inscricao quando o componente esta oculto (ex.: modal fechado).
+ * @param active desliga a inscrição quando o componente está oculto.
  */
 export function useWhatsAppConnection(active = true) {
   const [statusData, setStatusData] = useState<WhatsAppStatusPayload>(statusChannel.snapshot);
@@ -71,8 +103,22 @@ export function useWhatsAppConnection(active = true) {
     startTransition(async () => {
       try {
         const response = await fetch(endpoint, { method: 'POST' });
-        const data = (await response.json()) as { ok: boolean; error?: string };
-        if (!data.ok) setActionError(data.error ?? fallback);
+        const data = (await response.json()) as {
+          ok: boolean;
+          error?: string;
+          status?: WhatsAppStatusPayload;
+        };
+
+        if (data.ok) {
+          if (data.status) {
+            setStatusData(data.status);
+          }
+          // Dispara busca pontual do status apenas após a ação de conectar
+          setTimeout(() => void statusChannel.fetchNow(), 400);
+          setTimeout(() => void statusChannel.fetchNow(), 1500);
+        } else {
+          setActionError(data.error ?? fallback);
+        }
       } catch {
         setActionError(fallback);
       }
@@ -95,8 +141,13 @@ export function useWhatsAppConnection(active = true) {
       errorMessage: actionError ?? statusData.error,
       isPending,
       isConnected: statusData.status === 'conectado',
-      isAwaitingQR: statusData.status === 'aguardando_leitura' && Boolean(statusData.qr),
-      isConnecting: statusData.status === 'conectando' || statusData.status === 'gerando_qr',
+      isAwaitingQR:
+        statusData.status === 'aguardando_leitura' ||
+        (statusData.status === 'gerando_qr' && Boolean(statusData.qr)),
+      isConnecting:
+        statusData.status === 'conectando' ||
+        (statusData.status === 'gerando_qr' && !statusData.qr) ||
+        (statusData.status === 'aguardando_leitura' && !statusData.qr),
       connect,
       disconnect,
     }),

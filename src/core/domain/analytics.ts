@@ -1,12 +1,13 @@
 import type { Tone } from './label';
 import type { Id } from './shared';
 
-export type PeriodKey = 'hoje' | '7d' | '30d';
+export type PeriodKey = 'hoje' | '7d' | '30d' | 'mes';
 
 export const PERIOD_LABELS: Readonly<Record<PeriodKey, string>> = {
   hoje: 'Hoje',
   '7d': 'Últimos 7 dias',
   '30d': 'Últimos 30 dias',
+  mes: 'Este mês',
 };
 
 /** Como o período anterior se chama, para o rótulo da comparação. */
@@ -14,6 +15,7 @@ export const PREVIOUS_PERIOD_LABELS: Readonly<Record<PeriodKey, string>> = {
   hoje: 'Ontem',
   '7d': '7 dias anteriores',
   '30d': '30 dias anteriores',
+  mes: 'Mês anterior',
 };
 
 /**
@@ -71,10 +73,9 @@ export interface Kpi {
   readonly value: string;
   readonly delta: string;
   readonly deltaDirection: 'positivo' | 'negativo' | 'neutro';
+  readonly description?: string;
   /**
    * Série do período, para o sparkline embutido no próprio indicador.
-   * Um número sozinho diz onde a operação está; a série diz para onde ela vai —
-   * e é o que decide se o valor merece atenção agora.
    */
   readonly series?: readonly number[];
 }
@@ -82,10 +83,14 @@ export interface Kpi {
 export interface TimeSeriePoint {
   readonly label: string;
   readonly value: number;
+  readonly answered?: number;
+  readonly resolved?: number;
+  readonly abandoned?: number;
 }
 
 export interface ChannelShare {
   readonly channelLabel: string;
+  readonly count?: number;
   readonly percentage: number;
   readonly colorVar: string;
 }
@@ -93,8 +98,10 @@ export interface ChannelShare {
 export interface AgentPerformance {
   readonly id: Id;
   readonly name: string;
+  readonly team?: string;
   readonly avatarTone: string;
   readonly handled: number;
+  readonly resolved?: number;
   readonly averageResponse: string;
   readonly csat: string;
   readonly csatTone: Tone;
@@ -105,14 +112,21 @@ export interface FunnelStageSummary {
   readonly count: number;
   readonly amountInCents: number;
   readonly colorVar: string;
+  readonly conversionRate?: string;
 }
 
 export interface PendingConversation {
   readonly conversationId: Id;
   readonly contactName: string;
+  readonly phone?: string;
+  readonly channel?: string;
+  readonly assigneeName?: string;
+  readonly priority?: 'baixa' | 'media' | 'alta' | 'urgente';
   readonly waitingLabel: string;
+  readonly waitingMinutes?: number;
   readonly tone: Tone;
 }
+
 
 export interface ConversionRate {
   readonly stage: string;
