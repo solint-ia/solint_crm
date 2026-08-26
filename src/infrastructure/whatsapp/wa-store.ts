@@ -28,6 +28,19 @@ import { waEventBus } from './whatsapp-events';
 
 const nowIso = (date: Date): string => date.toISOString();
 
+/**
+ * Violação de restrição única (`P2002`).
+ *
+ * Aparece o tempo todo neste arquivo por um motivo estrutural: as mensagens
+ * recebidas são processadas **em paralelo**. O handler de `messages.upsert` é
+ * assíncrono e o emissor de eventos do Baileys não o aguarda, então uma fila
+ * represada dispara dezenas de gravações concorrentes. Toda leitura seguida de
+ * escrita aqui tem uma janela entre as duas, e sob concorrência essa janela é
+ * atingida — não raramente, mas com frequência.
+ */
+const isUniqueViolation = (error: unknown): boolean =>
+  error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+
 /** Contato já conhecido — da conversa, quando existe, ou da agenda. */
 export const findStoredContact = async (
   accountId: string,
@@ -66,15 +79,26 @@ const upsertContact = async (
     participantCount: contact.participantCount ?? null,
   };
 
-  await prisma.contact.upsert({
-    where: { id: contact.id },
-    create: { ...data, id: contact.id, accountId },
-    update: {
-      name: data.name,
-      avatarUrl: data.avatarUrl,
-      participantCount: data.participantCount,
-    },
-  });
+  const update = {
+    name: data.name,
+    avatarUrl: data.avatarUrl,
+    participantCount: data.participantCount,
+  };
+
+  try {
+    await prisma.contact.upsert({
+      where: { id: contact.id },
+      create: { ...data, id: contact.id, accountId },
+      update,
+    });
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+    // `upsert` não é atômico: ele lê, não acha, e insere. Duas mensagens do
+    // mesmo contato chegando juntas — o caso normal de uma fila represada —
+    // passam as duas pela leitura e as duas tentam inserir. A linha existe
+    // agora, então só resta aplicar a atualização.
+    await prisma.contact.update({ where: { id: contact.id, accountId }, data: update });
+  }
 };
 
 export interface CommitInput {
@@ -86,26 +110,137 @@ export interface CommitInput {
   readonly preview: string;
   readonly at: Date;
   readonly fromMe: boolean;
+  /**
+   * Grava sem anunciar.
+   *
+   * Usado enquanto a fila represada do WhatsApp é drenada. Anunciar mensagem
+   * por mensagem ali faz a caixa de entrada se redesenhar centenas de vezes e
+   * dá a impressão de que o painel está "carregando aos poucos" — quando, na
+   * verdade, quem abrisse a tela depois veria tudo pronto de uma vez. Quem
+   * silencia é responsável por anunciar o resultado ao final; ver o controle
+   * de drenagem em `worker/session.ts`.
+   */
+  readonly silent?: boolean;
 }
+
+/** Estado da conversa que decide como a mensagem é anexada. */
+interface ExistingConversation {
+  readonly unreadCount: number;
+  readonly status: string;
+  readonly lastInboundAt: string | null;
+}
+
+const findConversationState = (
+  accountId: string,
+  conversationId: string,
+): Promise<ExistingConversation | null> =>
+  prisma.conversation.findFirst({
+    where: { id: conversationId, accountId },
+    select: { unreadCount: true, status: true, lastInboundAt: true },
+  });
 
 /**
  * Anexa a mensagem à conversa (criando-a se preciso) e publica o resultado.
  */
 export const commitMessage = async (input: CommitInput): Promise<void> => {
+  const { chat, contact } = input;
+
+  await upsertContact(input.accountId, contact, chat.isGroup);
+
+  const existing = await findConversationState(input.accountId, chat.conversationId);
+  if (existing) {
+    await attachToConversation(input, existing);
+    return;
+  }
+
+  await createConversationWith(input);
+};
+
+/**
+ * Cria a conversa com a primeira mensagem dentro.
+ *
+ * O `P2002` aqui não é caso excepcional: entre o `findFirst` acima e este
+ * `create` existe uma janela, e uma fila represada entrega várias mensagens do
+ * mesmo contato ao mesmo tempo — todas veem "conversa não existe" e todas
+ * tentam criá-la. Antes essa exceção subia sem tratamento, a promise do handler
+ * rejeitava sem ninguém para ouvir (o emissor do Baileys não aguarda o
+ * listener) e **a mensagem era perdida em silêncio**. Quem perdeu a corrida
+ * agora simplesmente anexa à conversa que o vencedor acabou de criar.
+ */
+const createConversationWith = async (input: CommitInput): Promise<void> => {
   const { chat, contact, message, preview, at, fromMe } = input;
   const targetInboxId = input.inboxId ?? `ibx-${input.accountId}`;
 
-  // Grava/atualiza o contato em 1 operação atômica (upsert)
-  await upsertContact(input.accountId, contact, chat.isGroup);
+  try {
+    await prisma.conversation.create({
+      data: {
+        id: chat.conversationId,
+        accountId: input.accountId,
+        contactId: contact.id,
+        channel: 'whatsapp',
+        inboxId: targetInboxId,
+        queue: chat.isGroup ? 'Grupos' : 'Geral',
+        status: 'aberta',
+        statusLabel: 'Em andamento',
+        priority: 'media',
+        unreadCount: fromMe ? 0 : 1,
+        lastMessagePreview: preview,
+        lastMessageAt: message.time,
+        lastActivityAt: at,
+        lastInboundAt: fromMe ? null : nowIso(at),
+        channelThreadId: chat.jid,
+        protocols: asJson([
+          {
+            code: `#AT-${Math.floor(10000 + Math.random() * 90000)}`,
+            date: at.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }),
+            status: 'Em andamento',
+          },
+        ]),
+        messages: {
+          create: {
+            id: message.id,
+            author: message.author,
+            authorName: message.authorName ?? null,
+            contentType: message.content.type,
+            content: asJson(message.content),
+            time: message.time,
+            createdAt: at,
+            deliveryStatus: message.deliveryStatus ?? null,
+            isPrivate: message.isPrivate,
+            externalId: message.externalId ?? null,
+            origin: message.origin ?? null,
+          },
+        },
+      },
+    });
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
 
-  const existing = await prisma.conversation.findFirst({
-    where: { id: chat.conversationId, accountId: input.accountId },
-    select: { id: true, unreadCount: true, status: true, lastInboundAt: true },
-  });
+    const created = await findConversationState(input.accountId, chat.conversationId);
+    if (!created) {
+      // A restrição violada não foi a da conversa. Sem estado para anexar, a
+      // única saída honesta é deixar o erro subir.
+      throw error;
+    }
+    await attachToConversation(input, created);
+    return;
+  }
 
-  if (existing) {
-    try {
-      await prisma.$transaction([
+  if (!input.silent) {
+    await publish(input.accountId, 'new_conversation', chat.conversationId, message, targetInboxId);
+  }
+};
+
+/** Anexa a mensagem a uma conversa que já existe. */
+const attachToConversation = async (
+  input: CommitInput,
+  existing: ExistingConversation,
+): Promise<void> => {
+  const { chat, message, preview, at, fromMe } = input;
+  const targetInboxId = input.inboxId ?? `ibx-${input.accountId}`;
+
+  try {
+    await prisma.$transaction([
         prisma.message.upsert({
           where: { id: message.id },
           create: {
@@ -142,61 +277,16 @@ export const commitMessage = async (input: CommitInput): Promise<void> => {
           },
         }),
       ]);
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        return;
-      }
-      throw error;
-    }
-
-
-    await publish(input.accountId, 'new_message', chat.conversationId, message);
-    return;
+  } catch (error) {
+    // A mensagem já estava gravada — reentrega do WhatsApp, ou duas cópias do
+    // mesmo evento chegando juntas. Nada a fazer e nada a anunciar.
+    if (isUniqueViolation(error)) return;
+    throw error;
   }
 
-  await prisma.conversation.create({
-    data: {
-      id: chat.conversationId,
-      accountId: input.accountId,
-      contactId: contact.id,
-      channel: 'whatsapp',
-      inboxId: targetInboxId,
-      queue: chat.isGroup ? 'Grupos' : 'Geral',
-      status: 'aberta',
-      statusLabel: 'Em andamento',
-      priority: 'media',
-      unreadCount: fromMe ? 0 : 1,
-      lastMessagePreview: preview,
-      lastMessageAt: message.time,
-      lastActivityAt: at,
-      lastInboundAt: fromMe ? null : nowIso(at),
-      channelThreadId: chat.jid,
-      protocols: asJson([
-        {
-          code: `#AT-${Math.floor(10000 + Math.random() * 90000)}`,
-          date: at.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }),
-          status: 'Em andamento',
-        },
-      ]),
-      messages: {
-        create: {
-          id: message.id,
-          author: message.author,
-          authorName: message.authorName ?? null,
-          contentType: message.content.type,
-          content: asJson(message.content),
-          time: message.time,
-          createdAt: at,
-          deliveryStatus: message.deliveryStatus ?? null,
-          isPrivate: message.isPrivate,
-          externalId: message.externalId ?? null,
-          origin: message.origin ?? null,
-        },
-      },
-    },
-  });
-
-  await publish(input.accountId, 'new_conversation', chat.conversationId, message);
+  if (!input.silent) {
+    await publish(input.accountId, 'new_message', chat.conversationId, message, targetInboxId);
+  }
 };
 
 /** Recibo de entrega/leitura do canal. */

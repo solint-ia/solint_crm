@@ -57,6 +57,10 @@ interface UseInboxParams {
     contactId: string;
     labelIds: readonly string[];
   }) => Promise<{ ok: boolean; error?: string }>;
+  readonly moveInbox?: (input: {
+    conversationId: string;
+    inboxId: string;
+  }) => Promise<{ ok: boolean; error?: string }>;
   /** Conversa aberta ao carregar — vem da URL em /conversas/[id]. */
   readonly initialSelectedId?: string;
 }
@@ -96,6 +100,7 @@ export function useInbox({
   sendTemplate,
   sendMedia,
   setContactLabels,
+  moveInbox,
   initialSelectedId,
 }: UseInboxParams) {
   const [conversations, setConversations] = useState<readonly Conversation[]>(initialConversations);
@@ -421,6 +426,27 @@ export function useInbox({
     [selected, setContactLabels, optimistic],
   );
 
+  /**
+   * Move a conversa de caixa.
+   *
+   * Sem atualização otimista de propósito: a mudança pode **desatribuir** o
+   * responsável — o servidor decide isso conferindo se ele alcança a caixa de
+   * destino —, e adivinhar esse resultado na tela mostraria um estado que pode
+   * não se confirmar. O evento de tempo real traz a conversa já resolvida.
+   */
+  const handleMoveInbox = useCallback(
+    (inboxId: string) => {
+      if (!selected || !moveInbox) return;
+      setError(undefined);
+      const conversationId = selected.id;
+      startTransition(async () => {
+        const result = await moveInbox({ conversationId, inboxId });
+        if (!result.ok) setError(result.error);
+      });
+    },
+    [selected, moveInbox],
+  );
+
   const handleSendTemplate = useCallback(
     (templateId: string, values: readonly string[]) => {
       if (!selected || !sendTemplate) return;
@@ -475,6 +501,7 @@ export function useInbox({
     setLabels: handleSetLabels,
     setContactLabels: handleSetContactLabels,
     sendTemplate: handleSendTemplate,
+    moveInbox: handleMoveInbox,
     sendMedia: handleSendMedia,
   };
 }

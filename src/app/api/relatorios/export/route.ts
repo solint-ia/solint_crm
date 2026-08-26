@@ -42,7 +42,7 @@ export async function GET(request: Request) {
   const period = parsePeriod(url.searchParams.get('periodo') ?? undefined);
   const tab: ExportTab = parseOneOf(url.searchParams.get('aba') ?? undefined, TABS, 'conversas');
 
-  const report = await container.analytics.getReport(session.account.id, period);
+  const report = await container.analytics.getReport(session.account.id, period, session.inboxAccess);
 
   let csv: string;
 

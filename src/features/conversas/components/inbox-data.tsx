@@ -1,4 +1,4 @@
-import { can } from '@/core/domain/user';
+import { can, canSeeInbox } from '@/core/domain/user';
 import { AccessDenied } from '@/components/layout/access-denied';
 import { container } from '@/infrastructure/container';
 import {
@@ -6,6 +6,7 @@ import {
   changeConversationPriorityAction,
   changeConversationStatusAction,
   markConversationReadAction,
+  moveConversationToInboxAction,
   sendMediaAction,
   sendMessageAction,
   sendTemplateAction,
@@ -33,7 +34,7 @@ export async function InboxData({ selectedId }: { readonly selectedId?: string }
     container.useCases.listConversations({
       accountId: session.account.id,
       currentUserId: session.user.id,
-      filter: { scope: 'todas' },
+      filter: { scope: 'todas', inboxAccess: session.inboxAccess },
     }),
     container.settings.get(session.account.id),
     container.campaigns.listTemplates(session.account.id),
@@ -44,6 +45,13 @@ export async function InboxData({ selectedId }: { readonly selectedId?: string }
       conversations={conversations}
       currentUserId={session.user.id}
       currentUserName={session.user.name}
+      // Só as caixas que esta pessoa alcança. `settings.connections` traz todas
+      // as da conta; oferecer no menu de mover uma caixa fora do alcance seria
+      // propor uma ação que o servidor recusa.
+      inboxes={settings.connections
+        .filter((connection) => canSeeInbox(session, connection.id))
+        .map((connection) => ({ id: connection.id, name: connection.name }))}
+      moveInbox={moveConversationToInboxAction}
       catalog={{ members: settings.members, labels: settings.labels, templates }}
       cannedResponses={settings.cannedResponses}
       sendMessage={sendMessageAction}

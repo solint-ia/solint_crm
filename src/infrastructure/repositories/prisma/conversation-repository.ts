@@ -8,6 +8,7 @@ import type { Contact } from '@/core/domain/contact';
 import type { Label } from '@/core/domain/label';
 import { previewOfMessage, type Message } from '@/core/domain/message';
 import { NotFoundError, type Id } from '@/core/domain/shared';
+import type { InboxAccess } from '@/core/domain/user';
 import type {
   Assignee,
   ConversationRepository,
@@ -26,26 +27,54 @@ const STATUS_LABELS: Readonly<Record<ConversationStatus, string>> = {
   espera: 'Em espera',
 };
 
+/**
+ * Recorte por caixa de entrada, em SQL.
+ *
+ * Filtrar em memória depois de carregar tudo funcionaria e seria errado por
+ * dois motivos: traria do banco conversa que quem pediu não pode ver — e basta
+ * um `console.log` distraído para ela aparecer — e carregaria a timeline inteira
+ * de cada uma para depois jogar fora.
+ *
+ * Lista vazia devolve `in: []`, que não casa com nada. É o resultado correto
+ * para quem não participa de nenhuma equipe: não vê conversa nenhuma.
+ */
+const inboxScope = (access: InboxAccess) =>
+  access === 'todas' ? {} : { inboxId: { in: [...access] } };
+
 export class PrismaConversationRepository implements ConversationRepository {
   async list(
     accountId: Id,
     _currentUserId: Id,
-    _filter: ConversationFilter,
+    filter: ConversationFilter,
   ): Promise<readonly Conversation[]> {
     // A filtragem fina vive no domínio (`matchesScope`, filtros da caixa) e é
     // aplicada sobre esta lista. Ordenar aqui garante que a caixa já chegue na
-    // ordem certa mesmo antes de o cliente reordenar.
+    // ordem certa mesmo antes de o cliente reordenar. O recorte por caixa é a
+    // exceção: é autorização, e autorização não se aplica depois.
     const rows = await prisma.conversation.findMany({
-      where: { accountId },
+      where: { accountId, ...inboxScope(filter.inboxAccess) },
       include: CONVERSATION_INCLUDE,
       orderBy: { lastActivityAt: 'desc' },
     });
     return rows.map(conversationRow);
   }
 
-  async findById(accountId: Id, conversationId: Id): Promise<Conversation | null> {
+  /**
+   * Uma conversa pelo id.
+   *
+   * O `inboxAccess` não é enfeite: esta é a consulta que atende
+   * `/conversas/[id]`, e sem ela bastaria digitar o id na URL para abrir o
+   * atendimento de um setor a que a pessoa não tem acesso. Fora do alcance,
+   * responde `null` — e a tela mostra 404, que é a resposta certa: existir ou
+   * não existir é informação que ela também não deveria ter.
+   */
+  async findById(
+    accountId: Id,
+    conversationId: Id,
+    inboxAccess: InboxAccess,
+  ): Promise<Conversation | null> {
     const row = await prisma.conversation.findFirst({
-      where: { id: conversationId, accountId },
+      where: { id: conversationId, accountId, ...inboxScope(inboxAccess) },
       include: CONVERSATION_INCLUDE,
     });
     return row ? conversationRow(row) : null;
@@ -163,6 +192,61 @@ export class PrismaConversationRepository implements ConversationRepository {
       assigneeId: assignee?.id ?? null,
       assigneeName: assignee?.name ?? null,
     });
+  }
+
+  async moveToInbox(
+    accountId: Id,
+    conversationId: Id,
+    targetInboxId: Id,
+    options: { readonly keepAssignee: boolean },
+  ): Promise<Conversation> {
+    // A caixa de destino precisa ser desta conta. Sem esta conferência, um id
+    // de caixa de outra empresa moveria a conversa para fora do inquilino — ela
+    // sumiria da tela de todo mundo aqui e apareceria na de lá.
+    const inbox = await prisma.inbox.findFirst({
+      where: { id: targetInboxId, accountId },
+      select: { id: true },
+    });
+    if (!inbox) throw new NotFoundError('Caixa de entrada', targetInboxId);
+
+    return this.patch(accountId, conversationId, {
+      inboxId: targetInboxId,
+      ...(options.keepAssignee ? {} : { assigneeId: null, assigneeName: null }),
+    });
+  }
+
+  async userReachesInbox(accountId: Id, userId: Id, inboxId: Id): Promise<boolean> {
+    // Papel com `caixas:todas` alcança tudo, e é preciso perguntar isso pelo
+    // vínculo desta conta: o papel da pessoa em outra empresa não vale aqui.
+    const membership = await prisma.membership.findUnique({
+      where: { userId_accountId: { userId, accountId } },
+      select: { roleSlug: true },
+    });
+    if (!membership) return false;
+
+    const role = await prisma.role.findUnique({
+      where: { accountId_slug: { accountId, slug: membership.roleSlug } },
+      select: { permissions: true },
+    });
+    const permissions = Array.isArray(role?.permissions) ? (role.permissions as string[]) : [];
+    if (permissions.includes('caixas:todas')) return true;
+
+    // Conta sem equipe com caixa vinculada não restringe ninguém — a mesma
+    // regra que `resolveInboxAccess` aplica na sessão. Divergir aqui faria a
+    // conversa perder o dono numa conta que sequer usa equipes.
+    const comCaixa = await prisma.team.count({
+      where: { accountId, teamInboxes: { some: {} } },
+    });
+    if (comCaixa === 0) return true;
+
+    const alcance = await prisma.team.count({
+      where: {
+        accountId,
+        teamMembers: { some: { userId } },
+        teamInboxes: { some: { inboxId } },
+      },
+    });
+    return alcance > 0;
   }
 
   async setLabels(

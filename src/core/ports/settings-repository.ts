@@ -123,14 +123,21 @@ export interface SettingsRepository {
   ): Promise<CustomAttributeDefinition>;
   deleteCustomAttribute(accountId: Id, attributeId: Id): Promise<void>;
 
-  createTeam(
-    accountId: Id,
-    draft: {
-      name: string;
-      color?: string;
-      members?: readonly string[];
-      inboxes?: readonly string[];
-    },
-  ): Promise<Team>;
+  createTeam(accountId: Id, draft: TeamDraft): Promise<Team>;
+  updateTeam(accountId: Id, teamId: Id, draft: TeamDraft): Promise<Team>;
   deleteTeam(accountId: Id, teamId: Id): Promise<void>;
+}
+
+/**
+ * Rascunho de equipe.
+ *
+ * `inboxIds` e `memberIds` são ids — nunca nomes. O campo já guardou nome de
+ * caixa, e nome não serve para autorizar acesso: renomear a caixa cortaria em
+ * silêncio quem dependia dela.
+ */
+export interface TeamDraft {
+  readonly name: string;
+  readonly color?: string;
+  readonly memberIds?: readonly string[];
+  readonly inboxIds?: readonly string[];
 }

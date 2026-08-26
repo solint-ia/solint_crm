@@ -28,7 +28,7 @@ export default async function ConversaPage({
   const session = await container.session.getCurrentSession();
   if (!can(session, 'conversas:ler')) return <AccessDenied permission="conversas:ler" />;
 
-  const conversation = await container.conversations.findById(session.account.id, id);
+  const conversation = await container.conversations.findById(session.account.id, id, session.inboxAccess);
   if (!conversation) notFound();
 
   return (

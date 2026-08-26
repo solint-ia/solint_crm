@@ -78,6 +78,25 @@ export interface ConversationEventPayload {
  * banco buscar o resto. A leitura acontece onde o leitor está, que é onde ela
  * deveria acontecer desde o início.
  */
+/**
+ * Garante que o evento diga de qual caixa é.
+ *
+ * O `inboxId` deixou de ser informação decorativa: é por ele que a rota de SSE
+ * decide se este evento pode chegar a quem está com a tela aberta — uma pessoa
+ * que atende só a Recepção não pode ver aparecer, ao vivo, uma conversa da
+ * Cobrança. Vários emissores não o preenchiam por não precisarem dele antes.
+ *
+ * Normalizar aqui, e não em cada emissor, é o que impede que o próximo lugar a
+ * publicar um evento reabra o vazamento por esquecimento. Quando o payload traz
+ * a conversa, a caixa está lá dentro; quando não traz nem uma coisa nem outra,
+ * o evento segue sem `inboxId` e é o consumidor que recusa.
+ */
+const withInboxId = (payload: ConversationEventPayload): ConversationEventPayload => {
+  if (payload.inboxId) return payload;
+  const inboxId = (payload.conversation as { inboxId?: string } | undefined)?.inboxId;
+  return inboxId ? { ...payload, inboxId } : payload;
+};
+
 const thin = (payload: ConversationEventPayload) => ({
   type: payload.type,
   accountId: payload.accountId,
@@ -175,8 +194,9 @@ class WhatsAppEventBus extends EventEmitter {
    * de o evento caber no `NOTIFY` sem depender do tamanho da conversa.
    */
   emitConversation(payload: ConversationEventPayload) {
-    this.emitLocal('conversation', payload);
-    postgresPubSub.publish(CHANNELS.CONVERSATIONS, thin(payload)).catch((err) => {
+    const completo = withInboxId(payload);
+    this.emitLocal('conversation', completo);
+    postgresPubSub.publish(CHANNELS.CONVERSATIONS, thin(completo)).catch((err) => {
       console.warn('[WhatsAppEventBus] Falha ao publicar conversa no Postgres:', err);
     });
   }

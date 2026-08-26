@@ -1,3 +1,5 @@
+import type { Conversation } from '@/core/domain/conversation';
+import { canSeeInbox } from '@/core/domain/user';
 import { container } from '@/infrastructure/container';
 import {
   waEventBus,
@@ -5,6 +7,18 @@ import {
 } from '@/infrastructure/whatsapp/whatsapp-events';
 
 export const dynamic = 'force-dynamic';
+
+/**
+ * De qual caixa é este evento.
+ *
+ * Duas origens porque os emissores diferem: alguns declaram `inboxId` na raiz
+ * do evento, outros trazem a conversa inteira (reidratada do banco no processo
+ * do site) e a caixa está dentro dela. Ler as duas evita depender de todo
+ * emissor lembrar do campo — e o que não tiver nenhuma das duas é barrado por
+ * `canSeeInbox`.
+ */
+const inboxIdOf = (payload: ConversationEventPayload): string | undefined =>
+  payload.inboxId ?? (payload.conversation as Conversation | undefined)?.inboxId;
 
 export async function GET(request: Request) {
   // Sem sessão não há conta, e sem conta não há como filtrar: recusar é a única
@@ -24,6 +38,16 @@ export async function GET(request: Request) {
       const onConversationUpdate = (payload: ConversationEventPayload) => {
         // O barramento é do processo, não da conta: o filtro é aqui.
         if (payload.accountId !== accountId) return;
+
+        // Conta certa não basta: dentro dela, cada pessoa alcança só as caixas
+        // das suas equipes. Sem este filtro, uma conversa da Cobrança apareceria
+        // ao vivo na tela de quem só atende a Recepção — e a lista, que já é
+        // recortada no banco, seria contornada pelo tempo real.
+        //
+        // O `inboxId` vem do próprio evento; quando não vem, `canSeeInbox`
+        // recusa. Deixar passar o que não se sabe identificar seria escolher o
+        // vazamento em vez do evento perdido.
+        if (!canSeeInbox(session, inboxIdOf(payload))) return;
         try {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
         } catch {

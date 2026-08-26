@@ -54,6 +54,65 @@ import {
 } from '../wa-format';
 
 
+/**
+ * Teto da janela de silêncio da drenagem.
+ *
+ * Só existe para o caso de o aviso de fim nunca chegar. Passado esse tempo a
+ * janela fecha sozinha, porque uma janela presa aberta faria as mensagens
+ * seguintes pararem de aparecer em tempo real — um defeito pior que o que ela
+ * conserta.
+ */
+const DRAIN_MAX_MS = 90_000;
+
+/**
+ * Limitador de concorrência mínimo.
+ *
+ * Uma fila de espera e um contador — não vale uma dependência nova. Quem chama
+ * recebe uma promessa que só resolve quando houver vaga, e a vaga é devolvida
+ * no `finally`, inclusive quando a tarefa falha.
+ */
+const createLimiter = (max: number) => {
+  let running = 0;
+  const waiting: (() => void)[] = [];
+  const idleWaiters: (() => void)[] = [];
+
+  const release = () => {
+    running -= 1;
+    waiting.shift()?.();
+    if (running === 0 && waiting.length === 0) {
+      for (const resolve of idleWaiters.splice(0)) resolve();
+    }
+  };
+
+  return {
+    run: async <T>(task: () => Promise<T>): Promise<T> => {
+      if (running >= max) {
+        await new Promise<void>((resolve) => waiting.push(resolve));
+      }
+      running += 1;
+      try {
+        return await task();
+      } finally {
+        release();
+      }
+    },
+
+    /**
+     * Resolve quando nada mais estiver em andamento.
+     *
+     * Necessário para fechar a drenagem sem mentir: o aviso de fim do WhatsApp
+     * chega quando *ele* terminou de entregar, não quando *nós* terminamos de
+     * gravar. Anunciar nesse instante publicaria um estado em que as últimas
+     * mensagens ainda não estão no banco, e quem recarregasse a conversa a
+     * partir do evento a veria incompleta.
+     */
+    idle: (): Promise<void> =>
+      running === 0 && waiting.length === 0
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => idleWaiters.push(resolve)),
+  };
+};
+
 export class WhatsAppSession {
   readonly inboxId: string;
   readonly accountId: string;
@@ -89,6 +148,41 @@ export class WhatsAppSession {
    * que separa "a mensagem não chegou" de "chegou e não pôde ser lida".
    */
   private readonly logger = pino({ level: baileysLogLevel() });
+
+  /**
+   * Estado da drenagem da fila represada.
+   *
+   * Ao reconectar, o WhatsApp entrega de uma vez tudo o que reteve enquanto o
+   * socket esteve fora. O Baileys processa esses nós **em série** (ver
+   * `Utils/offline-node-processor.js`) e emite um `messages.upsert` por
+   * mensagem — não um evento grande com várias.
+   *
+   * Enquanto isso corre, anunciar mensagem por mensagem faria a caixa de
+   * entrada se redesenhar centenas de vezes, o que aparece na tela como um
+   * carregamento lento e progressivo. As mensagens são gravadas caladas e, ao
+   * final, cada conversa afetada é anunciada uma única vez — já no estado
+   * final.
+   */
+  private drain: {
+    active: boolean;
+    closing: boolean;
+    count: number;
+    startedAt: number;
+    touched: Set<string>;
+    timer: NodeJS.Timeout | null;
+  } = { active: false, closing: false, count: 0, startedAt: 0, touched: new Set(), timer: null };
+
+  /**
+   * Teto de mensagens processadas ao mesmo tempo.
+   *
+   * O emissor do Baileys não aguarda um listener assíncrono, então uma fila
+   * represada dispara nossos handlers todos de uma vez, sem limite. Cada um faz
+   * várias idas ao Postgres e o pool tem dez conexões: sem teto, eles disputam
+   * entre si e ainda atrasam as leituras de chave de que o próprio Baileys
+   * precisa para decifrar a mensagem seguinte. Limitar aqui deixa o conjunto
+   * mais rápido, não mais lento.
+   */
+  private readonly limiter = createLimiter(5);
 
   constructor(inboxId: string, accountId: string) {
     this.inboxId = inboxId;
@@ -314,11 +408,19 @@ export class WhatsAppSession {
         }
       }
 
+      // O WhatsApp avisa quando terminou de entregar o que reteve enquanto
+      // estivemos fora. É o sinal para anunciar de uma vez o que foi gravado
+      // calado durante a drenagem.
+      if (update.receivedPendingNotifications) {
+        void this.finishDrain('fim da fila represada');
+      }
+
       if (connection === 'open') {
         this.isInitializing = false;
         this.isAuthenticated = true;
         this.qrAttempts = 0;
         this.retryCount = 0;
+        this.beginDrain();
 
         const userJid = this.socket?.user?.id ? jidNormalizedUser(this.socket.user.id) : undefined;
 
@@ -352,8 +454,12 @@ export class WhatsAppSession {
 
     this.socket.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify' && type !== 'append') return;
+      // O `await` aqui não serializa a fila represada: o Baileys emite um
+      // evento por mensagem, então `messages` quase sempre tem um item só.
+      // Quem controla o paralelismo real — entre invocações deste listener,
+      // que o emissor do Baileys não aguarda — é o limitador.
       for (const msg of messages) {
-        await this.handleIncomingMessage(msg);
+        await this.limiter.run(() => this.handleIncomingMessage(msg));
       }
     });
 
@@ -367,6 +473,81 @@ export class WhatsAppSession {
         }
       }
     });
+  }
+
+  /**
+   * Abre a janela de silêncio ao conectar.
+   *
+   * Tudo que o WhatsApp reteve enquanto estivemos fora chega logo depois do
+   * `open`. Não há como saber de antemão se são zero ou quinhentas mensagens,
+   * então a janela abre sempre e fecha no aviso do servidor.
+   */
+  private beginDrain(): void {
+    if (this.drain.timer) clearTimeout(this.drain.timer);
+
+    // Rede de segurança: se o aviso de fim não vier — servidor que não o envia,
+    // conexão que cai no meio —, a janela não pode ficar aberta para sempre,
+    // ou as mensagens seguintes deixariam de aparecer na tela em tempo real.
+    const timer = setTimeout(() => void this.finishDrain('tempo limite da janela'), DRAIN_MAX_MS);
+    timer.unref?.();
+
+    this.drain = {
+      active: true,
+      closing: false,
+      count: 0,
+      startedAt: Date.now(),
+      touched: new Set(),
+      timer,
+    };
+  }
+
+  /**
+   * Fecha a janela e anuncia o resultado.
+   *
+   * Um evento por **conversa afetada**, não por mensagem: numa fila de
+   * quinhentas mensagens de vinte conversas, são vinte avisos em vez de
+   * quinhentos, e cada um já carrega o estado final. O payload leva só
+   * identificadores; quem recebe do outro lado do `NOTIFY` carrega a conversa.
+   */
+  private async finishDrain(motivo: string): Promise<void> {
+    if (!this.drain.active || this.drain.closing) return;
+    // O aviso do servidor e o tempo limite podem chegar os dois; e entre a
+    // espera abaixo e a reinicialização do estado existe uma janela em que uma
+    // segunda chamada entraria de novo.
+    this.drain.closing = true;
+
+    // As gravações ainda em voo precisam terminar antes do anúncio — senão o
+    // evento descreveria uma conversa que ainda não está inteira no banco.
+    await this.limiter.idle();
+
+    const { count, startedAt, touched } = this.drain;
+    if (this.drain.timer) clearTimeout(this.drain.timer);
+    this.drain = {
+      active: false,
+      closing: false,
+      count: 0,
+      startedAt: 0,
+      touched: new Set(),
+      timer: null,
+    };
+
+    if (count > 0) {
+      console.log(
+        `[WhatsAppSession ${this.inboxId}] Fila represada drenada: ${count} mensagem(ns) em ` +
+          `${touched.size} conversa(s), ${Date.now() - startedAt}ms (${motivo}).`,
+      );
+    } else {
+      waLog.debug(`[sessão ${this.inboxId}] Nenhuma mensagem represada (${motivo}).`);
+    }
+
+    for (const conversationId of touched) {
+      waEventBus.emitConversation({
+        type: 'conversation_updated',
+        accountId: this.accountId,
+        conversationId,
+        inboxId: this.inboxId,
+      });
+    }
   }
 
   private async handleIncomingMessage(msg: WAMessage): Promise<void> {
@@ -410,6 +591,15 @@ export class WhatsAppSession {
       this.lastInboundKey.set(chat.conversationId, msg.key);
     }
 
+    // Durante a drenagem a gravação é calada e a conversa entra na lista do
+    // anúncio final. Fora dela, cada mensagem é anunciada na hora — é disso que
+    // o tempo real depende.
+    const draining = this.drain.active;
+    if (draining) {
+      this.drain.count += 1;
+      this.drain.touched.add(chat.conversationId);
+    }
+
     const medir = waLog.timer(`[sessão ${this.inboxId}] commitMessage`);
     await commitMessage({
       accountId: this.accountId,
@@ -420,6 +610,7 @@ export class WhatsAppSession {
       preview: decoded.preview,
       at,
       fromMe,
+      ...(draining ? { silent: true } : {}),
     });
     medir(`${fromMe ? 'saída' : 'entrada'} em ${chat.conversationId}`);
 
@@ -728,6 +919,10 @@ export class WhatsAppSession {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    // Fecha a janela de silêncio antes de sair: o que foi gravado calado ainda
+    // não foi anunciado, e desligar sem isso deixaria as telas abertas sem
+    // saber das mensagens que acabaram de entrar.
+    await this.finishDrain('sessão encerrada');
     this.teardownSocket();
     this.isAuthenticated = false;
     this.isInitializing = false;

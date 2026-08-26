@@ -154,7 +154,6 @@ export async function signupAction(input: unknown): Promise<AuthActionResult> {
         accountId,
         roleSlug: 'administrador',
         availability: 'disponivel',
-        teams: asJson([]),
       },
     });
     await tx.accountSettings.create({

@@ -99,8 +99,9 @@ model User {
   authSessions   AuthSession[]
   conversations  Conversation[]
   notifications  Notification[]
-  assignedTasks  Task[]         @relation("TaskAssignee")
-  createdInvites Invite[]       @relation("InviteCreator")
+  assignedTasks   Task[]       @relation("TaskAssignee")
+  createdInvites  Invite[]     @relation("InviteCreator")
+  teamMemberships TeamMember[]
 }
 
 /// Vínculo entre uma pessoa e uma conta — "este usuário, neste workspace".
@@ -124,8 +125,6 @@ model Membership {
   /// exclusão do papel nem apagar o vínculo em cascata.
   roleSlug     String
   availability String @default("disponivel")
-  /// JSON: string[]
-  teams        Json   @default("[]")
 
   createdAt DateTime @default(now())
 
@@ -450,6 +449,7 @@ model Inbox {
   waConnection  WhatsAppConnection?
   campaigns     Campaign[]
   mediaObjects  MediaObject[]
+  teamInboxes   TeamInbox[]
 
   @@index([accountId])
 }
@@ -586,15 +586,54 @@ model Team {
   name        String
   description String?
   color       String
-  /// JSON: string[] (IDs de usuários membros)
-  members     Json     @default("[]")
-  /// JSON: string[] (IDs de caixas vinculadas)
-  inboxIds    Json     @default("[]")
   createdAt   DateTime @default(now())
 
-  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  account     Account      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  teamMembers TeamMember[]
+  teamInboxes TeamInbox[]
 
   @@index([accountId])
+}
+
+/// Pessoa que pertence a uma equipe.
+///
+/// Substituiu dois campos `Json` que guardavam a mesma relação em direções
+/// opostas: `Team.members` (ids de usuário) e `Membership.teams` (nomes de
+/// equipe). Duas fontes para o mesmo fato saem de sincronia — atualiza-se uma e
+/// esquece-se a outra —, e quando o fato é "quem alcança esta caixa de
+/// entrada", sair de sincronia significa mostrar conversa de cliente para quem
+/// não deveria vê-la.
+///
+/// Sem `accountId` de propósito: o vínculo é escopado pelo `Team`, que já o tem.
+/// Duplicá-lo aqui criaria uma terceira cópia do mesmo fato — exatamente o que
+/// esta tabela existe para eliminar.
+model TeamMember {
+  teamId String
+  userId String
+
+  createdAt DateTime @default(now())
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([teamId, userId])
+  @@index([userId])
+}
+
+/// Caixa de entrada que uma equipe alcança.
+///
+/// É a tabela que decide o que cada pessoa enxerga na caixa de entrada. Uma
+/// caixa pode pertencer a várias equipes (a recepção e a gerência veem
+/// "Atendimento"), e uma pessoa em várias equipes enxerga a união das caixas.
+model TeamInbox {
+  teamId  String
+  inboxId String
+
+  team  Team  @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  inbox Inbox @relation(fields: [inboxId], references: [id], onDelete: Cascade)
+
+  @@id([teamId, inboxId])
+  @@index([inboxId])
 }
 
 model Webhook {
@@ -806,6 +845,9 @@ model Invite {
   accountId       String
   email           String
   roleSlug        String
+  /// JSON: string[] — equipes que o convidado assume ao aceitar. É aqui que o
+  /// gestor decide, no momento do convite, quais caixas a pessoa vai alcançar.
+  teamIds         Json      @default("[]")
   tokenHash       String    @unique
   invitedByUserId String
   expiresAt       DateTime

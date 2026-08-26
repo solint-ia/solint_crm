@@ -3,6 +3,7 @@ import type { Contact } from './contact';
 import type { Label } from './label';
 import type { Message, TimelineItem } from './message';
 import type { Id, IsoDateTime } from './shared';
+import type { InboxAccess } from './user';
 
 export const CONVERSATION_STATUSES = ['aberta', 'pendente', 'resolvida', 'espera'] as const;
 export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
@@ -75,6 +76,16 @@ export const isHsmWindowOpen = (
 export type InboxScope = 'minhas' | 'nao_atribuidas' | 'todas';
 
 export interface ConversationFilter {
+  /**
+   * Caixas que quem consulta alcança.
+   *
+   * **Obrigatório de propósito.** Poderia ser opcional com padrão `'todas'`, e
+   * aí bastaria uma chamada distraída para a lista voltar sem restrição — uma
+   * falha que não quebra nada, não aparece em teste de uma equipe só, e vaza
+   * conversa de outro setor. Sendo obrigatório, o compilador cobra a decisão em
+   * cada ponto de leitura.
+   */
+  readonly inboxAccess: InboxAccess;
   readonly scope: InboxScope;
   readonly status?: ConversationStatus | 'todas';
   readonly search?: string;

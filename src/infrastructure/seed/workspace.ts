@@ -13,6 +13,9 @@ const SUPERVISOR_PERMISSIONS: readonly Permission[] = [
   'conversas:ler',
   'conversas:responder',
   'conversas:transferir',
+  // Supervisor move atendimento entre setores; o agente, não. Reatribuir a um
+  // colega e empurrar para a fila da Cobrança são decisões de peso diferente.
+  'conversas:mover-caixa',
   'conversas:resolver',
   'contatos:ler',
   'contatos:escrever',
@@ -148,4 +151,6 @@ export const SESSION: Session = {
   account: ACCOUNTS[0] as Account,
   permissions: PERMISSIONS,
   availableAccounts: ACCOUNTS,
+  // Coerente com `permissions: PERMISSIONS`, que inclui `caixas:todas`.
+  inboxAccess: 'todas',
 };

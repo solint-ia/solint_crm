@@ -155,6 +155,9 @@ export const mediaStore = {
     if (!isSafeMediaId(id)) return false;
     if (fs.existsSync(pathsFor(id).bin)) return true;
     if (!isStorageConfigured()) return false;
+    // tenant-ok: existência física do arquivo, não entrega de conteúdo. Chamado
+    // só pelo worker para decidir se precisa baixar de novo — quem entrega ao
+    // navegador é `read`, e lá a posse é conferida.
     return (await prisma.mediaObject.count({ where: { id } })) > 0;
   },
 
@@ -224,13 +227,29 @@ export const mediaStore = {
    * conversas. O Storage é o que garante que a resposta existe mesmo quando o
    * disco foi trocado — ou quando quem gravou foi o outro processo.
    */
-  async read(id: string): Promise<StoredMedia | null> {
+  async read(id: string, scope?: { readonly accountId: string }): Promise<StoredMedia | null> {
     if (!isSafeMediaId(id)) return null;
+
+    // A posse é conferida **antes** do cache, não depois.
+    //
+    // O cache em disco não sabe de quem é o arquivo, então perguntar a ele
+    // primeiro entregaria a mídia de outra empresa sem passar por conferência
+    // nenhuma — bastava conhecer o id, que é o id da mensagem no WhatsApp.
+    // Quem não informa `scope` é código de servidor que já opera dentro de uma
+    // conta (o worker, ao enviar um anexo); quem atende requisição de navegador
+    // informa, sempre.
+    if (scope) {
+      const owned = await prisma.mediaObject.count({
+        where: { id, accountId: scope.accountId },
+      });
+      if (owned === 0) return null;
+    }
 
     const cached = await readCache(id);
     if (cached) return cached;
     if (!isStorageConfigured()) return null;
 
+    // tenant-ok: a posse já foi conferida acima, quando `scope` foi informado.
     const object = await prisma.mediaObject.findUnique({ where: { id } });
     if (!object) return null;
 

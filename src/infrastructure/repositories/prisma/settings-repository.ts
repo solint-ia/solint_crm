@@ -76,7 +76,9 @@ export class PrismaSettingsRepository implements SettingsRepository {
       prisma.inbox.findMany({ where: { accountId }, orderBy: { name: 'asc' } }),
       prisma.membership.findMany({
         where: { accountId },
-        include: { user: true },
+        // As equipes vêm junto: são desta conta (o `where` do `Team` garante) e
+        // buscá-las depois custaria uma ida ao banco por pessoa na tela.
+        include: { user: { include: { teamMemberships: { include: { team: true } } } } },
         orderBy: { user: { name: 'asc' } },
       }),
       prisma.role.findMany({ where: { accountId } }),
@@ -84,7 +86,11 @@ export class PrismaSettingsRepository implements SettingsRepository {
       prisma.knowledgeCategory.findMany({ where: { accountId }, orderBy: { order: 'asc' } }),
       prisma.knowledgeArticle.findMany({ where: { accountId }, orderBy: { title: 'asc' } }),
       prisma.accountSettings.findUnique({ where: { accountId } }),
-      prisma.team.findMany({ where: { accountId }, orderBy: { name: 'asc' } }),
+      prisma.team.findMany({
+        where: { accountId },
+        include: { teamMembers: true, teamInboxes: true },
+        orderBy: { name: 'asc' },
+      }),
       prisma.webhook.findMany({ where: { accountId }, orderBy: { name: 'asc' } }),
       prisma.apiToken.findMany({ where: { accountId }, orderBy: { createdAt: 'desc' } }),
       prisma.customAttributeDefinition.findMany({ where: { accountId }, orderBy: { order: 'asc' } }),
@@ -96,7 +102,17 @@ export class PrismaSettingsRepository implements SettingsRepository {
     return {
       automations: automations.map(automationRow),
       connections: connections.map(connectionRow),
-      members: members.map((row) => userRow(row.user, row)),
+      members: members.map((row) =>
+        userRow(
+          row.user,
+          row,
+          // Só as equipes desta conta: a mesma pessoa pode atender em outra
+          // empresa, e o nome da equipe de lá não tem o que fazer aqui.
+          row.user.teamMemberships
+            .filter((link) => link.team.accountId === accountId)
+            .map((link) => link.team.name),
+        ),
+      ),
       roles: roles.map((row): Role => ({
         id: row.id,
         accountId: row.accountId,
@@ -138,8 +154,10 @@ export class PrismaSettingsRepository implements SettingsRepository {
       teams: teams.map((t): Team => ({
         id: t.id,
         name: t.name,
-        memberCount: readJson<string[]>(t.members, []).length,
-        inboxes: readJson<string[]>(t.inboxIds, []),
+        color: t.color,
+        memberCount: t.teamMembers.length,
+        inboxIds: t.teamInboxes.map((link) => link.inboxId),
+        memberIds: t.teamMembers.map((link) => link.userId),
         businessHours: 'Seg a Sex, 08h às 18h',
       })),
       customAttributes: customAttributes.map((ca): CustomAttributeDefinition => ({
@@ -580,24 +598,105 @@ export class PrismaSettingsRepository implements SettingsRepository {
     draft: {
       name: string;
       color?: string;
-      members?: readonly string[];
-      inboxes?: readonly string[];
+      memberIds?: readonly string[];
+      inboxIds?: readonly string[];
     },
   ): Promise<Team> {
-    const row = await prisma.team.create({
-      data: {
-        accountId,
-        name: draft.name,
-        color: draft.color ?? '#3B82F6',
-        members: asJson(draft.members ?? []),
-        inboxIds: asJson(draft.inboxes ?? []),
-      },
+    return this.saveTeam(accountId, draft);
+  }
+
+  async updateTeam(
+    accountId: Id,
+    teamId: Id,
+    draft: {
+      name: string;
+      color?: string;
+      memberIds?: readonly string[];
+      inboxIds?: readonly string[];
+    },
+  ): Promise<Team> {
+    return this.saveTeam(accountId, draft, teamId);
+  }
+
+  /**
+   * Cria ou atualiza a equipe junto com seus vínculos, numa transação.
+   *
+   * Os ids recebidos **não são confiáveis** — vêm de um formulário. Antes de
+   * gravar, cada um é conferido contra a própria conta: um id de caixa de outro
+   * inquilino gravado aqui viraria acesso a conversas de outra empresa, que é
+   * exatamente o risco que esta tabela existe para controlar.
+   *
+   * Vínculos são substituídos por inteiro (apaga e regrava) em vez de
+   * reconciliados um a um: são poucas linhas, e "o que está na tela é o que
+   * fica" é mais fácil de garantir do que um diff.
+   */
+  private async saveTeam(
+    accountId: Id,
+    draft: {
+      name: string;
+      color?: string;
+      memberIds?: readonly string[];
+      inboxIds?: readonly string[];
+    },
+    teamId?: Id,
+  ): Promise<Team> {
+    const [inboxesDaConta, membrosDaConta] = await Promise.all([
+      prisma.inbox.findMany({ where: { accountId }, select: { id: true } }),
+      prisma.membership.findMany({ where: { accountId }, select: { userId: true } }),
+    ]);
+
+    const inboxIds = (draft.inboxIds ?? []).filter((id) =>
+      inboxesDaConta.some((inbox) => inbox.id === id),
+    );
+    const memberIds = (draft.memberIds ?? []).filter((id) =>
+      membrosDaConta.some((member) => member.userId === id),
+    );
+
+    const row = await prisma.$transaction(async (tx) => {
+      if (teamId) {
+        const exists = await tx.team.findFirst({
+          where: { id: teamId, accountId },
+          select: { id: true },
+        });
+        if (!exists) throw new NotFoundError('Equipe', teamId);
+
+        await tx.team.update({
+          where: { id: teamId, accountId },
+          data: { name: draft.name, ...(draft.color ? { color: draft.color } : {}) },
+        });
+        await tx.teamInbox.deleteMany({ where: { teamId } });
+        await tx.teamMember.deleteMany({ where: { teamId } });
+      }
+
+      const team = teamId
+        ? { id: teamId, name: draft.name, color: draft.color ?? '#3B82F6' }
+        : await tx.team.create({
+            data: { accountId, name: draft.name, color: draft.color ?? '#3B82F6' },
+          });
+
+      if (inboxIds.length > 0) {
+        await tx.teamInbox.createMany({
+          data: inboxIds.map((inboxId) => ({ teamId: team.id, inboxId })),
+          skipDuplicates: true,
+        });
+      }
+      if (memberIds.length > 0) {
+        await tx.teamMember.createMany({
+          data: memberIds.map((userId) => ({ teamId: team.id, userId })),
+          skipDuplicates: true,
+        });
+      }
+
+      return team;
     });
+
     return {
       id: row.id,
       name: row.name,
-      memberCount: (draft.members ?? []).length,
-      inboxes: draft.inboxes ?? [],
+      color: row.color,
+      memberCount: memberIds.length,
+      inboxIds,
+      memberIds,
       businessHours: 'Seg a Sex, 08h às 18h',
     };
   }

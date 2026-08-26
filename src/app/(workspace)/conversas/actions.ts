@@ -53,7 +53,10 @@ async function applyDispatch(
     return { message: { ...message, deliveryStatus: 'enviando' } };
   }
 
-  return { message: { ...message, deliveryStatus: 'falha' }, ...(sent.error ? { error: sent.error } : {}) };
+  return {
+    message: { ...message, deliveryStatus: 'falha' },
+    ...(sent.error ? { error: sent.error } : {}),
+  };
 }
 
 /**
@@ -168,6 +171,7 @@ export async function markConversationReadAction(input: unknown): Promise<Action
   const conversation = await container.conversations.findById(
     session.account.id,
     parsed.data.conversationId,
+    session.inboxAccess,
   );
   if (!conversation) return { ok: false, error: 'Conversa não encontrada.' };
 
@@ -178,7 +182,11 @@ export async function markConversationReadAction(input: unknown): Promise<Action
   }
 
   // Os demais atendentes precisam ver que a conversa deixou de estar não lida.
-  const updated = await container.conversations.findById(session.account.id, conversation.id);
+  const updated = await container.conversations.findById(
+    session.account.id,
+    conversation.id,
+    session.inboxAccess,
+  );
   if (updated) {
     waEventBus.emitConversation({
       type: 'conversation_updated',
@@ -198,7 +206,11 @@ export async function markConversationReadAction(input: unknown): Promise<Action
 /** Depois de escrever, todo mundo precisa ver — inclusive quem não agiu. */
 const broadcast = async (conversationId: string) => {
   const session = await container.session.getCurrentSession();
-  const updated = await container.conversations.findById(session.account.id, conversationId);
+  const updated = await container.conversations.findById(
+    session.account.id,
+    conversationId,
+    session.inboxAccess,
+  );
   if (updated) {
     waEventBus.emitConversation({
       type: 'conversation_updated',
@@ -350,6 +362,7 @@ export async function sendTemplateAction(input: unknown): Promise<SendMessageRes
   const conversation = await container.conversations.findById(
     session.account.id,
     parsed.data.conversationId,
+    session.inboxAccess,
   );
 
   const result = await container.useCases.sendTemplate({
@@ -390,6 +403,7 @@ export async function sendTemplateAction(input: unknown): Promise<SendMessageRes
   const updated = await container.conversations.findById(
     session.account.id,
     parsed.data.conversationId,
+    session.inboxAccess,
   );
   waEventBus.emitConversation({
     type: 'new_message',
@@ -491,7 +505,11 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
   }
 
   const session = await container.session.getCurrentSession();
-  const conversation = await container.conversations.findById(session.account.id, conversationId);
+  const conversation = await container.conversations.findById(
+    session.account.id,
+    conversationId,
+    session.inboxAccess,
+  );
   if (!conversation) return { ok: false, error: 'Conversa não encontrada.' };
 
   // Anexo público fora da janela HSM é tão bloqueado quanto texto livre.
@@ -579,7 +597,11 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
     }
   }
 
-  const updated = await container.conversations.findById(session.account.id, conversationId);
+  const updated = await container.conversations.findById(
+    session.account.id,
+    conversationId,
+    session.inboxAccess,
+  );
   waEventBus.emitConversation({
     type: 'new_message',
     accountId: session.account.id,
@@ -590,4 +612,47 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
   });
 
   return dispatchError ? { ok: false, error: dispatchError, message } : { ok: true, message };
+}
+
+/* ==========================================================================
+   Mover o atendimento de caixa de entrada.
+   ========================================================================== */
+
+const moveInboxSchema = z.object({
+  conversationId: z.string().min(1).max(64),
+  inboxId: z.string().min(1).max(64),
+});
+
+/**
+ * Move a conversa para outra caixa.
+ *
+ * Toda a regra vive no caso de uso — inclusive a decisão de desatribuir quem
+ * não alcança a caixa de destino. Aqui só entra a validação da entrada e o
+ * anúncio: a conversa muda de lugar, e as telas abertas precisam saber.
+ *
+ * O evento carrega a conversa já atualizada; quem estiver com a caixa de origem
+ * aberta e não alcançar o destino simplesmente para de recebê-la — o filtro da
+ * rota de SSE cuida disso.
+ */
+export async function moveConversationToInboxAction(input: unknown): Promise<ActionResult> {
+  const parsed = moveInboxSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Dados inválidos para mover a conversa.' };
+
+  const session = await container.session.getCurrentSession();
+  const result = await container.useCases.moveConversationInbox({
+    session,
+    conversationId: parsed.data.conversationId,
+    targetInboxId: parsed.data.inboxId,
+  });
+  if (!result.ok) return { ok: false, error: result.error.message };
+
+  waEventBus.emitConversation({
+    type: 'conversation_updated',
+    accountId: session.account.id,
+    conversationId: parsed.data.conversationId,
+    inboxId: parsed.data.inboxId,
+    conversation: result.value,
+  });
+
+  return { ok: true };
 }

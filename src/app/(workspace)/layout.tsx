@@ -21,6 +21,7 @@ export default async function WorkspaceLayout({
   const session = await container.session.getCurrentSession();
   const conversations = await container.conversations.list(session.account.id, session.user.id, {
     scope: 'todas',
+    inboxAccess: session.inboxAccess,
   });
   const unreadCount = conversations.reduce(
     (total, conversation) => total + conversation.unreadCount,

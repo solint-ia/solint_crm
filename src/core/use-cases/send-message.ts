@@ -56,7 +56,7 @@ export const createSendMessage =
       return fail(new DomainError('A mensagem excede o limite de caracteres.', 'MESSAGE_TOO_LONG'));
     }
 
-    const conversation = await repository.findById(session.account.id, conversationId);
+    const conversation = await repository.findById(session.account.id, conversationId, session.inboxAccess);
     if (!conversation) {
       return fail(new DomainError('Conversa não encontrada.', 'NOT_FOUND'));
     }

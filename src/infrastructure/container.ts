@@ -10,6 +10,7 @@ import type { SettingsRepository } from '@/core/ports/settings-repository';
 import { createChangeConversationStatus } from '@/core/use-cases/change-conversation-status';
 import { createListContacts } from '@/core/use-cases/list-contacts';
 import { createListConversations } from '@/core/use-cases/list-conversations';
+import { createMoveConversationInbox } from '@/core/use-cases/move-conversation-inbox';
 import { createMoveDeal } from '@/core/use-cases/move-deal';
 import { createSendMessage } from '@/core/use-cases/send-message';
 import { createSendMedia, createSendTemplate } from '@/core/use-cases/send-rich-message';
@@ -47,6 +48,7 @@ export interface Container {
     readonly sendMessage: ReturnType<typeof createSendMessage>;
     readonly changeConversationStatus: ReturnType<typeof createChangeConversationStatus>;
     readonly assignConversation: ReturnType<typeof createAssignConversation>;
+    readonly moveConversationInbox: ReturnType<typeof createMoveConversationInbox>;
     readonly changeConversationPriority: ReturnType<typeof createChangeConversationPriority>;
     readonly setConversationLabels: ReturnType<typeof createSetConversationLabels>;
     readonly sendTemplate: ReturnType<typeof createSendTemplate>;
@@ -82,6 +84,7 @@ const buildContainer = (): Container => {
       sendMessage: createSendMessage(conversations),
       changeConversationStatus: createChangeConversationStatus(conversations),
       assignConversation: createAssignConversation(conversations),
+      moveConversationInbox: createMoveConversationInbox(conversations),
       changeConversationPriority: createChangeConversationPriority(conversations),
       setConversationLabels: createSetConversationLabels(conversations),
       sendTemplate: createSendTemplate(conversations),

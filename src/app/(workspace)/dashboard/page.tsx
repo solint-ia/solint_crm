@@ -32,7 +32,7 @@ export default async function DashboardPage({
   }
 
   const [overview, notifications] = await Promise.all([
-    container.analytics.getOverview(session.account.id, period),
+    container.analytics.getOverview(session.account.id, period, session.inboxAccess),
     container.notifications.list(session.account.id, session.user.id),
   ]);
 

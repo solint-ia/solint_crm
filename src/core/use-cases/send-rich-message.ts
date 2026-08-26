@@ -58,7 +58,7 @@ export const createSendTemplate =
       );
     }
 
-    const conversation = await repository.findById(session.account.id, conversationId);
+    const conversation = await repository.findById(session.account.id, conversationId, session.inboxAccess);
     if (!conversation) return fail(new DomainError('Conversa não encontrada.', 'NOT_FOUND'));
 
     const message: Message = {
@@ -106,7 +106,7 @@ export const createSendMedia =
       return fail(new DomainError('Sem permissão para responder conversas.', 'FORBIDDEN'));
     }
 
-    const conversation = await repository.findById(session.account.id, conversationId);
+    const conversation = await repository.findById(session.account.id, conversationId, session.inboxAccess);
     if (!conversation) return fail(new DomainError('Conversa não encontrada.', 'NOT_FOUND'));
 
     const message: Message = {

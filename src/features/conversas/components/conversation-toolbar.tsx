@@ -1,6 +1,6 @@
 'use client';
 
-import { Check, ChevronDown, Tag, UserPlus } from 'lucide-react';
+import { Check, ChevronDown, Inbox, Tag, UserPlus } from 'lucide-react';
 import type { WhatsAppTemplate } from '@/core/domain/campaign';
 import type { Conversation, Priority } from '@/core/domain/conversation';
 import { PRIORITIES } from '@/core/domain/conversation';
@@ -151,5 +151,65 @@ export function AssigneeButton({
         {conversation.assigneeName ?? 'Sem responsável'}
       </span>
     </button>
+  );
+}
+
+/**
+ * Mover o atendimento para outra caixa de entrada.
+ *
+ * Aparece só quando há mais de uma caixa ao alcance — com uma só, o menu seria
+ * uma escolha sem alternativa. Quando a pessoa responsável não atende a caixa
+ * de destino, o servidor a desatribui, e o aviso abaixo diz isso antes de o
+ * clique acontecer: uma conversa que perde o dono sem explicação vira suporte
+ * no dia seguinte.
+ */
+export function InboxMenu({
+  conversation,
+  inboxes,
+  onMove,
+}: {
+  readonly conversation: Conversation;
+  readonly inboxes: readonly { readonly id: string; readonly name: string }[];
+  readonly onMove: (inboxId: string) => void;
+}) {
+  if (inboxes.length < 2) return null;
+
+  const atual = inboxes.find((inbox) => inbox.id === conversation.inboxId);
+
+  return (
+    <Menu
+      label={`Caixa: ${atual?.name ?? 'atual'}`}
+      trigger={
+        <span className="inline-flex items-center gap-1 rounded-control border border-line px-2 py-1 text-meta font-semibold text-ink transition-colors hover:bg-surface-2">
+          <Inbox className="size-3 text-dim" />
+          {atual?.name ?? 'Caixa'}
+          <ChevronDown className="size-3 text-dim" />
+        </span>
+      }
+    >
+      {(close) => (
+        <>
+          <MenuHeader>Mover para a caixa</MenuHeader>
+          {inboxes.map((inbox) => (
+            <MenuItem
+              key={inbox.id}
+              selected={inbox.id === conversation.inboxId}
+              onClick={() => {
+                if (inbox.id !== conversation.inboxId) onMove(inbox.id);
+                close();
+              }}
+            >
+              {inbox.name}
+            </MenuItem>
+          ))}
+          {conversation.assigneeName ? (
+            <div className="border-t border-line-soft px-3 py-2 text-meta text-muted">
+              {conversation.assigneeName} deixa de ser responsável se não atender a caixa de
+              destino.
+            </div>
+          ) : null}
+        </>
+      )}
+    </Menu>
   );
 }

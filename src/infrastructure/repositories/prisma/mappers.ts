@@ -218,7 +218,19 @@ export const CONVERSATION_INCLUDE = {
  * numa conta e um agente em outra. O domínio continua vendo um objeto só — é a
  * fronteira fazendo o trabalho dela.
  */
-export const userRow = (row: DbUser, membership: DbMembership): User => ({
+export const userRow = (
+  row: DbUser,
+  membership: DbMembership,
+  /**
+   * Nomes das equipes da pessoa nesta conta.
+   *
+   * Vem de fora porque a relação agora mora em `TeamMember`, e este arquivo é
+   * de mapeamento puro — não consulta banco. Quem já carregou o vínculo passa a
+   * lista; quem não precisa dela omite e recebe vazio, que é o comportamento
+   * honesto para "não perguntei".
+   */
+  teams: readonly string[] = [],
+): User => ({
   id: row.id,
   accountId: membership.accountId,
   name: row.name,
@@ -226,7 +238,7 @@ export const userRow = (row: DbUser, membership: DbMembership): User => ({
   roleSlug: membership.roleSlug,
   avatarTone: row.avatarTone,
   availability: membership.availability as User['availability'],
-  teams: readJson<readonly string[]>(membership.teams, []),
+  teams,
   twoFactorEnabled: row.twoFactorEnabled,
   ...(row.signature ? { signature: row.signature } : {}),
   ...(row.lastActiveAt ? { lastActiveAt: row.lastActiveAt } : {}),

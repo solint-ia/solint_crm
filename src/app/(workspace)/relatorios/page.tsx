@@ -39,7 +39,7 @@ export default async function RelatoriosPage({
   // A rail ja esconde o item; sem esta checagem, a URL direta entraria.
   if (!can(session, 'relatorios:ler')) return <AccessDenied permission="relatorios:ler" />;
   const [report, notifications] = await Promise.all([
-    container.analytics.getReport(session.account.id, period),
+    container.analytics.getReport(session.account.id, period, session.inboxAccess),
     container.notifications.list(session.account.id, session.user.id),
   ]);
 

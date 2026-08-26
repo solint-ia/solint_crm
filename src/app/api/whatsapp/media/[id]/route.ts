@@ -43,7 +43,12 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 });
   }
 
-  const media = await mediaStore.read(id);
+  // Sessão válida diz *quem* é, não *de quem é o arquivo*. Sem o escopo abaixo,
+  // qualquer pessoa autenticada — de qualquer empresa — baixava a mídia de
+  // qualquer outra sabendo o id, que é o id da mensagem no WhatsApp. Mídia de
+  // conta alheia responde 404: existir ou não é informação que também não lhe
+  // pertence.
+  const media = await mediaStore.read(id, { accountId: session.account.id });
   if (!media) {
     return NextResponse.json({ ok: false, error: 'Mídia não encontrada' }, { status: 404 });
   }

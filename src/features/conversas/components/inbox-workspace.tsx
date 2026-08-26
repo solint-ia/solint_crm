@@ -67,6 +67,18 @@ interface InboxWorkspaceProps {
     contactId: string;
     labelIds: readonly string[];
   }) => Promise<{ ok: boolean; error?: string }>;
+  /**
+   * Caixas que a pessoa alcança.
+   *
+   * Vem escopada da sessão: são as caixas das equipes dela, não todas as da
+   * conta. É o que o menu de mover oferece como destino — oferecer uma caixa
+   * fora do alcance seria propor uma ação que o servidor recusaria.
+   */
+  readonly inboxes: readonly { readonly id: string; readonly name: string }[];
+  readonly moveInbox: (input: {
+    conversationId: string;
+    inboxId: string;
+  }) => Promise<{ ok: boolean; error?: string }>;
   readonly catalog: InboxCatalog;
   readonly cannedResponses: readonly CannedResponse[];
   readonly initialSelectedId?: string;
@@ -107,6 +119,7 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
     sendTemplate: props.sendTemplate,
     sendMedia: props.sendMedia,
     setContactLabels: props.setContactLabels,
+    moveInbox: props.moveInbox,
     initialSelectedId: props.initialSelectedId,
   });
 
@@ -298,6 +311,8 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
               pending={inbox.pending}
               currentUserId={props.currentUserId}
               catalog={props.catalog}
+              inboxes={props.inboxes}
+              onMoveInbox={inbox.moveInbox}
               cannedResponses={props.cannedResponses}
               onSend={inbox.send}
               onSendMedia={inbox.sendMedia}

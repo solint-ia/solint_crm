@@ -5,6 +5,7 @@ import { ARTICLE_STATUSES } from '@/core/domain/knowledge';
 import type { AssignmentMethod } from '@/core/domain/settings';
 import { can } from '@/core/domain/user';
 import { WEEKDAYS } from '@/core/domain/business-hours';
+import { createInvite } from '@/infrastructure/auth/invites';
 import { container } from '@/infrastructure/container';
 
 export interface ActionResult {
@@ -472,15 +473,15 @@ export async function deleteCustomAttributeAction(input: unknown): Promise<Actio
 
 // ---------------------------------------------------------------- Onda 3: Equipes
 
-const createTeamSchema = z.object({
+const teamSchema = z.object({
   name: z.string().trim().min(2).max(60),
   color: z.string().trim().optional(),
-  members: z.array(z.string()).optional(),
-  inboxes: z.array(z.string()).optional(),
+  memberIds: z.array(z.string().min(1).max(64)).max(200).optional(),
+  inboxIds: z.array(z.string().min(1).max(64)).max(50).optional(),
 });
 
 export async function createTeamAction(input: unknown): Promise<ActionResult> {
-  const parsed = createTeamSchema.safeParse(input);
+  const parsed = teamSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Nome da equipe inválido.' };
 
   try {
@@ -489,6 +490,23 @@ export async function createTeamAction(input: unknown): Promise<ActionResult> {
     return { ok: true };
   } catch (error) {
     return failureOf(error, 'Erro ao criar equipe.');
+  }
+}
+
+const updateTeamSchema = teamSchema.extend({ teamId: z.string().min(1).max(64) });
+
+export async function updateTeamAction(input: unknown): Promise<ActionResult> {
+  const parsed = updateTeamSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Dados inválidos para a equipe.' };
+
+  const { teamId, ...draft } = parsed.data;
+
+  try {
+    const session = await assertCanWrite();
+    await container.settings.updateTeam(session.account.id, teamId, draft);
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao salvar equipe.');
   }
 }
 
@@ -504,5 +522,84 @@ export async function deleteTeamAction(input: unknown): Promise<ActionResult> {
     return { ok: true };
   } catch (error) {
     return failureOf(error, 'Erro ao excluir equipe.');
+  }
+}
+
+/* ==========================================================================
+   Convites — como uma empresa ganha gente além de quem criou a conta.
+   ========================================================================== */
+
+const inviteSchema = z.object({
+  email: z.string().trim().toLowerCase().email('Informe um e-mail válido.'),
+  roleSlug: z.string().min(1).max(64),
+  teamIds: z.array(z.string().min(1).max(64)).max(50).optional(),
+});
+
+export interface InviteResult extends ActionResult {
+  /**
+   * Link de aceite.
+   *
+   * Devolvido **uma única vez**: o banco guarda só o hash do token. Se a pessoa
+   * perder o link, o caminho é emitir outro — não há como recuperar este.
+   */
+  readonly link?: string;
+  readonly expiresAt?: string;
+}
+
+/**
+ * Convida alguém para a conta.
+ *
+ * Aqui é onde os dois eixos de acesso são decididos de uma vez: o **papel** diz
+ * o que a pessoa pode fazer (`can`), e as **equipes** dizem quais caixas ela
+ * alcança (`canSeeInbox`). São independentes — dois agentes com o mesmo papel
+ * podem atender setores diferentes.
+ *
+ * Exige `equipe:gerenciar`, e não `configuracoes:escrever`: convidar gente é
+ * poder de RH, e há quem edite horário de atendimento sem poder abrir a porta.
+ */
+export async function inviteMemberAction(input: unknown): Promise<InviteResult> {
+  const parsed = inviteSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
+  }
+
+  try {
+    const session = await container.session.getCurrentSession();
+    if (!can(session, 'equipe:gerenciar')) {
+      return { ok: false, error: 'Seu papel não permite convidar pessoas.' };
+    }
+
+    const settings = await container.settings.get(session.account.id);
+
+    // Papel e equipes vêm do formulário: conferir que pertencem a esta conta é
+    // o que impede alguém de forjar um convite com papel de outra empresa.
+    if (!settings.roles.some((role) => role.slug === parsed.data.roleSlug)) {
+      return { ok: false, error: 'Papel não encontrado nesta conta.' };
+    }
+    const teamIds = (parsed.data.teamIds ?? []).filter((id) =>
+      settings.teams.some((team) => team.id === id),
+    );
+
+    // Já é da casa? O convite não teria efeito, e a mensagem honesta evita o
+    // gestor ficar esperando um aceite que nunca vem.
+    if (settings.members.some((member) => member.email.toLowerCase() === parsed.data.email)) {
+      return { ok: false, error: 'Esta pessoa já faz parte da conta.' };
+    }
+
+    const invite = await createInvite({
+      accountId: session.account.id,
+      email: parsed.data.email,
+      roleSlug: parsed.data.roleSlug,
+      teamIds,
+      invitedByUserId: session.user.id,
+    });
+
+    return {
+      ok: true,
+      link: `/convite/${invite.token}`,
+      expiresAt: invite.expiresAt.toISOString(),
+    };
+  } catch (error) {
+    return failureOf(error, 'Erro ao gerar o convite.');
   }
 }

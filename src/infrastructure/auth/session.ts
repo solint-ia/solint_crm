@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { cookies } from 'next/headers';
 import { cache } from 'react';
-import type { Account, Permission, Role, Session } from '@/core/domain/user';
+import type { Account, InboxAccess, Permission, Role, Session } from '@/core/domain/user';
 import { prisma, readJson } from '@/infrastructure/db/prisma';
 import { userRow } from '@/infrastructure/repositories/prisma/mappers';
 import {
@@ -122,7 +122,7 @@ export const readSession = cache(async (): Promise<Session | null> => {
   // revogação vem de `jti`, o vínculo de `sub`+`act`, e a lista de workspaces de
   // `sub`. Em série custavam três idas ao banco; juntas, uma. Só o papel precisa
   // esperar, porque a chave dele sai do vínculo.
-  const [authSession, membership, all] = await Promise.all([
+  const [authSession, membership, all, teamsDaConta] = await Promise.all([
     prisma.authSession.findUnique({ where: { tokenId: claims.jti } }),
     prisma.membership.findUnique({
       where: { userId_accountId: { userId: claims.sub, accountId: claims.act } },
@@ -136,6 +136,18 @@ export const readSession = cache(async (): Promise<Session | null> => {
       where: { userId: claims.sub },
       include: { account: true },
       orderBy: { createdAt: 'asc' },
+    }),
+    // Equipes desta conta que têm caixa vinculada, com a informação de o
+    // usuário pertencer a elas. Uma consulta só resolve as duas perguntas que
+    // o acesso por caixa faz: "a conta organizou equipes?" e "de quais eu
+    // participo?". Perguntá-las em separado custaria uma ida a mais ao banco em
+    // todo carregamento de tela.
+    prisma.team.findMany({
+      where: { accountId: claims.act, teamInboxes: { some: {} } },
+      select: {
+        teamInboxes: { select: { inboxId: true } },
+        teamMembers: { where: { userId: claims.sub }, select: { userId: true } },
+      },
     }),
   ]);
 
@@ -166,15 +178,50 @@ export const readSession = cache(async (): Promise<Session | null> => {
         : null,
     );
 
+  // Sem papel cadastrado o usuário fica sem permissão nenhuma. É o padrão
+  // seguro: um papel apagado não deve virar acesso irrestrito.
+  const permissions = role?.permissions ?? [];
+
   return {
     user: userRow(membership.user, membership),
     account: toDomainAccount(membership.account),
-    // Sem papel cadastrado o usuário fica sem permissão nenhuma. É o padrão
-    // seguro: um papel apagado não deve virar acesso irrestrito.
-    permissions: role?.permissions ?? [],
+    permissions,
     availableAccounts: all.map((row) => toDomainAccount(row.account)),
+    inboxAccess: resolveInboxAccess(permissions, teamsDaConta),
   };
 });
+
+/**
+ * Quais caixas esta pessoa alcança.
+ *
+ * Três caminhos, nesta ordem — e a ordem importa:
+ *
+ *  1. `caixas:todas` no papel: enxerga tudo. É o gestor, e é o que o impede de
+ *     se trancar do lado de fora ao criar a primeira equipe.
+ *  2. Conta sem nenhuma equipe com caixa vinculada: ninguém é restringido. É a
+ *     trava que mantém funcionando quem usa o sistema com um número só — a
+ *     restrição por caixa liga no dia em que o gestor a configura, não antes.
+ *  3. Caso contrário: a união das caixas das equipes de que a pessoa participa.
+ *     Quem não participa de nenhuma fica com a lista vazia e não vê conversa
+ *     nenhuma — que é o correto, e é visível na tela como tal.
+ */
+const resolveInboxAccess = (
+  permissions: readonly Permission[],
+  teams: readonly {
+    readonly teamInboxes: readonly { readonly inboxId: string }[];
+    readonly teamMembers: readonly { readonly userId: string }[];
+  }[],
+): InboxAccess => {
+  if (permissions.includes('caixas:todas')) return 'todas';
+  if (teams.length === 0) return 'todas';
+
+  const alcancadas = new Set<string>();
+  for (const team of teams) {
+    if (team.teamMembers.length === 0) continue;
+    for (const link of team.teamInboxes) alcancadas.add(link.inboxId);
+  }
+  return [...alcancadas];
+};
 
 /** Marca a atividade do usuário. Falha em silêncio: é dado auxiliar. */
 export const touchUser = async (userId: string): Promise<void> => {

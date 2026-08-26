@@ -8,6 +8,7 @@ import type { Contact } from '../domain/contact';
 import type { Label } from '../domain/label';
 import type { Message } from '../domain/message';
 import type { Id } from '../domain/shared';
+import type { InboxAccess } from '../domain/user';
 
 /**
  * Responsável pelo atendimento.
@@ -37,7 +38,7 @@ export interface ConversationReader {
     currentUserId: Id,
     filter: ConversationFilter,
   ): Promise<readonly Conversation[]>;
-  findById(accountId: Id, conversationId: Id): Promise<Conversation | null>;
+  findById(accountId: Id, conversationId: Id, inboxAccess: InboxAccess): Promise<Conversation | null>;
 }
 
 /** Escrita de conversas. */
@@ -61,6 +62,28 @@ export interface ConversationWriter {
   ): Promise<Conversation>;
   changePriority(accountId: Id, conversationId: Id, priority: Priority): Promise<Conversation>;
   assign(accountId: Id, conversationId: Id, assignee: Assignee | null): Promise<Conversation>;
+  /**
+   * Move o atendimento para outra caixa de entrada.
+   *
+   * `keepAssignee` é decidido fora daqui, pelo caso de uso, porque é regra de
+   * negócio e não de persistência: o responsável só continua se **ele** alcançar
+   * a caixa de destino. Falso, a conversa volta para a fila sem dono — melhor
+   * que ficar com um dono incapaz de abri-la.
+   */
+  moveToInbox(
+    accountId: Id,
+    conversationId: Id,
+    targetInboxId: Id,
+    options: { readonly keepAssignee: boolean },
+  ): Promise<Conversation>;
+  /**
+   * Esta pessoa alcança esta caixa?
+   *
+   * Pergunta sobre **outra** pessoa, e por isso não sai da sessão de quem
+   * chama: é o que decide se o responsável atual sobrevive a uma mudança de
+   * caixa.
+   */
+  userReachesInbox(accountId: Id, userId: Id, inboxId: Id): Promise<boolean>;
   setLabels(accountId: Id, conversationId: Id, labels: readonly Label[]): Promise<Conversation>;
   /**
    * Propaga a nova versao do contato para as conversas que carregam a copia

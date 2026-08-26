@@ -49,6 +49,7 @@ export async function GET(request: Request) {
   if (can(session, 'conversas:ler')) {
     const conversations = await container.conversations.list(session.account.id, session.user.id, {
       scope: 'todas',
+      inboxAccess: session.inboxAccess,
     });
 
     for (const conversation of conversations) {

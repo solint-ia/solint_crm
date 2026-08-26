@@ -64,11 +64,29 @@ export interface ApiToken {
   readonly lastUsedLabel: string;
 }
 
+/**
+ * Equipe — a unidade que decide **quais caixas de entrada** uma pessoa alcança.
+ *
+ * Uma pessoa em várias equipes enxerga a união das caixas delas; uma caixa pode
+ * pertencer a várias equipes (recepção e gerência veem "Atendimento"). Quando a
+ * conta não tem nenhuma equipe com caixa vinculada, não há restrição — é o que
+ * mantém funcionando quem usa o sistema com uma caixa só.
+ */
 export interface Team {
   readonly id: Id;
   readonly name: string;
+  readonly color: string;
   readonly memberCount: number;
-  readonly inboxes: readonly string[];
+  /**
+   * Ids das caixas alcançadas.
+   *
+   * Ids, não nomes. O campo já guardou nome — o formulário pedia texto livre
+   * separado por vírgula — e nome não serve para autorizar: renomear a caixa
+   * cortaria o acesso de quem dependia dela, em silêncio.
+   */
+  readonly inboxIds: readonly string[];
+  /** Ids das pessoas na equipe. */
+  readonly memberIds: readonly string[];
   readonly businessHours: string;
 }
 

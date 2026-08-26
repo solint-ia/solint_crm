@@ -31,11 +31,7 @@ export default async function ConfiguracoesPage({
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
-  const currentSection: SettingsSectionId = parseOneOf(
-    params.secao,
-    SECTION_IDS,
-    'automacoes',
-  );
+  const currentSection: SettingsSectionId = parseOneOf(params.secao, SECTION_IDS, 'automacoes');
 
   const session = await container.session.getCurrentSession();
   // A rail ja esconde o item; sem esta checagem, a URL direta entraria.
@@ -43,7 +39,10 @@ export default async function ConfiguracoesPage({
   const [settings, notifications, conversations] = await Promise.all([
     container.settings.get(session.account.id),
     container.notifications.list(session.account.id, session.user.id),
-    container.conversations.list(session.account.id, session.user.id, { scope: 'todas' }),
+    container.conversations.list(session.account.id, session.user.id, {
+      scope: 'todas',
+      inboxAccess: session.inboxAccess,
+    }),
   ]);
 
   const activeSectionMeta = SETTINGS_SECTIONS.find((s) => s.id === currentSection);
@@ -106,12 +105,11 @@ export default async function ConfiguracoesPage({
               members={settings.members}
               roles={settings.roles}
               teams={settings.teams}
+              inboxes={settings.connections}
             />
           ) : null}
 
-          {currentSection === 'etiquetas' ? (
-            <LabelsSection labels={settings.labels} />
-          ) : null}
+          {currentSection === 'etiquetas' ? <LabelsSection labels={settings.labels} /> : null}
 
           {currentSection === 'respostas' ? (
             <CannedResponsesSection cannedResponses={settings.cannedResponses} />
@@ -121,13 +119,9 @@ export default async function ConfiguracoesPage({
             <CustomAttributesSection attributes={settings.customAttributes} />
           ) : null}
 
-          {currentSection === 'empresa' ? (
-            <CompanySection account={session.account} />
-          ) : null}
+          {currentSection === 'empresa' ? <CompanySection account={session.account} /> : null}
 
-          {currentSection === 'faturamento' ? (
-            <BillingSection billing={settings.billing} />
-          ) : null}
+          {currentSection === 'faturamento' ? <BillingSection billing={settings.billing} /> : null}
 
           {currentSection === 'seguranca' ? (
             <SecuritySection

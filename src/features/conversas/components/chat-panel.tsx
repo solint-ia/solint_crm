@@ -28,6 +28,7 @@ import { StatusBadge } from '@/components/domain/status-badge';
 import { Composer, type ComposerMode, type MediaResult } from './composer';
 import {
   AssigneeButton,
+  InboxMenu,
   LabelMenu,
   PriorityMenu,
   type InboxCatalog,
@@ -50,6 +51,8 @@ interface ChatPanelProps {
   readonly onAssign: (assignee: { id: string; name: string } | null) => void;
   readonly onChangePriority: (priority: Priority) => void;
   readonly onSetLabels: (labels: readonly Label[]) => void;
+  readonly inboxes: readonly { readonly id: string; readonly name: string }[];
+  readonly onMoveInbox: (inboxId: string) => void;
   readonly onBack?: () => void;
   readonly isContextOpen?: boolean;
   readonly onToggleContext?: () => void;
@@ -68,6 +71,8 @@ export function ChatPanel({
   onAssign,
   onChangePriority,
   onSetLabels,
+  inboxes,
+  onMoveInbox,
   onBack,
   isContextOpen = false,
   onToggleContext,
@@ -146,6 +151,7 @@ export function ChatPanel({
                   labels={catalog.labels}
                   onChange={onSetLabels}
                 />
+                <InboxMenu conversation={conversation} inboxes={inboxes} onMove={onMoveInbox} />
               </div>
 
               <div className="hidden lg:inline-flex">

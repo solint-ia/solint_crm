@@ -10,6 +10,7 @@ import type {
   PendingConversation,
 } from '@/core/domain/analytics';
 import type { Id } from '@/core/domain/shared';
+import type { InboxAccess } from '@/core/domain/user';
 import type { AnalyticsRepository } from '@/core/ports/analytics-repository';
 import { prisma } from '@/infrastructure/db/prisma';
 import { buildPeriodSeries } from '@/infrastructure/seed/analytics-series';
@@ -24,17 +25,25 @@ const CHANNEL_COLORS: Readonly<Record<string, { label: string; colorVar: string 
 };
 
 export class PrismaAnalyticsRepository implements AnalyticsRepository {
-  async getOverview(accountId: Id, period: PeriodKey): Promise<DashboardOverview> {
+  async getOverview(
+    accountId: Id,
+    period: PeriodKey,
+    inboxAccess: InboxAccess,
+  ): Promise<DashboardOverview> {
     // 1. Consultar conversas, membros e funil da conta
     const [conversations, members, defaultPipeline] = await Promise.all([
       prisma.conversation.findMany({
-        where: { accountId },
+        // O recorte por caixa vale aqui como vale na lista. Sem ele, um agente
+        // da Recepção leria no painel a contagem de atendimentos da Cobrança —
+        // não o conteúdo, mas o volume, o tempo de resposta e quem atendeu. É
+        // menos óbvio que ver a conversa, e vaza a mesma informação.
+        where: { accountId, ...(inboxAccess === 'todas' ? {} : { inboxId: { in: [...inboxAccess] } }) },
         include: { contact: true },
         orderBy: { lastActivityAt: 'desc' },
       }),
       prisma.membership.findMany({
         where: { accountId },
-        include: { user: true },
+        include: { user: { include: { teamMemberships: { include: { team: true } } } } },
       }),
       prisma.pipeline.findFirst({
         where: { accountId, isDefault: true },
@@ -182,7 +191,11 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
         (c) => c.assigneeId === member.userId || c.assigneeName === member.user.name,
       ).length;
 
-      const teams = Array.isArray(member.teams) ? (member.teams as string[]) : [];
+      // Só as equipes desta conta: a mesma pessoa pode atender em outra empresa,
+      // e o nome da equipe de lá não descreve o trabalho dela aqui.
+      const teams = member.user.teamMemberships
+        .filter((link) => link.team.accountId === accountId)
+        .map((link) => link.team.name);
 
       return {
         id: member.userId,
@@ -255,8 +268,12 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
     };
   }
 
-  async getReport(accountId: Id, period: PeriodKey): Promise<AnalyticsReport> {
-    const overview = await this.getOverview(accountId, period);
+  async getReport(
+    accountId: Id,
+    period: PeriodKey,
+    inboxAccess: InboxAccess,
+  ): Promise<AnalyticsReport> {
+    const overview = await this.getOverview(accountId, period, inboxAccess);
     const series = buildPeriodSeries(period);
 
     return {

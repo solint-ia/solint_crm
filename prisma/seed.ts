@@ -140,7 +140,6 @@ async function main() {
         accountId: user.accountId,
         roleSlug: user.roleSlug,
         availability: user.availability,
-        teams: json(user.teams),
       })),
       // O administrador também atende na segunda conta. É o que torna o seletor
       // de workspace uma coisa testável em vez de um botão com uma opção só.
@@ -150,7 +149,6 @@ async function main() {
             accountId: secondary.id,
             roleSlug: 'administrador',
             availability: 'disponivel',
-            teams: json([]),
           }]
         : []),
     ],
@@ -396,10 +394,22 @@ async function main() {
       accountId: ACCOUNT_ID,
       name: t.name,
       description: null,
-      color: '#3B82F6',
-      members: json([]),
-      inboxIds: json(t.inboxes),
+      color: t.color,
     })),
+  });
+
+  // Os vínculos vivem em tabelas próprias desde a migração `remove_json_equipes`.
+  // São eles que decidem quem enxerga qual caixa de entrada — ver `TeamInbox`.
+  await prisma.teamInbox.createMany({
+    data: SETTINGS.teams.flatMap((t) =>
+      t.inboxIds.map((inboxId) => ({ teamId: t.id, inboxId })),
+    ),
+    skipDuplicates: true,
+  });
+
+  await prisma.teamMember.createMany({
+    data: SETTINGS.teams.flatMap((t) => t.memberIds.map((userId) => ({ teamId: t.id, userId }))),
+    skipDuplicates: true,
   });
 
   console.log('· webhooks');
