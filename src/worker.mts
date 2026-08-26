@@ -60,11 +60,48 @@ async function main() {
 
   console.log(`[Worker] Pronto. Id: ${sessionManager.workerId}`);
 
+  /**
+   * Servidor HTTP de Healthcheck e Manutenção de Conexão.
+   *
+   * Permite que plataformas como o Render (Web Service Free), Railway ou Docker
+   * realizem checagem de integridade via HTTP e recebam pings periódicos
+   * (ex: via UptimeRobot) para evitar que o container entre em suspensão.
+   */
+  const http = await import('node:http');
+  const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 10000;
+
+  const server = http.createServer((req, res) => {
+    if (req.url === '/health' || req.url === '/' || req.url === '/ping') {
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-store',
+      });
+      res.end(
+        JSON.stringify({
+          status: 'ok',
+          service: 'solint-whatsapp-worker',
+          workerId: sessionManager.workerId,
+          uptimeSeconds: Math.floor(process.uptime()),
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return;
+    }
+
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Not Found' }));
+  });
+
+  server.listen(port, '0.0.0.0', () => {
+    console.log(`[Worker] Servidor HTTP de healthcheck ativo na porta ${port}`);
+  });
+
   const { flushPendingKeys } = await import('./infrastructure/whatsapp/auth/postgres-auth-state');
 
   const handleShutdown = async (signal: string) => {
     console.log(`\n[Worker] Recebido sinal ${signal}. Encerrando sessões com segurança...`);
     clearInterval(beat);
+    server.close();
     commandConsumer.stop();
     await sessionManager.shutdown();
     // As chaves de cache (`lid-mapping`, `tctoken`) são gravadas fora do mutex
