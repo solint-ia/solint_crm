@@ -10,11 +10,25 @@ const INITIAL: WhatsAppStatusPayload = {
 
 type Listener = (status: WhatsAppStatusPayload) => void;
 
-/**
- * Canal compartilhado de status do WhatsApp via Server-Sent Events (SSE).
- * Sem loops de polling desnecessários durante a navegação normal.
- */
-const statusChannel = (() => {
+interface StatusChannel {
+  snapshot: () => WhatsAppStatusPayload;
+  fetchNow: () => Promise<void>;
+  subscribe: (listener: Listener) => () => void;
+}
+
+const channels = new Map<string, StatusChannel>();
+
+const getStatusChannel = (inboxId?: string): StatusChannel => {
+  const key = inboxId ?? 'global';
+  let ch = channels.get(key);
+  if (!ch) {
+    ch = createStatusChannel(inboxId);
+    channels.set(key, ch);
+  }
+  return ch;
+};
+
+const createStatusChannel = (inboxId?: string): StatusChannel => {
   const listeners = new Set<Listener>();
   let source: EventSource | null = null;
   let last: WhatsAppStatusPayload = INITIAL;
@@ -25,16 +39,18 @@ const statusChannel = (() => {
   };
 
   const fetchStatus = async () => {
-    try {
-      const res = await fetch('/api/whatsapp/status', { cache: 'no-store' });
-      if (res.ok) {
-        const data = (await res.json()) as { ok: boolean; status?: WhatsAppStatusPayload };
-        if (data.ok && data.status) {
-          notifyAll(data.status);
+    if (!inboxId) {
+      try {
+        const res = await fetch('/api/whatsapp/status', { cache: 'no-store' });
+        if (res.ok) {
+          const data = (await res.json()) as { ok: boolean; status?: WhatsAppStatusPayload };
+          if (data.ok && data.status) {
+            notifyAll(data.status);
+          }
         }
+      } catch {
+        // Silencioso
       }
-    } catch {
-      // Silencioso
     }
   };
 
@@ -42,11 +58,11 @@ const statusChannel = (() => {
     if (typeof window === 'undefined') return;
     if (source) return;
 
-    // Busca status inicial apenas uma vez ao abrir o canal
     void fetchStatus();
 
     try {
-      source = new EventSource('/api/whatsapp/events');
+      const sseUrl = inboxId ? `/api/inboxes/${inboxId}/whatsapp/events` : '/api/whatsapp/events';
+      source = new EventSource(sseUrl);
 
       source.onmessage = (event) => {
         try {
@@ -77,62 +93,75 @@ const statusChannel = (() => {
         if (listeners.size === 0) {
           source?.close();
           source = null;
+          channels.delete(inboxId ?? 'global');
         }
       };
     },
   };
-})();
+};
 
 /**
  * Estado da conexão do WhatsApp exposto para a interface.
  *
  * @param active desliga a inscrição quando o componente está oculto.
+ * @param inboxId id específico da caixa para multi-inbox, ou omitido para rota global.
  */
-export function useWhatsAppConnection(active = true) {
-  const [statusData, setStatusData] = useState<WhatsAppStatusPayload>(statusChannel.snapshot);
+export function useWhatsAppConnection(active = true, inboxId?: string) {
+  const channel = useMemo(() => getStatusChannel(inboxId), [inboxId]);
+  const [statusData, setStatusData] = useState<WhatsAppStatusPayload>(channel.snapshot);
   const [actionError, setActionError] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
     if (!active) return;
-    return statusChannel.subscribe(setStatusData);
-  }, [active]);
+    return channel.subscribe(setStatusData);
+  }, [active, channel]);
 
-  const call = useCallback((endpoint: string, fallback: string) => {
-    setActionError(undefined);
-    startTransition(async () => {
-      try {
-        const response = await fetch(endpoint, { method: 'POST' });
-        const data = (await response.json()) as {
-          ok: boolean;
-          error?: string;
-          status?: WhatsAppStatusPayload;
-        };
+  const call = useCallback(
+    (endpoint: string, fallback: string) => {
+      setActionError(undefined);
+      startTransition(async () => {
+        try {
+          const response = await fetch(endpoint, { method: 'POST' });
+          const data = (await response.json()) as {
+            ok: boolean;
+            error?: string;
+            status?: WhatsAppStatusPayload;
+          };
 
-        if (data.ok) {
-          if (data.status) {
-            setStatusData(data.status);
+          if (data.ok) {
+            if (data.status) {
+              setStatusData(data.status);
+            }
+            setTimeout(() => void channel.fetchNow(), 400);
+            setTimeout(() => void channel.fetchNow(), 1500);
+          } else {
+            setActionError(data.error ?? fallback);
           }
-          // Dispara busca pontual do status apenas após a ação de conectar
-          setTimeout(() => void statusChannel.fetchNow(), 400);
-          setTimeout(() => void statusChannel.fetchNow(), 1500);
-        } else {
-          setActionError(data.error ?? fallback);
+        } catch {
+          setActionError(fallback);
         }
-      } catch {
-        setActionError(fallback);
-      }
-    });
-  }, []);
+      });
+    },
+    [channel],
+  );
 
   const connect = useCallback(
-    () => call('/api/whatsapp/connect', 'Erro ao iniciar conexão com WhatsApp'),
-    [call],
+    () =>
+      call(
+        inboxId ? `/api/inboxes/${inboxId}/whatsapp/connect` : '/api/whatsapp/connect',
+        'Erro ao iniciar conexão com WhatsApp',
+      ),
+    [call, inboxId],
   );
 
   const disconnect = useCallback(
-    () => call('/api/whatsapp/disconnect', 'Erro ao desconectar WhatsApp'),
-    [call],
+    () =>
+      call(
+        inboxId ? `/api/inboxes/${inboxId}/whatsapp/disconnect` : '/api/whatsapp/disconnect',
+        'Erro ao desconectar WhatsApp',
+      ),
+    [call, inboxId],
   );
 
   return useMemo(

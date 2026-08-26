@@ -38,6 +38,17 @@ export interface PipelineRepository {
     },
   ): Promise<Deal>;
   deleteDeal(accountId: Id, dealId: Id): Promise<void>;
+
+  /**
+   * Checklist do card.
+   *
+   * As três devolvem o card inteiro, já com as tarefas recarregadas: a tela
+   * precisa do estado final e uma segunda ida ao banco para buscá-lo abriria
+   * espaço para mostrar a lista desatualizada.
+   */
+  addDealTask(accountId: Id, dealId: Id, title: string): Promise<Deal>;
+  toggleDealTask(accountId: Id, dealId: Id, taskId: Id): Promise<Deal>;
+  deleteDealTask(accountId: Id, dealId: Id, taskId: Id): Promise<Deal>;
   updateStages(
     accountId: Id,
     pipelineId: Id,

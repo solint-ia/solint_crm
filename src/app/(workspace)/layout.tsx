@@ -1,10 +1,11 @@
 import { NavigationRail } from '@/components/layout/navigation-rail';
 import { ToastProvider } from '@/components/ui/toast';
 import { NAV_ITEMS } from '@/config/navigation';
-import { can } from '@/core/domain/user';
+import { can, canSeeInbox } from '@/core/domain/user';
 import { ConversationEventsProvider } from '@/features/realtime/conversation-events';
 import { RealtimeToasts } from '@/features/realtime/realtime-toasts';
 import { container } from '@/infrastructure/container';
+import { prisma } from '@/infrastructure/db/prisma';
 
 /**
  * Shell das telas autenticadas: rail global + area de conteúdo.
@@ -19,14 +20,44 @@ export default async function WorkspaceLayout({
   readonly children: React.ReactNode;
 }) {
   const session = await container.session.getCurrentSession();
-  const conversations = await container.conversations.list(session.account.id, session.user.id, {
-    scope: 'todas',
-    inboxAccess: session.inboxAccess,
-  });
+  const [conversations, inboxes, role] = await Promise.all([
+    container.conversations.list(session.account.id, session.user.id, {
+      scope: 'todas',
+      inboxAccess: session.inboxAccess,
+    }),
+    prisma.inbox.findMany({
+      where: { accountId: session.account.id },
+      include: { waConnection: { select: { status: true, phoneJid: true } } },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.role.findUnique({
+      where: {
+        accountId_slug: { accountId: session.account.id, slug: session.user.roleSlug },
+      },
+      select: { name: true },
+    }),
+  ]);
+
   const unreadCount = conversations.reduce(
     (total, conversation) => total + conversation.unreadCount,
     0,
   );
+
+  const accessibleInboxes = inboxes
+    .filter((inbox) => canSeeInbox(session, inbox.id))
+    .map((inbox) => ({
+      id: inbox.id,
+      name: inbox.name,
+      channel: inbox.channel,
+      identifier: inbox.waConnection?.phoneJid
+        ? inbox.waConnection.phoneJid.replace(/@s\.whatsapp\.net$/, '')
+        : inbox.identifier,
+      status: inbox.waConnection?.status ?? inbox.status,
+      teamName: inbox.teamName ?? undefined,
+      unreadCount: conversations
+        .filter((c) => c.inboxId === inbox.id && c.unreadCount > 0)
+        .reduce((sum, c) => sum + c.unreadCount, 0),
+    }));
 
   const items = NAV_ITEMS.filter((item) => can(session, item.permission));
 
@@ -40,6 +71,9 @@ export default async function WorkspaceLayout({
             userName={session.user.name}
             userTone={session.user.avatarTone}
             availability={session.user.availability}
+            accessibleInboxes={accessibleInboxes}
+            canManageInboxes={can(session, 'configuracoes:escrever') || can(session, 'caixas:todas')}
+            roleName={role?.name ?? session.user.roleSlug}
           />
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
         </div>

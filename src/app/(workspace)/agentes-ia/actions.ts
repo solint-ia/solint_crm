@@ -1,8 +1,40 @@
 'use server';
 
 import { z } from 'zod';
-import { FLOW_BLOCK_TYPES } from '@/core/domain/ai-agent';
+import { FLOW_BLOCK_TYPES, type AiAgent } from '@/core/domain/ai-agent';
 import { container } from '@/infrastructure/container';
+
+const createAgentSchema = z.object({
+  name: z.string().trim().min(2, 'Nome deve ter no mínimo 2 caracteres').max(80),
+  scope: z.string().trim().min(2, 'Escopo deve ter no mínimo 2 caracteres').max(120),
+  persona: z.string().trim().min(2, 'Persona deve ter no mínimo 2 caracteres').max(500),
+  systemPrompt: z.string().trim().max(2000).optional(),
+  model: z.string().trim().max(60).optional(),
+});
+
+export async function createAiAgentAction(
+  input: unknown,
+): Promise<{ ok: boolean; agent?: AiAgent; error?: string }> {
+  const parsed = createAgentSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
+  }
+
+  const session = await container.session.getCurrentSession();
+  if (!session.permissions.includes('agentes-ia:escrever')) {
+    return { ok: false, error: 'Seu papel não permite criar agentes de IA.' };
+  }
+
+  try {
+    const agent = await container.aiAgents.create(session.account.id, parsed.data);
+    return { ok: true, agent };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro ao criar o agente de IA.',
+    };
+  }
+}
 
 const idSchema = z.string().min(1).max(64);
 

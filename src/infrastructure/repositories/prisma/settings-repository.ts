@@ -11,6 +11,7 @@ import type {
   BillingInfo,
   CannedResponse,
   ChannelConnection,
+  CompanyProfile,
   CustomAttributeDefinition,
   Macro,
   Team,
@@ -18,13 +19,17 @@ import type {
 } from '@/core/domain/settings';
 import { ConflictError, NotFoundError, type Id } from '@/core/domain/shared';
 import type { Permission, Role } from '@/core/domain/user';
+import { defaultBusinessHours } from '@/core/domain/business-hours';
 import type {
   ArticleDraft,
   AutomationDraft,
+  InboxDraft,
   InboxSettingsPatch,
+  LabelDraft,
   SettingsRepository,
   WorkspaceSettings,
 } from '@/core/ports/settings-repository';
+import type { Label } from '@/core/domain/label';
 import { prisma, readJson, asJson } from '@/infrastructure/db/prisma';
 import {
   articleRow,
@@ -93,10 +98,17 @@ export class PrismaSettingsRepository implements SettingsRepository {
       }),
       prisma.webhook.findMany({ where: { accountId }, orderBy: { name: 'asc' } }),
       prisma.apiToken.findMany({ where: { accountId }, orderBy: { createdAt: 'desc' } }),
-      prisma.customAttributeDefinition.findMany({ where: { accountId }, orderBy: { order: 'asc' } }),
+      prisma.customAttributeDefinition.findMany({
+        where: { accountId },
+        orderBy: { order: 'asc' },
+      }),
       prisma.cannedResponse.findMany({ where: { accountId }, orderBy: { shortcut: 'asc' } }),
       prisma.macro.findMany({ where: { accountId }, orderBy: { name: 'asc' } }),
-      prisma.auditLogEntry.findMany({ where: { accountId }, orderBy: { createdAt: 'desc' }, take: 50 }),
+      prisma.auditLogEntry.findMany({
+        where: { accountId },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      }),
     ]);
 
     return {
@@ -148,7 +160,11 @@ export class PrismaSettingsRepository implements SettingsRepository {
         id: tk.id,
         name: tk.name,
         maskedValue: `${tk.tokenPrefix}****${tk.id.slice(-4)}`,
-        createdLabel: tk.createdAt.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }),
+        createdLabel: tk.createdAt.toLocaleDateString('pt-BR', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+        }),
         lastUsedLabel: tk.lastUsedAt ? 'Ativo recentemente' : 'Nunca usado',
       })),
       teams: teams.map((t): Team => ({
@@ -164,7 +180,16 @@ export class PrismaSettingsRepository implements SettingsRepository {
         id: ca.id,
         name: ca.name,
         key: ca.key,
-        type: ca.type === 'select' ? 'lista' : ca.type === 'number' ? 'numero' : ca.type === 'date' ? 'data' : ca.type === 'boolean' ? 'booleano' : 'texto',
+        type:
+          ca.type === 'select'
+            ? 'lista'
+            : ca.type === 'number'
+              ? 'numero'
+              : ca.type === 'date'
+                ? 'data'
+                : ca.type === 'boolean'
+                  ? 'booleano'
+                  : 'texto',
         appliesTo: ca.target === 'deal' ? 'conversa' : 'contato',
       })),
       billing: readJson<BillingInfo>(settings?.billing, EMPTY_BILLING),
@@ -177,7 +202,30 @@ export class PrismaSettingsRepository implements SettingsRepository {
         at: al.createdAt.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }),
       })),
       activeSessions: readJson<readonly ActiveSession[]>(settings?.activeSessions, []),
+      company: readJson<CompanyProfile>(settings?.company, {}),
     };
+  }
+
+  async saveCompanyProfile(
+    accountId: Id,
+    draft: CompanyProfile & { tradeName: string; document?: string },
+  ): Promise<CompanyProfile> {
+    const { tradeName, document, ...profile } = draft;
+
+    // Nome e documento são colunas de `Account` porque são consultados; o resto
+    // é o agregado da tela. Uma transação para os dois não divergirem.
+    await prisma.$transaction([
+      prisma.account.update({
+        where: { id: accountId },
+        data: { name: tradeName, document: document ?? null },
+      }),
+      prisma.accountSettings.update({
+        where: { accountId },
+        data: { company: asJson(profile) },
+      }),
+    ]);
+
+    return profile;
   }
 
   async setAutomationEnabled(
@@ -281,6 +329,42 @@ export class PrismaSettingsRepository implements SettingsRepository {
         }),
       ),
     );
+  }
+
+  async createInbox(accountId: Id, draft: InboxDraft): Promise<ChannelConnection> {
+    const channel = draft.channel ?? 'whatsapp';
+    const provider = draft.provider ?? (channel === 'whatsapp' ? 'baileys' : 'custom');
+    const id = `ibx-${crypto.randomUUID()}`;
+
+    const created = await prisma.$transaction(async (tx) => {
+      const inbox = await tx.inbox.create({
+        data: {
+          id,
+          accountId,
+          name: draft.name.trim(),
+          channel,
+          identifier: channel === 'whatsapp' ? `whatsapp-${id.slice(-6)}` : id,
+          status: 'desconectado',
+          provider,
+          businessHours: asJson(defaultBusinessHours()),
+          awayMessage: asJson({ enabled: false, message: '' }),
+          greeting: asJson({ enabled: false, message: '' }),
+        },
+      });
+
+      if (channel === 'whatsapp') {
+        await tx.whatsAppConnection.create({
+          data: {
+            inboxId: id,
+            status: 'desconectado',
+          },
+        });
+      }
+
+      return inbox;
+    });
+
+    return connectionRow(created);
   }
 
   async updateInbox(
@@ -493,7 +577,11 @@ export class PrismaSettingsRepository implements SettingsRepository {
       id: row.id,
       name: row.name,
       maskedValue: `sk_live_****${rawSecret.slice(-4)}`,
-      createdLabel: row.createdAt.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }),
+      createdLabel: row.createdAt.toLocaleDateString('pt-BR', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      }),
       lastUsedLabel: 'Nunca usado',
     };
 
@@ -534,6 +622,37 @@ export class PrismaSettingsRepository implements SettingsRepository {
     };
   }
 
+  async updateCannedResponse(
+    accountId: Id,
+    responseId: Id,
+    draft: { shortcut: string; content: string },
+  ): Promise<CannedResponse> {
+    const exists = await prisma.cannedResponse.findFirst({
+      where: { id: responseId, accountId },
+      select: { id: true },
+    });
+    if (!exists) throw new NotFoundError('Resposta rápida', responseId);
+
+    const shortcut = draft.shortcut.startsWith('/') ? draft.shortcut : `/${draft.shortcut}`;
+
+    // O atalho é único por conta. Renomear para um já ocupado por outra
+    // resposta é conflito de verdade — e a mensagem precisa dizer isso, não
+    // deixar o erro cru do Prisma chegar à tela.
+    const conflito = await prisma.cannedResponse.findFirst({
+      where: { accountId, shortcut, id: { not: responseId } },
+      select: { id: true },
+    });
+    if (conflito) {
+      throw new ConflictError(`Já existe uma resposta rápida com o atalho ${shortcut}.`);
+    }
+
+    const row = await prisma.cannedResponse.update({
+      where: { id: responseId, accountId },
+      data: { shortcut, content: draft.content },
+    });
+    return { id: row.id, shortcut: row.shortcut, content: row.content };
+  }
+
   async deleteCannedResponse(accountId: Id, responseId: Id): Promise<void> {
     const exists = await prisma.cannedResponse.findFirst({
       where: { id: responseId, accountId },
@@ -555,7 +674,16 @@ export class PrismaSettingsRepository implements SettingsRepository {
     },
   ): Promise<CustomAttributeDefinition> {
     const dbTarget = draft.appliesTo === 'conversa' ? 'deal' : 'contact';
-    const dbType = draft.type === 'lista' ? 'select' : draft.type === 'numero' ? 'number' : draft.type === 'data' ? 'date' : draft.type === 'booleano' ? 'boolean' : 'text';
+    const dbType =
+      draft.type === 'lista'
+        ? 'select'
+        : draft.type === 'numero'
+          ? 'number'
+          : draft.type === 'data'
+            ? 'date'
+            : draft.type === 'booleano'
+              ? 'boolean'
+              : 'text';
 
     const row = await prisma.customAttributeDefinition.upsert({
       where: { accountId_target_key: { accountId, target: dbTarget, key: draft.key } },
@@ -708,6 +836,87 @@ export class PrismaSettingsRepository implements SettingsRepository {
     });
     if (!exists) throw new NotFoundError('Equipe', teamId);
     await prisma.team.delete({ where: { id: teamId, accountId } });
+  }
+
+  // --- Sessões ativas ---
+
+  /**
+   * Lê a lista corrente e grava a que o filtro deixou.
+   *
+   * `activeSessions` é uma coluna JSON lida e gravada inteira, então as duas
+   * operações compartilham este caminho — o que muda entre elas é só o critério.
+   */
+  private async writeSessions(
+    accountId: Id,
+    manter: (session: ActiveSession) => boolean,
+  ): Promise<readonly ActiveSession[]> {
+    const settings = await prisma.accountSettings.findUnique({ where: { accountId } });
+    const atuais = readJson<readonly ActiveSession[]>(settings?.activeSessions, []);
+    const restantes = atuais.filter(manter);
+
+    await prisma.accountSettings.update({
+      where: { accountId },
+      data: { activeSessions: asJson(restantes) },
+    });
+
+    return restantes;
+  }
+
+  async terminateSession(accountId: Id, sessionId: Id): Promise<readonly ActiveSession[]> {
+    return this.writeSessions(accountId, (s) => s.id !== sessionId || s.current);
+  }
+
+  async terminateOtherSessions(accountId: Id): Promise<readonly ActiveSession[]> {
+    return this.writeSessions(accountId, (s) => s.current);
+  }
+
+  // --- Etiquetas ---
+  //
+  // O catálogo era o único conjunto lido da tabela e nunca escrito: a tela
+  // criava a etiqueta em estado do React, mostrava o aviso de sucesso e perdia
+  // tudo no primeiro recarregamento.
+
+  async createLabel(accountId: Id, draft: LabelDraft): Promise<Label> {
+    // `Label.id` não tem `@default` no schema, então o id sai daqui — no mesmo
+    // formato que as demais tabelas de id explícito deste projeto.
+    const id = `lbl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const row = await prisma.label.create({
+      data: {
+        id,
+        accountId,
+        name: draft.name,
+        tone: draft.tone,
+        description: draft.description ?? null,
+      },
+    });
+    return labelRow(row);
+  }
+
+  async updateLabel(accountId: Id, labelId: Id, draft: LabelDraft): Promise<Label> {
+    await this.assertLabel(accountId, labelId);
+    const row = await prisma.label.update({
+      where: { id: labelId, accountId },
+      data: {
+        name: draft.name,
+        tone: draft.tone,
+        description: draft.description ?? null,
+      },
+    });
+    return labelRow(row);
+  }
+
+  async deleteLabel(accountId: Id, labelId: Id): Promise<void> {
+    await this.assertLabel(accountId, labelId);
+    await prisma.label.delete({ where: { id: labelId, accountId } });
+  }
+
+  private async assertLabel(accountId: Id, labelId: Id) {
+    const row = await prisma.label.findFirst({
+      where: { id: labelId, accountId },
+      select: { id: true },
+    });
+    if (!row) throw new NotFoundError('Etiqueta', labelId);
+    return row;
   }
 
   private async assertAutomation(accountId: Id, automationId: Id) {

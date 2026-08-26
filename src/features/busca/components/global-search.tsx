@@ -19,7 +19,9 @@ export function GlobalSearch({ navItems }: { readonly navItems: readonly NavItem
     if (navigator.platform.toLowerCase().includes('mac')) setShortcut('⌘K');
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey)) {
+      // `key` nem sempre vem preenchido: extensões de autofill/gerenciador de
+      // senha disparam `keydown` sintético via APIs antigas que não o definem.
+      if (event.key?.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
         setOpen((value) => !value);
       }

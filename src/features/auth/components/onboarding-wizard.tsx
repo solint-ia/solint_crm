@@ -131,20 +131,6 @@ export function OnboardingWizard() {
                   icon: 'W',
                   tone: 'green',
                 },
-                {
-                  id: 'instagram',
-                  name: 'Instagram Direct',
-                  desc: 'Mensagens do seu perfil',
-                  icon: 'IG',
-                  tone: 'pink',
-                },
-                {
-                  id: 'webchat',
-                  name: 'Webchat institucional',
-                  desc: 'Widget para seu site',
-                  icon: 'WC',
-                  tone: 'indigo',
-                },
               ].map((c) => (
                 <button
                   key={c.id}

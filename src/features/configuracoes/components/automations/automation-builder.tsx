@@ -33,6 +33,8 @@ export interface BuilderVocabulary {
   readonly priorities: readonly string[];
   readonly teams: readonly string[];
   readonly agents: readonly string[];
+  /** Nomes de etapas do funil, para a ação de mover o card. */
+  readonly stages: readonly string[];
 }
 
 interface AutomationBuilderProps {
@@ -69,6 +71,7 @@ const PLACEHOLDER: Readonly<Record<AutomationActionType, string>> = {
   enviar_mensagem: 'Nome do modelo ou resposta rápida',
   notificar: 'supervisor de plantão',
   resolver: '',
+  mover_etapa_kanban: 'Proposta enviada',
 };
 
 const DRAFT_ID = 'draft-em-edicao';
@@ -120,6 +123,8 @@ export function AutomationBuilder({
         return vocabulary.priorities;
       case 'aplicar_etiqueta':
         return vocabulary.labels;
+      case 'mover_etapa_kanban':
+        return vocabulary.stages;
       default:
         return [];
     }

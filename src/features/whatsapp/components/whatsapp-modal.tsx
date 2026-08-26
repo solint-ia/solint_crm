@@ -19,9 +19,11 @@ import { useWhatsAppConnection } from '../hooks/use-whatsapp-connection';
 interface WhatsAppModalProps {
   readonly open: boolean;
   readonly onClose: () => void;
+  readonly inboxId?: string;
+  readonly inboxName?: string;
 }
 
-export function WhatsAppModal({ open, onClose }: WhatsAppModalProps) {
+export function WhatsAppModal({ open, onClose, inboxId, inboxName }: WhatsAppModalProps) {
   // O stream so fica aberto enquanto o modal esta visível.
   const {
     statusData,
@@ -32,13 +34,23 @@ export function WhatsAppModal({ open, onClose }: WhatsAppModalProps) {
     isConnecting,
     connect,
     disconnect,
-  } = useWhatsAppConnection(open);
+  } = useWhatsAppConnection(open, inboxId);
+
+  // Fechar o modal antes do pareamento terminar não pode deixar a sessão viva
+  // no worker: sem isso, o Baileys segue sozinho gerando QR novo a cada ~60s,
+  // indefinidamente, sem ninguém olhando a tela para escanear.
+  const handleClose = () => {
+    if (!isConnected && statusData.status !== 'desconectado') {
+      void disconnect();
+    }
+    onClose();
+  };
 
   return (
     <Modal
       open={open}
-      onClose={onClose}
-      title="Conectar WhatsApp Direto"
+      onClose={handleClose}
+      title={inboxName ? `Conectar WhatsApp · ${inboxName}` : 'Conectar WhatsApp Direto'}
       description="Conecte seu número escaneando o QR Code para receber e responder conversas em tempo real."
       className="max-w-md"
     >
@@ -69,7 +81,6 @@ export function WhatsAppModal({ open, onClose }: WhatsAppModalProps) {
             {errorMessage}
           </p>
         ) : null}
-
 
         {/* Cenário 1: Conectado com sucesso */}
         {isConnected ? (
@@ -174,7 +185,6 @@ export function WhatsAppModal({ open, onClose }: WhatsAppModalProps) {
           <div className="flex w-full flex-col items-center gap-4 rounded-surface border border-line bg-surface-2 p-6 text-center">
             <div className="flex size-12 items-center justify-center rounded-surface bg-accent-soft text-brand">
               <QrCode className="size-6" />
-
             </div>
 
             <div>

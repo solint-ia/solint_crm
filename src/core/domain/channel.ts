@@ -1,7 +1,15 @@
 import type { Id } from './shared';
 
-/** Canais suportados pela plataforma. Novo canal = nova entrada no registro (OCP). */
-export const CHANNELS = ['whatsapp', 'instagram', 'webchat', 'email', 'telegram'] as const;
+/**
+ * Canais suportados pela plataforma. Novo canal = nova entrada no registro (OCP).
+ *
+ * Hoje só há WhatsApp — é onde o produto está focado. Instagram, Webchat,
+ * E-mail e Telegram já apareceram aqui, mas nenhum tinha implementação por
+ * trás: eram opções que a tela oferecia e que não conectavam a coisa alguma.
+ * Oferecer conexão que não existe é pior do que não oferecer, então saíram do
+ * registro. Voltam quando houver motor que os atenda, uma entrada por vez.
+ */
+export const CHANNELS = ['whatsapp'] as const;
 export type Channel = (typeof CHANNELS)[number];
 
 export type ChannelToneKey = 'green' | 'pink' | 'indigo' | 'slate' | 'blue';
@@ -19,13 +27,25 @@ export interface ChannelDescriptor {
  */
 export const CHANNEL_REGISTRY: Readonly<Record<Channel, ChannelDescriptor>> = {
   whatsapp: { id: 'whatsapp', label: 'WhatsApp', tone: 'green' },
-  instagram: { id: 'instagram', label: 'Instagram', tone: 'pink' },
-  webchat: { id: 'webchat', label: 'Webchat', tone: 'indigo' },
-  email: { id: 'email', label: 'E-mail', tone: 'slate' },
-  telegram: { id: 'telegram', label: 'Telegram', tone: 'blue' },
 };
 
-export const describeChannel = (channel: Channel): ChannelDescriptor => CHANNEL_REGISTRY[channel];
+/** Descritor de segurança para linha antiga do banco num canal já removido. */
+const CANAL_DESCONHECIDO: ChannelDescriptor = {
+  id: 'whatsapp',
+  label: 'Canal desativado',
+  tone: 'slate',
+};
+
+/**
+ * O banco pode conter canal que o registro não tem mais.
+ *
+ * Linhas gravadas quando Instagram e Webchat ainda eram opções continuam lá, e
+ * um acesso direto ao registro devolveria `undefined` — a tela quebrava ao ler
+ * `.label` de uma conversa antiga. Aqui elas aparecem como desativadas, que é a
+ * verdade, em vez de derrubar a página.
+ */
+export const describeChannel = (channel: Channel): ChannelDescriptor =>
+  CHANNEL_REGISTRY[channel] ?? CANAL_DESCONHECIDO;
 
 export type InboxConnectionStatus = 'conectado' | 'desconectado' | 'pareando' | 'nao_configurado';
 

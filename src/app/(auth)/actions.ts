@@ -4,6 +4,7 @@ import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { PERMISSIONS } from '@/core/domain/user';
+import { defaultBusinessHours } from '@/core/domain/business-hours';
 import { hashPassword, passwordProblem, verifyPassword } from '@/infrastructure/auth/password';
 import { createSession, destroyCurrentSession, touchUser } from '@/infrastructure/auth/session';
 import { prisma, asJson } from '@/infrastructure/db/prisma';
@@ -178,7 +179,10 @@ export async function signupAction(input: unknown): Promise<AuthActionResult> {
         identifier: 'whatsapp-primary',
         status: 'ativo',
         provider: 'baileys',
-        businessHours: asJson({ enabled: false, timezone: 'America/Sao_Paulo', schedule: [] }),
+        // Forma canônica do domínio. Antes gravava `{ enabled, timezone, schedule }`
+        // — outra forma, de uma versão anterior — e toda conta criada pelo
+        // cadastro nascia com a tela de Configurações quebrada.
+        businessHours: asJson(defaultBusinessHours()),
         awayMessage: asJson({ enabled: false, message: '' }),
         greeting: asJson({ enabled: false, message: '' }),
       },
@@ -198,7 +202,14 @@ export async function signupAction(input: unknown): Promise<AuthActionResult> {
         { id: `stg-2-${accountId}`, pipelineId, name: 'Qualificação', order: 2, color: '#f59e0b' },
         { id: `stg-3-${accountId}`, pipelineId, name: 'Proposta', order: 3, color: '#8b5cf6' },
         { id: `stg-4-${accountId}`, pipelineId, name: 'Negociação', order: 4, color: '#ec4899' },
-        { id: `stg-5-${accountId}`, pipelineId, name: 'Fechado', order: 5, color: '#10b981', isWon: true },
+        {
+          id: `stg-5-${accountId}`,
+          pipelineId,
+          name: 'Fechado',
+          order: 5,
+          color: '#10b981',
+          isWon: true,
+        },
       ],
     });
   });

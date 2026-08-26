@@ -13,10 +13,17 @@ export const metadata: Metadata = { title: 'Caixa de entrada' };
  * um `loading.tsx` alcanca tambem as rotas filhas, e faz o Next despachar 200
  * antes de `/conversas/[id]` poder responder 404. Ver `inbox-skeleton.tsx`.
  */
-export default function ConversasPage() {
+export default async function ConversasPage({
+  searchParams,
+}: {
+  readonly searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = await searchParams;
+  const caixa = typeof params?.caixa === 'string' ? params.caixa : undefined;
+
   return (
     <Suspense fallback={<InboxSkeleton />}>
-      <InboxData />
+      <InboxData initialInboxId={caixa} />
     </Suspense>
   );
 }

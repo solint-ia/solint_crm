@@ -1,12 +1,17 @@
 'use server';
 
+import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
+import { AUTOMATION_ACTION_TYPES, AUTOMATION_TRIGGERS } from '@/core/domain/automation';
+import { CHANNELS } from '@/core/domain/channel';
 import { ARTICLE_STATUSES } from '@/core/domain/knowledge';
-import type { AssignmentMethod } from '@/core/domain/settings';
+import { TONES } from '@/core/domain/label';
+import type { AssignmentMethod, ChannelConnection } from '@/core/domain/settings';
 import { can } from '@/core/domain/user';
 import { WEEKDAYS } from '@/core/domain/business-hours';
 import { createInvite } from '@/infrastructure/auth/invites';
 import { container } from '@/infrastructure/container';
+import { PrismaSettingsRepository } from '@/infrastructure/repositories/prisma/settings-repository';
 
 export interface ActionResult {
   readonly ok: boolean;
@@ -82,28 +87,17 @@ const conditionSchema = z.object({
   value: z.string().trim().min(1).max(120),
 });
 
+// Derivado do domínio, não recopiado: quando `mover_etapa_kanban` foi
+// acrescentada, a lista fixa daqui teria recusado a regra nova sem dizer por quê.
 const actionSchema = z.object({
-  type: z.enum([
-    'atribuir_equipe',
-    'atribuir_agente',
-    'definir_prioridade',
-    'aplicar_etiqueta',
-    'enviar_mensagem',
-    'notificar',
-    'resolver',
-  ] as const),
+  type: z.enum(AUTOMATION_ACTION_TYPES),
   value: z.string().trim().max(160),
 });
 
 const saveAutomationSchema = z.object({
   id: z.string().min(1).max(64).optional(),
   name: z.string().trim().min(3).max(80),
-  trigger: z.enum([
-    'conversa_criada',
-    'mensagem_recebida',
-    'conversa_pendente',
-    'conversa_resolvida',
-  ] as const),
+  trigger: z.enum(AUTOMATION_TRIGGERS),
   conditions: z.array(conditionSchema).max(8),
   // Uma automação sem ação não faz nada: recusar é mais honesto que salvar vazio.
   actions: z.array(actionSchema).min(1).max(8),
@@ -174,6 +168,36 @@ const autoReplySchema = z.object({
   enabled: z.boolean(),
   text: z.string().trim().max(1000),
 });
+
+const createInboxSchema = z.object({
+  name: z.string().trim().min(2, 'O nome da caixa deve ter pelo menos 2 caracteres.').max(100),
+  channel: z.enum(CHANNELS).default('whatsapp'),
+});
+
+export async function createInboxAction(
+  input: unknown,
+): Promise<ActionResult & { readonly connection?: ChannelConnection }> {
+  const parsed = createInboxSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Dados inválidos para a nova caixa de entrada.',
+    };
+  }
+
+  try {
+    const session = await assertCanWrite();
+    const settingsRepo =
+      typeof container.settings.createInbox === 'function'
+        ? container.settings
+        : new PrismaSettingsRepository();
+    const connection = await settingsRepo.createInbox(session.account.id, parsed.data);
+    revalidatePath('/configuracoes');
+    return { ok: true, connection };
+  } catch (error) {
+    return failureOf(error, 'Erro ao criar a nova caixa de entrada.');
+  }
+}
 
 const updateInboxSchema = z.object({
   connectionId: z.string().min(1).max(64),
@@ -339,7 +363,11 @@ export async function toggleWebhookAction(input: unknown): Promise<ActionResult>
 
   try {
     const session = await assertCanWrite();
-    await container.settings.toggleWebhook(session.account.id, parsed.data.webhookId, parsed.data.enabled);
+    await container.settings.toggleWebhook(
+      session.account.id,
+      parsed.data.webhookId,
+      parsed.data.enabled,
+    );
     return { ok: true };
   } catch (error) {
     return failureOf(error, 'Erro ao alterar status do webhook.');
@@ -418,6 +446,24 @@ export async function createCannedResponseAction(input: unknown): Promise<Action
   }
 }
 
+const updateCannedResponseSchema = createCannedResponseSchema.extend({
+  responseId: z.string().min(1).max(64),
+});
+
+export async function updateCannedResponseAction(input: unknown): Promise<ActionResult> {
+  const parsed = updateCannedResponseSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Atalho ou conteúdo inválido.' };
+
+  const { responseId, ...draft } = parsed.data;
+  try {
+    const session = await assertCanWrite();
+    await container.settings.updateCannedResponse(session.account.id, responseId, draft);
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao atualizar resposta rápida.');
+  }
+}
+
 const deleteCannedResponseSchema = z.object({ responseId: z.string().min(1) });
 
 export async function deleteCannedResponseAction(input: unknown): Promise<ActionResult> {
@@ -437,7 +483,12 @@ export async function deleteCannedResponseAction(input: unknown): Promise<Action
 
 const createCustomAttributeSchema = z.object({
   name: z.string().trim().min(2).max(60),
-  key: z.string().trim().min(2).max(40).regex(/^[a-z0-9_]+$/, 'A chave deve conter apenas letras minúsculas, números e sublinhados.'),
+  key: z
+    .string()
+    .trim()
+    .min(2)
+    .max(40)
+    .regex(/^[a-z0-9_]+$/, 'A chave deve conter apenas letras minúsculas, números e sublinhados.'),
   type: z.enum(['texto', 'numero', 'data', 'lista', 'booleano'] as const),
   appliesTo: z.enum(['contato', 'conversa'] as const),
   options: z.array(z.string().trim()).optional(),
@@ -445,7 +496,8 @@ const createCustomAttributeSchema = z.object({
 
 export async function createCustomAttributeAction(input: unknown): Promise<ActionResult> {
   const parsed = createCustomAttributeSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
 
   try {
     const session = await assertCanWrite();
@@ -601,5 +653,132 @@ export async function inviteMemberAction(input: unknown): Promise<InviteResult> 
     };
   } catch (error) {
     return failureOf(error, 'Erro ao gerar o convite.');
+  }
+}
+
+// ---------------------------------------------------------------- Etiquetas
+
+const labelSchema = z.object({
+  name: z.string().trim().min(1).max(60),
+  tone: z.enum(TONES),
+  description: z.string().trim().max(200).optional(),
+});
+
+export async function createLabelAction(input: unknown): Promise<ActionResult> {
+  const parsed = labelSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
+  }
+
+  try {
+    const session = await assertCanWrite();
+    await container.settings.createLabel(session.account.id, parsed.data);
+    revalidatePath('/configuracoes');
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao criar etiqueta.');
+  }
+}
+
+const updateLabelSchema = labelSchema.extend({
+  labelId: z.string().min(1).max(64),
+});
+
+export async function updateLabelAction(input: unknown): Promise<ActionResult> {
+  const parsed = updateLabelSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
+  }
+
+  const { labelId, ...draft } = parsed.data;
+  try {
+    const session = await assertCanWrite();
+    await container.settings.updateLabel(session.account.id, labelId, draft);
+    revalidatePath('/configuracoes');
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao atualizar etiqueta.');
+  }
+}
+
+const deleteLabelSchema = z.object({ labelId: z.string().min(1).max(64) });
+
+export async function deleteLabelAction(input: unknown): Promise<ActionResult> {
+  const parsed = deleteLabelSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Etiqueta inválida.' };
+
+  try {
+    const session = await assertCanWrite();
+    await container.settings.deleteLabel(session.account.id, parsed.data.labelId);
+    revalidatePath('/configuracoes');
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao excluir etiqueta.');
+  }
+}
+
+// ---------------------------------------------------------------- Sessões ativas
+
+const terminateSessionSchema = z.object({ sessionId: z.string().min(1).max(64) });
+
+export async function terminateSessionAction(input: unknown): Promise<ActionResult> {
+  const parsed = terminateSessionSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Sessão inválida.' };
+
+  try {
+    const session = await assertCanWrite();
+    await container.settings.terminateSession(session.account.id, parsed.data.sessionId);
+    revalidatePath('/configuracoes');
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao encerrar a sessão.');
+  }
+}
+
+export async function terminateOtherSessionsAction(): Promise<ActionResult> {
+  try {
+    const session = await assertCanWrite();
+    await container.settings.terminateOtherSessions(session.account.id);
+    revalidatePath('/configuracoes');
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao encerrar as sessões.');
+  }
+}
+
+// ---------------------------------------------------------------- Dados da empresa
+
+/** Campo de texto opcional: string vazia significa "apagar", não "manter". */
+const opcional = (max: number) => z.string().trim().max(max).optional();
+
+const companySchema = z.object({
+  tradeName: z.string().trim().min(2, 'O nome fantasia precisa de ao menos 2 caracteres.').max(120),
+  legalName: opcional(160),
+  document: opcional(24),
+  website: z.union([z.literal(''), z.string().trim().url('Informe uma URL válida.').max(200)]).optional(),
+  address: opcional(240),
+  phone: opcional(32),
+  email: z.union([z.literal(''), z.string().trim().email('Informe um e-mail válido.').max(160)]).optional(),
+  language: opcional(16),
+  timezone: opcional(64),
+  currency: opcional(8),
+  dateFormat: opcional(16),
+  firstDayOfWeek: opcional(16),
+  brandColor: opcional(16),
+});
+
+export async function saveCompanyProfileAction(input: unknown): Promise<ActionResult> {
+  const parsed = companySchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados da empresa inválidos.' };
+  }
+
+  try {
+    const session = await assertCanWrite();
+    await container.settings.saveCompanyProfile(session.account.id, parsed.data);
+    revalidatePath('/configuracoes');
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao salvar os dados da empresa.');
   }
 }

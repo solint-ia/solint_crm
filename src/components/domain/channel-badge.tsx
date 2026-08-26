@@ -15,7 +15,9 @@ export function ChannelDot({ channel }: { readonly channel: Channel }) {
       title={descriptor.label}
       aria-label={descriptor.label}
       className="inline-block size-2 rounded-full"
-      style={{ backgroundColor: CHANNEL_COLOR_VAR[channel] }}
+      // Canal removido do registro ainda pode vir de linha antiga do banco: sem
+      // o padrão, o ponto ficaria transparente e sumia da lista.
+      style={{ backgroundColor: CHANNEL_COLOR_VAR[channel] ?? 'var(--color-dim)' }}
     />
   );
 }

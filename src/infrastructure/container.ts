@@ -67,6 +67,7 @@ const buildContainer = (): Container => {
   const pipelines = new PrismaPipelineRepository();
   const aiAgents = new PrismaAiAgentRepository();
   const campaigns = new PrismaCampaignRepository();
+  const settings = new PrismaSettingsRepository();
 
   return {
     session: new CookieSessionProvider(),
@@ -78,7 +79,7 @@ const buildContainer = (): Container => {
     campaigns,
     analytics: new PrismaAnalyticsRepository(),
     notifications: new PrismaNotificationRepository(),
-    settings: new PrismaSettingsRepository(),
+    settings,
     useCases: {
       listConversations: createListConversations(conversations),
       sendMessage: createSendMessage(conversations),
@@ -97,8 +98,15 @@ const buildContainer = (): Container => {
 
 const globalRef = globalThis as typeof globalThis & { __solintContainer?: Container };
 
-export const container: Container = globalRef.__solintContainer ?? buildContainer();
-
-if (process.env.NODE_ENV !== 'production') {
-  globalRef.__solintContainer = container;
+if (
+  process.env.NODE_ENV !== 'production' ||
+  (globalRef.__solintContainer &&
+    typeof globalRef.__solintContainer.settings.createInbox !== 'function')
+) {
+  delete globalRef.__solintContainer;
 }
+
+export const container: Container =
+  process.env.NODE_ENV === 'production'
+    ? (globalRef.__solintContainer ??= buildContainer())
+    : buildContainer();

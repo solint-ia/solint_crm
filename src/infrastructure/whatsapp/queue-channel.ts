@@ -63,8 +63,10 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     return command.id;
   }
 
-  async getStatus(accountId: string): Promise<WhatsAppStatusPayload> {
-    const inboxId = await this.inboxOf(accountId);
+  async getStatus(accountId: string, scopedInboxId?: string): Promise<WhatsAppStatusPayload> {
+    // Caixa pedida explicitamente não passa por `inboxOf`: o ponto de perguntar
+    // pela caixa da conversa é justamente não aceitar outra no lugar dela.
+    const inboxId = scopedInboxId ?? (await this.inboxOf(accountId));
     const conn = inboxId
       ? await prisma.whatsAppConnection.findUnique({ where: { inboxId } })
       : null;
@@ -145,8 +147,11 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     kind: 'send' | 'send_media',
     body: object,
   ): Promise<DispatchResult> {
-    const inboxId = await this.inboxOf(context.accountId);
-    if (!inboxId) return { ok: false, error: 'Conta sem caixa de entrada de WhatsApp.' };
+    // A caixa vem da conversa, não de `inboxOf`: aquele método escolhe pela
+    // conta e prefere a caixa pareada, o que fazia o envio de uma conversa
+    // movida para uma caixa sem sessão sair pelo número de outra.
+    const inboxId = context.inboxId;
+    if (!inboxId) return { ok: false, error: 'Conversa sem caixa de entrada definida.' };
     if (!workerPresence().online) {
       return { ok: false, error: 'O worker de WhatsApp não está em execução.' };
     }
@@ -185,8 +190,8 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     return this.dispatch(context, 'send_media', { recipient: target, media });
   }
 
-  async markRead(accountId: string, conversationId: string): Promise<void> {
-    const inboxId = await this.inboxOf(accountId);
+  async markRead(accountId: string, conversationId: string, scopedInboxId?: string): Promise<void> {
+    const inboxId = scopedInboxId ?? (await this.inboxOf(accountId));
     if (!inboxId || !workerPresence().online) return;
     await this.enqueue(inboxId, 'read', { conversationId });
   }

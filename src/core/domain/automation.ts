@@ -1,13 +1,21 @@
 import type { Id } from './shared';
 
-export type AutomationTrigger =
-  'conversa_criada' | 'mensagem_recebida' | 'conversa_pendente' | 'conversa_resolvida';
+export const AUTOMATION_TRIGGERS = [
+  'conversa_criada',
+  'mensagem_recebida',
+  'conversa_pendente',
+  'conversa_resolvida',
+  'etiqueta_aplicada',
+] as const;
+
+export type AutomationTrigger = (typeof AUTOMATION_TRIGGERS)[number];
 
 export const AUTOMATION_TRIGGER_LABELS: Readonly<Record<AutomationTrigger, string>> = {
   conversa_criada: 'Quando uma conversa é criada',
   mensagem_recebida: 'Quando chega uma mensagem',
   conversa_pendente: 'Quando a conversa fica pendente',
   conversa_resolvida: 'Quando a conversa é resolvida',
+  etiqueta_aplicada: 'Quando uma etiqueta é aplicada',
 };
 
 export type AutomationConditionField =
@@ -36,14 +44,18 @@ export interface AutomationCondition {
   readonly value: string;
 }
 
-export type AutomationActionType =
-  | 'atribuir_equipe'
-  | 'atribuir_agente'
-  | 'definir_prioridade'
-  | 'aplicar_etiqueta'
-  | 'enviar_mensagem'
-  | 'notificar'
-  | 'resolver';
+export const AUTOMATION_ACTION_TYPES = [
+  'atribuir_equipe',
+  'atribuir_agente',
+  'definir_prioridade',
+  'aplicar_etiqueta',
+  'enviar_mensagem',
+  'notificar',
+  'resolver',
+  'mover_etapa_kanban',
+] as const;
+
+export type AutomationActionType = (typeof AUTOMATION_ACTION_TYPES)[number];
 
 export const AUTOMATION_ACTION_LABELS: Readonly<Record<AutomationActionType, string>> = {
   atribuir_equipe: 'Atribuir à equipe',
@@ -53,6 +65,7 @@ export const AUTOMATION_ACTION_LABELS: Readonly<Record<AutomationActionType, str
   enviar_mensagem: 'Enviar mensagem',
   notificar: 'Notificar',
   resolver: 'Marcar como resolvida',
+  mover_etapa_kanban: 'Mover para a etapa do funil',
 };
 
 /**
@@ -65,6 +78,9 @@ const EXCLUSIVE_ACTIONS: ReadonlySet<AutomationActionType> = new Set([
   'atribuir_agente',
   'definir_prioridade',
   'resolver',
+  // Um card mora numa etapa só: duas regras mandando para etapas diferentes é
+  // exatamente a sobrescrita que o detector procura.
+  'mover_etapa_kanban',
 ]);
 
 export interface AutomationAction {
@@ -107,6 +123,100 @@ export const describeAutomation = (automation: Automation): string => {
 
   return `Se ${conditions}, então ${actions || 'nada'}.`;
 };
+
+/**
+ * O que o motor sabe sobre o momento em que a automação disparou.
+ *
+ * Deliberadamente raso — rótulos e textos, não entidades. O casamento de
+ * condição é comparação de string (é o que o construtor grava: "Suporte",
+ * "VIP", "alta"), e receber a conversa inteira aqui amarraria o domínio da
+ * automação ao de conversas sem necessidade.
+ */
+export interface AutomationContext {
+  readonly canal: string;
+  readonly fila: string;
+  readonly prioridade: string;
+  readonly etiquetas: readonly string[];
+  /** Texto da mensagem que disparou, quando houve uma. */
+  readonly texto?: string;
+  /** Está dentro do horário de atendimento da caixa? */
+  readonly dentroDoHorario?: boolean;
+}
+
+const normalizar = (valor: string): string => valor.trim().toLowerCase();
+
+/**
+ * O valor observado para um campo de condição.
+ *
+ * `etiqueta` devolve várias: uma conversa tem um conjunto delas, e "etiqueta é
+ * VIP" precisa ser verdade se **alguma** for VIP.
+ */
+const observado = (
+  field: AutomationConditionField,
+  context: AutomationContext,
+): readonly string[] => {
+  switch (field) {
+    case 'canal':
+      return [context.canal];
+    case 'fila':
+      return [context.fila];
+    case 'prioridade':
+      return [context.prioridade];
+    case 'etiqueta':
+      return context.etiquetas;
+    case 'palavra_chave':
+      return context.texto ? [context.texto] : [];
+    case 'horario':
+      // Sem informação de horário a condição não é afirmável; devolver vazio
+      // faz `igual` falhar, que é o lado seguro: melhor não disparar do que
+      // disparar por engano fora do expediente.
+      return context.dentroDoHorario === undefined
+        ? []
+        : [context.dentroDoHorario ? 'dentro' : 'fora'];
+    default:
+      return [];
+  }
+};
+
+const satisfaz = (condition: AutomationCondition, context: AutomationContext): boolean => {
+  const valores = observado(condition.field, context).map(normalizar);
+  const alvo = normalizar(condition.value);
+
+  switch (condition.operator) {
+    case 'igual':
+      return valores.some((valor) => valor === alvo);
+    case 'contem':
+      return valores.some((valor) => valor.includes(alvo));
+    case 'diferente':
+      // "Nenhum dos observados é o alvo" — e não "algum é diferente", que seria
+      // verdade para qualquer conversa com duas etiquetas.
+      return !valores.some((valor) => valor === alvo);
+    default:
+      return false;
+  }
+};
+
+/**
+ * A automação vale para este momento?
+ *
+ * Todas as condições precisam valer (E), que é como o construtor as descreve
+ * ("se canal é WhatsApp **e** etiqueta é VIP"). Sem condições, vale sempre.
+ */
+export const automationMatches = (
+  automation: Automation,
+  context: AutomationContext,
+): boolean =>
+  automation.enabled && automation.conditions.every((condition) => satisfaz(condition, context));
+
+/** Regras que devem rodar para um gatilho, já na ordem de execução. */
+export const automationsFor = (
+  automations: readonly Automation[],
+  trigger: AutomationTrigger,
+  context: AutomationContext,
+): readonly Automation[] =>
+  automations
+    .filter((automation) => automation.trigger === trigger && automationMatches(automation, context))
+    .toSorted((a, b) => a.order - b.order);
 
 export type ConflictSeverity = 'sobrescrita' | 'duplicidade';
 

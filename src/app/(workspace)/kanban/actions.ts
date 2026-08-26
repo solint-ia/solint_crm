@@ -5,6 +5,13 @@ import { revalidatePath } from 'next/cache';
 import type { Deal } from '@/core/domain/pipeline';
 import { container } from '@/infrastructure/container';
 
+/** Resultado que devolve o card atualizado, para a tela não recarregar o quadro. */
+interface DealActionResult {
+  readonly ok: boolean;
+  readonly error?: string;
+  readonly deal?: Deal;
+}
+
 const moveDealSchema = z.object({
   dealId: z.string().min(1).max(64),
   targetStageId: z.string().min(1).max(64),
@@ -157,3 +164,75 @@ export async function updateStagesAction(
 }
 
 
+
+/* ==========================================================================
+   Checklist do card.
+
+   As tarefas já tinham tabela (`Task`) e relação com `Deal`, mas nenhum
+   caminho de escrita: o painel de detalhe montava a lista em estado do React e
+   a perdia ao fechar.
+   ========================================================================== */
+
+const addTaskSchema = z.object({
+  dealId: z.string().min(1).max(64),
+  title: z.string().trim().min(1).max(200),
+});
+
+export async function addDealTaskAction(input: unknown): Promise<DealActionResult> {
+  const parsed = addTaskSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Descreva a tarefa antes de adicionar.' };
+
+  try {
+    const session = await container.session.getCurrentSession();
+    const deal = await container.pipelines.addDealTask(
+      session.account.id,
+      parsed.data.dealId,
+      parsed.data.title,
+    );
+    revalidatePath('/kanban');
+    return { ok: true, deal };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Erro ao criar tarefa.' };
+  }
+}
+
+const taskSchema = z.object({
+  dealId: z.string().min(1).max(64),
+  taskId: z.string().min(1).max(64),
+});
+
+export async function toggleDealTaskAction(input: unknown): Promise<DealActionResult> {
+  const parsed = taskSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Tarefa inválida.' };
+
+  try {
+    const session = await container.session.getCurrentSession();
+    const deal = await container.pipelines.toggleDealTask(
+      session.account.id,
+      parsed.data.dealId,
+      parsed.data.taskId,
+    );
+    revalidatePath('/kanban');
+    return { ok: true, deal };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Erro ao atualizar tarefa.' };
+  }
+}
+
+export async function deleteDealTaskAction(input: unknown): Promise<DealActionResult> {
+  const parsed = taskSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Tarefa inválida.' };
+
+  try {
+    const session = await container.session.getCurrentSession();
+    const deal = await container.pipelines.deleteDealTask(
+      session.account.id,
+      parsed.data.dealId,
+      parsed.data.taskId,
+    );
+    revalidatePath('/kanban');
+    return { ok: true, deal };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Erro ao excluir tarefa.' };
+  }
+}

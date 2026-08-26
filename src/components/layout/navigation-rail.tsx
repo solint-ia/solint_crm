@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   Bot,
+  ChevronDown,
   Inbox,
   KanbanSquare,
   LayoutDashboard,
@@ -23,6 +24,7 @@ import { WhatsAppModal } from '@/features/whatsapp/components/whatsapp-modal';
 import { useWhatsAppConnection } from '@/features/whatsapp/hooks/use-whatsapp-connection';
 import { cn } from '@/lib/cn';
 import { ThemeToggle } from './theme-toggle';
+import { InboxNavDropdown, type AccessibleInbox } from './inbox-nav-dropdown';
 
 const ICONS: Readonly<Record<NavIcon, typeof Inbox>> = {
   inbox: Inbox,
@@ -40,6 +42,9 @@ interface NavigationRailProps {
   readonly userName: string;
   readonly userTone: string;
   readonly availability: AvailabilityStatus;
+  readonly accessibleInboxes?: readonly AccessibleInbox[];
+  readonly canManageInboxes?: boolean;
+  readonly roleName?: string;
 }
 
 export function NavigationRail({
@@ -48,10 +53,14 @@ export function NavigationRail({
   userName,
   userTone,
   availability,
+  accessibleInboxes = [],
+  canManageInboxes = false,
+  roleName,
 }: NavigationRailProps) {
   const pathname = usePathname();
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [mobileInboxesOpen, setMobileInboxesOpen] = useState(false);
   const { isConnected: waConnected, statusData } = useWhatsAppConnection();
 
   useEffect(() => setDrawerOpen(false), [pathname]);
@@ -106,6 +115,21 @@ export function NavigationRail({
           {items.map((item) => {
             const Icon = ICONS[item.icon];
             const active = isActive(item);
+
+            // Caixas de entrada abre o menu flutuante inteligente
+            if (item.id === 'conversas') {
+              return (
+                <InboxNavDropdown
+                  key={item.id}
+                  accessibleInboxes={accessibleInboxes}
+                  totalUnreadCount={unreadCount}
+                  canManageInboxes={canManageInboxes}
+                  roleName={roleName}
+                  active={active}
+                />
+              );
+            }
+
             return (
               <Link
                 key={item.id}
@@ -121,11 +145,6 @@ export function NavigationRail({
                 )}
               >
                 <Icon className="size-[19px] transition-transform group-hover:scale-110" />
-                {item.id === 'conversas' && unreadCount > 0 && (
-                  <span className="absolute -top-1 -right-1 flex min-w-4.5 h-4.5 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-bold text-white shadow-sm shadow-blue-600/40">
-                    {unreadCount}
-                  </span>
-                )}
               </Link>
             );
           })}
@@ -229,6 +248,80 @@ export function NavigationRail({
               {items.map((item) => {
                 const Icon = ICONS[item.icon];
                 const active = isActive(item);
+
+                if (item.id === 'conversas' && accessibleInboxes.length > 0) {
+                  return (
+                    <li key={item.id} className="flex flex-col">
+                      <div className="flex items-center gap-1">
+                        <Link
+                          href={item.href}
+                          aria-current={active ? 'page' : undefined}
+                          className={cn(
+                            'flex flex-1 items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-medium transition-colors',
+                            active
+                              ? 'bg-brand/12 font-semibold text-brand border border-brand/25'
+                              : 'text-muted hover:bg-surface-2 hover:text-ink border border-transparent',
+                          )}
+                        >
+                          <Icon className="size-[18px] shrink-0" />
+                          <span className="flex-1">{item.label}</span>
+                          {unreadCount > 0 && (
+                            <span className="rounded-full bg-blue-600 px-1.5 text-[10px] font-bold text-white">
+                              {unreadCount}
+                            </span>
+                          )}
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => setMobileInboxesOpen((v) => !v)}
+                          className="flex size-9 items-center justify-center rounded-xl text-muted hover:bg-surface-2 hover:text-ink"
+                          title="Expandir caixas"
+                        >
+                          <ChevronDown
+                            className={cn(
+                              'size-4 transition-transform duration-150',
+                              mobileInboxesOpen ? 'rotate-180 text-brand' : '',
+                            )}
+                          />
+                        </button>
+                      </div>
+
+                      {mobileInboxesOpen && (
+                        <ul className="ml-5 mt-1 flex flex-col gap-1 border-l-2 border-line pl-3 py-1 animate-in fade-in duration-150">
+                          <li>
+                            <Link
+                              href="/conversas"
+                              className="flex items-center justify-between rounded-lg px-2.5 py-1.5 text-xs text-muted hover:bg-surface-2 hover:text-ink"
+                            >
+                              <span>Todas as caixas</span>
+                              {unreadCount > 0 && (
+                                <span className="rounded-full bg-blue-600 px-1.5 text-[10px] font-bold text-white">
+                                  {unreadCount}
+                                </span>
+                              )}
+                            </Link>
+                          </li>
+                          {accessibleInboxes.map((inbox) => (
+                            <li key={inbox.id}>
+                              <Link
+                                href={`/conversas?caixa=${inbox.id}`}
+                                className="flex items-center justify-between rounded-lg px-2.5 py-1.5 text-xs text-muted hover:bg-surface-2 hover:text-ink"
+                              >
+                                <span className="truncate">{inbox.name}</span>
+                                {inbox.unreadCount > 0 && (
+                                  <span className="rounded-full bg-blue-600 px-1.5 text-[10px] font-bold text-white">
+                                    {inbox.unreadCount}
+                                  </span>
+                                )}
+                              </Link>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </li>
+                  );
+                }
+
                 return (
                   <li key={item.id}>
                     <Link

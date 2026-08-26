@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { CheckCircle2, Settings2 } from 'lucide-react';
+import { CheckCircle2, FilterX, Settings2 } from 'lucide-react';
 import type { Deal, Pipeline } from '@/core/domain/pipeline';
 
 import type { AppNotification } from '@/core/domain/notification';
@@ -18,7 +18,6 @@ import { DealDetailPanel } from './deal-detail-panel';
 import { NewDealModal } from './new-deal-modal';
 import { EditDealModal } from './edit-deal-modal';
 import { StagesModal } from './stages-modal';
-import { EmptyBoardState } from './empty-board-state';
 import { useBoard } from '../hooks/use-board';
 import {
   createDealAction,
@@ -261,7 +260,20 @@ export function KanbanBoard({
       </div>
 
       {/* Nível 3: Quadro Kanban Principal */}
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {/* Aviso amigável quando filtros zeram os resultados */}
+        {isFiltered && board.visibleDeals.length === 0 && (
+          <div className="mx-4 mt-3 flex items-center justify-between rounded-xl border border-line bg-surface p-3 text-xs text-muted shadow-2xs">
+            <div className="flex items-center gap-2">
+              <FilterX className="size-4 text-dim" />
+              <span>Nenhuma oportunidade encontrada para os filtros selecionados.</span>
+            </div>
+            <Button variant="ghost" size="sm" onClick={board.clearAllFilters}>
+              Limpar filtros
+            </Button>
+          </div>
+        )}
+
         {board.columns.length === 0 ? (
           /* Estado Vazio quando não há etapas no funil */
           <div className="flex flex-1 items-center justify-center p-6">
@@ -284,18 +296,8 @@ export function KanbanBoard({
               </Button>
             </div>
           </div>
-        ) : board.visibleDeals.length === 0 ? (
-          /* Estado Vazio quando não há oportunidades (ou filtros zeraram) */
-          <EmptyBoardState
-            isFiltered={isFiltered}
-            onOpenNewDealModal={() => {
-              board.setNewDealStageId(undefined);
-              board.setNewDealModalOpen(true);
-            }}
-            onClearFilters={board.clearAllFilters}
-          />
         ) : (
-          /* Quadro com Colunas */
+          /* Quadro com Colunas / Raias Predefinidas (Sempre Visíveis) */
           <main
             aria-label="Quadro de oportunidades"
             className="flex flex-1 gap-3.5 overflow-x-auto p-4 sm:p-5 md:gap-4"

@@ -1,15 +1,24 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import {
+  Check,
+  CheckCircle2,
+  Copy,
+  Layers,
+  Plus,
+  Shield,
+  Trash2,
+  UserPlus,
+  Users,
+} from 'lucide-react';
 
 import type { Role, User } from '@/core/domain/user';
 import type { ChannelConnection, Team } from '@/core/domain/settings';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import { Modal } from '@/components/ui/modal';
 import { ConfirmModal } from '@/components/ui/confirm-modal';
 import { cn } from '@/lib/cn';
@@ -24,13 +33,6 @@ interface TeamSectionProps {
   readonly members: readonly User[];
   readonly roles: readonly Role[];
   readonly teams: readonly Team[];
-  /**
-   * Caixas da conta.
-   *
-   * A equipe guarda **ids** de caixa, não nomes — nome não serve para
-   * autorizar, porque renomear a caixa cortaria o acesso de quem dependia dela.
-   * Quem traduz id em nome legível é esta tela.
-   */
   readonly inboxes: readonly ChannelConnection[];
 }
 
@@ -42,6 +44,7 @@ export function TeamSection({ members, roles, teams, inboxes }: TeamSectionProps
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [subTab, setSubTab] = useState<TeamSubTab>('membros');
+  const [roleFilter, setRoleFilter] = useState<string>('todos');
 
   // Team Modal
   const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
@@ -120,7 +123,6 @@ export function TeamSection({ members, roles, teams, inboxes }: TeamSectionProps
         teamIds: [...inviteTeamIds],
       });
       if (res.ok && res.link) {
-        // O link aparece uma vez só — o banco guarda apenas o hash do token.
         setInviteLink(`${window.location.origin}${res.link}`);
         router.refresh();
       } else {
@@ -138,31 +140,448 @@ export function TeamSection({ members, roles, teams, inboxes }: TeamSectionProps
     });
   };
 
+  // KPIs
+  const totalMembers = members.length;
+  const onlineAgents = members.filter((m) => m.availability === 'disponivel').length;
+  const adminCount = members.filter((m) => m.roleSlug === 'administrador').length;
+
+  const roleNameOf = (slug: string): string =>
+    roles.find((r) => r.slug === slug)?.name ?? slug;
+
+  const filteredMembers = useMemo(() => {
+    if (roleFilter === 'todos') return members;
+    return members.filter((m) => m.roleSlug === roleFilter);
+  }, [members, roleFilter]);
+
   return (
-    <div className="flex flex-col gap-4">
-      {/* Modal Equipe — criar e editar usam o mesmo formulário. */}
+    <div className="flex flex-col gap-6 animate-in fade-in duration-200">
+      {/* ============================================================ */}
+      {/* CABEÇALHO DA SEÇÃO                                           */}
+      {/* ============================================================ */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-line pb-5">
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="font-display text-xl font-bold tracking-tight text-ink">
+              Equipe e permissões
+            </h2>
+            <span className="inline-flex items-center rounded-full bg-blue-500/10 px-2.5 py-0.5 text-xs font-semibold text-blue-600 dark:text-blue-400">
+              {totalMembers} {totalMembers === 1 ? 'membro' : 'membros'}
+            </span>
+          </div>
+          <p className="mt-1 text-sm text-muted">
+            Gerencie os membros da equipe e controle os níveis de acesso e filas no CRM.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {subTab === 'equipes' ? (
+            <Button size="md" icon={<Plus className="size-4" />} onClick={openNewTeam}>
+              Nova equipe
+            </Button>
+          ) : (
+            <Button
+              size="md"
+              icon={<UserPlus className="size-4" />}
+              onClick={() => {
+                setInviteLink(null);
+                setInviteError(null);
+                setIsInviteOpen(true);
+              }}
+            >
+              Convidar membro
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* ============================================================ */}
+      {/* 4 KPI CARDS NO TOPO ESTILO DASHBOARD                         */}
+      {/* ============================================================ */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        {/* Card 1: Total */}
+        <div className="rounded-2xl border border-line bg-surface p-4.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-muted">Total de membros</span>
+            <div className="flex size-8 items-center justify-center rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
+              <Users className="size-4" />
+            </div>
+          </div>
+          <div className="mt-3 font-display text-2xl font-bold text-ink tabular-nums">
+            {totalMembers}
+          </div>
+          <span className="mt-1 block text-[11px] text-dim">Usuários cadastrados</span>
+        </div>
+
+        {/* Card 2: Agentes Online */}
+        <div className="rounded-2xl border border-line bg-surface p-4.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-muted">Agentes online</span>
+            <div className="flex size-8 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+              <CheckCircle2 className="size-4" />
+            </div>
+          </div>
+          <div className="mt-3 font-display text-2xl font-bold text-ink tabular-nums">
+            {onlineAgents}
+          </div>
+          <span className="mt-1 block text-[11px] text-green-600 dark:text-green-400 font-semibold">
+            {Math.round((onlineAgents / (totalMembers || 1)) * 100)}% da equipe ativa
+          </span>
+        </div>
+
+        {/* Card 3: Administradores */}
+        <div className="rounded-2xl border border-line bg-surface p-4.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-muted">Administradores</span>
+            <div className="flex size-8 items-center justify-center rounded-xl bg-violet-500/10 text-violet-600 dark:text-violet-400">
+              <Shield className="size-4" />
+            </div>
+          </div>
+          <div className="mt-3 font-display text-2xl font-bold text-ink tabular-nums">
+            {adminCount}
+          </div>
+          <span className="mt-1 block text-[11px] text-dim">Gestão total da conta</span>
+        </div>
+
+        {/* Card 4: Equipes / Filas */}
+        <div className="rounded-2xl border border-line bg-surface p-4.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-muted">Equipes ativas</span>
+            <div className="flex size-8 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+              <Layers className="size-4" />
+            </div>
+          </div>
+          <div className="mt-3 font-display text-2xl font-bold text-ink tabular-nums">
+            {teams.length}
+          </div>
+          <span className="mt-1 block text-[11px] text-dim">Filas segmentadas</span>
+        </div>
+      </div>
+
+      {/* ============================================================ */}
+      {/* NAVEGAÇÃO DE SUB-ABAS (Membros / Papéis / Equipes)            */}
+      {/* ============================================================ */}
+      <div className="flex items-center gap-1 rounded-2xl border border-line bg-surface-2 p-1 text-xs w-fit">
+        <button
+          type="button"
+          onClick={() => setSubTab('membros')}
+          className={cn(
+            'flex items-center gap-2 rounded-xl px-3.5 py-1.5 font-semibold transition-all',
+            subTab === 'membros'
+              ? 'bg-surface text-ink shadow-2xs font-bold ring-1 ring-black/5 dark:ring-white/10'
+              : 'text-muted hover:text-ink',
+          )}
+        >
+          <Users className="size-3.5 text-dim" />
+          <span>Membros da equipe</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setSubTab('papeis')}
+          className={cn(
+            'flex items-center gap-2 rounded-xl px-3.5 py-1.5 font-semibold transition-all',
+            subTab === 'papeis'
+              ? 'bg-surface text-ink shadow-2xs font-bold ring-1 ring-black/5 dark:ring-white/10'
+              : 'text-muted hover:text-ink',
+          )}
+        >
+          <Shield className="size-3.5 text-dim" />
+          <span>Papéis e permissões</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setSubTab('equipes')}
+          className={cn(
+            'flex items-center gap-2 rounded-xl px-3.5 py-1.5 font-semibold transition-all',
+            subTab === 'equipes'
+              ? 'bg-surface text-ink shadow-2xs font-bold ring-1 ring-black/5 dark:ring-white/10'
+              : 'text-muted hover:text-ink',
+          )}
+        >
+          <Layers className="size-3.5 text-dim" />
+          <span>Equipes e filas</span>
+        </button>
+      </div>
+
+      {/* ============================================================ */}
+      {/* ABA 1: MEMBROS DA EQUIPE (TABELA MODERNA + FILTROS)          */}
+      {/* ============================================================ */}
+      {subTab === 'membros' ? (
+        <div className="flex flex-col gap-4">
+          {/* Filtros Rápidos */}
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-dim mr-1">Filtrar por papel:</span>
+            {['todos', 'administrador', 'supervisor', 'agente'].map((role) => (
+              <button
+                key={role}
+                type="button"
+                onClick={() => setRoleFilter(role)}
+                className={cn(
+                  'rounded-xl px-3 py-1 font-semibold transition-all capitalize',
+                  roleFilter === role
+                    ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 font-bold'
+                    : 'border border-line bg-surface text-muted hover:bg-surface-2',
+                )}
+              >
+                {role}
+              </button>
+            ))}
+          </div>
+
+          <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-2xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="border-b border-line bg-surface-2/60 text-[11px] font-semibold text-muted uppercase tracking-wider">
+                  <tr>
+                    <th scope="col" className="px-4 py-3">Membro</th>
+                    <th scope="col" className="px-4 py-3">E-mail</th>
+                    <th scope="col" className="px-4 py-3">Função</th>
+                    <th scope="col" className="px-4 py-3">Equipes atribuídas</th>
+                    <th scope="col" className="px-4 py-3">Segurança 2FA</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line-soft">
+                  {filteredMembers.map((member) => (
+                    <tr key={member.id} className="hover:bg-surface-2/50 transition-colors">
+                      <td className="px-4 py-3.5">
+                        <div className="flex items-center gap-3">
+                          <Avatar
+                            name={member.name}
+                            tone={member.avatarTone}
+                            size="sm"
+                            availability={member.availability}
+                          />
+                          <div className="min-w-0">
+                            <span className="font-bold text-ink block truncate">
+                              {member.name}
+                            </span>
+                            <span className="text-[11px] text-dim capitalize">
+                              {member.availability === 'disponivel'
+                                ? 'Disponível agora'
+                                : member.availability === 'ocupado'
+                                  ? 'Ocupado'
+                                  : 'Ausente'}
+                            </span>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="px-4 py-3.5 font-mono text-muted">
+                        {member.email}
+                      </td>
+
+                      <td className="px-4 py-3.5">
+                        <Badge
+                          tone={
+                            member.roleSlug === 'administrador'
+                              ? 'violet'
+                              : member.roleSlug === 'supervisor'
+                                ? 'blue'
+                                : 'slate'
+                          }
+                        >
+                          {roleNameOf(member.roleSlug)}
+                        </Badge>
+                      </td>
+
+                      <td className="px-4 py-3.5">
+                        {member.teams && member.teams.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {member.teams.map((t) => (
+                              <span
+                                key={t}
+                                className="rounded-md bg-surface-2 px-2 py-0.5 text-[10px] font-semibold text-ink border border-line-soft"
+                              >
+                                {t}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-dim text-[11px]">Todas as caixas</span>
+                        )}
+                      </td>
+
+                      <td className="px-4 py-3.5">
+                        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                          <Check className="size-3" />
+                          Ativo
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ============================================================ */}
+      {/* ABA 2: PAPÉIS E PERMISSÕES                                    */}
+      {/* ============================================================ */}
+      {subTab === 'papeis' ? (
+        <div className="grid gap-4 sm:grid-cols-3">
+          {roles.map((role) => (
+            <div
+              key={role.id}
+              className="flex flex-col justify-between rounded-2xl border border-line bg-surface p-5 shadow-2xs"
+            >
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="font-display text-base font-bold text-ink">
+                    {role.name}
+                  </h4>
+                  <Badge
+                    tone={
+                      role.slug === 'administrador'
+                        ? 'violet'
+                        : role.slug === 'supervisor'
+                          ? 'blue'
+                          : 'slate'
+                    }
+                  >
+                    {role.slug}
+                  </Badge>
+                </div>
+                <p className="mt-2 text-xs text-muted leading-relaxed">
+                  {role.description}
+                </p>
+
+                <div className="mt-4 border-t border-line-soft pt-3">
+                  <span className="text-[11px] font-semibold text-dim uppercase">
+                    {role.permissions.length} permissões concedidas
+                  </span>
+                  <div className="mt-2 flex flex-wrap gap-1 max-h-40 overflow-y-auto">
+                    {role.permissions.map((p) => (
+                      <span
+                        key={p}
+                        className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10px] text-muted border border-line-soft"
+                      >
+                        {p}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {/* ============================================================ */}
+      {/* ABA 3: EQUIPES E FILAS                                       */}
+      {/* ============================================================ */}
+      {subTab === 'equipes' ? (
+        <div className="flex flex-col gap-4">
+          {teams.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-line bg-surface-2/40 p-12 text-center">
+              <div className="flex size-12 items-center justify-center rounded-2xl bg-surface-2 text-dim mb-3">
+                <Layers className="size-6" />
+              </div>
+              <h4 className="font-display text-base font-bold text-ink">
+                Nenhuma equipe cadastrada
+              </h4>
+              <p className="mt-1 max-w-md text-xs text-muted">
+                Equipes agrupam atendentes por setor (Comercial, Suporte, Financeiro) e direcionam conversas das caixas correspondentes.
+              </p>
+              <Button size="md" className="mt-5" icon={<Plus className="size-4" />} onClick={openNewTeam}>
+                Criar primeira equipe
+              </Button>
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {teams.map((team) => (
+                <div
+                  key={team.id}
+                  className="flex flex-col justify-between rounded-2xl border border-line bg-surface p-5 shadow-2xs transition-all hover:border-brand/40 hover:shadow-xs"
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <span
+                          className="size-3.5 rounded-full ring-2 ring-white/10"
+                          style={{ backgroundColor: team.color }}
+                        />
+                        <h4 className="font-display text-base font-bold text-ink">
+                          {team.name}
+                        </h4>
+                      </div>
+                      <span className="rounded-md bg-surface-2 px-2 py-0.5 text-[11px] font-semibold text-muted border border-line-soft">
+                        {team.memberIds.length} {team.memberIds.length === 1 ? 'membro' : 'membros'}
+                      </span>
+                    </div>
+
+                    <div className="mt-4 border-t border-line-soft pt-3">
+                      <span className="text-[11px] font-semibold uppercase text-dim">
+                        Caixas de entrada vinculadas
+                      </span>
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {team.inboxIds.length > 0 ? (
+                          team.inboxIds.map((id) => (
+                            <span
+                              key={id}
+                              className="rounded-md bg-blue-500/10 px-2 py-0.5 text-[11px] font-medium text-blue-600 dark:text-blue-400"
+                            >
+                              {inboxNameOf(id)}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-xs text-dim italic">Nenhuma caixa atribuída</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 flex items-center justify-end gap-2 border-t border-line-soft pt-3">
+                    <Button variant="ghost" size="sm" onClick={() => openEditTeam(team)}>
+                      Editar
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Excluir equipe ${team.name}`}
+                      onClick={() => setDeletingTeam(team)}
+                      icon={<Trash2 className="size-3.5 text-red-500" />}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {/* Modal Nova/Editar Equipe */}
       <Modal
         open={isTeamModalOpen}
         onClose={() => setIsTeamModalOpen(false)}
         title={editingTeam ? `Editar ${editingTeam.name}` : 'Criar nova equipe'}
+        description="Configure o nome, cor e as caixas que essa equipe atenderá."
+        className="max-w-md"
       >
-        <form onSubmit={handleSaveTeam} className="flex flex-col gap-4">
-          {teamError && (
-            <div className="rounded-md bg-danger/10 p-3 text-body text-danger">{teamError}</div>
-          )}
+        <form onSubmit={handleSaveTeam} className="flex flex-col gap-4 pt-1">
+          {teamError ? (
+            <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+              {teamError}
+            </p>
+          ) : null}
+
           <div>
-            <label className="mb-1 block text-meta font-medium text-ink">Nome da equipe</label>
+            <label htmlFor="team-name" className="mb-1 block text-xs font-semibold text-ink">
+              Nome da equipe
+            </label>
             <input
+              id="team-name"
               type="text"
               required
-              placeholder="Ex: Recepção, Cobrança, Suporte N2"
+              placeholder="Ex: Comercial, Suporte N2, Cobrança"
               value={teamName}
               onChange={(e) => setTeamName(e.target.value)}
-              className="w-full rounded-md border border-line bg-surface px-3 py-2 text-body text-ink focus:border-primary focus:outline-none"
+              className="h-10 w-full rounded-xl border border-line bg-surface px-3 text-xs text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 shadow-2xs"
             />
           </div>
+
           <div>
-            <label className="mb-1 block text-meta font-medium text-ink">
+            <label className="mb-1 block text-xs font-semibold text-ink">
               Cor de identificação
             </label>
             <div className="flex items-center gap-2">
@@ -170,399 +589,163 @@ export function TeamSection({ members, roles, teams, inboxes }: TeamSectionProps
                 type="color"
                 value={teamColor}
                 onChange={(e) => setTeamColor(e.target.value)}
-                className="h-9 w-12 cursor-pointer rounded border border-line bg-surface p-1"
+                className="h-9 w-12 cursor-pointer rounded-lg border border-line bg-surface p-1"
               />
-              <span className="font-mono text-meta text-muted">{teamColor}</span>
+              <span className="font-mono text-xs text-muted">{teamColor}</span>
             </div>
           </div>
 
-          {/*
-            Seleção real, não texto livre.
-            O campo pedia os nomes das caixas separados por vírgula, e nome não
-            serve para autorizar acesso: um erro de digitação — ou renomear a
-            caixa — cortava o acesso de todo mundo da equipe, em silêncio.
-          */}
           <div>
-            <label className="mb-1 block text-meta font-medium text-ink">
-              Caixas que esta equipe atende
+            <label className="mb-1 block text-xs font-semibold text-ink">
+              Caixas de entrada atendidas
             </label>
-            <p className="mb-2 text-meta text-muted">
-              Quem está nesta equipe passa a ver as conversas destas caixas.
-            </p>
-            <div className="flex flex-col gap-1.5 rounded-md border border-line bg-surface p-2">
+            <div className="max-h-36 overflow-y-auto rounded-xl border border-line bg-surface p-2 flex flex-col gap-1">
               {inboxes.map((inbox) => (
                 <label
                   key={inbox.id}
-                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-body text-ink hover:bg-surface-2"
+                  className="flex items-center gap-2.5 rounded-lg p-1.5 text-xs hover:bg-surface-2 cursor-pointer"
                 >
                   <input
                     type="checkbox"
                     checked={teamInboxIds.includes(inbox.id)}
                     onChange={() => toggle(teamInboxIds, inbox.id, setTeamInboxIds)}
-                    className="h-4 w-4 accent-[var(--color-brand)]"
+                    className="rounded accent-brand cursor-pointer"
                   />
-                  <span>{inbox.name}</span>
-                  <Badge tone="slate">{inbox.channel}</Badge>
-                </label>
-              ))}
-              {inboxes.length === 0 && (
-                <span className="px-2 py-1.5 text-body text-muted">
-                  Nenhuma caixa configurada nesta conta.
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div>
-            <label className="mb-1 block text-meta font-medium text-ink">Pessoas na equipe</label>
-            <div className="flex max-h-48 flex-col gap-1.5 overflow-y-auto rounded-md border border-line bg-surface p-2">
-              {members.map((member) => (
-                <label
-                  key={member.id}
-                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-body text-ink hover:bg-surface-2"
-                >
-                  <input
-                    type="checkbox"
-                    checked={teamMemberIds.includes(member.id)}
-                    onChange={() => toggle(teamMemberIds, member.id, setTeamMemberIds)}
-                    className="h-4 w-4 accent-[var(--color-brand)]"
-                  />
-                  <Avatar name={member.name} tone={member.avatarTone} size="sm" />
-                  <span>{member.name}</span>
+                  <span className="font-medium text-ink">{inbox.name}</span>
                 </label>
               ))}
             </div>
           </div>
 
-          <div className="mt-2 flex justify-end gap-2 border-t border-line-soft pt-3">
-            <Button variant="ghost" type="button" onClick={() => setIsTeamModalOpen(false)}>
+          <div className="flex justify-end gap-2 border-t border-line pt-4">
+            <Button variant="secondary" type="button" onClick={() => setIsTeamModalOpen(false)}>
               Cancelar
             </Button>
             <Button type="submit" disabled={isPending || !teamName.trim()}>
-              {isPending ? 'Salvando...' : editingTeam ? 'Salvar' : 'Criar equipe'}
+              {isPending ? 'Salvando…' : 'Salvar equipe'}
             </Button>
           </div>
         </form>
       </Modal>
 
-      {/* Modal Convite */}
-      <Modal open={isInviteOpen} onClose={() => setIsInviteOpen(false)} title="Convidar pessoa">
-        <form onSubmit={handleInvite} className="flex flex-col gap-4">
-          {inviteError && (
-            <div className="rounded-md bg-danger/10 p-3 text-body text-danger">{inviteError}</div>
-          )}
+      {/* Modal Convidar Membro */}
+      <Modal
+        open={isInviteOpen}
+        onClose={() => setIsInviteOpen(false)}
+        title="Convidar novo membro"
+        description="Envie um convite com link exclusivo para seu colaborador acessar o CRM."
+        className="max-w-md"
+      >
+        <form onSubmit={handleInvite} className="flex flex-col gap-4 pt-1">
+          {inviteError ? (
+            <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+              {inviteError}
+            </p>
+          ) : null}
 
           <div>
-            <label className="mb-1 block text-meta font-medium text-ink">E-mail</label>
+            <label htmlFor="invite-email" className="mb-1 block text-xs font-semibold text-ink">
+              E-mail do colaborador
+            </label>
             <input
+              id="invite-email"
               type="email"
               required
-              placeholder="pessoa@empresa.com.br"
+              placeholder="nome@empresa.com.br"
               value={inviteEmail}
               onChange={(e) => setInviteEmail(e.target.value)}
-              className="w-full rounded-md border border-line bg-surface px-3 py-2 text-body text-ink focus:border-primary focus:outline-none"
+              className="h-10 w-full rounded-xl border border-line bg-surface px-3 text-xs text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 shadow-2xs"
             />
           </div>
 
-          {/* Papel decide o que a pessoa pode fazer. */}
           <div>
-            <label className="mb-1 block text-meta font-medium text-ink">Papel</label>
+            <label htmlFor="invite-role" className="mb-1 block text-xs font-semibold text-ink">
+              Papel / Permissões
+            </label>
             <select
+              id="invite-role"
               value={inviteRole}
               onChange={(e) => setInviteRole(e.target.value)}
-              className="w-full rounded-md border border-line bg-surface px-3 py-2 text-body text-ink focus:border-primary focus:outline-none"
+              className="h-10 w-full rounded-xl border border-line bg-surface px-3 text-xs text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 shadow-2xs"
             >
               {roles.map((role) => (
-                <option key={role.id} value={role.slug}>
-                  {role.name}
+                <option key={role.slug} value={role.slug}>
+                  {role.name} ({role.description})
                 </option>
               ))}
             </select>
-            <p className="mt-1 text-meta text-muted">
-              Define o que a pessoa pode fazer: responder, transferir, ver relatórios.
-            </p>
           </div>
 
-          {/* Equipes decidem onde. Os dois eixos são independentes. */}
           <div>
-            <label className="mb-1 block text-meta font-medium text-ink">Equipes</label>
-            <div className="flex flex-col gap-1.5 rounded-md border border-line bg-surface p-2">
-              {teams.map((team) => (
+            <label className="mb-1 block text-xs font-semibold text-ink">
+              Equipes de atendimento
+            </label>
+            <div className="max-h-32 overflow-y-auto rounded-xl border border-line bg-surface p-2 flex flex-col gap-1">
+              {teams.map((t) => (
                 <label
-                  key={team.id}
-                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-body text-ink hover:bg-surface-2"
+                  key={t.id}
+                  className="flex items-center gap-2.5 rounded-lg p-1.5 text-xs hover:bg-surface-2 cursor-pointer"
                 >
                   <input
                     type="checkbox"
-                    checked={inviteTeamIds.includes(team.id)}
-                    onChange={() => toggle(inviteTeamIds, team.id, setInviteTeamIds)}
-                    className="h-4 w-4 accent-[var(--color-brand)]"
+                    checked={inviteTeamIds.includes(t.id)}
+                    onChange={() => toggle(inviteTeamIds, t.id, setInviteTeamIds)}
+                    className="rounded accent-brand cursor-pointer"
                   />
-                  <span>{team.name}</span>
-                  <span className="text-meta text-muted">
-                    {team.inboxIds.map(inboxNameOf).join(', ') || 'sem caixa'}
-                  </span>
+                  <span className="font-medium text-ink">{t.name}</span>
                 </label>
               ))}
-              {teams.length === 0 && (
-                <span className="px-2 py-1.5 text-body text-muted">
-                  Nenhuma equipe ainda. Sem equipes, a pessoa enxerga todas as caixas.
-                </span>
-              )}
             </div>
-            <p className="mt-1 text-meta text-muted">
-              Define quais caixas de entrada a pessoa enxerga.
-            </p>
           </div>
 
           {inviteLink ? (
-            <div className="rounded-md border border-line bg-surface-2 p-3">
-              <div className="mb-1 text-meta font-semibold text-ink">
-                Link do convite — copie agora
-              </div>
-              <p className="mb-2 text-meta text-muted">
-                Ele aparece uma única vez e vale por sete dias. Se perder, gere outro.
-              </p>
-              <div className="flex gap-2">
+            <div className="rounded-xl border border-line-soft bg-surface-2 p-3">
+              <span className="text-[11px] font-semibold text-dim uppercase">
+                Link de acesso gerado:
+              </span>
+              <div className="mt-1 flex items-center justify-between gap-2">
                 <input
                   readOnly
                   value={inviteLink}
-                  className="w-full rounded-md border border-line bg-surface px-2 py-1.5 font-mono text-meta text-ink"
+                  className="w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 font-mono text-xs text-ink select-all outline-none"
                 />
                 <Button
-                  type="button"
-                  variant="ghost"
+                  size="sm"
+                  variant="secondary"
+                  icon={copiado ? <Check className="size-3 text-green-500" /> : <Copy className="size-3" />}
                   onClick={() => {
                     void navigator.clipboard.writeText(inviteLink);
                     setCopiado(true);
+                    setTimeout(() => setCopiado(false), 2000);
                   }}
                 >
-                  {copiado ? 'Copiado' : 'Copiar'}
+                  {copiado ? 'Copiado!' : 'Copiar'}
                 </Button>
               </div>
             </div>
           ) : null}
 
-          <div className="mt-2 flex justify-end gap-2 border-t border-line-soft pt-3">
-            <Button variant="ghost" type="button" onClick={() => setIsInviteOpen(false)}>
-              Fechar
+          <div className="flex justify-end gap-2 border-t border-line pt-4">
+            <Button variant="secondary" type="button" onClick={() => setIsInviteOpen(false)}>
+              {inviteLink ? 'Concluir' : 'Cancelar'}
             </Button>
-            <Button type="submit" disabled={isPending || !inviteEmail.trim()}>
-              {isPending ? 'Gerando...' : 'Gerar convite'}
-            </Button>
+            {!inviteLink ? (
+              <Button type="submit" disabled={isPending || !inviteEmail.trim()}>
+                {isPending ? 'Gerando…' : 'Gerar convite'}
+              </Button>
+            ) : null}
           </div>
         </form>
       </Modal>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-1 rounded-control bg-surface-2 p-1">
-          <button
-            type="button"
-            onClick={() => setSubTab('membros')}
-            className={cn(
-              'rounded-control px-3 py-1.5 text-body font-semibold transition-colors',
-              subTab === 'membros'
-                ? 'bg-surface text-brand shadow-xs'
-                : 'text-muted hover:text-ink',
-            )}
-          >
-            Membros da equipe
-          </button>
-          <button
-            type="button"
-            onClick={() => setSubTab('papeis')}
-            className={cn(
-              'rounded-control px-3 py-1.5 text-body font-semibold transition-colors',
-              subTab === 'papeis' ? 'bg-surface text-brand shadow-xs' : 'text-muted hover:text-ink',
-            )}
-          >
-            Papéis e permissões
-          </button>
-          <button
-            type="button"
-            onClick={() => setSubTab('equipes')}
-            className={cn(
-              'rounded-control px-3 py-1.5 text-body font-semibold transition-colors',
-              subTab === 'equipes'
-                ? 'bg-surface text-brand shadow-xs'
-                : 'text-muted hover:text-ink',
-            )}
-          >
-            Equipes e filas
-          </button>
-        </div>
-
-        {subTab === 'equipes' ? (
-          <Button size="sm" icon={<Plus className="size-3.5" />} onClick={openNewTeam}>
-            Nova equipe
-          </Button>
-        ) : null}
-
-        {subTab === 'membros' ? (
-          <Button
-            size="sm"
-            icon={<Plus className="size-3.5" />}
-            onClick={() => {
-              setInviteLink(null);
-              setInviteError(null);
-              setIsInviteOpen(true);
-            }}
-          >
-            Convidar pessoa
-          </Button>
-        ) : null}
-      </div>
-
-      {subTab === 'membros' ? (
-        <Card className="overflow-hidden p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-ui">
-              <caption className="sr-only">Lista de membros da equipe</caption>
-              <thead className="border-b border-line bg-surface-2 text-meta font-semibold text-muted uppercase">
-                <tr>
-                  <th scope="col" className="px-4 py-3">
-                    Membro
-                  </th>
-                  <th scope="col" className="px-4 py-3">
-                    Email
-                  </th>
-                  <th scope="col" className="px-4 py-3">
-                    Papel
-                  </th>
-                  <th scope="col" className="px-4 py-3">
-                    Equipes
-                  </th>
-                  <th scope="col" className="px-4 py-3">
-                    2FA
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line-soft">
-                {members.map((member) => (
-                  <tr key={member.id} className="hover:bg-surface-2 transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <Avatar
-                          name={member.name}
-                          tone={member.avatarTone}
-                          size="sm"
-                          availability={member.availability}
-                        />
-                        <span className="font-semibold text-ink">{member.name}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-muted">{member.email}</td>
-                    <td className="px-4 py-3">
-                      <Badge tone="blue" className="capitalize">
-                        {member.roleSlug}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1">
-                        {member.teams.map((t) => (
-                          <Badge key={t} tone="slate">
-                            {t}
-                          </Badge>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge tone={member.twoFactorEnabled ? 'green' : 'slate'}>
-                        {member.twoFactorEnabled ? 'Ativo' : 'Inativo'}
-                      </Badge>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      ) : null}
-
-      {subTab === 'papeis' ? (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {roles.map((role) => (
-            <Card key={role.id} className="p-4">
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="text-ui font-semibold text-ink">{role.name}</h3>
-                {role.isSystem ? <Badge tone="slate">Sistema</Badge> : null}
-              </div>
-              <p className="mt-1 text-body text-muted">{role.description}</p>
-              <div className="mt-3 border-t border-line-soft pt-3">
-                <div className="mb-2 text-meta font-semibold text-dim uppercase">
-                  Permissões ({role.permissions.length})
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {role.permissions.map((perm) => (
-                    <Badge key={perm} tone="blue">
-                      {perm}
-                    </Badge>
-                  ))}
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-      ) : null}
-
-      {subTab === 'equipes' ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {teams.map((team) => (
-            <Card key={team.id} className="flex flex-col justify-between p-4">
-              <div>
-                <div className="flex items-center justify-between">
-                  <h3 className="text-ui font-semibold text-ink">{team.name}</h3>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Editar equipe ${team.name}`}
-                      onClick={() => openEditTeam(team)}
-                    >
-                      <Pencil className="size-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Excluir equipe ${team.name}`}
-                      onClick={() => setDeletingTeam(team)}
-                      icon={<Trash2 className="size-3.5 text-danger" />}
-                    />
-                  </div>
-                </div>
-                <div className="mt-1 text-body text-muted">{team.memberCount} membros</div>
-                <div className="mt-2 text-meta text-dim">
-                  <span className="font-semibold text-ink">Horário:</span> {team.businessHours}
-                </div>
-                <div className="mt-3">
-                  <div className="mb-1 text-meta font-semibold text-dim uppercase">
-                    Inboxes vinculadas
-                  </div>
-                  <div className="flex flex-wrap gap-1">
-                    {team.inboxIds.map((inboxId) => (
-                      <Badge key={inboxId} tone="slate">
-                        {inboxNameOf(inboxId)}
-                      </Badge>
-                    ))}
-                    {team.inboxIds.length === 0 && (
-                      <span className="text-body text-muted">Nenhuma caixa vinculada</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-      ) : null}
-
+      {/* Confirmação de Exclusão de Equipe */}
       <ConfirmModal
         open={deletingTeam !== null}
         title="Excluir equipe"
         description={
           <span>
             Tem certeza que deseja excluir a equipe{' '}
-            <strong className="text-ink">{deletingTeam?.name}</strong>? Os membros associados serão
-            desvinculados desta equipe.
+            <strong className="text-ink">{deletingTeam?.name}</strong>? Os membros não serão excluídos do CRM, mas perderão a filtragem por esta fila.
           </span>
         }
         confirmLabel="Excluir equipe"

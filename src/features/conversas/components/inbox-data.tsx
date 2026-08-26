@@ -26,7 +26,13 @@ import { InboxWorkspace } from './inbox-workspace';
  * que transferir, etiquetar e escolher template não precisem de uma ida extra
  * ao servidor no meio do atendimento.
  */
-export async function InboxData({ selectedId }: { readonly selectedId?: string }) {
+export async function InboxData({
+  selectedId,
+  initialInboxId,
+}: {
+  readonly selectedId?: string;
+  readonly initialInboxId?: string;
+}) {
   const session = await container.session.getCurrentSession();
   if (!can(session, 'conversas:ler')) return <AccessDenied permission="conversas:ler" />;
 
@@ -64,6 +70,7 @@ export async function InboxData({ selectedId }: { readonly selectedId?: string }
       sendTemplate={sendTemplateAction}
       sendMedia={sendMediaAction}
       {...(selectedId ? { initialSelectedId: selectedId } : {})}
+      {...(initialInboxId ? { initialInboxId } : {})}
     />
   );
 }

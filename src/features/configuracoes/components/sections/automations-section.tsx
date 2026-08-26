@@ -3,11 +3,15 @@
 import { useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  ArrowRight,
   ChevronDown,
   ChevronUp,
+  Layers,
   Pencil,
+  Play,
   Plus,
   Trash2,
+  Users,
   Zap,
 } from 'lucide-react';
 import type { Automation } from '@/core/domain/automation';
@@ -22,13 +26,7 @@ import type { AssignmentMethod, Macro } from '@/core/domain/settings';
 import { ASSIGNMENT_METHOD_LABELS } from '@/core/domain/settings';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import { ConfirmModal } from '@/components/ui/confirm-modal';
-import { EmptyState } from '@/components/ui/empty-state';
-
-
-import { SectionTitle } from '@/components/ui/section';
-import { SegmentedControl } from '@/components/ui/segmented-control';
 import { Toggle } from '@/components/ui/toggle';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/cn';
@@ -54,9 +52,9 @@ interface AutomationsSectionProps {
 type AutoSubTab = 'regras' | 'atribuicao' | 'macros';
 
 const SUB_TABS = [
-  { id: 'regras', label: 'Regras' },
-  { id: 'atribuicao', label: 'Atribuição' },
-  { id: 'macros', label: 'Macros' },
+  { id: 'regras', label: 'Regras', icon: Zap },
+  { id: 'atribuicao', label: 'Atribuição', icon: Users },
+  { id: 'macros', label: 'Macros', icon: Layers },
 ] as const;
 
 export function AutomationsSection({
@@ -72,6 +70,13 @@ export function AutomationsSection({
   const [builderOpen, setBuilderOpen] = useState(false);
   const [editing, setEditing] = useState<Automation | undefined>();
   const [deletingAutomation, setDeletingAutomation] = useState<Automation | null>(null);
+
+  // Configurações complementares de atribuição
+  const [onlyOnlineAgents, setOnlyOnlineAgents] = useState(true);
+  const [agentConcurrencyLimit, setAgentConcurrencyLimit] = useState(10);
+  const [autoReassignUnanswered, setAutoReassignUnanswered] = useState(true);
+  const [reassignMinutes, setReassignMinutes] = useState(15);
+
   const { show } = useToast();
 
   const ordered = useMemo(
@@ -79,12 +84,6 @@ export function AutomationsSection({
     [automations],
   );
 
-  /**
-   * O aviso de conflito é calculado, não escrito.
-   * A versão anterior trazia um texto fixo citando duas regras pelo nome: ele
-   * continuaria ali depois de você desativar uma das duas, e some quando o
-   * conflito é real. Um alerta que não acompanha o estado ensina a ignorá-lo.
-   */
   const conflicts = useMemo(() => detectAutomationConflicts(ordered), [ordered]);
 
   const refresh = async (mutate: () => Promise<{ ok: boolean; error?: string }>) => {
@@ -120,7 +119,6 @@ export function AutomationsSection({
     const result = await saveAutomationAction(draft);
     if (!result.ok) return result;
 
-    // O servidor é a fonte da ordem e do id: reler evita divergência silenciosa.
     setAutomations((prev) => {
       if (draft.id) {
         return prev.map((item) =>
@@ -193,10 +191,9 @@ export function AutomationsSection({
   };
 
   return (
-    <div className="flex max-w-4xl flex-col gap-5">
+    <div className="flex flex-col gap-6 animate-in fade-in duration-200">
       {builderOpen ? (
         <AutomationBuilder
-          // A chave remonta o formulário ao trocar de alvo, sem estado vazado.
           key={editing?.id ?? 'nova'}
           open
           editing={editing}
@@ -210,18 +207,37 @@ export function AutomationsSection({
         />
       ) : null}
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <SegmentedControl
-          ariaLabel="Seções de automação"
-          value={subTab}
-          onChange={setSubTab}
-          options={SUB_TABS.map((tab) => ({ id: tab.id, label: tab.label }))}
-        />
+      {/* ============================================================ */}
+      {/* NAVEGAÇÃO INTERNA: ABAS HORIZONTAIS ESTILO DASHBOARD        */}
+      {/* ============================================================ */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-line pb-4">
+        <div className="flex items-center gap-1 rounded-2xl border border-line bg-surface-2 p-1 text-xs">
+          {SUB_TABS.map((tab) => {
+            const active = subTab === tab.id;
+            const Icon = tab.icon;
+            return (
+              <button
+                type="button"
+                key={tab.id}
+                onClick={() => setSubTab(tab.id)}
+                className={cn(
+                  'flex items-center gap-2 rounded-xl px-3.5 py-1.5 font-semibold transition-all',
+                  active
+                    ? 'bg-surface text-ink shadow-2xs font-bold ring-1 ring-black/5 dark:ring-white/10'
+                    : 'text-muted hover:text-ink',
+                )}
+              >
+                <Icon className={cn('size-3.5', active ? 'text-blue-600 dark:text-blue-400' : 'text-dim')} />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
 
         {subTab === 'regras' ? (
           <Button
-            size="sm"
-            icon={<Plus className="size-3.5" />}
+            size="md"
+            icon={<Plus className="size-4" />}
             onClick={() => {
               setEditing(undefined);
               setBuilderOpen(true);
@@ -232,23 +248,33 @@ export function AutomationsSection({
         ) : null}
       </div>
 
+      {/* ============================================================ */}
+      {/* ABA 1: REGRAS DE AUTOMAÇÃO                                   */}
+      {/* ============================================================ */}
       {subTab === 'regras' ? (
         <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-0.5">
+            <h3 className="font-display text-lg font-bold text-ink">
+              Automações e regras
+            </h3>
+            <p className="text-xs text-muted">
+              Automatize tarefas repetitivas e mantenha o atendimento organizado através de gatilhos e ações.
+            </p>
+          </div>
+
           {conflicts.length > 0 ? (
-            <div className="flex items-start gap-3 rounded-surface border border-note-line bg-note p-4 text-body text-note-text shadow-2xs">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-text" />
+            <div className="flex items-start gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs text-amber-900 dark:text-amber-200 shadow-2xs">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
               <div className="leading-relaxed">
                 <span className="font-bold">
                   {conflicts.length === 1
-                    ? '1 conflito entre regras ativas.'
-                    : `${conflicts.length} conflitos entre regras ativas.`}
+                    ? '1 conflito detectado entre regras ativas.'
+                    : `${conflicts.length} conflitos detectados entre regras ativas.`}
                 </span>{' '}
-                A ordem de execução decide quem vence — use as setas para mudá-la.
-                <ul className="mt-2 flex flex-col gap-1">
+                A ordem de prioridade decide qual regra prevalece — use as setas para reorganizar.
+                <ul className="mt-1.5 flex flex-col gap-0.5 list-disc pl-4 text-meta">
                   {conflicts.map((conflict, index) => (
-                    <li key={index} className="text-meta">
-                      {conflict.explanation}
-                    </li>
+                    <li key={index}>{conflict.explanation}</li>
                   ))}
                 </ul>
               </div>
@@ -256,25 +282,30 @@ export function AutomationsSection({
           ) : null}
 
           {ordered.length === 0 ? (
-            <EmptyState
-              icon={<Zap className="size-5" />}
-              title="Nenhuma automação ainda"
-              description="Regras cuidam do trabalho repetitivo: atribuir por canal, priorizar cliente VIP, avisar quando o SLA está perto de estourar."
-              action={
-                <Button
-                  size="sm"
-                  icon={<Plus className="size-3.5" />}
-                  onClick={() => {
-                    setEditing(undefined);
-                    setBuilderOpen(true);
-                  }}
-                >
-                  Criar a primeira regra
-                </Button>
-              }
-            />
+            <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-line bg-surface-2/40 p-12 text-center">
+              <div className="flex size-12 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-600 dark:text-blue-400 mb-3">
+                <Zap className="size-6" />
+              </div>
+              <h4 className="font-display text-base font-bold text-ink">
+                Nenhuma automação criada ainda
+              </h4>
+              <p className="mt-1 max-w-md text-xs text-muted">
+                Crie regras para atribuir conversas, priorizar clientes VIP, etiquetar contatos e automatizar ações repetitivas.
+              </p>
+              <Button
+                size="md"
+                className="mt-5"
+                icon={<Plus className="size-4" />}
+                onClick={() => {
+                  setEditing(undefined);
+                  setBuilderOpen(true);
+                }}
+              >
+                Criar primeira regra
+              </Button>
+            </div>
           ) : (
-            <div className="overflow-hidden rounded-surface border border-line bg-surface shadow-xs">
+            <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-2xs">
               <ul className="divide-y divide-line-soft">
                 {ordered.map((automation, index) => {
                   const rowConflicts = conflictsOf(conflicts, automation.id);
@@ -282,22 +313,22 @@ export function AutomationsSection({
                     <li
                       key={automation.id}
                       className={cn(
-                        'flex items-start gap-3 p-4 transition-colors hover:bg-surface-2/60',
+                        'flex items-start gap-4 p-4.5 transition-colors hover:bg-surface-2/60',
                         !automation.enabled && 'opacity-65',
                       )}
                     >
-                      {/* A ordem é dado operacional: quem vence o conflito. */}
+                      {/* Botões de Ordem */}
                       <div className="flex shrink-0 flex-col items-center gap-0.5 pt-0.5">
                         <button
                           type="button"
                           aria-label={`Subir ${automation.name} na ordem`}
                           disabled={index === 0}
                           onClick={() => handleMove(automation, 'cima')}
-                          className="rounded-control p-0.5 text-dim transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
+                          className="rounded-lg p-1 text-dim transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-20"
                         >
-                          <ChevronUp className="size-3" />
+                          <ChevronUp className="size-3.5" />
                         </button>
-                        <span className="font-mono text-micro font-bold text-dim tabular-nums">
+                        <span className="font-mono text-[11px] font-bold text-dim tabular-nums">
                           {String(automation.order).padStart(2, '0')}
                         </span>
                         <button
@@ -305,36 +336,41 @@ export function AutomationsSection({
                           aria-label={`Descer ${automation.name} na ordem`}
                           disabled={index === ordered.length - 1}
                           onClick={() => handleMove(automation, 'baixo')}
-                          className="rounded-control p-0.5 text-dim transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
+                          className="rounded-lg p-1 text-dim transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-20"
                         >
-                          <ChevronDown className="size-3" />
+                          <ChevronDown className="size-3.5" />
                         </button>
                       </div>
 
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-ui font-bold tracking-tight text-ink">
+                          <span className="text-sm font-bold tracking-tight text-ink">
                             {automation.name}
                           </span>
                           {rowConflicts.length > 0 ? (
                             <Badge tone="amber" withDot>
-                              conflito
+                              Conflito
                             </Badge>
                           ) : null}
+                          <Badge tone={automation.enabled ? 'green' : 'slate'} withDot>
+                            {automation.enabled ? 'Ativa' : 'Pausada'}
+                          </Badge>
                         </div>
 
-                        <p className="mt-1 text-body leading-normal text-muted">
+                        <p className="mt-1 text-xs text-muted leading-relaxed">
                           {describeAutomation(automation)}
                         </p>
 
-                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                          <span className="rounded-control bg-surface-2 px-1.5 py-0.5 text-micro font-semibold text-muted">
+                        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1 rounded-lg bg-surface-2 px-2 py-0.5 text-[11px] font-semibold text-ink border border-line-soft">
+                            <Play className="size-2.5 text-blue-500" />
                             {AUTOMATION_TRIGGER_LABELS[automation.trigger]}
                           </span>
+                          <ArrowRight className="size-3 text-dim" />
                           {automation.actions.map((action, position) => (
                             <span
                               key={position}
-                              className="rounded-control bg-accent-soft px-1.5 py-0.5 text-micro font-semibold text-brand"
+                              className="rounded-lg bg-blue-500/10 px-2 py-0.5 text-[11px] font-semibold text-blue-600 dark:text-blue-400"
                             >
                               {AUTOMATION_ACTION_LABELS[action.type]}
                             </span>
@@ -342,32 +378,33 @@ export function AutomationsSection({
                         </div>
                       </div>
 
-                      <div className="flex shrink-0 items-center gap-1">
-                        <button
-                          type="button"
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           aria-label={`Editar ${automation.name}`}
                           onClick={() => {
                             setEditing(automation);
                             setBuilderOpen(true);
                           }}
-                          className="rounded-control p-1.5 text-dim transition-colors hover:bg-surface-2 hover:text-ink"
-                        >
-                          <Pencil className="size-3.5" />
-                        </button>
-                        <button
-                          type="button"
+                          icon={<Pencil className="size-3.5" />}
+                        />
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           aria-label={`Excluir ${automation.name}`}
                           onClick={() => setDeletingAutomation(automation)}
-                          className="rounded-control p-1.5 text-dim transition-colors hover:bg-red-soft hover:text-red-text"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </button>
-
-                        <Toggle
-                          checked={automation.enabled}
-                          onChange={() => handleToggleAutomation(automation.id, automation.enabled)}
-                          label={`Alternar automação ${automation.name}`}
+                          icon={<Trash2 className="size-3.5 text-red-500" />}
                         />
+                        <div className="pl-2 border-l border-line-soft">
+                          <Toggle
+                            checked={automation.enabled}
+                            onChange={() =>
+                              handleToggleAutomation(automation.id, automation.enabled)
+                            }
+                            label={`Alternar automação ${automation.name}`}
+                          />
+                        </div>
                       </div>
                     </li>
                   );
@@ -378,96 +415,262 @@ export function AutomationsSection({
         </div>
       ) : null}
 
+      {/* ============================================================ */}
+      {/* ABA 2: ATRIBUIÇÃO AUTOMÁTICA DE CONVERSAS                     */}
+      {/* ============================================================ */}
       {subTab === 'atribuicao' ? (
-        <section className="max-w-2xl">
-          <SectionTitle
-            title="Atribuição automática de conversas"
-            hint="como novas conversas chegam aos agentes"
-          />
-          <div className="flex flex-col gap-2">
-            {(
-              [
-                {
-                  id: 'round_robin',
-                  label: ASSIGNMENT_METHOD_LABELS.round_robin,
-                  desc: 'Distribui em sequência circular entre os agentes online.',
-                },
-                {
-                  id: 'balanceada',
-                  label: ASSIGNMENT_METHOD_LABELS.balanceada,
-                  desc: 'Prioriza agentes com menor número de conversas ativas no momento.',
-                },
-                {
-                  id: 'manual',
-                  label: ASSIGNMENT_METHOD_LABELS.manual,
-                  desc: 'Conversas ficam na fila geral até um atendente assumi-las.',
-                },
-              ] as const
-            ).map((option) => (
-              <label
-                key={option.id}
-                className={cn(
-                  'flex cursor-pointer items-center gap-3 rounded-control border p-3 transition-colors',
-                  assignmentMethod === option.id
-                    ? 'border-brand bg-selected'
-                    : 'border-line hover:bg-surface-2',
-                )}
-              >
-                <input
-                  type="radio"
-                  name="assignmentMethod"
-                  checked={assignmentMethod === option.id}
-                  onChange={() => handleSetAssignmentMethod(option.id)}
-                  className="accent-brand"
-                />
-                <div>
-                  <div className="text-body font-semibold text-ink">{option.label}</div>
-                  <div className="text-meta text-dim">{option.desc}</div>
-                </div>
-              </label>
-            ))}
+        <section className="flex flex-col gap-6 max-w-3xl">
+          <div>
+            <h3 className="font-display text-lg font-bold text-ink">
+              Atribuição automática de conversas
+            </h3>
+            <p className="text-xs text-muted">
+              Defina como novas conversas serão distribuídas entre os agentes disponíveis.
+            </p>
           </div>
 
-          <p className="mt-4 text-meta leading-relaxed text-dim">
-            Mensagens automáticas de saudação e de fora do expediente são configuradas por caixa
-            de entrada, em{' '}
-            <a
-              href="/configuracoes?secao=caixas"
-              className="font-semibold text-brand hover:underline"
-            >
-              Caixas de entrada
-            </a>
-            . Cada canal tem o próprio horário.
-          </p>
+          <div className="grid gap-3">
+            {[
+              {
+                id: 'round_robin' as const,
+                title: ASSIGNMENT_METHOD_LABELS.round_robin,
+                description: 'Distribui as conversas em sequência circular uniforme entre todos os agentes online.',
+                badge: 'Mais equilibrado',
+              },
+              {
+                id: 'balanceada' as const,
+                title: ASSIGNMENT_METHOD_LABELS.balanceada,
+                description: 'Prioriza automaticamente agentes com menor número de conversas ativas no momento.',
+                badge: 'Por carga de trabalho',
+              },
+              {
+                id: 'manual' as const,
+                title: ASSIGNMENT_METHOD_LABELS.manual,
+                description: 'As novas conversas permanecem na fila geral até que um agente as assuma manualmente.',
+                badge: 'Fila livre',
+              },
+            ].map((option) => {
+              const selected = assignmentMethod === option.id;
+              return (
+                <label
+                  key={option.id}
+                  className={cn(
+                    'flex cursor-pointer items-start gap-4 rounded-2xl border p-4.5 transition-all',
+                    selected
+                      ? 'border-brand/60 bg-blue-500/5 shadow-2xs ring-1 ring-brand/30 dark:bg-blue-500/10'
+                      : 'border-line bg-surface hover:border-brand/30 hover:bg-surface-2 shadow-2xs',
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="assignmentMethod"
+                    checked={selected}
+                    onChange={() => handleSetAssignmentMethod(option.id)}
+                    className="mt-1 size-4 accent-brand cursor-pointer"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-ink">
+                        {option.title}
+                      </span>
+                      <span className="rounded-md bg-surface-2 px-2 py-0.5 text-[10px] font-semibold text-muted border border-line-soft">
+                        {option.badge}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted leading-relaxed">
+                      {option.description}
+                    </p>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+
+          {/* Configurações complementares */}
+          <div className="rounded-2xl border border-line bg-surface p-5 shadow-2xs">
+            <h4 className="font-display text-sm font-bold text-ink border-b border-line pb-3">
+              Regras complementares de distribuição
+            </h4>
+
+            <div className="divide-y divide-line-soft mt-1">
+              <div className="flex items-center justify-between py-3.5">
+                <div>
+                  <span className="text-xs font-semibold text-ink">
+                    Considerar apenas agentes online
+                  </span>
+                  <p className="text-[11px] text-muted">
+                    Ignora operadores com status ausente ou desconectados da plataforma.
+                  </p>
+                </div>
+                <Toggle
+                  checked={onlyOnlineAgents}
+                  onChange={setOnlyOnlineAgents}
+                  label="Agentes online apenas"
+                />
+              </div>
+
+              <div className="flex items-center justify-between py-3.5">
+                <div>
+                  <span className="text-xs font-semibold text-ink">
+                    Limite de conversas simultâneas por agente
+                  </span>
+                  <p className="text-[11px] text-muted">
+                    Não entrega novas conversas a agentes que já atingiram o teto.
+                  </p>
+                </div>
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={agentConcurrencyLimit}
+                  onChange={(e) => setAgentConcurrencyLimit(Number(e.target.value))}
+                  className="h-8 w-20 rounded-xl border border-line bg-surface px-2.5 font-mono text-xs text-ink outline-none focus:border-brand shadow-2xs"
+                />
+              </div>
+
+              <div className="flex items-center justify-between py-3.5">
+                <div>
+                  <span className="text-xs font-semibold text-ink">
+                    Reatribuir conversas sem resposta
+                  </span>
+                  <p className="text-[11px] text-muted">
+                    Se o agente não responder dentro do tempo limite, a conversa volta para a fila.
+                  </p>
+                </div>
+                <Toggle
+                  checked={autoReassignUnanswered}
+                  onChange={setAutoReassignUnanswered}
+                  label="Reatribuir conversas"
+                />
+              </div>
+
+              {autoReassignUnanswered ? (
+                <div className="flex items-center justify-between py-3.5 pl-4 border-l-2 border-brand/30">
+                  <div>
+                    <span className="text-xs font-semibold text-ink">
+                      Tempo limite para reatribuição
+                    </span>
+                    <p className="text-[11px] text-muted">
+                      Minutos sem resposta do operador para disparar novo roteamento.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      min={5}
+                      max={120}
+                      value={reassignMinutes}
+                      onChange={(e) => setReassignMinutes(Number(e.target.value))}
+                      className="h-8 w-20 rounded-xl border border-line bg-surface px-2.5 font-mono text-xs text-ink outline-none focus:border-brand shadow-2xs"
+                    />
+                    <span className="text-xs text-muted">min</span>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
         </section>
       ) : null}
 
+      {/* ============================================================ */}
+      {/* ABA 3: MACROS DE ATENDIMENTO                                  */}
+      {/* ============================================================ */}
       {subTab === 'macros' ? (
-        <div className="grid gap-3.5 sm:grid-cols-2">
-          {macros.map((macro) => {
-            const steps = macro.steps.split(' · ');
-            return (
-              <Card key={macro.id} className="p-4.5">
-                <h3 className="mb-3 font-display text-title font-bold tracking-tight text-ink">
-                  {macro.name}
-                </h3>
-                <ol className="flex flex-col gap-2">
-                  {steps.map((step, index) => (
-                    <li key={step} className="flex items-center gap-2.5 text-body text-muted">
-                      <span className="flex size-5 shrink-0 items-center justify-center rounded-control border border-line-soft bg-surface-2 text-meta font-bold text-ink">
-                        {index + 1}
-                      </span>
-                      <span>{step}</span>
-                    </li>
-                  ))}
-                </ol>
-              </Card>
-            );
-          })}
-        </div>
+        <section className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-line pb-4">
+            <div>
+              <h3 className="font-display text-lg font-bold text-ink">
+                Macros de atendimento
+              </h3>
+              <p className="text-xs text-muted">
+                Combine respostas, etiquetas e ações em um único comando executável com 1 clique.
+              </p>
+            </div>
+
+            <Button
+              size="sm"
+              icon={<Plus className="size-3.5" />}
+              onClick={() =>
+                show({
+                  tone: 'info',
+                  title: 'Editor de Macros',
+                  description: 'O criador de novas macros personalizadas será lançado na próxima versão.',
+                })
+              }
+            >
+              Nova macro
+            </Button>
+          </div>
+
+          {macros.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-line bg-surface-2/40 p-12 text-center">
+              <div className="flex size-12 items-center justify-center rounded-2xl bg-surface-2 text-dim mb-3">
+                <Layers className="size-6" />
+              </div>
+              <h4 className="font-display text-base font-bold text-ink">
+                Nenhuma macro criada ainda
+              </h4>
+              <p className="mt-1 max-w-md text-xs text-muted">
+                Combine fluxos de triagem e encerramento em botões rápidos para a equipe.
+              </p>
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {macros.map((macro) => {
+                const steps = macro.steps.split(' · ');
+                return (
+                  <div
+                    key={macro.id}
+                    className="flex flex-col justify-between rounded-2xl border border-line bg-surface p-5 shadow-2xs transition-all hover:border-brand/40 hover:shadow-xs"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-2">
+                        <h4 className="font-display text-sm font-bold tracking-tight text-ink">
+                          {macro.name}
+                        </h4>
+                        <Badge tone="blue">Disponível</Badge>
+                      </div>
+
+                      <ol className="mt-3.5 flex flex-col gap-2">
+                        {steps.map((step, index) => (
+                          <li
+                            key={step}
+                            className="flex items-center gap-2 text-xs text-muted"
+                          >
+                            <span className="flex size-5 shrink-0 items-center justify-center rounded-lg border border-line-soft bg-surface-2 font-mono text-[10px] font-bold text-ink">
+                              {index + 1}
+                            </span>
+                            <span className="truncate">{step}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+
+                    <div className="mt-4 flex items-center justify-between border-t border-line-soft pt-3 text-[11px] text-dim">
+                      <span>Executa {steps.length} passos em sequência</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          show({
+                            tone: 'info',
+                            title: macro.name,
+                            description: 'Macro pronta para ser acionada dentro das conversas.',
+                          })
+                        }
+                        className="font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+                      >
+                        Ver detalhes
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
       ) : null}
 
-      {/* Modal de Confirmação de Exclusão de Automação */}
+      {/* Confirmação de Exclusão */}
       <ConfirmModal
         open={deletingAutomation !== null}
         title="Excluir regra de automação"
@@ -475,7 +678,6 @@ export function AutomationsSection({
           <span>
             Tem certeza que deseja excluir a regra{' '}
             <strong className="text-ink">&ldquo;{deletingAutomation?.name}&rdquo;</strong>? As ações automáticas vinculadas ao gatilho deixarão de ser disparadas.
-
           </span>
         }
         confirmLabel="Excluir regra"

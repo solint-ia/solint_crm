@@ -574,6 +574,13 @@ model AccountSettings {
   billing          Json
   /// JSON: ActiveSession[]
   activeSessions   Json   @default("[]")
+  /// JSON: CompanyProfile — razão social, endereço, preferências regionais e marca.
+  ///
+  /// É JSON pela regra do topo deste arquivo: o perfil é lido e gravado
+  /// inteiro pela tela de empresa, e nenhuma consulta filtra por endereço ou
+  /// formato de data. `name` e `document` continuam colunas de `Account`,
+  /// porque esses dois são consultados de fato.
+  company          Json   @default("{}")
 
   account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 }

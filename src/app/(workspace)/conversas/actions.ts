@@ -7,6 +7,7 @@ import type { Message, MessageContent } from '@/core/domain/message';
 import { can } from '@/core/domain/user';
 import { canSendFreeText, MAX_MESSAGE_LENGTH } from '@/core/use-cases/send-message';
 import { container } from '@/infrastructure/container';
+import { dispararAutomacoes } from '@/infrastructure/automations/dispatch';
 import type { DispatchResult } from '@/infrastructure/whatsapp/channel';
 import { getWhatsAppChannel } from '@/infrastructure/whatsapp/channel-provider';
 import { mediaStore } from '@/infrastructure/whatsapp/wa-media-store';
@@ -93,7 +94,7 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
   if (!parsed.data.isPrivate) {
     if (conversation.channel === 'whatsapp') {
       const channel = await getWhatsAppChannel();
-      const channelStatus = await channel.getStatus(session.account.id);
+      const channelStatus = await channel.getStatus(session.account.id, conversation.inboxId);
 
       if (channelStatus.status === 'conectado') {
         const sent = await channel.sendText(
@@ -101,6 +102,7 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
             accountId: session.account.id,
             conversationId: conversation.id,
             messageId: message.id,
+            inboxId: conversation.inboxId,
           },
           { channelThreadId: conversation.channelThreadId, phone: conversation.contact.phone },
           parsed.data.text,
@@ -150,6 +152,22 @@ export async function changeConversationStatusAction(input: unknown): Promise<Ac
   const result = await container.useCases.changeConversationStatus({ session, ...parsed.data });
   if (!result.ok) return { ok: false, error: result.error.message };
 
+  // Só dois dos status têm gatilho; os demais não disparam nada.
+  const gatilho =
+    parsed.data.status === 'pendente'
+      ? ('conversa_pendente' as const)
+      : parsed.data.status === 'resolvida'
+        ? ('conversa_resolvida' as const)
+        : undefined;
+
+  if (gatilho) {
+    await dispararAutomacoes({
+      accountId: session.account.id,
+      trigger: gatilho,
+      conversationId: parsed.data.conversationId,
+    });
+  }
+
   waEventBus.emitConversation({
     type: 'conversation_updated',
     accountId: session.account.id,
@@ -178,7 +196,7 @@ export async function markConversationReadAction(input: unknown): Promise<Action
   await container.conversations.markAsRead(session.account.id, conversation.id);
   if (conversation.channel === 'whatsapp') {
     const channel = await getWhatsAppChannel();
-    await channel.markRead(session.account.id, conversation.id);
+    await channel.markRead(session.account.id, conversation.id, conversation.inboxId);
   }
 
   // Os demais atendentes precisam ver que a conversa deixou de estar não lida.
@@ -294,6 +312,13 @@ export async function setConversationLabelsAction(input: unknown): Promise<Actio
   });
   if (!result.ok) return { ok: false, error: result.error.message };
 
+  // A etiqueta já está gravada; agora as regras que reagem a ela.
+  await dispararAutomacoes({
+    accountId: session.account.id,
+    trigger: 'etiqueta_aplicada',
+    conversationId: parsed.data.conversationId,
+  });
+
   await broadcast(parsed.data.conversationId);
   return { ok: true };
 }
@@ -335,6 +360,14 @@ export async function setContactLabelsAction(input: unknown): Promise<ActionResu
       error: error instanceof Error ? error.message : 'Erro ao etiquetar o contato.',
     };
   }
+
+  // Etiqueta de contato também dispara: a regra "VIP → mover para Negociação"
+  // deve valer quando a pessoa é marcada como VIP, não só a conversa.
+  await dispararAutomacoes({
+    accountId: session.account.id,
+    trigger: 'etiqueta_aplicada',
+    conversationId: parsed.data.conversationId,
+  });
 
   await broadcast(parsed.data.conversationId);
   return { ok: true };
@@ -379,7 +412,7 @@ export async function sendTemplateAction(input: unknown): Promise<SendMessageRes
   if (conversation?.channel === 'whatsapp' && message.content.type === 'template') {
     const text = message.content.text;
     const channel = await getWhatsAppChannel();
-    const channelStatus = await channel.getStatus(session.account.id);
+    const channelStatus = await channel.getStatus(session.account.id, conversation.inboxId);
 
     if (channelStatus.status === 'conectado') {
       const sent = await channel.sendText(
@@ -387,6 +420,7 @@ export async function sendTemplateAction(input: unknown): Promise<SendMessageRes
           accountId: session.account.id,
           conversationId: conversation.id,
           messageId: message.id,
+          inboxId: conversation.inboxId,
         },
         { channelThreadId: conversation.channelThreadId, phone: conversation.contact.phone },
         text,
@@ -567,7 +601,7 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
   // Nota interna nunca sai para o canal externo — vale para anexo também.
   if (!isPrivate && conversation.channel === 'whatsapp') {
     const channel = await getWhatsAppChannel();
-    const channelStatus = await channel.getStatus(session.account.id);
+    const channelStatus = await channel.getStatus(session.account.id, conversation.inboxId);
 
     if (channelStatus.status === 'conectado') {
       // Só o identificador viaja para o canal: os bytes já estão no depósito
@@ -577,6 +611,7 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
           accountId: session.account.id,
           conversationId: conversation.id,
           messageId: message.id,
+          inboxId: conversation.inboxId,
         },
         { channelThreadId: conversation.channelThreadId, phone: conversation.contact.phone },
         {

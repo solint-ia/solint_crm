@@ -99,7 +99,7 @@ export const AI_AGENTS: readonly AiAgent[] = [
     id: 'ai-suporte',
     accountId: ACCOUNT_ID,
     name: 'Suporte N1',
-    scope: 'WhatsApp + Webchat · Suporte',
+    scope: 'WhatsApp · Suporte',
     active: true,
     persona: 'Objetivo e empático, resolve dúvidas frequentes antes de escalar.',
     systemPrompt:

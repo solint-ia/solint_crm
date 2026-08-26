@@ -1,5 +1,5 @@
 import type { Channel } from '@/core/domain/channel';
-import { CHANNEL_REGISTRY } from '@/core/domain/channel';
+import { describeChannel } from '@/core/domain/channel';
 import type { ConversationStatus, Priority } from '@/core/domain/conversation';
 import type { Tone } from '@/core/domain/label';
 import type { CampaignStatus } from '@/core/domain/campaign';
@@ -37,14 +37,10 @@ export const PRIORITY_LABEL: Readonly<Record<Priority, string>> = {
   urgente: 'Urgente',
 };
 
-export const CHANNEL_TONE = (channel: Channel): Tone => CHANNEL_REGISTRY[channel].tone;
+export const CHANNEL_TONE = (channel: Channel): Tone => describeChannel(channel).tone;
 
 export const CHANNEL_COLOR_VAR: Readonly<Record<Channel, string>> = {
   whatsapp: 'var(--color-whatsapp)',
-  instagram: 'var(--color-instagram)',
-  webchat: 'var(--color-webchat)',
-  email: 'var(--color-email)',
-  telegram: 'var(--color-telegram)',
 };
 
 export const CAMPAIGN_STATUS_TONE: Readonly<Record<CampaignStatus, Tone>> = {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import Link from 'next/link';
 import {
   Calendar,
@@ -14,12 +14,18 @@ import {
   X,
 } from 'lucide-react';
 
-import type { Deal, PipelineStage } from '@/core/domain/pipeline';
+import type { Deal, DealTask, PipelineStage } from '@/core/domain/pipeline';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmModal } from '@/components/ui/confirm-modal';
 import { PRIORITY_LABEL, PRIORITY_TONE } from '@/components/domain/presentation-maps';
+import { useToast } from '@/components/ui/toast';
+import {
+  addDealTaskAction,
+  deleteDealTaskAction,
+  toggleDealTaskAction,
+} from '@/app/(workspace)/kanban/actions';
 import { formatMoneyFromCents } from '@/lib/format';
 import { cn } from '@/lib/cn';
 
@@ -44,14 +50,17 @@ export function DealDetailPanel({
   const currentStageIndex = stages.findIndex((s) => s.id === deal.stageId);
   const currentStage = stages[currentStageIndex] ?? stages[0];
 
-  // Tarefas locais (checklist)
-  const [tasks, setTasks] = useState(
-    deal.tasks ?? [
-      { id: 'tsk-default', title: 'Entrar em contato para qualificação', completed: false },
-    ],
-  );
+  // O checklist vem do banco. O estado local só existe para refletir a
+  // resposta da action sem esperar o quadro inteiro recarregar.
+  const [tasks, setTasks] = useState<readonly DealTask[]>(deal.tasks ?? []);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [isAddingTask, setIsAddingTask] = useState(false);
+  const [isSavingTask, startTaskTransition] = useTransition();
+  const { show } = useToast();
+
+  useEffect(() => {
+    setTasks(deal.tasks ?? []);
+  }, [deal.tasks]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -61,38 +70,73 @@ export function DealDetailPanel({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [onClose]);
 
+  /**
+   * Aplica o resultado da action ao checklist.
+   *
+   * Toda action de tarefa devolve o card recarregado, então a lista da tela é
+   * substituída pela do banco — nada de adivinhar o estado final no cliente.
+   */
+  const aplicar = (
+    executar: () => Promise<{ ok: boolean; error?: string; deal?: Deal }>,
+    falha: string,
+  ) => {
+    startTaskTransition(async () => {
+      const result = await executar();
+      if (!result.ok) {
+        show({ tone: 'erro', title: falha, description: result.error ?? '' });
+        return;
+      }
+      if (result.deal) setTasks(result.deal.tasks ?? []);
+    });
+  };
+
   const handleToggleTask = (taskId: string) => {
+    // Vira na hora e é corrigido pela resposta: esperar o banco para riscar um
+    // item de checklist faria a interface parecer travada.
     setTasks((prev) =>
       prev.map((t) => (t.id === taskId ? { ...t, completed: !t.completed } : t)),
+    );
+    aplicar(
+      () => toggleDealTaskAction({ dealId: deal.id, taskId }),
+      'Não foi possível atualizar a tarefa',
+    );
+  };
+
+  const handleDeleteTask = (taskId: string) => {
+    aplicar(
+      () => deleteDealTaskAction({ dealId: deal.id, taskId }),
+      'Não foi possível excluir a tarefa',
     );
   };
 
   const handleAddTask = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTaskTitle.trim()) return;
-    setTasks((prev) => [
-      ...prev,
-      { id: `tsk-${Date.now()}`, title: newTaskTitle.trim(), completed: false },
-    ]);
+    const title = newTaskTitle.trim();
+    if (!title) return;
+
     setNewTaskTitle('');
     setIsAddingTask(false);
+    aplicar(
+      () => addDealTaskAction({ dealId: deal.id, title }),
+      'Não foi possível criar a tarefa',
+    );
   };
 
   return (
     <>
-      {/* Backdrop para mobile / tablet */}
+      {/* Backdrop suave que mantém o funil visível ao fundo */}
       <div
-        className="fixed inset-0 z-40 bg-black/40 backdrop-blur-xs lg:hidden"
+        className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[1px] transition-opacity animate-in fade-in duration-200"
         onClick={onClose}
         aria-hidden="true"
       />
 
       <aside
         aria-label={`Detalhes da oportunidade: ${deal.title ?? deal.contactName}`}
-        className="fixed right-0 top-0 bottom-0 z-40 flex w-full max-w-md flex-col border-l border-line bg-surface shadow-2xl animate-in slide-in-from-right duration-200 lg:relative lg:w-[380px] lg:z-auto lg:shadow-none"
+        className="fixed inset-y-0 right-0 z-50 flex h-full w-full sm:max-w-md lg:max-w-[480px] flex-col border-l border-line bg-surface shadow-2xl animate-in slide-in-from-right duration-200 overflow-hidden"
       >
-        {/* Cabeçalho do Painel */}
-        <header className="flex items-start justify-between gap-3 border-b border-line px-5 py-4 bg-surface">
+        {/* Cabeçalho do Painel - Fixo no topo */}
+        <header className="flex shrink-0 items-start justify-between gap-3 border-b border-line px-5 py-4 bg-surface">
           <div className="flex items-center gap-3 min-w-0">
             <Avatar name={deal.contactName} size="md" />
             <div className="min-w-0">
@@ -133,8 +177,8 @@ export function DealDetailPanel({
           </div>
         </header>
 
-        {/* Conteúdo com Scroll */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+        {/* Conteúdo com Scroll Interno Garantido */}
+        <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-5">
           {/* Valor Estimado & Probabilidade */}
           <div className="rounded-xl border border-line bg-surface-2/60 p-4">
             <div className="flex items-end justify-between">
@@ -171,7 +215,12 @@ export function DealDetailPanel({
               Etapa Atual do Funil
             </span>
             <div className="flex flex-col gap-1.5">
-              <div className="grid grid-cols-5 gap-1">
+              <div
+                className="grid gap-1"
+                style={{
+                  gridTemplateColumns: `repeat(${Math.max(1, stages.length)}, minmax(0, 1fr))`,
+                }}
+              >
                 {stages.map((st, idx) => {
                   const isCurrent = st.id === deal.stageId;
                   const isPassed = currentStageIndex >= idx;
@@ -238,31 +287,55 @@ export function DealDetailPanel({
               </button>
             </div>
 
+            {tasks.length === 0 && !isAddingTask ? (
+              <p className="text-meta text-dim italic">
+                Nenhuma tarefa nesta oportunidade ainda.
+              </p>
+            ) : null}
+
             <ul className="flex flex-col gap-2">
               {tasks.map((task) => (
                 <li
                   key={task.id}
-                  onClick={() => handleToggleTask(task.id)}
-                  className="flex items-center gap-2.5 cursor-pointer rounded p-1 hover:bg-surface-2 transition-colors"
+                  className="group flex items-center gap-2.5 rounded p-1 hover:bg-surface-2 transition-colors"
                 >
-                  <span
-                    className={cn(
-                      'flex size-4 shrink-0 items-center justify-center rounded border transition-colors',
-                      task.completed
-                        ? 'border-emerald-600 bg-emerald-600 text-white'
-                        : 'border-line bg-surface',
-                    )}
+                  <button
+                    type="button"
+                    onClick={() => handleToggleTask(task.id)}
+                    disabled={isSavingTask}
+                    aria-pressed={task.completed}
+                    aria-label={`Marcar "${task.title}" como ${task.completed ? 'pendente' : 'concluída'}`}
+                    className="flex flex-1 cursor-pointer items-center gap-2.5 text-left disabled:cursor-wait"
                   >
-                    {task.completed && <Check className="size-3 stroke-[3]" />}
-                  </span>
-                  <span
-                    className={cn(
-                      'text-body',
-                      task.completed ? 'line-through text-dim' : 'text-ink font-medium',
-                    )}
+                    <span
+                      className={cn(
+                        'flex size-4 shrink-0 items-center justify-center rounded border transition-colors',
+                        task.completed
+                          ? 'border-emerald-600 bg-emerald-600 text-white'
+                          : 'border-line bg-surface',
+                      )}
+                    >
+                      {task.completed && <Check className="size-3 stroke-[3]" />}
+                    </span>
+                    <span
+                      className={cn(
+                        'text-body',
+                        task.completed ? 'line-through text-dim' : 'text-ink font-medium',
+                      )}
+                    >
+                      {task.title}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteTask(task.id)}
+                    disabled={isSavingTask}
+                    aria-label={`Excluir tarefa ${task.title}`}
+                    className="shrink-0 rounded p-1 text-dim opacity-0 transition-opacity group-hover:opacity-100 hover:text-red-500 focus-visible:opacity-100"
                   >
-                    {task.title}
-                  </span>
+                    <Trash2 className="size-3.5" />
+                  </button>
                 </li>
               ))}
             </ul>
@@ -277,8 +350,8 @@ export function DealDetailPanel({
                   autoFocus
                   className="h-8 flex-1 rounded border border-line bg-surface px-2.5 text-body text-ink outline-none focus:border-brand"
                 />
-                <Button type="submit" size="sm">
-                  Salvar
+                <Button type="submit" size="sm" disabled={isSavingTask || !newTaskTitle.trim()}>
+                  {isSavingTask ? 'Salvando…' : 'Salvar'}
                 </Button>
               </form>
             )}
@@ -302,8 +375,8 @@ export function DealDetailPanel({
           </div>
         </div>
 
-        {/* Rodapé de Ações Rápidas */}
-        <footer className="border-t border-line p-4 bg-surface-2 flex flex-col gap-2">
+        {/* Rodapé de Ações Rápidas - Sempre Fixo e Visível na Base */}
+        <footer className="shrink-0 border-t border-line p-4 bg-surface-2 flex flex-col gap-2.5">
           {deal.conversationId ? (
             <Link href="/conversas" className="w-full">
               <Button

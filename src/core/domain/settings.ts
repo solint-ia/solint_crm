@@ -115,6 +115,30 @@ export interface ActiveSession {
   readonly current: boolean;
 }
 
+/**
+ * Perfil da empresa dona da conta.
+ *
+ * `tradeName` e `document` moram em `Account` — são consultados. O resto é
+ * agregado: só a tela de empresa lê e grava, sempre inteiro.
+ *
+ * As preferências regionais são guardadas mesmo antes de alguém consumi-las.
+ * A alternativa era continuar oferecendo campos que a tela mostrava e o
+ * recarregamento apagava, que foi exatamente o defeito daqui.
+ */
+export interface CompanyProfile {
+  readonly legalName?: string;
+  readonly website?: string;
+  readonly address?: string;
+  readonly phone?: string;
+  readonly email?: string;
+  readonly language?: string;
+  readonly timezone?: string;
+  readonly currency?: string;
+  readonly dateFormat?: string;
+  readonly firstDayOfWeek?: string;
+  readonly brandColor?: string;
+}
+
 export interface BillingInfo {
   readonly planName: string;
   readonly priceLabel: string;

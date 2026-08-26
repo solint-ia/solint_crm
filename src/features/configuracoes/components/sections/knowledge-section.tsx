@@ -1,7 +1,17 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { BookOpen, FolderPlus, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import {
+  BookOpen,
+  CheckCircle2,
+  Eye,
+  FolderPlus,
+  Pencil,
+  Plus,
+  Search,
+  ThumbsUp,
+  Trash2,
+} from 'lucide-react';
 import type {
   ArticleStatus,
   KnowledgeArticle,
@@ -20,7 +30,6 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Field, TextArea, TextInput } from '@/components/ui/field';
 import { Modal } from '@/components/ui/modal';
 import { ConfirmModal } from '@/components/ui/confirm-modal';
-import { SectionTitle } from '@/components/ui/section';
 
 
 
@@ -214,44 +223,95 @@ export function KnowledgeSection({ knowledge }: { readonly knowledge: KnowledgeB
         />
       ) : null}
 
-      <SectionTitle
-        title="Base de conhecimento"
-        hint="artigos do portal de ajuda e da consulta dos agentes"
-        action={
-          <Button
-            size="sm"
-            icon={<Plus className="size-3.5" />}
-            disabled={categories.length === 0}
-            title={
-              categories.length === 0
-                ? 'Crie uma categoria antes do primeiro artigo.'
-                : undefined
-            }
-            onClick={() => {
-              setEditing(undefined);
-              setEditorOpen(true);
-            }}
-          >
-            Novo artigo
-          </Button>
-        }
-      />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-line pb-5">
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="font-display text-xl font-bold tracking-tight text-ink">
+              Base de conhecimento
+            </h2>
+            <span className="inline-flex items-center rounded-full bg-blue-500/10 px-2.5 py-0.5 text-xs font-semibold text-blue-600 dark:text-blue-400">
+              {stats.total} {stats.total === 1 ? 'artigo' : 'artigos'}
+            </span>
+          </div>
+          <p className="mt-1 text-sm text-muted">
+            Artigos do portal de ajuda e base de consulta rápida para os operadores.
+          </p>
+        </div>
 
-      {/* Faixa de números, sem card: separação por fio, ênfase por peso. */}
-      <dl className="grid grid-cols-2 gap-px overflow-hidden border-y border-line bg-line md:grid-cols-4">
-        <Stat label="Artigos" value={String(stats.total)} />
-        <Stat
-          label="Publicados"
-          value={String(stats.published)}
-          hint={`${stats.total - stats.published} fora do portal`}
-        />
-        <Stat label="Visualizações" value={stats.views.toLocaleString('pt-BR')} />
-        <Stat
-          label="Resolveu a dúvida"
-          value={stats.approval === undefined ? '—' : `${stats.approval}%`}
-          hint={stats.approval === undefined ? 'sem votos ainda' : 'dos votos do portal'}
-        />
-      </dl>
+        <Button
+          size="md"
+          icon={<Plus className="size-4" />}
+          disabled={categories.length === 0}
+          title={
+            categories.length === 0
+              ? 'Crie uma categoria antes de escrever o primeiro artigo.'
+              : undefined
+          }
+          onClick={() => {
+            setEditing(undefined);
+            setEditorOpen(true);
+          }}
+        >
+          Novo artigo
+        </Button>
+      </div>
+
+      {/* 4 KPI Cards no Estilo do Dashboard */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="rounded-2xl border border-line bg-surface p-4.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-muted">Total de artigos</span>
+            <div className="flex size-8 items-center justify-center rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
+              <BookOpen className="size-4" />
+            </div>
+          </div>
+          <div className="mt-3 font-display text-2xl font-bold text-ink tabular-nums">
+            {stats.total}
+          </div>
+          <span className="mt-1 block text-[11px] text-dim">{categories.length} categorias</span>
+        </div>
+
+        <div className="rounded-2xl border border-line bg-surface p-4.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-muted">Publicados</span>
+            <div className="flex size-8 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+              <CheckCircle2 className="size-4" />
+            </div>
+          </div>
+          <div className="mt-3 font-display text-2xl font-bold text-ink tabular-nums">
+            {stats.published}
+          </div>
+          <span className="mt-1 block text-[11px] text-green-600 dark:text-green-400 font-semibold">
+            {stats.total - stats.published} em rascunho
+          </span>
+        </div>
+
+        <div className="rounded-2xl border border-line bg-surface p-4.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-muted">Visualizações totais</span>
+            <div className="flex size-8 items-center justify-center rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400">
+              <Eye className="size-4" />
+            </div>
+          </div>
+          <div className="mt-3 font-display text-2xl font-bold text-ink tabular-nums">
+            {stats.views.toLocaleString('pt-BR')}
+          </div>
+          <span className="mt-1 block text-[11px] text-dim">Leituras realizadas</span>
+        </div>
+
+        <div className="rounded-2xl border border-line bg-surface p-4.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-muted">Aprovação dos leitores</span>
+            <div className="flex size-8 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+              <ThumbsUp className="size-4" />
+            </div>
+          </div>
+          <div className="mt-3 font-display text-2xl font-bold text-ink tabular-nums">
+            {stats.approval === undefined ? '—' : `${stats.approval}%`}
+          </div>
+          <span className="mt-1 block text-[11px] text-dim">Dúvidas resolvidas</span>
+        </div>
+      </div>
 
       <div className="grid gap-4 md:grid-cols-[220px_1fr]">
         {/* ---------- Categorias ---------- */}
@@ -523,27 +583,6 @@ export function KnowledgeSection({ knowledge }: { readonly knowledge: KnowledgeB
         onClose={() => setDeletingCategory(null)}
         onConfirm={handleConfirmDeleteCategory}
       />
-    </div>
-  );
-}
-
-
-function Stat({
-  label,
-  value,
-  hint,
-}: {
-  readonly label: string;
-  readonly value: string;
-  readonly hint?: string;
-}) {
-  return (
-    <div className="flex flex-col gap-1 bg-surface px-4 py-3">
-      <dt className="text-meta font-medium tracking-tight text-muted">{label}</dt>
-      <dd className="font-display text-metric leading-none font-bold tracking-tight text-ink tabular-nums">
-        {value}
-      </dd>
-      {hint ? <p className="text-meta text-dim">{hint}</p> : null}
     </div>
   );
 }

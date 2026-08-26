@@ -2,7 +2,7 @@ import type { AgentFlowBlock, AiAgent } from '@/core/domain/ai-agent';
 import type { AppNotification } from '@/core/domain/notification';
 import type { Deal, Pipeline, PipelineStage } from '@/core/domain/pipeline';
 import { DomainError, NotFoundError, type Id } from '@/core/domain/shared';
-import type { AiAgentRepository } from '@/core/ports/ai-agent-repository';
+import type { AiAgentRepository, CreateAiAgentDraft } from '@/core/ports/ai-agent-repository';
 import type { NotificationRepository } from '@/core/ports/notification-repository';
 import type { PipelineRepository } from '@/core/ports/pipeline-repository';
 import { prisma, readJson, asJson } from '@/infrastructure/db/prisma';
@@ -10,17 +10,123 @@ import { aiAgentRow, dealRow, notificationRow, pipelineRow } from './mappers';
 
 export class PrismaPipelineRepository implements PipelineRepository {
   async listPipelines(accountId: Id): Promise<readonly Pipeline[]> {
-    const rows = await prisma.pipeline.findMany({
+    let rows = await prisma.pipeline.findMany({
       where: { accountId },
       include: { stages: true },
       orderBy: { name: 'asc' },
     });
+
+    if (rows.length === 0) {
+      const pipelineId = `pip-${accountId}`;
+      await prisma.pipeline.create({
+        data: {
+          id: pipelineId,
+          accountId,
+          name: 'Funil Comercial',
+          isDefault: true,
+          stages: {
+            create: [
+              { id: `stg-1-${accountId}`, name: 'Novo Lead', order: 1, color: '#3B82F6' },
+              { id: `stg-2-${accountId}`, name: 'Qualificação', order: 2, color: '#F59E0B' },
+              { id: `stg-3-${accountId}`, name: 'Proposta Enviada', order: 3, color: '#8B5CF6' },
+              { id: `stg-4-${accountId}`, name: 'Negociação', order: 4, color: '#EC4899' },
+              { id: `stg-5-${accountId}`, name: 'Fechado Ganho', order: 5, color: '#10B981', isWon: true },
+              { id: `stg-6-${accountId}`, name: 'Fechado Perdido', order: 6, color: '#64748B', isLost: true },
+            ],
+          },
+        },
+      });
+
+      rows = await prisma.pipeline.findMany({
+        where: { accountId },
+        include: { stages: true },
+        orderBy: { name: 'asc' },
+      });
+    } else if (rows.some((r) => r.stages.length === 0)) {
+      for (const row of rows) {
+        if (row.stages.length === 0) {
+          await prisma.pipelineStage.createMany({
+            data: [
+              { id: `stg-1-${row.id}`, pipelineId: row.id, name: 'Novo Lead', order: 1, color: '#3B82F6' },
+              { id: `stg-2-${row.id}`, pipelineId: row.id, name: 'Qualificação', order: 2, color: '#F59E0B' },
+              { id: `stg-3-${row.id}`, pipelineId: row.id, name: 'Proposta Enviada', order: 3, color: '#8B5CF6' },
+              { id: `stg-4-${row.id}`, pipelineId: row.id, name: 'Negociação', order: 4, color: '#EC4899' },
+              { id: `stg-5-${row.id}`, pipelineId: row.id, name: 'Fechado Ganho', order: 5, color: '#10B981', isWon: true },
+              { id: `stg-6-${row.id}`, pipelineId: row.id, name: 'Fechado Perdido', order: 6, color: '#64748B', isLost: true },
+            ],
+          });
+        }
+      }
+
+      rows = await prisma.pipeline.findMany({
+        where: { accountId },
+        include: { stages: true },
+        orderBy: { name: 'asc' },
+      });
+    }
+
     return rows.map(pipelineRow);
   }
 
   async listDeals(accountId: Id, pipelineId: Id): Promise<readonly Deal[]> {
-    const rows = await prisma.deal.findMany({ where: { accountId, pipelineId } });
+    const rows = await prisma.deal.findMany({
+      where: { accountId, pipelineId },
+      // O painel de detalhe mostra o checklist e é aberto a partir desta lista;
+      // buscá-lo à parte por card seria uma consulta por clique.
+      include: { tasks: { orderBy: { createdAt: 'asc' } } },
+    });
     return rows.map(dealRow);
+  }
+
+  async addDealTask(accountId: Id, dealId: Id, title: string): Promise<Deal> {
+    await this.assertDeal(accountId, dealId);
+    await prisma.task.create({ data: { accountId, dealId, title } });
+    return this.dealWithTasks(accountId, dealId);
+  }
+
+  async toggleDealTask(accountId: Id, dealId: Id, taskId: Id): Promise<Deal> {
+    await this.assertDeal(accountId, dealId);
+
+    const task = await prisma.task.findFirst({
+      where: { id: taskId, dealId, accountId },
+      select: { id: true, completed: true },
+    });
+    if (!task) throw new NotFoundError('Tarefa', taskId);
+
+    const completed = !task.completed;
+    await prisma.task.update({
+      where: { id: taskId },
+      // `completedAt` acompanha o estado em vez de só marcar a ida: desmarcar
+      // uma tarefa que voltou a ser pendente precisa limpar a data, senão o
+      // relatório contaria como concluída algo que está aberto.
+      data: { completed, completedAt: completed ? new Date() : null },
+    });
+
+    return this.dealWithTasks(accountId, dealId);
+  }
+
+  async deleteDealTask(accountId: Id, dealId: Id, taskId: Id): Promise<Deal> {
+    await this.assertDeal(accountId, dealId);
+    const { count } = await prisma.task.deleteMany({ where: { id: taskId, dealId, accountId } });
+    if (count === 0) throw new NotFoundError('Tarefa', taskId);
+    return this.dealWithTasks(accountId, dealId);
+  }
+
+  private async assertDeal(accountId: Id, dealId: Id) {
+    const deal = await prisma.deal.findFirst({
+      where: { id: dealId, accountId },
+      select: { id: true },
+    });
+    if (!deal) throw new NotFoundError('Oportunidade', dealId);
+    return deal;
+  }
+
+  private async dealWithTasks(accountId: Id, dealId: Id): Promise<Deal> {
+    const row = await prisma.deal.findFirstOrThrow({
+      where: { id: dealId, accountId },
+      include: { tasks: { orderBy: { createdAt: 'asc' } } },
+    });
+    return dealRow(row);
   }
 
   /**
@@ -218,6 +324,61 @@ export class PrismaAiAgentRepository implements AiAgentRepository {
   async findById(accountId: Id, agentId: Id): Promise<AiAgent | null> {
     const row = await prisma.aiAgent.findFirst({ where: { id: agentId, accountId } });
     return row ? aiAgentRow(row) : null;
+  }
+
+  async create(accountId: Id, draft: CreateAiAgentDraft): Promise<AiAgent> {
+    const id = `agent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const defaultFlow: AgentFlowBlock[] = [
+      {
+        id: 'blk-start',
+        type: 'inicio',
+        title: 'Início do atendimento',
+        branches: [{ label: 'Próximo', targetId: 'blk-msg' }],
+      },
+      {
+        id: 'blk-msg',
+        type: 'mensagem',
+        title: 'Boas-vindas',
+        detail: 'Olá! Sou o assistente virtual da Solint. Como posso te ajudar hoje?',
+        branches: [{ label: 'Encerrar', targetId: 'blk-end' }],
+      },
+      {
+        id: 'blk-end',
+        type: 'encerrar',
+        title: 'Fim do atendimento',
+        branches: [],
+      },
+    ];
+
+    const row = await prisma.aiAgent.create({
+      data: {
+        id,
+        accountId,
+        name: draft.name,
+        scope: draft.scope,
+        active: false,
+        persona: draft.persona,
+        systemPrompt:
+          draft.systemPrompt ||
+          `Você é ${draft.name}, assistente virtual da empresa. Responda de forma prestativa, concisa e precisa aos clientes.`,
+        model: draft.model || 'gemini-1.5-flash',
+        handledCount: 0,
+        transferRate: '0%',
+        knowledgeBase: asJson([]),
+        transferRules: asJson([
+          {
+            id: 'rule-explicit',
+            type: 'solicitacao_explicita',
+            condition: 'Cliente pede para falar com um atendente humano',
+            enabled: true,
+          },
+        ]),
+        flow: asJson(defaultFlow),
+        logs: asJson([]),
+      },
+    });
+
+    return aiAgentRow(row);
   }
 
   async setActive(accountId: Id, agentId: Id, active: boolean): Promise<AiAgent> {

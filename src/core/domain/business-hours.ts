@@ -43,6 +43,40 @@ export interface BusinessHours {
   readonly days: readonly BusinessHoursDay[];
 }
 
+/**
+ * Expediente padrão de uma caixa nova: segunda a sexta, 8h às 18h.
+ *
+ * Existe para que criar uma caixa nunca produza um expediente sem os sete dias.
+ * Já produziu: o cadastro gravava `{ enabled, timezone, schedule: [] }` — outra
+ * forma, de uma versão anterior —, e a tela de Configurações quebrava ao tentar
+ * filtrar `days`, que não existia ali. Um único lugar que monta o padrão evita
+ * que a próxima origem invente a terceira forma.
+ */
+export const defaultBusinessHours = (timezone = 'America/Sao_Paulo'): BusinessHours => ({
+  timezone,
+  days: WEEKDAYS.map((day) => ({
+    day,
+    enabled: day !== 'dom' && day !== 'sab',
+    opensAt: '08:00',
+    closesAt: '18:00',
+  })),
+});
+
+/**
+ * Devolve um expediente utilizável a partir de qualquer coisa lida do banco.
+ *
+ * A coluna é `jsonb` e guarda o que versões antigas do código gravaram lá. O
+ * `readJson` protege contra nulo e contra escalar, mas não contra um **objeto
+ * com a forma errada** — que foi exatamente o caso: passava pela checagem de
+ * tipo e explodia depois, longe daqui, ao usar `days`.
+ */
+export const normalizeBusinessHours = (value: unknown): BusinessHours => {
+  const raw = (value ?? {}) as Partial<BusinessHours>;
+  const timezone = typeof raw.timezone === 'string' ? raw.timezone : 'America/Sao_Paulo';
+  if (!Array.isArray(raw.days) || raw.days.length === 0) return defaultBusinessHours(timezone);
+  return { timezone, days: raw.days };
+};
+
 export interface AutoReply {
   readonly enabled: boolean;
   readonly text: string;

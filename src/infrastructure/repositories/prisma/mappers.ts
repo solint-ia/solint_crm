@@ -6,7 +6,7 @@ import type {
   TransferRule,
 } from '@/core/domain/ai-agent';
 import type { Automation, AutomationAction, AutomationCondition } from '@/core/domain/automation';
-import type { AutoReply, BusinessHours } from '@/core/domain/business-hours';
+import { normalizeBusinessHours, type AutoReply } from '@/core/domain/business-hours';
 import type { Channel } from '@/core/domain/channel';
 import type { Contact, CustomField, TimelineEvent } from '@/core/domain/contact';
 import type {
@@ -263,7 +263,25 @@ export const pipelineRow = (row: PipelineWithStages): Pipeline => ({
     })),
 });
 
-export const dealRow = (row: DbDeal): Deal => ({
+/**
+ * O card com as tarefas juntas, quando a consulta as trouxe.
+ *
+ * As tarefas moram em tabela própria (`Task`), então só existem aqui se quem
+ * consultou pediu o `include`. Sem esta variante o mapeador teria de escolher
+ * entre exigir o join sempre — caro nas listagens do quadro, que não mostram
+ * checklist — ou nunca trazer as tarefas, que foi o que aconteceu: a tabela
+ * existia e a tela mantinha a lista só na memória do navegador.
+ */
+type DbDealWithTasks = DbDeal & {
+  readonly tasks?: readonly {
+    id: string;
+    title: string;
+    completed: boolean;
+    dueDate: Date | null;
+  }[];
+};
+
+export const dealRow = (row: DbDealWithTasks): Deal => ({
   id: row.id,
   accountId: row.accountId,
   pipelineId: row.pipelineId,
@@ -279,6 +297,16 @@ export const dealRow = (row: DbDeal): Deal => ({
   ...(row.contactId ? { contactId: row.contactId } : {}),
   ...(row.company ? { company: row.company } : {}),
   ...(row.conversationId ? { conversationId: row.conversationId } : {}),
+  ...(row.tasks
+    ? {
+        tasks: row.tasks.map((task) => ({
+          id: task.id,
+          title: task.title,
+          completed: task.completed,
+          ...(task.dueDate ? { dueDate: task.dueDate.toISOString() } : {}),
+        })),
+      }
+    : {}),
 });
 
 export const aiAgentRow = (row: DbAiAgent): AiAgent => ({
@@ -326,10 +354,10 @@ export const connectionRow = (row: DbInbox): ChannelConnection => ({
   identifier: row.identifier,
   status: row.status as ChannelConnection['status'],
   provider: row.provider,
-  businessHours: readJson<BusinessHours>(row.businessHours, {
-    timezone: 'America/Sao_Paulo',
-    days: [],
-  }),
+  // Normaliza a forma, não só a ausência: uma caixa gravada por versão antiga
+  // do cadastro trazia `schedule` no lugar de `days`, passava pelo `readJson`
+  // por ser um objeto válido, e derrubava a tela de Configurações inteira.
+  businessHours: normalizeBusinessHours(row.businessHours),
   awayMessage: readJson<AutoReply>(row.awayMessage, { enabled: false, text: '' }),
   greeting: readJson<AutoReply>(row.greeting, { enabled: false, text: '' }),
   ...(row.webhookUrl ? { webhookUrl: row.webhookUrl } : {}),

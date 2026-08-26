@@ -36,13 +36,14 @@ export default async function ConfiguracoesPage({
   const session = await container.session.getCurrentSession();
   // A rail ja esconde o item; sem esta checagem, a URL direta entraria.
   if (!can(session, 'configuracoes:ler')) return <AccessDenied permission="configuracoes:ler" />;
-  const [settings, notifications, conversations] = await Promise.all([
+  const [settings, notifications, conversations, pipelines] = await Promise.all([
     container.settings.get(session.account.id),
     container.notifications.list(session.account.id, session.user.id),
     container.conversations.list(session.account.id, session.user.id, {
       scope: 'todas',
       inboxAccess: session.inboxAccess,
     }),
+    container.pipelines.listPipelines(session.account.id),
   ]);
 
   const activeSectionMeta = SETTINGS_SECTIONS.find((s) => s.id === currentSection);
@@ -59,6 +60,11 @@ export default async function ConfiguracoesPage({
     priorities: PRIORITIES.map((priority) => PRIORITY_LABEL[priority]),
     teams: settings.teams.map((team) => team.name),
     agents: settings.members.map((member) => member.name),
+    // Nomes de etapa de todos os funis, sem repetir: a ação de mover casa por
+    // nome, e dois funis podem ter uma etapa chamada igual.
+    stages: [
+      ...new Set(pipelines.flatMap((pipeline) => pipeline.stages.map((stage) => stage.name))),
+    ].sort(),
   };
 
   return (
@@ -119,7 +125,9 @@ export default async function ConfiguracoesPage({
             <CustomAttributesSection attributes={settings.customAttributes} />
           ) : null}
 
-          {currentSection === 'empresa' ? <CompanySection account={session.account} /> : null}
+          {currentSection === 'empresa' ? (
+            <CompanySection account={session.account} company={settings.company} />
+          ) : null}
 
           {currentSection === 'faturamento' ? <BillingSection billing={settings.billing} /> : null}
 

@@ -2,18 +2,18 @@ import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { Route } from 'next';
-import { Bot, Plus } from 'lucide-react';
+import { Bot } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Topbar } from '@/components/layout/topbar';
 import { PageShell } from '@/components/layout/page-shell';
 import { AgentsSkeleton } from '@/features/agentes-ia/components/agents-skeleton';
+import { CreateAgentButton } from '@/features/agentes-ia/components/create-agent-button';
 import { can } from '@/core/domain/user';
 import { AccessDenied } from '@/components/layout/access-denied';
 import { container } from '@/infrastructure/container';
 import { formatNumber } from '@/lib/format';
-import { planned } from '@/components/ui/planned';
 
 export const metadata: Metadata = { title: 'Agentes de IA' };
 
@@ -47,11 +47,7 @@ async function AgentesData() {
         account={session.account}
         accounts={session.availableAccounts}
         notifications={notifications}
-        actions={
-          <Button size="sm" icon={<Plus className="size-3.5" />} {...planned('Criar um novo agente de IA')}>
-            Novo agente
-          </Button>
-        }
+        actions={<CreateAgentButton />}
       />
 
       <PageShell>

@@ -8,6 +8,7 @@ import {
   contactRow,
   conversationRow,
 } from '@/infrastructure/repositories/prisma/mappers';
+import { dispararAutomacoes } from '@/infrastructure/automations/dispatch';
 import type { ChatIdentity } from './wa-identity';
 import { waEventBus } from './whatsapp-events';
 
@@ -128,6 +129,7 @@ interface ExistingConversation {
   readonly unreadCount: number;
   readonly status: string;
   readonly lastInboundAt: string | null;
+  readonly inboxId: string;
 }
 
 const findConversationState = (
@@ -136,7 +138,7 @@ const findConversationState = (
 ): Promise<ExistingConversation | null> =>
   prisma.conversation.findFirst({
     where: { id: conversationId, accountId },
-    select: { unreadCount: true, status: true, lastInboundAt: true },
+    select: { unreadCount: true, status: true, lastInboundAt: true, inboxId: true },
   });
 
 /**
@@ -150,10 +152,23 @@ export const commitMessage = async (input: CommitInput): Promise<void> => {
   const existing = await findConversationState(input.accountId, chat.conversationId);
   if (existing) {
     await attachToConversation(input, existing);
-    return;
+  } else {
+    await createConversationWith(input);
   }
 
-  await createConversationWith(input);
+  // As automações rodam depois da gravação, nunca antes: uma regra que move o
+  // card ou aplica etiqueta precisa encontrar a conversa já no estado novo.
+  //
+  // Só mensagem recebida dispara. O eco do que **nós** enviamos chega por aqui
+  // igual, e disparar nele faria a resposta automática responder a si mesma.
+  if (!input.fromMe) {
+    await dispararAutomacoes({
+      accountId: input.accountId,
+      trigger: existing ? 'mensagem_recebida' : 'conversa_criada',
+      conversationId: chat.conversationId,
+      ...(input.preview ? { messageText: input.preview } : {}),
+    });
+  }
 };
 
 /**
@@ -237,7 +252,17 @@ const attachToConversation = async (
   existing: ExistingConversation,
 ): Promise<void> => {
   const { chat, message, preview, at, fromMe } = input;
-  const targetInboxId = input.inboxId ?? `ibx-${input.accountId}`;
+
+  /**
+   * A caixa da conversa é a que ela já tem, não a da sessão que trouxe a
+   * mensagem.
+   *
+   * Antes toda mensagem recebida regravava `inboxId` com a caixa do socket, e
+   * isso desfazia em silêncio um "mover para outra caixa" assim que o contato
+   * respondesse. Mover é uma decisão de atendimento e precisa durar; a sessão
+   * que recebeu diz por qual número a mensagem entrou, não onde ela deve ficar.
+   */
+  const targetInboxId = existing.inboxId;
 
   try {
     await prisma.$transaction([
@@ -273,7 +298,6 @@ const attachToConversation = async (
             status: existing.status === 'resolvida' ? 'aberta' : existing.status,
             statusLabel: existing.status === 'resolvida' ? 'Em andamento' : undefined,
             channelThreadId: chat.jid,
-            inboxId: targetInboxId,
           },
         }),
       ]);

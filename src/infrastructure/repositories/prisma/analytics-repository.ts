@@ -16,12 +16,11 @@ import { prisma } from '@/infrastructure/db/prisma';
 import { buildPeriodSeries } from '@/infrastructure/seed/analytics-series';
 import { REPORT } from '@/infrastructure/seed/analytics';
 
+// Indexado por `string`, não por `Channel`: a coluna do banco ainda pode trazer
+// canal de linha antiga, e o relatório prefere rotular o desconhecido a sumir
+// com a fatia.
 const CHANNEL_COLORS: Readonly<Record<string, { label: string; colorVar: string }>> = {
   whatsapp: { label: 'WhatsApp', colorVar: 'var(--color-whatsapp)' },
-  instagram: { label: 'Instagram', colorVar: 'var(--color-instagram)' },
-  webchat: { label: 'Chat do site', colorVar: 'var(--color-webchat)' },
-  email: { label: 'E-mail', colorVar: 'var(--color-blue-text)' },
-  messenger: { label: 'Messenger', colorVar: 'var(--color-violet-text)' },
 };
 
 export class PrismaAnalyticsRepository implements AnalyticsRepository {

@@ -52,12 +52,7 @@ export const OVERVIEW: DashboardOverview = {
     { label: 'Ter', value: 203 },
     { label: 'Qua', value: 176 },
   ],
-  channels: [
-    { channelLabel: 'WhatsApp', percentage: 72, colorVar: 'var(--color-whatsapp)' },
-    { channelLabel: 'Instagram', percentage: 14, colorVar: 'var(--color-instagram)' },
-    { channelLabel: 'Webchat', percentage: 9, colorVar: 'var(--color-webchat)' },
-    { channelLabel: 'E-mail', percentage: 5, colorVar: 'var(--color-blue-text)' },
-  ],
+  channels: [{ channelLabel: 'WhatsApp', percentage: 100, colorVar: 'var(--color-whatsapp)' }],
   agents: [
     {
       id: 'user-camila',

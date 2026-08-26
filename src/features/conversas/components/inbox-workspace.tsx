@@ -3,9 +3,9 @@
 import { useState } from 'react';
 import {
   ArrowLeft,
+  Inbox,
   MessageSquare,
   Search,
-  SlidersHorizontal,
   X,
 } from 'lucide-react';
 import type { Conversation, ConversationStatus, Priority } from '@/core/domain/conversation';
@@ -15,6 +15,7 @@ import { cn } from '@/lib/cn';
 import { ChatPanel } from './chat-panel';
 import type { InboxCatalog } from './conversation-toolbar';
 import { InboxFiltersMenu } from './inbox-filters';
+import { InboxSortMenu } from './inbox-sort-menu';
 import { ContextPanel } from './context-panel';
 import { ConversationListItem } from './conversation-list-item';
 import { InboxDisconnectedState } from './inbox-disconnected-state';
@@ -23,7 +24,6 @@ import { useWhatsAppConnection } from '@/features/whatsapp/hooks/use-whatsapp-co
 import {
   activeFilterCount,
   useInbox,
-  type SortKey,
   type StatusTab,
 } from '../hooks/use-inbox';
 
@@ -82,6 +82,7 @@ interface InboxWorkspaceProps {
   readonly catalog: InboxCatalog;
   readonly cannedResponses: readonly CannedResponse[];
   readonly initialSelectedId?: string;
+  readonly initialInboxId?: string;
 }
 
 const STATUS_TABS = [
@@ -90,12 +91,6 @@ const STATUS_TABS = [
   { id: 'pendente', label: 'Pendentes' },
   { id: 'espera', label: 'Em espera' },
   { id: 'resolvida', label: 'Resolvidas' },
-] as const;
-
-const SORT_OPTIONS = [
-  { id: 'recentes', label: 'Recentes' },
-  { id: 'antigas', label: 'Antigas' },
-  { id: 'prioridade', label: 'Prioridade' },
 ] as const;
 
 type MobilePane = 'lista' | 'conversa' | 'contexto';
@@ -121,6 +116,7 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
     setContactLabels: props.setContactLabels,
     moveInbox: props.moveInbox,
     initialSelectedId: props.initialSelectedId,
+    initialInboxId: props.initialInboxId,
   });
 
   const filterCount = activeFilterCount(inbox.filters);
@@ -178,22 +174,10 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
                 labels={props.catalog.labels}
                 onChange={inbox.setFilters}
               />
-
-              <label className="flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-1.5 text-[11px] text-muted hover:text-ink hover:bg-surface-2 cursor-pointer transition-colors" title="Ordenar lista">
-                <SlidersHorizontal className="size-3 text-muted" />
-                <span className="sr-only">Ordenar</span>
-                <select
-                  value={inbox.sort}
-                  onChange={(event) => inbox.setSort(event.target.value as SortKey)}
-                  className="bg-transparent text-[11px] text-ink outline-none cursor-pointer"
-                >
-                  {SORT_OPTIONS.map((option) => (
-                    <option key={option.id} value={option.id} className="bg-surface text-ink">
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <InboxSortMenu
+                sort={inbox.sort}
+                onChange={inbox.setSort}
+              />
             </div>
           </div>
 
@@ -240,6 +224,27 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
               );
             })}
           </div>
+
+          {/* Chip de Caixa Específica Filtrada */}
+          {inbox.filters.inboxId && (
+            <div className="mt-1 flex items-center justify-between rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 py-1 text-xs text-blue-600 dark:text-blue-400">
+              <div className="flex items-center gap-1.5 truncate">
+                <Inbox className="size-3.5 shrink-0" />
+                <span className="truncate text-[11px] font-medium">
+                  Caixa:{' '}
+                  {props.inboxes.find((i) => i.id === inbox.filters.inboxId)?.name ?? 'Filtrada'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => inbox.setFilters((prev) => ({ ...prev, inboxId: undefined }))}
+                className="ml-1 rounded p-0.5 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 transition-colors"
+                title="Ver todas as caixas"
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Lista Rolável de Conversas */}

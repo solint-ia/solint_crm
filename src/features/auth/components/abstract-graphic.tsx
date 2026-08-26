@@ -22,9 +22,9 @@ export function AbstractGraphic() {
               <MessageSquare className="size-6" />
             </div>
             <span className="text-[11px] font-semibold tracking-wide text-white">
-              Canais Conectados
+              Canal Conectado
             </span>
-            <span className="text-[10px] text-sky-200/70">WhatsApp, Instagram e Webchat</span>
+            <span className="text-[10px] text-sky-200/70">WhatsApp multi-caixa</span>
           </div>
 
           {/* Linha conectora 1 */}

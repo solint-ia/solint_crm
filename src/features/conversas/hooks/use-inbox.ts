@@ -63,6 +63,7 @@ interface UseInboxParams {
   }) => Promise<{ ok: boolean; error?: string }>;
   /** Conversa aberta ao carregar — vem da URL em /conversas/[id]. */
   readonly initialSelectedId?: string;
+  readonly initialInboxId?: string;
 }
 
 /** Recortes combináveis da lista. `undefined` significa "não filtrar por isto". */
@@ -72,10 +73,13 @@ export interface InboxFilters {
   readonly labelId?: string;
   readonly unreadOnly?: boolean;
   readonly slaBreached?: boolean;
+  readonly inboxId?: string;
 }
 
 export const activeFilterCount = (filters: InboxFilters): number =>
-  Object.values(filters).filter((value) => value !== undefined && value !== false).length;
+  Object.entries(filters).filter(
+    ([key, value]) => key !== 'inboxId' && value !== undefined && value !== false,
+  ).length;
 
 /** Substitui a conversa e a recoloca no topo — atividade nova vem primeiro. */
 const upsertConversation = (
@@ -102,6 +106,7 @@ export function useInbox({
   setContactLabels,
   moveInbox,
   initialSelectedId,
+  initialInboxId,
 }: UseInboxParams) {
   const [conversations, setConversations] = useState<readonly Conversation[]>(initialConversations);
   const [selectedId, setSelectedId] = useState<string | undefined>(
@@ -111,9 +116,17 @@ export function useInbox({
   const [statusTab, setStatusTab] = useState<StatusTab>('todas');
   const [sort, setSort] = useState<SortKey>('recentes');
   const [search, setSearch] = useState('');
-  const [filters, setFilters] = useState<InboxFilters>({});
+  const [filters, setFilters] = useState<InboxFilters>(
+    initialInboxId ? { inboxId: initialInboxId } : {},
+  );
   const [error, setError] = useState<string | undefined>();
   const [pending, startTransition] = useTransition();
+
+  useEffect(() => {
+    if (initialInboxId !== undefined) {
+      setFilters((prev) => ({ ...prev, inboxId: initialInboxId || undefined }));
+    }
+  }, [initialInboxId]);
 
   // Tempo real vem do barramento compartilhado do workspace (uma unica conexao SSE).
   useConversationEvents((payload) => {
@@ -184,6 +197,7 @@ export function useInbox({
       if (statusTab !== 'todas' && conversation.status !== statusTab) return false;
 
       // Filtros combinam por E: cada um estreita o que o anterior deixou passar.
+      if (filters.inboxId && conversation.inboxId !== filters.inboxId) return false;
       if (filters.channel && conversation.channel !== filters.channel) return false;
       if (filters.priority && conversation.priority !== filters.priority) return false;
       if (filters.labelId && !conversation.labels.some((l) => l.id === filters.labelId)) {

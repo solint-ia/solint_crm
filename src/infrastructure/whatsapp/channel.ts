@@ -23,6 +23,15 @@ export interface DispatchContext {
   readonly accountId: string;
   readonly conversationId: string;
   readonly messageId: string;
+  /**
+   * Caixa **da conversa** — quem manda no número que vai sair.
+   *
+   * Sem este campo o motor worker escolhia a caixa pela conta, preferindo a que
+   * tivesse sessão pareada. Uma conversa movida para uma caixa não conectada
+   * continuava enviando, e saía pelo número de outra caixa — para o contato, a
+   * mensagem vinha de um número que ele não conhecia.
+   */
+  readonly inboxId: string;
 }
 
 export interface DispatchMedia {
@@ -53,12 +62,16 @@ export interface WhatsAppChannel {
   readonly engine: 'inprocess' | 'worker';
 
   /**
-   * Estado da conexão da conta.
+   * Estado da conexão.
+   *
+   * Com `inboxId`, é o estado **daquela caixa** — que é o que um envio precisa
+   * saber. Sem ele, o motor escolhe uma caixa da conta, para quem só quer saber
+   * se a conta tem WhatsApp de pé (topbar, tela de conexão).
    *
    * Assíncrono mesmo no motor in-process, onde o valor está em memória: um
    * método que muda de assinatura conforme o motor não seria uma fronteira.
    */
-  getStatus(accountId: string): Promise<WhatsAppStatusPayload>;
+  getStatus(accountId: string, inboxId?: string): Promise<WhatsAppStatusPayload>;
 
   startSession(owner: WhatsAppOwner): Promise<WhatsAppStatusPayload>;
 
@@ -76,7 +89,8 @@ export interface WhatsAppChannel {
     media: DispatchMedia,
   ): Promise<DispatchResult>;
 
-  markRead(accountId: string, conversationId: string): Promise<void>;
+  /** `inboxId` é o da conversa: confirmar leitura na sessão errada não confirma nada. */
+  markRead(accountId: string, conversationId: string, inboxId?: string): Promise<void>;
 }
 
 /**

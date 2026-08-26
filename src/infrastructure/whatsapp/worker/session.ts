@@ -65,6 +65,19 @@ import {
 const DRAIN_MAX_MS = 90_000;
 
 /**
+ * Teto de QR Codes emitidos numa tentativa de pareamento.
+ *
+ * O Baileys renova o QR sozinho a cada `qrTimeout` **sem fechar o socket**, e
+ * `qrAttempts` só conta reconexão — então nada limitava esse ciclo: uma caixa
+ * nunca pareada ficava emitindo QR para sempre, gravando no banco a cada volta,
+ * muito depois de a tela que pediu o código ter sido fechada.
+ *
+ * Cinco códigos a um minuto cada é folga larga para alguém pegar o telefone e
+ * escanear; passado isso, ninguém está olhando.
+ */
+const MAX_QR_CYCLES = 5;
+
+/**
  * Limitador de concorrência mínimo.
  *
  * Uma fila de espera e um contador — não vale uma dependência nova. Quem chama
@@ -122,6 +135,14 @@ export class WhatsAppSession {
   private isAuthenticated = false;
   private retryCount = 0;
   private qrAttempts = 0;
+  /**
+   * QR Codes emitidos desde o último pareamento ou pedido explícito de conexão.
+   *
+   * Separado de `qrAttempts` porque conta outra coisa: aquele conta reconexão
+   * após queda, este conta código mostrado — e é o segundo que corre solto
+   * quando o socket fica de pé e o Baileys só troca o QR.
+   */
+  private qrCycles = 0;
   /**
    * A sessao ja foi pareada alguma vez?
    *
@@ -318,8 +339,29 @@ export class WhatsAppSession {
 
       if (qr) {
         this.isInitializing = false;
-        this.qrAttempts = 0;
-        console.log(`[WhatsAppSession ${this.inboxId}] QR Code recebido com sucesso.`);
+        // Zerar `qrAttempts` aqui tornava o teto de 8 inalcançável: cada QR
+        // recebido devolvia o orçamento inteiro, e o par QR→428→QR girava sem
+        // fim. O contador pertence ao ciclo de reconexão, não ao QR.
+        this.qrCycles += 1;
+
+        if (this.qrCycles > MAX_QR_CYCLES) {
+          console.log(
+            `[WhatsAppSession ${this.inboxId}] ${MAX_QR_CYCLES} QR Codes emitidos sem leitura. ` +
+              'Encerrando a tentativa de pareamento.',
+          );
+          this.teardownSocket();
+          this.qrCycles = 0;
+          await this.updateStatus({
+            status: 'desconectado',
+            qr: undefined,
+            error: 'O QR expirou sem ser lido. Clique em conectar para gerar outro.',
+          });
+          return;
+        }
+
+        console.log(
+          `[WhatsAppSession ${this.inboxId}] QR Code recebido (${this.qrCycles}/${MAX_QR_CYCLES}).`,
+        );
         await this.updateStatus({
           status: 'aguardando_leitura',
           qr,
@@ -383,7 +425,10 @@ export class WhatsAppSession {
             return;
           }
 
+          // Os dois orçamentos voltam juntos: a mensagem acima manda clicar em
+          // conectar, e a tentativa seguinte precisa começar inteira.
           this.qrAttempts = 0;
+          this.qrCycles = 0;
           await this.updateStatus({
             status: 'desconectado',
             qr: undefined,
@@ -419,6 +464,7 @@ export class WhatsAppSession {
         this.isInitializing = false;
         this.isAuthenticated = true;
         this.qrAttempts = 0;
+        this.qrCycles = 0;
         this.retryCount = 0;
         this.beginDrain();
 
@@ -926,6 +972,10 @@ export class WhatsAppSession {
     this.teardownSocket();
     this.isAuthenticated = false;
     this.isInitializing = false;
+    // Encerramento explícito zera os orçamentos de pareamento: quem desconectar
+    // e voltar a conectar começa do zero, não do que sobrou da tentativa antiga.
+    this.qrAttempts = 0;
+    this.qrCycles = 0;
     await this.updateStatus({ status: 'desconectado', qr: undefined });
   }
 }

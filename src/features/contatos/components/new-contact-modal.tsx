@@ -9,6 +9,8 @@ import {
   Phone,
   User,
 } from 'lucide-react';
+import type { Channel } from '@/core/domain/channel';
+import { CHANNELS, describeChannel } from '@/core/domain/channel';
 import { Modal } from '@/components/ui/modal';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
@@ -29,7 +31,7 @@ export function NewContactModal({ open, onClose }: NewContactModalProps) {
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [company, setCompany] = useState('');
-  const [channel, setChannel] = useState<'whatsapp' | 'instagram' | 'email' | 'webchat'>('whatsapp');
+  const [channel, setChannel] = useState<Channel>('whatsapp');
   const [notes, setNotes] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -132,18 +134,14 @@ export function NewContactModal({ open, onClose }: NewContactModalProps) {
             </label>
             <select
               value={channel}
-              onChange={(e) =>
-                setChannel(
-                  e.target.value as 'whatsapp' | 'instagram' | 'email' | 'webchat',
-                )
-              }
+              onChange={(e) => setChannel(e.target.value as Channel)}
               className="w-full rounded-control border border-line bg-surface px-3 py-2 text-body text-ink outline-none transition-colors focus:border-brand"
             >
-
-              <option value="whatsapp">WhatsApp</option>
-              <option value="instagram">Instagram Direct</option>
-              <option value="email">E-mail</option>
-              <option value="webchat">Chat do Site</option>
+              {CHANNELS.map((id) => (
+                <option key={id} value={id}>
+                  {describeChannel(id).label}
+                </option>
+              ))}
             </select>
           </div>
         </div>

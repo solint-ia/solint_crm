@@ -1,7 +1,7 @@
 import type { Automation } from '../domain/automation';
 import type { AutoReply, BusinessHours } from '../domain/business-hours';
 import type { KnowledgeArticle, KnowledgeBase, KnowledgeCategory } from '../domain/knowledge';
-import type { Label } from '../domain/label';
+import type { Label, Tone } from '../domain/label';
 import type {
   ActiveSession,
   ApiToken,
@@ -10,6 +10,7 @@ import type {
   BillingInfo,
   CannedResponse,
   ChannelConnection,
+  CompanyProfile,
   CustomAttributeDefinition,
   Macro,
   Team,
@@ -35,6 +36,7 @@ export interface WorkspaceSettings {
   readonly auditLog: readonly AuditLogEntry[];
   readonly activeSessions: readonly ActiveSession[];
   readonly knowledge: KnowledgeBase;
+  readonly company: CompanyProfile;
 }
 
 /** Campos que o construtor de automação escreve. O id ausente cria uma nova. */
@@ -45,6 +47,12 @@ export interface AutomationDraft {
   readonly conditions: Automation['conditions'];
   readonly actions: Automation['actions'];
   readonly enabled: boolean;
+}
+
+export interface InboxDraft {
+  readonly name: string;
+  readonly channel?: 'whatsapp' | 'webchat' | 'instagram' | 'email';
+  readonly provider?: string;
 }
 
 /** Ajustes operacionais de uma caixa de entrada (§15). */
@@ -75,6 +83,7 @@ export interface SettingsRepository {
   /** A ordem decide quem vence um conflito de sobrescrita — por isso é editável. */
   moveAutomation(accountId: Id, automationId: Id, direction: 'cima' | 'baixo'): Promise<void>;
 
+  createInbox(accountId: Id, draft: InboxDraft): Promise<ChannelConnection>;
   updateInbox(
     accountId: Id,
     connectionId: Id,
@@ -109,6 +118,17 @@ export interface SettingsRepository {
     accountId: Id,
     draft: { shortcut: string; content: string },
   ): Promise<CannedResponse>;
+  /**
+   * Edita a resposta existente.
+   *
+   * Sem isto, a tela de edição caía no `create` e o atalho editado virava uma
+   * segunda linha em vez de substituir a primeira.
+   */
+  updateCannedResponse(
+    accountId: Id,
+    responseId: Id,
+    draft: { shortcut: string; content: string },
+  ): Promise<CannedResponse>;
   deleteCannedResponse(accountId: Id, responseId: Id): Promise<void>;
 
   createCustomAttribute(
@@ -126,6 +146,38 @@ export interface SettingsRepository {
   createTeam(accountId: Id, draft: TeamDraft): Promise<Team>;
   updateTeam(accountId: Id, teamId: Id, draft: TeamDraft): Promise<Team>;
   deleteTeam(accountId: Id, teamId: Id): Promise<void>;
+
+  /**
+   * Encerra uma sessão ativa, ou todas menos a atual.
+   *
+   * A sessão corrente nunca cai: encerrar a própria sessão a partir desta tela
+   * deslogaria quem clicou, que não é o que o botão promete.
+   */
+  terminateSession(accountId: Id, sessionId: Id): Promise<readonly ActiveSession[]>;
+  terminateOtherSessions(accountId: Id): Promise<readonly ActiveSession[]>;
+
+  /** Grava o perfil da empresa. `tradeName` vai para `Account.name`. */
+  saveCompanyProfile(
+    accountId: Id,
+    draft: CompanyProfile & { readonly tradeName: string; readonly document?: string },
+  ): Promise<CompanyProfile>;
+
+  createLabel(accountId: Id, draft: LabelDraft): Promise<Label>;
+  updateLabel(accountId: Id, labelId: Id, draft: LabelDraft): Promise<Label>;
+  /**
+   * Remove a etiqueta do catálogo.
+   *
+   * As ligações com conversas e contatos caem junto pela cascata do Prisma —
+   * uma etiqueta excluída não pode continuar aplicada a nada.
+   */
+  deleteLabel(accountId: Id, labelId: Id): Promise<void>;
+}
+
+/** Rascunho de etiqueta. `tone` é da paleta fechada, nunca uma cor solta. */
+export interface LabelDraft {
+  readonly name: string;
+  readonly tone: Tone;
+  readonly description?: string;
 }
 
 /**

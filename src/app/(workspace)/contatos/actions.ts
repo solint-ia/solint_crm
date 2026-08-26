@@ -1,6 +1,7 @@
 'use server';
 
 import { z } from 'zod';
+import { CHANNELS } from '@/core/domain/channel';
 import { can } from '@/core/domain/user';
 import { container } from '@/infrastructure/container';
 import { prisma, asJson } from '@/infrastructure/db/prisma';
@@ -29,7 +30,7 @@ const createContactSchema = z.object({
   phone: z.string().trim().min(8).max(30),
   email: z.string().trim().email().optional().or(z.literal('')),
   company: z.string().trim().max(100).optional().or(z.literal('')),
-  channel: z.enum(['whatsapp', 'instagram', 'email', 'webchat', 'telegram'] as const).default('whatsapp'),
+  channel: z.enum(CHANNELS).default('whatsapp'),
   notes: z.string().trim().max(2000).optional(),
 });
 

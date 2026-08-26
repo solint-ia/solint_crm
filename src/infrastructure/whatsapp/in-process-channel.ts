@@ -23,7 +23,12 @@ import fsp from 'node:fs/promises';
 export class InProcessWhatsAppChannel implements WhatsAppChannel {
   readonly engine = 'inprocess' as const;
 
-  async getStatus(_accountId: string): Promise<WhatsAppStatusPayload> {
+  /**
+   * `inboxId` é aceito e ignorado: este motor tem uma sessão só para o processo
+   * inteiro, então não há por onde escolher caixa. Quem precisa de roteamento
+   * por caixa usa o motor `worker` — é uma das razões de ele existir.
+   */
+  async getStatus(_accountId: string, _inboxId?: string): Promise<WhatsAppStatusPayload> {
     return whatsappService.getStatus();
   }
 
@@ -65,7 +70,11 @@ export class InProcessWhatsAppChannel implements WhatsAppChannel {
     });
   }
 
-  async markRead(_accountId: string, conversationId: string): Promise<void> {
+  async markRead(
+    _accountId: string,
+    conversationId: string,
+    _inboxId?: string,
+  ): Promise<void> {
     await whatsappService.markConversationAsRead(conversationId);
   }
 }
