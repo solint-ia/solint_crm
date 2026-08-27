@@ -36,14 +36,26 @@ export default async function ConfiguracoesPage({
   const session = await container.session.getCurrentSession();
   // A rail ja esconde o item; sem esta checagem, a URL direta entraria.
   if (!can(session, 'configuracoes:ler')) return <AccessDenied permission="configuracoes:ler" />;
+  /**
+   * Conversas e funis só alimentam o `vocabulary`, e o `vocabulary` só chega ao
+   * construtor de automação. Carregá-los ao abrir "Respostas" ou "Etiquetas"
+   * era varrer a caixa de entrada inteira para montar uma lista que aquela tela
+   * nem recebe — e cada consulta a mais custa uma travessia até o banco.
+   */
+  const montaVocabulario = currentSection === 'automacoes';
+
   const [settings, notifications, conversations, pipelines] = await Promise.all([
     container.settings.get(session.account.id),
     container.notifications.list(session.account.id, session.user.id),
-    container.conversations.list(session.account.id, session.user.id, {
-      scope: 'todas',
-      inboxAccess: session.inboxAccess,
-    }),
-    container.pipelines.listPipelines(session.account.id),
+    montaVocabulario
+      ? container.conversations.list(session.account.id, session.user.id, {
+          scope: 'todas',
+          inboxAccess: session.inboxAccess,
+        })
+      : Promise.resolve([]),
+    montaVocabulario
+      ? container.pipelines.listPipelines(session.account.id)
+      : Promise.resolve([]),
   ]);
 
   const activeSectionMeta = SETTINGS_SECTIONS.find((s) => s.id === currentSection);

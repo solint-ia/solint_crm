@@ -67,10 +67,18 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     const command = await prisma.whatsAppCommand.create({
       data: { inboxId, kind, payload: payload as never, status: 'pending' },
     });
-    // Fora do await de propósito: o comando já está gravado e é a fila que manda.
-    // O aviso é só para o worker não esperar a varredura — se ele se perder, a
-    // varredura pega o comando do mesmo jeito.
-    void postgresPubSub.publish(CHANNELS.COMMANDS, { inboxId, kind, id: command.id });
+    // **Esperado**, e não disparado ao vento.
+    //
+    // Era `void`, com o argumento de que a varredura pegaria o comando de todo
+    // jeito. Pega — 15 segundos depois. Numa função serverless a promessa solta
+    // frequentemente não chega a terminar: ao responder a requisição a instância
+    // congela, e um `publish` que ainda precisava abrir conexão morre com ela.
+    // É por isso que a **primeira** mensagem de uma conversa demorava ~18s e as
+    // seguintes ~1,5s: na primeira o lambda está frio e a conexão do publicador
+    // ainda não existe; nas seguintes ela já está no pool e o aviso sai a tempo.
+    //
+    // Esperar custa uma ida ao banco. Não esperar custava a varredura inteira.
+    await postgresPubSub.publish(CHANNELS.COMMANDS, { inboxId, kind, id: command.id });
     return command.id;
   }
 
@@ -85,17 +93,11 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     const presence = workerPresence();
     const updatedAt = conn?.updatedAt.toISOString() ?? new Date().toISOString();
 
-    let isOnline = presence.online;
-    if (!isOnline) {
-      // Se acabou de carregar a aplicação, dá uma janela rápida de até 1.5s pelo heartbeat
-      isOnline = await waitForWorker(1500);
-    }
-
-
-    // Se o worker possuir trava ativa no banco, também é considerado ativo
-    if (!isOnline && travaViva(conn)) {
-      isOnline = true;
-    }
+    // A ordem importa, e é a mesma de `workerOnline`: a trava já está em `conn`,
+    // que acabou de ser lido, então conferi-la é de graça. Esperar 1,5s por uma
+    // batida antes disso era pagar essa espera em toda requisição de instância
+    // fria — que numa função serverless é boa parte delas.
+    const isOnline = presence.online || travaViva(conn) || (await waitForWorker(1500));
 
     // Worker comprovadamente ausente é reportado como desconexão
     if (!isOnline) {
