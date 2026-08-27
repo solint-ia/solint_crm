@@ -54,6 +54,7 @@ import {
   extractStatusCode,
   fallbackPersonName,
   GROUP_METADATA_TTL_MS,
+  inboxStatusFrom,
   MAX_INLINE_MEDIA_BYTES,
   MAX_TRACKED_SENT_IDS,
   timeLabel,
@@ -225,6 +226,17 @@ export class WhatsAppService {
           qrPayload: this.currentStatus.qr ?? null,
         },
       });
+
+      // A caixa acompanha o socket em toda transição, e não só ao conectar.
+      // O `Inbox.status` era escrito uma vez, no pareamento, e nunca mais:
+      // uma caixa que caía continuava "conectado" na tela de Configurações.
+      const accountId = this.accountId();
+      if (accountId) {
+        await prisma.inbox.updateMany({
+          where: { id: inboxId, accountId },
+          data: { status: inboxStatusFrom(this.currentStatus.status) },
+        });
+      }
     } catch {
       // O status é dado auxiliar: não vale derrubar a conexão porque o
       // espelhamento no banco falhou.

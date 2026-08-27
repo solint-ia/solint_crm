@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import type { PipelineStage } from '@/core/domain/pipeline';
+import type { Label } from '@/core/domain/label';
 import { STAGE_COLOR_PRESETS } from '@/core/domain/pipeline';
 import { Modal } from '@/components/ui/modal';
 import { Button } from '@/components/ui/button';
@@ -13,6 +14,8 @@ interface StagesModalProps {
   readonly open: boolean;
   readonly onClose: () => void;
   readonly stages: readonly PipelineStage[];
+  /** Etiquetas da conta, para vincular uma a cada etapa. */
+  readonly labels: readonly Label[];
   readonly onSaveStages: (
     updatedStages: readonly {
       id?: string;
@@ -22,6 +25,7 @@ interface StagesModalProps {
       isWon: boolean;
       isLost: boolean;
       defaultProbability?: number;
+      labelId?: string | null;
     }[],
   ) => Promise<void>;
 }
@@ -30,6 +34,7 @@ export function StagesModal({
   open,
   onClose,
   stages: initialStages,
+  labels,
   onSaveStages,
 }: StagesModalProps) {
   const [stages, setStages] = useState<
@@ -41,6 +46,8 @@ export function StagesModal({
       isWon: boolean;
       isLost: boolean;
       defaultProbability: number;
+      /** String vazia = etapa sem etiqueta. Vira `null` ao salvar. */
+      labelId: string;
     }[]
   >(
     initialStages.map((s, idx) => ({
@@ -51,8 +58,22 @@ export function StagesModal({
       isWon: s.isWon ?? false,
       isLost: s.isLost ?? false,
       defaultProbability: s.defaultProbability ?? (s.isWon ? 100 : s.isLost ? 0 : 50),
+      labelId: s.labelId ?? '',
     })),
   );
+
+  /**
+   * Uma etiqueta não pode representar duas etapas.
+   *
+   * Se representasse, um contato com ela estaria em duas colunas ao mesmo
+   * tempo e não haveria como decidir qual vale. O `<select>` esconde as já
+   * usadas em vez de deixar escolher e recusar depois.
+   */
+  const usadas = new Set(stages.map((stage) => stage.labelId).filter(Boolean));
+
+  const updateLabel = (index: number, labelId: string) => {
+    setStages((prev) => prev.map((st, i) => (i === index ? { ...st, labelId } : st)));
+  };
 
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -158,6 +179,7 @@ export function StagesModal({
         isWon: false,
         isLost: false,
         defaultProbability: 50,
+        labelId: '',
       },
     ]);
   };
@@ -166,7 +188,11 @@ export function StagesModal({
     setError(null);
     setIsSaving(true);
     try {
-      await onSaveStages(stages);
+      // A string vazia da tela vira `null` no banco: são a mesma ideia
+      // ("sem etiqueta") em duas linguagens, e o `<select>` não tem `null`.
+      await onSaveStages(
+        stages.map((stage) => ({ ...stage, labelId: stage.labelId || null })),
+      );
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao salvar configuração de etapas.');
@@ -289,6 +315,36 @@ export function StagesModal({
                 >
                   <Trash2 className="size-3.5" />
                 </button>
+              </div>
+
+              {/* Etiqueta que representa a etapa */}
+              <div className="flex flex-wrap items-center gap-1.5 pl-7">
+                <label
+                  htmlFor={`stage-label-${stage.id}`}
+                  className="text-micro font-medium text-dim"
+                >
+                  Etiqueta da etapa:
+                </label>
+                <select
+                  id={`stage-label-${stage.id}`}
+                  value={stage.labelId}
+                  onChange={(e) => updateLabel(index, e.target.value)}
+                  className="rounded-control border border-line bg-surface px-2 py-1 text-micro text-ink outline-none focus:border-brand"
+                >
+                  <option value="">Nenhuma</option>
+                  {labels
+                    .filter((label) => label.id === stage.labelId || !usadas.has(label.id))
+                    .map((label) => (
+                      <option key={label.id} value={label.id}>
+                        {label.name}
+                      </option>
+                    ))}
+                </select>
+                <span className="text-micro text-dim">
+                  {stage.labelId
+                    ? 'aplicada ao contato ao mover o card para cá'
+                    : 'o card só se move na mão'}
+                </span>
               </div>
 
               {/* Atalho de Cores Rápidas */}

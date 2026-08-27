@@ -5,7 +5,13 @@ import type {
   KnowledgeDocument,
   TransferRule,
 } from '@/core/domain/ai-agent';
-import type { Automation, AutomationAction, AutomationCondition } from '@/core/domain/automation';
+import type {
+  Automation,
+  AutomationAction,
+  AutomationCondition,
+  AutomationConditionLogic,
+} from '@/core/domain/automation';
+import { AUTOMATION_CONDITION_LOGICS } from '@/core/domain/automation';
 import { normalizeBusinessHours, type AutoReply } from '@/core/domain/business-hours';
 import type { Channel } from '@/core/domain/channel';
 import type { Contact, CustomField, TimelineEvent } from '@/core/domain/contact';
@@ -266,6 +272,7 @@ export const pipelineRow = (row: PipelineWithStages): Pipeline => ({
       color: stage.color,
       isWon: stage.isWon,
       isLost: stage.isLost,
+      ...(stage.labelId ? { labelId: stage.labelId } : {}),
     })),
 });
 
@@ -348,6 +355,9 @@ export const automationRow = (row: DbAutomation): Automation => ({
   name: row.name,
   trigger: row.trigger as Automation['trigger'],
   conditions: readJson<readonly AutomationCondition[]>(row.conditions, []),
+  conditionLogic: (AUTOMATION_CONDITION_LOGICS as readonly string[]).includes(row.conditionLogic)
+    ? (row.conditionLogic as AutomationConditionLogic)
+    : 'e',
   actions: readJson<readonly AutomationAction[]>(row.actions, []),
   enabled: row.enabled,
   order: row.order,

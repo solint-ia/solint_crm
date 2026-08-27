@@ -26,6 +26,7 @@ import { Button } from '@/components/ui/button';
 import { ConfirmModal } from '@/components/ui/confirm-modal';
 import { LabelChips } from '@/components/domain/label-chip';
 import { ContactTimeline } from './contact-timeline';
+import { StartConversationButton } from './start-conversation-button';
 import { deleteContactAction } from '@/app/(workspace)/contatos/actions';
 import { cn } from '@/lib/cn';
 
@@ -155,13 +156,11 @@ export function ContactDrawer({
           {/* Ações Rápidas em Destaque */}
           <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
             {waUrl && (
-              <Link
-                href="/conversas"
+              <StartConversationButton
+                contact={contact}
+                onNavigate={onClose}
                 className="flex items-center gap-1.5 rounded-control bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-3 py-1.5 text-meta font-semibold transition-colors shadow-2xs"
-              >
-                <MessageCircle className="size-3.5" />
-                <span>Conversar no WhatsApp</span>
-              </Link>
+              />
             )}
 
             <Link

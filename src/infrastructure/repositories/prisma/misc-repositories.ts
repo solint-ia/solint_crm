@@ -260,6 +260,13 @@ export class PrismaPipelineRepository implements PipelineRepository {
     await prisma.deal.delete({ where: { id: dealId, accountId } });
   }
 
+  async deleteDealsOfContact(accountId: Id, contactId: Id): Promise<number> {
+    // Sem `assertDeal`: um contato que não tem card nenhum não é erro, é o
+    // caso comum de quem nunca entrou no funil.
+    const { count } = await prisma.deal.deleteMany({ where: { accountId, contactId } });
+    return count;
+  }
+
   async updateStages(
     accountId: Id,
     pipelineId: Id,
@@ -271,10 +278,33 @@ export class PrismaPipelineRepository implements PipelineRepository {
       isWon: boolean;
       isLost: boolean;
       defaultProbability?: number;
+      labelId?: string | null;
     }[],
   ): Promise<readonly PipelineStage[]> {
     const pipeline = await prisma.pipeline.findFirst({ where: { id: pipelineId, accountId } });
     if (!pipeline) throw new NotFoundError('Funil', pipelineId);
+
+    /**
+     * Etiqueta escolhida precisa ser da conta.
+     *
+     * O id vem de um `<select>`, e um `<select>` é uma sugestão do servidor que
+     * o cliente pode ignorar. Sem esta conferência, um id de outra conta
+     * entraria na coluna e passaria a decidir quais contatos entram e saem
+     * deste funil — a etiqueta de um workspace governando o quadro de outro.
+     */
+    const pedidas = stages
+      .map((stage) => stage.labelId)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+
+    if (pedidas.length > 0) {
+      const validas = await prisma.label.findMany({
+        where: { accountId, id: { in: pedidas } },
+        select: { id: true },
+      });
+      const conhecidas = new Set(validas.map((label) => label.id));
+      const intrusa = pedidas.find((id) => !conhecidas.has(id));
+      if (intrusa) throw new NotFoundError('Etiqueta', intrusa);
+    }
 
     // Upsert or create stages
     const result: PipelineStage[] = [];
@@ -290,6 +320,7 @@ export class PrismaPipelineRepository implements PipelineRepository {
           color: st.color,
           isWon: st.isWon ?? false,
           isLost: st.isLost ?? false,
+          labelId: st.labelId ?? null,
         },
         update: {
           name: st.name,
@@ -297,6 +328,9 @@ export class PrismaPipelineRepository implements PipelineRepository {
           color: st.color,
           isWon: st.isWon ?? false,
           isLost: st.isLost ?? false,
+          // `undefined` mantém o vínculo; `null` o desfaz. Quem manda o campo
+          // ausente não está pedindo para desassociar a etiqueta.
+          ...(st.labelId === undefined ? {} : { labelId: st.labelId }),
         },
       });
       result.push({
@@ -308,6 +342,7 @@ export class PrismaPipelineRepository implements PipelineRepository {
         isWon: updated.isWon,
         isLost: updated.isLost,
         defaultProbability: st.defaultProbability,
+        ...(updated.labelId ? { labelId: updated.labelId } : {}),
       });
     }
 

@@ -8,16 +8,20 @@ import type {
   AutomationActionType,
   AutomationCondition,
   AutomationConditionField,
+  AutomationConditionLogic,
   AutomationConditionOperator,
   AutomationTrigger,
 } from '@/core/domain/automation';
 import {
   AUTOMATION_ACTION_LABELS,
+  AUTOMATION_CONDITION_LOGIC_LABELS,
+  AUTOMATION_CONDITION_LOGICS,
   AUTOMATION_FIELD_LABELS,
   AUTOMATION_OPERATOR_LABELS,
   AUTOMATION_TRIGGER_LABELS,
   describeAutomation,
   detectAutomationConflicts,
+  logicOf,
 } from '@/core/domain/automation';
 import { Button } from '@/components/ui/button';
 import { Field, Select, TextInput } from '@/components/ui/field';
@@ -45,6 +49,7 @@ interface AutomationBuilderProps {
     name: string;
     trigger: AutomationTrigger;
     conditions: readonly AutomationCondition[];
+    conditionLogic: AutomationConditionLogic;
     actions: readonly AutomationAction[];
     enabled: boolean;
   }) => Promise<{ ok: boolean; error?: string }>;
@@ -88,6 +93,9 @@ export function AutomationBuilder({
   const [trigger, setTrigger] = useState<AutomationTrigger>(editing?.trigger ?? 'conversa_criada');
   const [conditions, setConditions] = useState<readonly AutomationCondition[]>(
     editing?.conditions ?? [],
+  );
+  const [conditionLogic, setConditionLogic] = useState<AutomationConditionLogic>(
+    editing ? logicOf(editing) : 'e',
   );
   const [actions, setActions] = useState<readonly AutomationAction[]>(
     editing?.actions ?? [{ type: 'atribuir_equipe', value: '' }],
@@ -142,6 +150,7 @@ export function AutomationBuilder({
       name: name.trim() || 'Esta automação',
       trigger,
       conditions,
+      conditionLogic,
       actions,
       enabled,
       order: editing?.order ?? Number.MAX_SAFE_INTEGER,
@@ -150,7 +159,7 @@ export function AutomationBuilder({
     return detectAutomationConflicts([...others, draft]).filter(
       (conflict) => conflict.firstId === DRAFT_ID || conflict.secondId === DRAFT_ID,
     );
-  }, [name, trigger, conditions, actions, enabled, siblings, editing]);
+  }, [name, trigger, conditions, conditionLogic, actions, enabled, siblings, editing]);
 
   const sentence = useMemo(
     () =>
@@ -160,11 +169,12 @@ export function AutomationBuilder({
         name,
         trigger,
         conditions,
+        conditionLogic,
         actions,
         enabled,
         order: 0,
       }),
-    [name, trigger, conditions, actions, enabled],
+    [name, trigger, conditions, conditionLogic, actions, enabled],
   );
 
   const handleSave = async () => {
@@ -175,6 +185,7 @@ export function AutomationBuilder({
       name: name.trim(),
       trigger,
       conditions,
+      conditionLogic,
       actions: actions.map((action) => ({
         ...action,
         value: VALUELESS_ACTIONS.has(action.type) ? '' : action.value.trim(),
@@ -242,11 +253,50 @@ export function AutomationBuilder({
         <BuilderStep
           index={2}
           title="E se"
-          hint={conditions.length === 0 ? 'sem condições, vale para todas' : 'todas precisam valer'}
+          hint={
+            conditions.length === 0
+              ? 'sem condições, vale para todas'
+              : conditionLogic === 'ou'
+                ? 'basta uma delas valer'
+                : 'todas precisam valer'
+          }
         >
           <div className="flex flex-col gap-2">
+            {/* O seletor só aparece a partir da segunda condição: com uma só,
+                "todas" e "qualquer uma" descrevem a mesma coisa, e oferecer a
+                escolha ali sugeriria uma diferença que não existe. */}
+            {conditions.length > 1 ? (
+              <Select
+                aria-label="Como as condições se combinam"
+                className="w-auto min-w-48 self-start"
+                value={conditionLogic}
+                onChange={(event) =>
+                  setConditionLogic(event.target.value as AutomationConditionLogic)
+                }
+              >
+                {AUTOMATION_CONDITION_LOGICS.map((logic) => (
+                  <option key={logic} value={logic}>
+                    {AUTOMATION_CONDITION_LOGIC_LABELS[logic]}
+                  </option>
+                ))}
+              </Select>
+            ) : null}
+
             {conditions.map((condition, index) => (
               <div key={index} className="flex flex-wrap items-center gap-2">
+                {/* A conjunção aparece entre as linhas, onde ela é lida: a
+                    regra se lê de cima para baixo, e o seletor sozinho no topo
+                    não diz onde o "ou" entra. */}
+                <span
+                  aria-hidden
+                  className={cn(
+                    'w-6 shrink-0 text-right text-[11px] font-bold uppercase tracking-wide text-dim',
+                    index === 0 && 'invisible',
+                  )}
+                >
+                  {conditionLogic}
+                </span>
+
                 <Select
                   aria-label={`Campo da condição ${index + 1}`}
                   className="w-auto min-w-32 flex-1"

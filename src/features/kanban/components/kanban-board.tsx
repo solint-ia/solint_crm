@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { CheckCircle2, FilterX, Settings2 } from 'lucide-react';
 import type { Deal, Pipeline } from '@/core/domain/pipeline';
+import type { Label } from '@/core/domain/label';
 
 import type { AppNotification } from '@/core/domain/notification';
 import type { Account } from '@/core/domain/user';
@@ -34,6 +35,8 @@ interface KanbanBoardProps {
   readonly accounts: readonly Account[];
   readonly notifications: readonly AppNotification[];
   readonly navItems: readonly NavItem[];
+  /** Etiquetas da conta, para vincular cada etapa à sua. */
+  readonly labels: readonly Label[];
   readonly moveDeal: (input: {
     dealId: string;
     targetStageId: string;
@@ -48,6 +51,7 @@ export function KanbanBoard({
   accounts,
   notifications,
   navItems,
+  labels,
   moveDeal,
 }: KanbanBoardProps) {
   const router = useRouter();
@@ -154,6 +158,7 @@ export function KanbanBoard({
       isWon: boolean;
       isLost: boolean;
       defaultProbability?: number;
+      labelId?: string | null;
     }[],
   ) => {
     const res = await updateStagesAction(pipeline.id, { stages: updatedStages });
@@ -387,6 +392,7 @@ export function KanbanBoard({
       <StagesModal
         open={board.stagesModalOpen}
         stages={board.stages}
+        labels={labels}
         onClose={() => board.setStagesModalOpen(false)}
         onSaveStages={handleSaveStages}
       />

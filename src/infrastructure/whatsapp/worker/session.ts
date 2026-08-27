@@ -49,6 +49,7 @@ import {
   extractStatusCode,
   fallbackPersonName,
   GROUP_METADATA_TTL_MS,
+  inboxStatusFrom,
   MAX_INLINE_MEDIA_BYTES,
   MAX_TRACKED_SENT_IDS,
   timeLabel,
@@ -240,6 +241,29 @@ export class WhatsAppSession {
         phoneJid: this.currentStatus.phone ?? null,
         ...(this.currentStatus.status === 'conectado'
           ? { lastConnectedAt: new Date(), retryCount: 0 }
+          : {}),
+      },
+    });
+
+    /**
+     * O estado também é gravado na própria caixa.
+     *
+     * São duas colunas de propósito: `WhatsAppConnection.status` é o estado do
+     * socket, com os cinco degraus do pareamento; `Inbox.status` é o que a tela
+     * de Configurações lê, e fala de canal, não de socket. Só que o worker
+     * atualizava a primeira e ignorava a segunda — o motor in-process já fazia
+     * as duas. Em produção, onde quem roda é o worker, uma caixa recém-pareada
+     * ficava "desconectado" na tela para sempre, com o identificador
+     * `whatsapp-xxxxxx` no lugar do número.
+     */
+    await prisma.inbox.updateMany({
+      where: { id: this.inboxId, accountId: this.accountId },
+      data: {
+        status: inboxStatusFrom(this.currentStatus.status),
+        // O identificador só muda quando há número: um `undefined` a caminho
+        // do desconectado apagaria o número que a caixa acabou de exibir.
+        ...(this.currentStatus.status === 'conectado' && this.currentStatus.phone
+          ? { identifier: this.currentStatus.phone }
           : {}),
       },
     });

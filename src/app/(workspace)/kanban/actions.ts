@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import { revalidatePath } from 'next/cache';
 import type { Deal } from '@/core/domain/pipeline';
+import { contactLabelsAfterMove } from '@/core/domain/pipeline';
 import { container } from '@/infrastructure/container';
 
 /** Resultado que devolve o card atualizado, para a tela não recarregar o quadro. */
@@ -32,11 +33,72 @@ export async function moveDealAction(
   const result = await container.useCases.moveDeal({ session, pipelineId, ...parsed.data });
 
   if (result.ok) {
+    await syncContactLabelWithStage(
+      session.account.id,
+      pipelineId,
+      result.value,
+      parsed.data.targetStageId,
+    );
     revalidatePath('/kanban');
+    revalidatePath('/contatos');
+    revalidatePath('/conversas');
   }
 
   return result.ok ? { ok: true } : { ok: false, error: result.error.message };
 }
+
+/**
+ * Espelha o movimento do card na etiqueta do contato.
+ *
+ * Uma etapa pode declarar a etiqueta que a representa (ver `PipelineStage`).
+ * Quando ela existe, arrastar o card é uma forma de dizer "este contato agora
+ * está nesta etapa" — e essa afirmação precisa chegar ao cadastro do contato,
+ * senão a etiqueta continuaria descrevendo a etapa anterior e qualquer regra
+ * que dependa dela olharia para o passado.
+ *
+ * Falhar aqui **não** desfaz o movimento: o card já se moveu, e derrubar a
+ * ação faria a tela mostrar erro sobre uma mudança que aconteceu. A divergência
+ * é anotada no log e se corrige no próximo movimento.
+ */
+const syncContactLabelWithStage = async (
+  accountId: string,
+  pipelineId: string,
+  deal: Deal,
+  targetStageId: string,
+): Promise<void> => {
+  if (!deal.contactId) return;
+
+  try {
+    const pipelines = await container.pipelines.listPipelines(accountId);
+    const pipeline = pipelines.find((item) => item.id === pipelineId);
+    if (!pipeline) return;
+
+    // Nenhuma etapa deste funil espelha etiqueta: não há o que sincronizar, e
+    // sair daqui cedo evita duas consultas em todo arrastar de quem não usa o
+    // recurso.
+    if (!pipeline.stages.some((stage) => stage.labelId)) return;
+
+    const contact = await container.contacts.findById(accountId, deal.contactId);
+    if (!contact) return;
+
+    const atuais = contact.labels.map((label) => label.id);
+    const desejadas = contactLabelsAfterMove(pipeline, targetStageId, atuais);
+
+    const mudou =
+      desejadas.length !== atuais.length || desejadas.some((id) => !atuais.includes(id));
+    if (!mudou) return;
+
+    const settings = await container.settings.get(accountId);
+    const labels = settings.labels.filter((label) => desejadas.includes(label.id));
+
+    const atualizado = await container.contacts.update(accountId, deal.contactId, { labels });
+    // A conversa carrega uma cópia do contato: sem propagar, a caixa de
+    // entrada mostraria as etiquetas antigas até alguém recarregar.
+    await container.conversations.syncContact(accountId, atualizado);
+  } catch (error) {
+    console.error('[kanban] Falha ao sincronizar a etiqueta do contato com a etapa:', error);
+  }
+};
 
 const createDealSchema = z.object({
   stageId: z.string().min(1),
@@ -142,6 +204,8 @@ const updateStagesSchema = z.object({
       isWon: z.boolean().default(false),
       isLost: z.boolean().default(false),
       defaultProbability: z.number().min(0).max(100).optional(),
+      // `null` desfaz o vínculo com a etiqueta; ausente mantém o que está lá.
+      labelId: z.string().min(1).max(64).nullable().optional(),
     }),
   ),
 });

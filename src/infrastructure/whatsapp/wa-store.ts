@@ -434,6 +434,109 @@ const attachToConversation = async (
   }
 };
 
+/**
+ * A conversa de WhatsApp de um contato, se já existir alguma.
+ *
+ * Usada quando alguém pede "conversar" a partir do contato: quem já fala com a
+ * gente tem um histórico, e abrir uma conversa nova ao lado dele partiria o
+ * atendimento em dois lugares. A mais recente vence — é a que a pessoa espera
+ * ver ao clicar.
+ *
+ * `inboxIds` recorta pelo que a sessão alcança: apontar para uma conversa de
+ * uma caixa que a pessoa não pode abrir seria mandá-la para um 404.
+ */
+export const findContactConversation = async (
+  accountId: string,
+  contactId: string,
+  inboxIds: readonly string[] | 'todas',
+): Promise<{ readonly id: string; readonly inboxId: string } | null> =>
+  prisma.conversation.findFirst({
+    where: {
+      accountId,
+      contactId,
+      channel: 'whatsapp',
+      ...(inboxIds === 'todas' ? {} : { inboxId: { in: [...inboxIds] } }),
+    },
+    orderBy: { lastActivityAt: 'desc' },
+    select: { id: true, inboxId: true },
+  });
+
+/**
+ * Abre a conversa por onde uma mensagem nossa vai sair.
+ *
+ * O id e o `channelThreadId` seguem exatamente a forma que a entrada usa
+ * (`resolveStoredIds`): é o que faz a resposta do contato cair **nesta**
+ * conversa em vez de abrir outra ao lado. Errar aqui não daria erro nenhum —
+ * daria duas conversas com a mesma pessoa, e ninguém entenderia por quê.
+ *
+ * Idempotente por construção: se a linha já existe, ela é devolvida. Duas
+ * pessoas clicando em "conversar" ao mesmo tempo não criam duas conversas.
+ */
+export const openOutboundConversation = async (input: {
+  readonly accountId: string;
+  readonly inboxId: string;
+  readonly contact: Contact;
+}): Promise<{ readonly id: string; readonly created: boolean }> => {
+  const { accountId, inboxId, contact } = input;
+
+  const digits = contact.phone.replace(/\D/g, '');
+  if (!digits) throw new Error('O contato não tem telefone para receber uma mensagem.');
+  const jid = `${digits}@s.whatsapp.net`;
+
+  const existing = await prisma.conversation.findFirst({
+    where: { accountId, inboxId, channelThreadId: jid },
+    select: { id: true },
+  });
+  if (existing) return { id: existing.id, created: false };
+
+  const at = new Date();
+  const id = `cv-wa-${accountId}-${digits}`;
+
+  try {
+    const created = await prisma.conversation.create({
+      data: {
+        id,
+        accountId,
+        contactId: contact.id,
+        channel: 'whatsapp',
+        inboxId,
+        queue: 'Geral',
+        status: 'aberta',
+        statusLabel: 'Em andamento',
+        priority: 'media',
+        // Ninguém escreveu para nós: a conversa nasce lida.
+        unreadCount: 0,
+        lastMessagePreview: '',
+        lastMessageAt: '',
+        lastActivityAt: at,
+        lastInboundAt: null,
+        channelThreadId: jid,
+        protocols: asJson([
+          {
+            code: `#AT-${Math.floor(10000 + Math.random() * 90000)}`,
+            date: at.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }),
+            status: 'Em andamento',
+          },
+        ]),
+      },
+      select: { id: true },
+    });
+    return { id: created.id, created: true };
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+
+    // Perdeu a corrida, ou o id derivado já pertence a uma conversa desta
+    // conta noutra caixa. Nos dois casos a conversa existe e é dela que a
+    // mensagem deve sair.
+    const winner = await prisma.conversation.findFirst({
+      where: { accountId, OR: [{ id }, { inboxId, channelThreadId: jid }] },
+      select: { id: true },
+    });
+    if (!winner) throw error;
+    return { id: winner.id, created: false };
+  }
+};
+
 /** Recibo de entrega/leitura do canal. */
 export const applyDeliveryUpdate = async (
   externalId: string,

@@ -5,6 +5,7 @@ import type { Conversation } from '@/core/domain/conversation';
 import { isGroupContact } from '@/core/domain/contact';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
+import { TONE_DOT_CLASSES } from '@/components/ui/tone';
 import { ChannelDot } from '@/components/domain/channel-badge';
 import { PRIORITY_LABEL, PRIORITY_TONE } from '@/components/domain/presentation-maps';
 import { LabelChips } from '@/components/domain/label-chip';
@@ -99,10 +100,28 @@ export function ConversationListItem({
               </span>
             )}
 
+            {/* A prioridade é cor, não texto.
+                Um selo escrito "Urgente" competia por largura com a fila, o
+                SLA e as etiquetas — que são o que muda de conversa para
+                conversa — e empurrava tudo para a linha de baixo. A bolinha
+                diz a mesma coisa num quadrado de 6px; o nome continua
+                disponível para quem passa o mouse e para o leitor de tela, e
+                por extenso na barra da conversa aberta. */}
             {conversation.priority && conversation.priority !== 'baixa' && (
-              <Badge tone={PRIORITY_TONE[conversation.priority]}>
-                {PRIORITY_LABEL[conversation.priority]}
-              </Badge>
+              <span
+                title={`Prioridade: ${PRIORITY_LABEL[conversation.priority]}`}
+                className="inline-flex shrink-0 items-center"
+              >
+                <span
+                  className={cn(
+                    'size-1.5 rounded-full',
+                    TONE_DOT_CLASSES[PRIORITY_TONE[conversation.priority]],
+                  )}
+                />
+                <span className="sr-only">
+                  Prioridade {PRIORITY_LABEL[conversation.priority]}
+                </span>
+              </span>
             )}
 
             {conversation.slaLabel && (

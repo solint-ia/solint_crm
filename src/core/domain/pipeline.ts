@@ -10,7 +10,62 @@ export interface PipelineStage {
   readonly isWon: boolean;
   readonly isLost: boolean;
   readonly defaultProbability?: number;
+  /**
+   * Etiqueta que espelha esta etapa no cadastro do contato.
+   *
+   * É o que liga o funil às etiquetas: mover o card para cá aplica esta
+   * etiqueta ao contato, e o contato que fica sem nenhuma etiqueta de etapa
+   * sai do quadro. Ausente quando a etapa não espelha etiqueta nenhuma — aí o
+   * card só se move na mão, como sempre foi.
+   */
+  readonly labelId?: Id;
 }
+
+/**
+ * Etiquetas que alguma etapa espelha, em qualquer funil da conta.
+ *
+ * É o conjunto que decide se um contato pertence ao quadro: perder a última
+ * etiqueta **deste** conjunto é o que tira o card do funil. Uma etiqueta que
+ * nenhuma etapa espelha ("VIP", "Reclamação") não conta — ela descreve o
+ * contato, não o lugar dele no funil.
+ */
+/**
+ * As etiquetas do contato depois de mover o card para uma etapa.
+ *
+ * Duas coisas acontecem: as etiquetas das **outras** etapas deste funil saem, e
+ * a da etapa de destino entra. Tirar as outras é o que mantém o par
+ * contato ↔ etapa consistente — sem isso o contato acumularia "Novo Lead",
+ * "Qualificação" e "Proposta" ao mesmo tempo, e a próxima leitura não teria
+ * como dizer em qual etapa ele está.
+ *
+ * O recorte é o funil, não a conta: um contato pode estar num segundo funil ao
+ * mesmo tempo, e a etiqueta de lá não tem nada a ver com este movimento.
+ * Etiquetas que nenhuma etapa espelha ("VIP", "Reclamação") passam intactas —
+ * elas descrevem o contato, não o lugar dele no funil.
+ *
+ * Função pura de propósito: é a única regra aqui que vale a pena poder
+ * verificar sem banco.
+ */
+export const contactLabelsAfterMove = (
+  pipeline: Pipeline,
+  targetStageId: Id,
+  currentLabelIds: readonly Id[],
+): readonly Id[] => {
+  const doFunil = new Set(
+    pipeline.stages.map((stage) => stage.labelId).filter((id): id is Id => Boolean(id)),
+  );
+  const destino = pipeline.stages.find((stage) => stage.id === targetStageId)?.labelId;
+
+  const preservadas = currentLabelIds.filter((id) => !doFunil.has(id));
+  return destino ? [...preservadas, destino] : preservadas;
+};
+
+export const stageLabelIds = (pipelines: readonly Pipeline[]): ReadonlySet<Id> =>
+  new Set(
+    pipelines.flatMap((pipeline) =>
+      pipeline.stages.map((stage) => stage.labelId).filter((id): id is Id => Boolean(id)),
+    ),
+  );
 
 export interface Pipeline {
   readonly id: Id;

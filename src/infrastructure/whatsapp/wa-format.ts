@@ -1,6 +1,8 @@
+import type { InboxConnectionStatus } from '@/core/domain/channel';
 import { PhoneNumber } from '@/core/domain/contact';
 import { horaLabel } from '@/lib/datetime';
 import { userOf } from './wa-identity';
+import type { WhatsAppConnectionStatus } from './whatsapp-events';
 
 /**
  * Constantes e formatadores compartilhados pelos dois motores de WhatsApp.
@@ -60,3 +62,30 @@ export const AVATAR_TTL_MS = 60 * 60 * 1000;
 export const MAX_TRACKED_SENT_IDS = 500;
 /** Acima disso a mídia não é baixada: a conversa não pode esperar um vídeo enorme. */
 export const MAX_INLINE_MEDIA_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Estado do socket traduzido para o estado da caixa.
+ *
+ * O canal tem quatro estados e o socket tem cinco: os três degraus do
+ * pareamento (`gerando_qr`, `aguardando_leitura`, `conectando`) descrevem por
+ * onde a conexão está passando, e para a tela de Configurações são a mesma
+ * coisa — a caixa está pareando. `nao_configurado` não aparece aqui de
+ * propósito: ele diz que o canal nunca foi montado, e uma caixa com sessão de
+ * WhatsApp já passou desse ponto.
+ */
+export const inboxStatusFrom = (status: WhatsAppConnectionStatus): InboxConnectionStatus => {
+  switch (status) {
+    case 'conectado':
+      return 'conectado';
+    case 'gerando_qr':
+    case 'aguardando_leitura':
+    case 'conectando':
+      return 'pareando';
+    case 'desconectado':
+      return 'desconectado';
+    default: {
+      const exaustivo: never = status;
+      throw new Error(`Estado de WhatsApp não mapeado: ${String(exaustivo)}`);
+    }
+  }
+};

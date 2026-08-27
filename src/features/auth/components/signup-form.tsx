@@ -3,7 +3,18 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { AlertCircle, ArrowRight, Building, Lock, Mail, User, Loader2 } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowRight,
+  Building,
+  Eye,
+  EyeOff,
+  Loader2,
+  Lock,
+  Mail,
+  ShieldCheck,
+  User,
+} from 'lucide-react';
 import { signupAction } from '@/app/(auth)/actions';
 import { cn } from '@/lib/cn';
 
@@ -13,8 +24,20 @@ export function SignupForm() {
   const [email, setEmail] = useState('');
   const [company, setCompany] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * Um botão só governa os dois campos.
+   *
+   * Confirmar senha existe para pegar erro de digitação, e quem está vendo o
+   * que digita consegue conferir os dois de uma vez. Dois botões separados
+   * deixariam mostrar um e esconder o outro — o estado em que a conferência
+   * não serve para nada.
+   */
+  const mismatch = confirmPassword.length > 0 && password !== confirmPassword;
 
   const getStrength = (pwd: string) => {
     if (pwd.length === 0) return 0;
@@ -29,6 +52,15 @@ export function SignupForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (loading) return;
+
+    // O `required` do HTML garante que os dois foram preenchidos; a igualdade
+    // é nossa. Barrar aqui evita criar a conta com a senha que a pessoa não
+    // quis — e que ela não conseguiria mais adivinhar para entrar.
+    if (password !== confirmPassword) {
+      setError('As senhas não conferem. Digite a mesma senha nos dois campos.');
+      return;
+    }
+
     setError(null);
     setLoading(true);
 
@@ -136,15 +168,23 @@ export function SignupForm() {
             </div>
             <input
               id="signup-password"
-              type="password"
+              type={showPassword ? 'text' : 'password'}
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="new-password"
               minLength={10}
               placeholder="Mínimo 10 caracteres"
-              className="w-full rounded-xl border border-slate-200 bg-slate-50/50 py-2.5 pr-3.5 pl-9 text-sm text-slate-900 outline-none transition-all placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-600/10"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50/50 py-2.5 pr-10 pl-9 text-sm text-slate-900 outline-none transition-all placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-600/10"
             />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              aria-label={showPassword ? 'Ocultar senha' : 'Exibir senha'}
+              className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 transition-colors hover:text-slate-600"
+            >
+              {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+            </button>
           </div>
 
           {password.length > 0 && (
@@ -174,9 +214,45 @@ export function SignupForm() {
           )}
         </div>
 
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="signup-confirm-password" className="text-xs font-semibold text-slate-700">
+            Confirmar senha
+          </label>
+          <div className="relative">
+            <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+              <ShieldCheck className="size-4" />
+            </div>
+            <input
+              id="signup-confirm-password"
+              type={showPassword ? 'text' : 'password'}
+              required
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              autoComplete="new-password"
+              aria-invalid={mismatch}
+              aria-describedby={mismatch ? 'signup-confirm-error' : undefined}
+              placeholder="Repita a senha"
+              className={cn(
+                'w-full rounded-xl border bg-slate-50/50 py-2.5 pr-3.5 pl-9 text-sm text-slate-900 outline-none transition-all placeholder:text-slate-400 focus:bg-white focus:ring-4',
+                mismatch
+                  ? 'border-red-300 focus:border-red-500 focus:ring-red-500/10'
+                  : 'border-slate-200 focus:border-blue-600 focus:ring-blue-600/10',
+              )}
+            />
+          </div>
+
+          {/* O aviso aparece enquanto se digita, não só depois de enviar: quem
+              errou uma letra descobre na hora, e não ao voltar do servidor. */}
+          {mismatch && (
+            <span id="signup-confirm-error" className="text-[11px] font-semibold text-red-600">
+              As senhas não conferem.
+            </span>
+          )}
+        </div>
+
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || mismatch}
           className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-700 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-600/25 transition-all hover:from-blue-700 hover:to-indigo-800 hover:shadow-blue-600/35 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-70"
         >
           {loading ? (

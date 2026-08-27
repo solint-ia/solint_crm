@@ -38,6 +38,14 @@ export interface PipelineRepository {
     },
   ): Promise<Deal>;
   deleteDeal(accountId: Id, dealId: Id): Promise<void>;
+  /**
+   * Apaga todos os cards de um contato. Devolve quantos saíram.
+   *
+   * Usado quando o contato perde a última etiqueta ligada a uma etapa: sem
+   * etiqueta de etapa ele não pertence a nenhuma coluna, e um card fora de
+   * coluna não existe.
+   */
+  deleteDealsOfContact(accountId: Id, contactId: Id): Promise<number>;
 
   /**
    * Checklist do card.
@@ -60,6 +68,8 @@ export interface PipelineRepository {
       isWon: boolean;
       isLost: boolean;
       defaultProbability?: number;
+      /** `null` desfaz o vínculo; ausente mantém o que já estava gravado. */
+      labelId?: string | null;
     }[],
   ): Promise<readonly PipelineStage[]>;
 }

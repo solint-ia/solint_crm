@@ -189,6 +189,12 @@ export function Composer({
       try {
         const form = new FormData();
         form.set('file', attachment);
+        // `kind` era calculado aqui só para aparecer no rótulo do anexo e nunca
+        // ia no formulário. Do outro lado, `sendMediaAction` lê `kind` como a
+        // primeira coisa que valida — recebia string vazia e recusava **todo**
+        // anexo com "Tipo de anexo inválido", imagem inclusive.
+        form.set('kind', kindOf(attachment.type));
+        form.set('isPrivate', String(isNote));
         if (text.trim()) form.set('caption', text.trim());
         const res = await onSendMedia(form);
         if (!res.ok) {
@@ -210,6 +216,13 @@ export function Composer({
         const form = new FormData();
         const ext = recording.blob.type.includes('ogg') ? 'ogg' : 'webm';
         form.set('file', recording.blob, `audio-${Date.now()}.${ext}`);
+        form.set('kind', 'audio');
+        form.set('isPrivate', String(isNote));
+        // `voice` separa a mensagem de voz do arquivo de áudio anexado: no
+        // WhatsApp a primeira vira a bolha com a onda sonora, a segunda vira um
+        // anexo. A duração é o que desenha essa onda antes de o áudio carregar.
+        form.set('voice', 'true');
+        form.set('durationSeconds', String(recording.seconds));
         if (text.trim()) form.set('caption', text.trim());
         const res = await onSendMedia(form);
         if (!res.ok) {

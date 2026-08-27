@@ -44,6 +44,38 @@ export interface AutomationCondition {
   readonly value: string;
 }
 
+/**
+ * Como as condições se combinam.
+ *
+ * Duas opções, e só duas. Um construtor de regras cresce por aqui — grupos
+ * aninhados, "nenhuma das anteriores", parênteses —, e cada degrau desses
+ * multiplica o que a tela precisa desenhar e o que o motor precisa avaliar,
+ * para atender um caso que quase nunca chega. `e` e `ou` cobrem o que se pede
+ * numa regra de atendimento; o que não couber nas duas cabe em duas regras.
+ *
+ * O padrão é `e` porque foi assim que toda automação existente se comportou
+ * até agora: a lista de condições sempre foi avaliada com `every`. Uma regra
+ * gravada antes deste campo continua valendo exatamente o que valia.
+ */
+export const AUTOMATION_CONDITION_LOGICS = ['e', 'ou'] as const;
+
+export type AutomationConditionLogic = (typeof AUTOMATION_CONDITION_LOGICS)[number];
+
+export const AUTOMATION_CONDITION_LOGIC_LABELS: Readonly<
+  Record<AutomationConditionLogic, string>
+> = {
+  e: 'Todas as condições',
+  ou: 'Qualquer condição',
+};
+
+/** Como a frase da regra liga uma condição à seguinte. */
+export const AUTOMATION_CONDITION_LOGIC_JOINERS: Readonly<
+  Record<AutomationConditionLogic, string>
+> = {
+  e: ' e ',
+  ou: ' ou ',
+};
+
 export const AUTOMATION_ACTION_TYPES = [
   'atribuir_equipe',
   'atribuir_agente',
@@ -94,10 +126,22 @@ export interface Automation {
   readonly name: string;
   readonly trigger: AutomationTrigger;
   readonly conditions: readonly AutomationCondition[];
+  /** Ausente em regras gravadas antes do campo — vale `e`, o comportamento antigo. */
+  readonly conditionLogic?: AutomationConditionLogic;
   readonly actions: readonly AutomationAction[];
   readonly enabled: boolean;
   readonly order: number;
 }
+
+/**
+ * A combinação da regra, com o padrão aplicado num lugar só.
+ *
+ * Espalhar `?? 'e'` por descrição, avaliação e formulário é como as três
+ * acabam divergindo — basta uma esquecer o padrão para a mesma regra ser
+ * descrita de um jeito e avaliada de outro.
+ */
+export const logicOf = (automation: Pick<Automation, 'conditionLogic'>): AutomationConditionLogic =>
+  automation.conditionLogic ?? 'e';
 
 /** Frase legível da regra, derivada dos blocos — nunca digitada à mão. */
 export const describeAutomation = (automation: Automation): string => {
@@ -111,7 +155,7 @@ export const describeAutomation = (automation: Automation): string => {
                 AUTOMATION_OPERATOR_LABELS[condition.operator]
               } ${condition.value}`,
           )
-          .join(' e ');
+          .join(AUTOMATION_CONDITION_LOGIC_JOINERS[logicOf(automation)]);
 
   const actions = automation.actions
     .map((action) =>
@@ -199,14 +243,23 @@ const satisfaz = (condition: AutomationCondition, context: AutomationContext): b
 /**
  * A automação vale para este momento?
  *
- * Todas as condições precisam valer (E), que é como o construtor as descreve
- * ("se canal é WhatsApp **e** etiqueta é VIP"). Sem condições, vale sempre.
+ * Com `e`, todas as condições precisam valer; com `ou`, basta uma. Sem
+ * condições, vale sempre — nos dois casos, e é por isso que a lista vazia é
+ * testada antes: `some` sobre uma lista vazia é falso, e uma regra "qualquer
+ * condição" sem nenhuma condição deixaria de disparar ao trocar de `e` para
+ * `ou`, sem que nada na tela explicasse por quê.
  */
 export const automationMatches = (
   automation: Automation,
   context: AutomationContext,
-): boolean =>
-  automation.enabled && automation.conditions.every((condition) => satisfaz(condition, context));
+): boolean => {
+  if (!automation.enabled) return false;
+  if (automation.conditions.length === 0) return true;
+
+  return logicOf(automation) === 'ou'
+    ? automation.conditions.some((condition) => satisfaz(condition, context))
+    : automation.conditions.every((condition) => satisfaz(condition, context));
+};
 
 /** Regras que devem rodar para um gatilho, já na ordem de execução. */
 export const automationsFor = (

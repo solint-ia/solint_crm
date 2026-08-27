@@ -181,6 +181,7 @@ model Label {
   account       Account        @relation(fields: [accountId], references: [id], onDelete: Cascade)
   contacts      Contact[]      @relation("ContactLabels")
   conversations Conversation[] @relation("ConversationLabels")
+  stages        PipelineStage[]
 
   @@index([accountId])
 }
@@ -325,11 +326,20 @@ model PipelineStage {
   color      String
   isWon      Boolean @default(false)
   isLost     Boolean @default(false)
+  /// Etiqueta que representa esta etapa no cadastro do contato.
+  ///
+  /// É o elo entre o funil e as etiquetas: arrastar um card para cá aplica
+  /// esta etiqueta ao contato e tira a da etapa de origem, e um contato que
+  /// perde a última etiqueta ligada a alguma etapa sai do quadro. Nulo quando
+  /// a etapa não espelha etiqueta nenhuma — o card então só se move na mão.
+  labelId String?
 
   pipeline Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  label    Label?   @relation(fields: [labelId], references: [id], onDelete: SetNull)
   deals    Deal[]
 
   @@index([pipelineId])
+  @@index([labelId])
 }
 
 model Deal {
@@ -416,6 +426,10 @@ model Automation {
   trigger    String
   /// JSON: AutomationCondition[]
   conditions Json    @default("[]")
+  /// Como as condições se combinam: `e` (todas) ou `ou` (qualquer uma).
+  /// O padrão repete o comportamento anterior ao campo, quando a lista era
+  /// sempre avaliada com `every`.
+  conditionLogic String @default("e")
   /// JSON: AutomationAction[]
   actions    Json    @default("[]")
   enabled    Boolean @default(true)

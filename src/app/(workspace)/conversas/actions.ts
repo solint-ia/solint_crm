@@ -1,16 +1,22 @@
 'use server';
 
 import { randomUUID } from 'node:crypto';
+import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { CONVERSATION_STATUSES, PRIORITIES } from '@/core/domain/conversation';
 import type { Message, MessageContent } from '@/core/domain/message';
-import { can } from '@/core/domain/user';
+import { stageLabelIds } from '@/core/domain/pipeline';
+import { can, canSeeInbox } from '@/core/domain/user';
 import { canSendFreeText, MAX_MESSAGE_LENGTH } from '@/core/use-cases/send-message';
 import { container } from '@/infrastructure/container';
 import { dispararAutomacoes } from '@/infrastructure/automations/dispatch';
 import type { DispatchResult } from '@/infrastructure/whatsapp/channel';
 import { getWhatsAppChannel } from '@/infrastructure/whatsapp/channel-provider';
 import { mediaStore } from '@/infrastructure/whatsapp/wa-media-store';
+import {
+  findContactConversation,
+  openOutboundConversation,
+} from '@/infrastructure/whatsapp/wa-store';
 import { waEventBus } from '@/infrastructure/whatsapp/whatsapp-events';
 
 export interface ActionResult {
@@ -348,12 +354,19 @@ export async function setContactLabelsAction(input: unknown): Promise<ActionResu
   const settings = await container.settings.get(session.account.id);
   const labels = settings.labels.filter((label) => parsed.data.labelIds.includes(label.id));
 
+  // Lido **antes** da escrita: o que decide a remoção do card é a etiqueta que
+  // o contato tinha e deixou de ter. Depois da escrita esse dado já não existe.
+  const anteriores = (
+    await container.contacts.findById(session.account.id, parsed.data.contactId)
+  )?.labels.map((label) => label.id);
+
   try {
     const contact = await container.contacts.update(session.account.id, parsed.data.contactId, {
       labels,
     });
     // A conversa carrega uma cópia do contato: sem propagar, a tela mentiria.
     await container.conversations.syncContact(session.account.id, contact);
+    await pruneDealsSemEtiquetaDeEtapa(session.account.id, parsed.data.contactId, anteriores ?? []);
   } catch (error) {
     return {
       ok: false,
@@ -371,6 +384,208 @@ export async function setContactLabelsAction(input: unknown): Promise<ActionResu
 
   await broadcast(parsed.data.conversationId);
   return { ok: true };
+}
+
+/**
+ * Tira do funil o contato que perdeu a última etiqueta de etapa.
+ *
+ * Uma etapa pode declarar a etiqueta que a representa; o conjunto dessas
+ * etiquetas é o que coloca um contato no quadro. Perder a última delas é
+ * dizer que ele não está em etapa nenhuma — e um card fora de coluna não
+ * existe, então ele é apagado.
+ *
+ * A condição é ter perdido, não estar sem: o card criado à mão para um contato
+ * que nunca teve etiqueta de etapa continua onde está. Apagá-lo seria fazer um
+ * card sumir logo depois de alguém criá-lo, sem que ninguém tivesse mexido em
+ * etiqueta nenhuma.
+ *
+ * Silenciosa em caso de falha, e de propósito: etiquetar é a ação que a pessoa
+ * pediu e ela deu certo. Recusar a ação inteira porque a limpeza do quadro
+ * falhou trocaria um quadro desatualizado por uma etiqueta não aplicada.
+ */
+const pruneDealsSemEtiquetaDeEtapa = async (
+  accountId: string,
+  contactId: string,
+  anteriores: readonly string[],
+): Promise<void> => {
+  try {
+    const pipelines = await container.pipelines.listPipelines(accountId);
+    const deEtapa = stageLabelIds(pipelines);
+    if (deEtapa.size === 0) return;
+
+    const tinha = anteriores.some((id) => deEtapa.has(id));
+    if (!tinha) return;
+
+    const contact = await container.contacts.findById(accountId, contactId);
+    const continua = contact?.labels.some((label) => deEtapa.has(label.id)) ?? true;
+    if (continua) return;
+
+    const removidos = await container.pipelines.deleteDealsOfContact(accountId, contactId);
+    if (removidos > 0) revalidatePath('/kanban');
+  } catch (error) {
+    console.error('[conversas] Falha ao remover os cards do contato sem etiqueta de etapa:', error);
+  }
+};
+
+/* ==========================================================================
+   Conversar com um contato a partir da agenda.
+
+   Dois caminhos, e a diferença é quem começou: quem já nos escreveu tem
+   conversa, e o botão só leva até ela. Quem foi cadastrado à mão nunca escreveu
+   — não há conversa, não há caixa escolhida e não há mensagem. Aí é preciso
+   dizer as três coisas antes de qualquer coisa sair.
+   ========================================================================== */
+
+/** Caixa de WhatsApp por onde uma mensagem pode sair. */
+export interface CaixaDisponivel {
+  readonly id: string;
+  readonly name: string;
+  /** O número pareado, quando há um. É por ele que a pessoa reconhece a caixa. */
+  readonly identifier: string;
+  readonly conectada: boolean;
+}
+
+export interface ContactConversationResult {
+  readonly ok: boolean;
+  readonly error?: string;
+  /** Conversa que já existe — a tela navega direto para ela. */
+  readonly conversationId?: string;
+  /** Ausente a conversa, as caixas por onde a primeira mensagem pode sair. */
+  readonly caixas?: readonly CaixaDisponivel[];
+}
+
+const contactConversationSchema = z.object({
+  contactId: z.string().min(1).max(64),
+});
+
+/**
+ * Existe conversa com este contato? Se não, por onde ela poderia começar.
+ *
+ * Uma chamada só devolve as duas respostas de propósito: são a mesma pergunta
+ * do ponto de vista de quem clicou em "conversar", e separá-las faria a tela
+ * decidir sozinha qual fazer — com o risco de perguntar a caixa para quem já
+ * tem conversa aberta.
+ */
+export async function findContactConversationAction(
+  input: unknown,
+): Promise<ContactConversationResult> {
+  const parsed = contactConversationSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Contato inválido.' };
+
+  const session = await container.session.getCurrentSession();
+  if (!can(session, 'conversas:ler')) {
+    return { ok: false, error: 'Seu papel não permite abrir conversas.' };
+  }
+
+  const contact = await container.contacts.findById(session.account.id, parsed.data.contactId);
+  if (!contact) return { ok: false, error: 'Contato não encontrado.' };
+
+  const existente = await findContactConversation(
+    session.account.id,
+    contact.id,
+    session.inboxAccess,
+  );
+  if (existente) return { ok: true, conversationId: existente.id };
+
+  if (!contact.phone.trim()) {
+    return { ok: false, error: 'Este contato não tem telefone cadastrado.' };
+  }
+
+  return { ok: true, caixas: await caixasDeWhatsApp(session) };
+}
+
+/**
+ * As caixas de WhatsApp que esta sessão alcança, com o estado da conexão.
+ *
+ * O estado acompanha a lista em vez de filtrar por ele: uma caixa
+ * desconectada ainda é uma escolha legítima — a mensagem fica gravada e sai
+ * quando o número voltar. Esconder a caixa faria a pessoa procurar por uma
+ * opção que existe.
+ */
+const caixasDeWhatsApp = async (
+  session: Awaited<ReturnType<typeof container.session.getCurrentSession>>,
+): Promise<readonly CaixaDisponivel[]> => {
+  const settings = await container.settings.get(session.account.id);
+  return settings.connections
+    .filter(
+      (connection) =>
+        connection.channel === 'whatsapp' && canSeeInbox(session, connection.id),
+    )
+    .map((connection) => ({
+      id: connection.id,
+      name: connection.name,
+      identifier: connection.identifier,
+      conectada: connection.status === 'conectado',
+    }));
+};
+
+const startContactConversationSchema = z.object({
+  contactId: z.string().min(1).max(64),
+  inboxId: z.string().min(1).max(64),
+  text: z.string().trim().min(1).max(MAX_MESSAGE_LENGTH),
+});
+
+/**
+ * Abre a conversa na caixa escolhida e manda a primeira mensagem.
+ *
+ * A caixa é escolhida, não adivinhada: ela é o número que aparece no telefone
+ * de quem recebe. Com mais de um número conectado, deixar o sistema escolher
+ * significa o cliente receber uma mensagem de um número que ele não conhece —
+ * e responder para lá, onde ninguém está olhando.
+ */
+export async function startContactConversationAction(
+  input: unknown,
+): Promise<SendMessageResult & { readonly conversationId?: string }> {
+  const parsed = startContactConversationSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: 'Dados inválidos para iniciar a conversa.' };
+  }
+
+  const session = await container.session.getCurrentSession();
+  if (!can(session, 'conversas:responder')) {
+    return { ok: false, error: 'Seu papel não permite enviar mensagens.' };
+  }
+  if (!canSeeInbox(session, parsed.data.inboxId)) {
+    return { ok: false, error: 'Você não tem acesso a esta caixa de entrada.' };
+  }
+
+  const contact = await container.contacts.findById(session.account.id, parsed.data.contactId);
+  if (!contact) return { ok: false, error: 'Contato não encontrado.' };
+
+  const settings = await container.settings.get(session.account.id);
+  const inbox = settings.connections.find((item) => item.id === parsed.data.inboxId);
+  if (!inbox || inbox.channel !== 'whatsapp') {
+    return { ok: false, error: 'Caixa de entrada inválida para WhatsApp.' };
+  }
+
+  let conversationId: string;
+  try {
+    const aberta = await openOutboundConversation({
+      accountId: session.account.id,
+      inboxId: parsed.data.inboxId,
+      contact,
+    });
+    conversationId = aberta.id;
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro ao abrir a conversa.',
+    };
+  }
+
+  // O envio reaproveita o caminho normal inteiro — janela de 24h, despacho
+  // pelo canal, recibo, eventos de tempo real. Uma segunda implementação aqui
+  // seria a que esquece metade dessas coisas.
+  const enviado = await sendMessageAction({
+    conversationId,
+    text: parsed.data.text,
+    isPrivate: false,
+  });
+
+  revalidatePath('/conversas');
+  revalidatePath('/contatos');
+
+  return { ...enviado, conversationId };
 }
 
 /* ==========================================================================

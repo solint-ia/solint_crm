@@ -1,4 +1,4 @@
-import type { Automation } from '../domain/automation';
+import type { Automation, AutomationConditionLogic } from '../domain/automation';
 import type { AutoReply, BusinessHours } from '../domain/business-hours';
 import type { KnowledgeArticle, KnowledgeBase, KnowledgeCategory } from '../domain/knowledge';
 import type { Label, Tone } from '../domain/label';
@@ -45,6 +45,7 @@ export interface AutomationDraft {
   readonly name: Automation['name'];
   readonly trigger: Automation['trigger'];
   readonly conditions: Automation['conditions'];
+  readonly conditionLogic: AutomationConditionLogic;
   readonly actions: Automation['actions'];
   readonly enabled: boolean;
 }

@@ -25,9 +25,11 @@ export default async function KanbanPage({
   const pipeline = pipelines.find((item) => item.id === requestedPipeline) ?? pipelines[0];
   if (!pipeline) notFound();
 
-  const [deals, notifications] = await Promise.all([
+  const [deals, notifications, settings] = await Promise.all([
     container.pipelines.listDeals(session.account.id, pipeline.id),
     container.notifications.list(session.account.id, session.user.id),
+    // As etiquetas alimentam o vínculo etapa ↔ etiqueta no modal de etapas.
+    container.settings.get(session.account.id),
   ]);
 
   const navItems = NAV_ITEMS.filter((item) => can(session, item.permission));
@@ -41,6 +43,7 @@ export default async function KanbanPage({
       accounts={session.availableAccounts}
       notifications={notifications}
       navItems={navItems}
+      labels={settings.labels}
       moveDeal={moveDealAction.bind(null, pipeline.id)}
     />
   );

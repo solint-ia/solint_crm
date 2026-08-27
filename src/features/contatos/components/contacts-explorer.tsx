@@ -11,7 +11,6 @@ import {
   Download,
   ExternalLink,
   Kanban,
-  MessageCircle,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -33,6 +32,7 @@ import { useToast } from '@/components/ui/toast';
 import { ContactDrawer } from './contact-drawer';
 import { NewContactModal } from './new-contact-modal';
 import { EditContactModal } from './edit-contact-modal';
+import { StartConversationButton } from './start-conversation-button';
 import { SaveSegmentModal } from './save-segment-modal';
 import { ImportCsvModal } from './import-csv-modal';
 import { deleteContactAction } from '@/app/(workspace)/contatos/actions';
@@ -678,13 +678,13 @@ export function ContactsExplorer({ contacts }: ContactsExplorerProps) {
                                       <span>Editar contato</span>
                                     </button>
 
-                                    <Link
-                                      href="/conversas"
+                                    <StartConversationButton
+                                      contact={contact}
+                                      onNavigate={() => setActiveMenuId(null)}
                                       className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-meta text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 transition-colors"
                                     >
-                                      <MessageCircle className="size-3.5" />
                                       <span>Iniciar conversa</span>
-                                    </Link>
+                                    </StartConversationButton>
 
                                     <Link
                                       href="/kanban"

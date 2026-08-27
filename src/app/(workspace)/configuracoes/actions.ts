@@ -2,7 +2,11 @@
 
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
-import { AUTOMATION_ACTION_TYPES, AUTOMATION_TRIGGERS } from '@/core/domain/automation';
+import {
+  AUTOMATION_ACTION_TYPES,
+  AUTOMATION_CONDITION_LOGICS,
+  AUTOMATION_TRIGGERS,
+} from '@/core/domain/automation';
 import { CHANNELS } from '@/core/domain/channel';
 import { ARTICLE_STATUSES } from '@/core/domain/knowledge';
 import { TONES } from '@/core/domain/label';
@@ -100,6 +104,8 @@ const saveAutomationSchema = z.object({
   name: z.string().trim().min(3).max(80),
   trigger: z.enum(AUTOMATION_TRIGGERS),
   conditions: z.array(conditionSchema).max(8),
+  // Regra gravada antes do campo chega sem ele; `e` é o que ela sempre valeu.
+  conditionLogic: z.enum(AUTOMATION_CONDITION_LOGICS).default('e'),
   // Uma automação sem ação não faz nada: recusar é mais honesto que salvar vazio.
   actions: z.array(actionSchema).min(1).max(8),
   enabled: z.boolean(),
