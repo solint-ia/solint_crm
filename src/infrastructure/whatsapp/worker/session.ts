@@ -22,6 +22,7 @@ import {
   findSentMessage,
   findStoredContact,
   patchContact,
+  resolveStoredIds,
 } from '../wa-store';
 import {
   isSupportedChatJid,
@@ -541,8 +542,22 @@ export class WhatsAppSession {
         // evento por mensagem, então `messages` quase sempre tem um item só.
         // Quem controla o paralelismo real — entre invocações deste listener,
         // que o emissor do Baileys não aguarda — é o limitador.
+        // O `guarded` de fora protege o listener, mas aborta o laço na
+        // primeira exceção — e num lote represado isso descartaria todas as
+        // mensagens seguintes por causa de uma. Cada mensagem responde só por
+        // si.
         for (const msg of messages) {
-          await this.limiter.run(() => this.handleIncomingMessage(msg));
+          await this.limiter.run(async () => {
+            try {
+              await this.handleIncomingMessage(msg);
+            } catch (error) {
+              console.error(
+                `[WhatsAppSession ${this.inboxId}] Falha ao processar a mensagem ` +
+                  `${msg.key.id ?? '(sem id)'} de ${msg.key.remoteJid ?? '(sem jid)'}:`,
+                error,
+              );
+            }
+          });
         }
       }),
     );
@@ -650,8 +665,14 @@ export class WhatsAppSession {
     const decoded = decodeWaMessage(msg);
     if (!decoded) return;
 
-    const chat = await resolveChatIdentity(socket, msg.key);
-    if (!chat) return;
+    const identity = await resolveChatIdentity(socket, msg.key, this.accountId);
+    if (!identity) return;
+
+    // Os ids que vieram da identidade sao sugestoes; os que valem sao os que
+    // esta conta ja usa para este chat. Resolver aqui, uma vez, faz com que
+    // tudo abaixo — gravacao, eventos de tempo real, drenagem — fale do mesmo
+    // id que esta no banco.
+    const chat = await resolveStoredIds(this.accountId, this.inboxId, identity);
 
     const at = new Date(timestampOf(msg));
     const contact = await this.resolveContact(chat, msg, fromMe);
@@ -723,7 +744,10 @@ export class WhatsAppSession {
 
     const base = {
       ...existing,
-      id: chat.contactId,
+      // O contato que ja existe mantem o id dele. `chat.contactId` so vale
+      // quando nao ha nenhum — um contato cadastrado a mao no CRM tem id
+      // proprio, e sobrescreve-lo criaria um duplicado com o mesmo telefone.
+      id: existing?.id ?? chat.contactId,
       accountId: this.accountId,
       channel: 'whatsapp' as const,
       avatarTone: existing?.avatarTone ?? toneFor(chat.key),

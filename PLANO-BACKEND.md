@@ -565,12 +565,23 @@ como saber de qual conta é a conversa que acabou de chegar. Se o dono não é c
 **lança** em vez de escolher um padrão: adivinhar aqui significa gravar conversa de cliente no
 workspace de outro cliente. Na Fase 3 esse arquivo desaparece e a conta vem da `Inbox`.
 
-> **Dívida encontrada, e ela é da Fase 3.** Os ids do WhatsApp são derivados do JID
-> (`cv-wa-<jid>`, `ct-wa-<jid>`), **sem a conta**. Duas contas falando com o mesmo número geram o
-> mesmo id de conversa e de contato. Hoje é latente — há uma conexão só — e as consultas do
-> `wa-store` já foram escopadas por conta, então uma colisão falha em vez de atravessar. A correção
-> de verdade é a da Fase 3.8: `@@unique([accountId, phone])` e
-> `@@unique([inboxId, channelThreadId])`, com chave primária opaca.
+> **Dívida encontrada, e ela cobrou.** Os ids do WhatsApp eram derivados do JID
+> (`cv-wa-<jid>`, `ct-wa-<jid>`), **sem a conta**, e `Contact.id`/`Conversation.id` são chave
+> primária global. Enquanto havia uma conexão só isso ficou latente. Com a segunda conta o
+> resultado apareceu inteiro: uma conexão nova pareava com sucesso e **não recebia mensagem
+> nenhuma**. O caminho era `conversation.create` → `P2002` na própria chave primária → o `catch`
+> relia a conversa escopado pela conta, não achava (a linha era da outra conta) e relançava → a
+> exceção subia até o listener do Baileys, que não aguarda listener assíncrono, e a mensagem
+> sumia.
+>
+> **Corrigido sem migração.** Os ids passaram a ser escopados por conta
+> (`cv-wa-<conta>-<numero>`) para linha nova, e `resolveStoredIds` (`wa-store.ts`) traduz um chat
+> para os ids que a conta já usa antes de qualquer gravação — pela **chave natural**
+> `inboxId + channelThreadId`, que o schema já declara única e que cobre 100% das conversas de
+> WhatsApp existentes. As linhas no formato antigo continuam com os ids delas.
+>
+> A Fase 3.8 continua valendo pelo resto: `@@unique([accountId, phone])` em `Contact` e chave
+> primária opaca — o que sobra hoje é um id derivado, não uma colisão.
 
 ### 4.3 O vazamento do SSE
 

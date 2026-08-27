@@ -26,6 +26,8 @@ import {
   conversationExists,
   findStoredContact as loadStoredContact,
   patchContact,
+  patchContactByThread,
+  resolveStoredIds,
 } from './wa-store';
 import { clearOwner, readOwner, writeOwner } from './wa-owner';
 import { waEventBus, type WhatsAppOwner, type WhatsAppStatusPayload } from './whatsapp-events';
@@ -559,8 +561,12 @@ export class WhatsAppService {
     const decoded = decodeWaMessage(msg);
     if (!decoded) return;
 
-    const chat = await resolveChatIdentity(socket, msg.key);
-    if (!chat) return;
+    const identity = await resolveChatIdentity(socket, msg.key, accountId);
+    if (!identity) return;
+
+    // Ver `resolveStoredIds`: os ids da identidade valem para chat novo; os de
+    // um chat que ja existe sao os que o banco tem.
+    const chat = await resolveStoredIds(accountId, inboxId, identity);
 
     console.log(`[WhatsAppService] Nova mensagem de ${chat.phone || chat.jid} (ID: ${messageId})`);
 
@@ -670,7 +676,8 @@ export class WhatsAppService {
     // o canal so contribui com o que ele realmente conhece.
     const base = {
       ...existing,
-      id: chat.contactId,
+      // O contato que ja existe mantem o id dele — ver a mesma nota no worker.
+      id: existing?.id ?? chat.contactId,
       accountId,
       channel: 'whatsapp',
       avatarTone: existing?.avatarTone ?? toneFor(chat.key),
@@ -757,14 +764,22 @@ export class WhatsAppService {
     const normalized = jidNormalizedUser(jid);
     if (imgUrl) this.avatarCache.set(normalized, { url: imgUrl, at: Date.now() });
 
-    await patchContact(`cv-wa-${userOf(normalized)}`, {
+    const accountId = this.accountId();
+    const inboxId = await this.activeInboxId();
+    if (!accountId || !inboxId) return;
+
+    await patchContactByThread(accountId, inboxId, normalized, {
       ...(name ? { name } : {}),
       ...(imgUrl ? { avatarUrl: imgUrl } : {}),
     });
   }
 
   private async renameGroupChat(jid: string, subject: string, size?: number) {
-    await patchContact(`cv-wa-g-${userOf(jid)}`, {
+    const accountId = this.accountId();
+    const inboxId = await this.activeInboxId();
+    if (!accountId || !inboxId) return;
+
+    await patchContactByThread(accountId, inboxId, jid, {
       name: subject,
       ...(size ? { participantCount: size } : {}),
     });

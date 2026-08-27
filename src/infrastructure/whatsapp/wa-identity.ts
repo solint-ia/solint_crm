@@ -70,15 +70,37 @@ export const resolvePhoneJid = async (
   return jidNormalizedUser(jid);
 };
 
-const identityFromKey = (jid: string, isGroup: boolean, phone: string): ChatIdentity => {
+/**
+ * Ids sugeridos para o chat — **escopados pela conta**.
+ *
+ * Eram derivados so do telefone (`cv-wa-<numero>`), e como `Contact.id` e
+ * `Conversation.id` sao chave primaria global, duas contas falando com o mesmo
+ * numero disputavam a mesma linha. O efeito, quando a segunda conta apareceu:
+ * `conversation.create` estourava `P2002` na propria chave primaria, o
+ * `catch` relia a conversa escopado pela conta, nao achava nada (a linha era
+ * da outra conta) e relancava — a excecao subia ate o listener do Baileys, que
+ * nao aguarda listener assincrono, e **a mensagem sumia**. Uma conexao nova
+ * conectava com sucesso e nao recebia nada.
+ *
+ * Sao "sugeridos" porque valem para linha nova. Quando a conversa ja existe,
+ * quem manda e o id que ela tem — inclusive o formato antigo, sem conta. Ver
+ * `resolveStoredIds` em `wa-store.ts`, que faz essa traducao pela chave
+ * natural (`inboxId` + `channelThreadId`) antes de qualquer gravacao.
+ */
+const identityFromKey = (
+  accountId: string,
+  jid: string,
+  isGroup: boolean,
+  phone: string,
+): ChatIdentity => {
   const key = isGroup ? `g-${userOf(jid)}` : phone ? phone.slice(1) : `lid-${userOf(jid)}`;
   return {
     jid,
     isGroup,
     phone,
     key,
-    contactId: `ct-wa-${key}`,
-    conversationId: `cv-wa-${key}`,
+    contactId: `ct-wa-${accountId}-${key}`,
+    conversationId: `cv-wa-${accountId}-${key}`,
   };
 };
 
@@ -86,16 +108,17 @@ const identityFromKey = (jid: string, isGroup: boolean, phone: string): ChatIden
 export const resolveChatIdentity = async (
   socket: WASocket,
   key: WAMessageKey,
+  accountId: string,
 ): Promise<ChatIdentity | null> => {
   const remoteJid = key.remoteJid;
   if (!isSupportedChatJid(remoteJid)) return null;
 
   if (isJidGroup(remoteJid)) {
-    return identityFromKey(remoteJid, true, '');
+    return identityFromKey(accountId, remoteJid, true, '');
   }
 
   const pnJid = await resolvePhoneJid(socket, remoteJid, key.remoteJidAlt);
-  return identityFromKey(pnJid, false, phoneFromJid(pnJid));
+  return identityFromKey(accountId, pnJid, false, phoneFromJid(pnJid));
 };
 
 /** Identidade de quem escreveu — em grupos difere do chat. */

@@ -48,6 +48,68 @@ const nowIso = (date: Date): string => date.toISOString();
 const isUniqueViolation = (error: unknown): boolean =>
   error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 
+/**
+ * Traduz os ids sugeridos pela identidade do chat para os ids que esta conta
+ * realmente usa.
+ *
+ * Existe por causa da chave primária global. Os ids do WhatsApp passaram a ser
+ * escopados por conta (`cv-wa-<conta>-<numero>`), mas as conversas criadas
+ * antes disso têm o formato antigo (`cv-wa-<numero>`), e uma mensagem nova de
+ * um contato antigo não pode abrir uma segunda conversa ao lado da que já
+ * existe. Reescrever os ids antigos resolveria também, ao custo de uma
+ * migração que toca `Message`, `Conversation` e `Contact` numa base viva — a
+ * tradução na borda custa uma consulta e não arrisca dado nenhum.
+ *
+ * A busca é pela **chave natural**, não pelo id: `inboxId` + `channelThreadId`
+ * é o par que o schema já declara único, e é o único que identifica a conversa
+ * sem depender de como o id foi formado. O id é apenas o desempate para linhas
+ * antigas — e mesmo ele vai escopado por conta, porque um id de outra conta
+ * precisa responder "não existe".
+ *
+ * Quando nada é encontrado, os ids sugeridos passam intactos: é chat novo, e
+ * o formato escopado é o certo para criá-lo.
+ */
+export const resolveStoredIds = async (
+  accountId: string,
+  inboxId: string | undefined,
+  chat: ChatIdentity,
+): Promise<ChatIdentity> => {
+  const conversation = inboxId
+    ? await prisma.conversation.findFirst({
+        where: { accountId, inboxId, channelThreadId: chat.jid },
+        select: { id: true, contactId: true },
+      })
+    : null;
+
+  const legacy =
+    conversation ??
+    (await prisma.conversation.findFirst({
+      where: { accountId, id: { in: [chat.conversationId, `cv-wa-${chat.key}`] } },
+      select: { id: true, contactId: true },
+    }));
+
+  if (legacy) {
+    return { ...chat, conversationId: legacy.id, contactId: legacy.contactId };
+  }
+
+  // Sem conversa, o contato ainda pode existir — cadastrado à mão no CRM, ou
+  // trazido por outra caixa da mesma conta. Reaproveitá-lo evita um duplicado
+  // com o mesmo telefone.
+  const contact = await prisma.contact.findFirst({
+    where: {
+      accountId,
+      OR: [
+        { id: chat.contactId },
+        { id: `ct-wa-${chat.key}` },
+        ...(chat.phone ? [{ phone: chat.phone }] : []),
+      ],
+    },
+    select: { id: true },
+  });
+
+  return contact ? { ...chat, contactId: contact.id } : chat;
+};
+
 /** Contato já conhecido — da conversa, quando existe, ou da agenda. */
 export const findStoredContact = async (
   accountId: string,
@@ -145,6 +207,23 @@ interface ExistingConversation {
   readonly lastInboundAt: string | null;
   readonly inboxId: string;
 }
+
+const CONVERSATION_STATE_SELECT = {
+  unreadCount: true,
+  status: true,
+  lastInboundAt: true,
+  inboxId: true,
+} as const;
+
+const findConversationByThread = (
+  accountId: string,
+  inboxId: string,
+  jid: string,
+): Promise<ExistingConversation | null> =>
+  prisma.conversation.findFirst({
+    where: { accountId, inboxId, channelThreadId: jid },
+    select: CONVERSATION_STATE_SELECT,
+  });
 
 const findConversationState = (
   accountId: string,
@@ -267,7 +346,13 @@ const createConversationWith = async (input: CommitInput): Promise<void> => {
   } catch (error) {
     if (!isUniqueViolation(error)) throw error;
 
-    const created = await findConversationState(input.accountId, chat.conversationId);
+    // A releitura vai pelos dois caminhos porque a restrição violada pode ter
+    // sido qualquer um dos dois: a chave primária (o vencedor da corrida usou o
+    // mesmo id derivado) ou o índice único `inboxId + channelThreadId` (o
+    // vencedor resolveu para um id antigo que este processo não tinha visto).
+    const created =
+      (await findConversationState(input.accountId, chat.conversationId)) ??
+      (await findConversationByThread(input.accountId, targetInboxId, chat.jid));
     if (!created) {
       // A restrição violada não foi a da conversa. Sem estado para anexar, a
       // única saída honesta é deixar o erro subir.
@@ -384,6 +469,34 @@ export const applyDeliveryUpdate = async (
   });
 };
 
+export interface ContactPatch {
+  readonly name?: string;
+  readonly avatarUrl?: string;
+  readonly participantCount?: number;
+}
+
+/**
+ * O mesmo remendo, endereçado pela chave natural do canal.
+ *
+ * Quem recebe um aviso de "contato mudou" do WhatsApp tem o JID, não o id da
+ * conversa — e montar o id a partir do JID era exatamente o que atravessava
+ * conta: `cv-wa-<numero>` acertava a conversa de quem tivesse chegado primeiro,
+ * qualquer que fosse o workspace. A caixa é o que amarra o aviso à conta certa.
+ */
+export const patchContactByThread = async (
+  accountId: string,
+  inboxId: string,
+  jid: string,
+  patch: ContactPatch,
+): Promise<void> => {
+  const conversation = await prisma.conversation.findFirst({
+    where: { accountId, inboxId, channelThreadId: jid },
+    select: { id: true },
+  });
+  if (!conversation) return;
+  await patchContact(conversation.id, patch);
+};
+
 /** Nome, foto ou número de participantes mudaram no canal. */
 export const patchContact = async (
   conversationId: string,
@@ -455,9 +568,9 @@ const loadConversation = async (
   conversationId: string,
 ): Promise<Conversation | null> => {
   // `findFirst` e nao `findUnique`: o id sozinho e unico, mas a conta e que
-  // decide se esta conversa pode ser vista daqui. Os ids do WhatsApp sao
-  // derivados do JID (`cv-wa-<jid>`), entao duas contas falando com o mesmo
-  // numero geram o mesmo id -- ver a divida anotada na Fase 3.
+  // decide se esta conversa pode ser vista daqui. Os ids novos do WhatsApp ja
+  // carregam a conta (`cv-wa-<conta>-<numero>`), mas os antigos nao — e o
+  // escopo aqui e o que impede um id antigo de ser lido de fora da conta dele.
   const row = await prisma.conversation.findFirst({
     where: { id: conversationId, accountId },
     include: CONVERSATION_INCLUDE,
