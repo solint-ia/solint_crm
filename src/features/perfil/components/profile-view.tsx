@@ -140,7 +140,7 @@ export function ProfileView({ session }: ProfileViewProps) {
           {[
             { key: 'assigned', label: 'Conversa atribuída diretamente a mim' },
             { key: 'mentions', label: 'Menções com @ em notas internas' },
-            { key: 'sla', label: 'Alerta de SLA prestes a estourar' },
+            { key: 'sla', label: 'Aviso quando o prazo de resposta estiver acabando' },
             { key: 'campaigns', label: 'Notificar conclusão de campanhas em massa' },
             { key: 'dailySummary', label: 'Receber resumo diário de atividades por email' },
           ].map((item) => (

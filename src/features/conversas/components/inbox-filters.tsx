@@ -334,7 +334,7 @@ export function InboxFiltersMenu({ filters, labels, onChange }: InboxFiltersMenu
             {/* 4. Situação / Status especiais */}
             <div>
               <span className="block text-[10px] font-bold uppercase tracking-wider text-muted mb-1.5">
-                Situação e SLA
+                Situação e prazo
               </span>
               <div className="space-y-1.5">
                 <button
@@ -382,7 +382,7 @@ export function InboxFiltersMenu({ filters, labels, onChange }: InboxFiltersMenu
                   <div className="flex items-center gap-2 text-left">
                     <AlertTriangle className="size-4 text-rose-500" />
                     <div>
-                      <div className="font-medium">SLA estourado</div>
+                      <div className="font-medium">Prazo estourado</div>
                       <div className="text-[10px] text-muted">Prazo de resposta ultrapassado</div>
                     </div>
                   </div>

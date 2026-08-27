@@ -47,10 +47,18 @@ async function AgentesData() {
         account={session.account}
         accounts={session.availableAccounts}
         notifications={notifications}
-        actions={<CreateAgentButton />}
       />
 
       <PageShell>
+        {/* Ação da página fica com o conteúdo dela, não no cabeçalho: é onde
+            as outras telas põem os botões, e é onde o olho procura. */}
+        <div className="mb-4 flex flex-col gap-3 border-b border-line pb-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-body text-muted">
+            {agents.length === 1 ? '1 agente criado' : `${agents.length} agentes criados`}
+          </p>
+          <CreateAgentButton />
+        </div>
+
         <ul className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {agents.map((agent) => (
             <li key={agent.id}>

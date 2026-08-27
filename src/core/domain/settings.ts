@@ -16,10 +16,17 @@ export interface CannedResponse {
 
 export type AssignmentMethod = 'round_robin' | 'balanceada' | 'manual';
 
+/**
+ * Nomes escritos para quem usa o sistema, não para quem o construiu.
+ *
+ * Eram `Round-robin`, `Balanceada por carga` e `Manual` — termos corretos e
+ * inúteis para o dono de uma loja escolhendo como as conversas chegam à equipe
+ * dele. O identificador continua técnico (é chave de banco); só o rótulo mudou.
+ */
 export const ASSIGNMENT_METHOD_LABELS: Readonly<Record<AssignmentMethod, string>> = {
-  round_robin: 'Round-robin (sequencial)',
-  balanceada: 'Balanceada por carga',
-  manual: 'Manual (agentes assumem da fila)',
+  round_robin: 'Rodízio entre a equipe',
+  balanceada: 'Para quem está mais livre',
+  manual: 'Cada um pega da fila',
 };
 
 /**

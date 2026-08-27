@@ -69,8 +69,8 @@ export function CreateAgentButton() {
   return (
     <>
       <Button
-        size="sm"
-        icon={<Plus className="size-3.5" />}
+        size="md"
+        icon={<Plus className="size-4" />}
         onClick={handleOpen}
       >
         Novo agente

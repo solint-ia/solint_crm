@@ -53,8 +53,8 @@ type AutoSubTab = 'regras' | 'atribuicao' | 'macros';
 
 const SUB_TABS = [
   { id: 'regras', label: 'Regras', icon: Zap },
-  { id: 'atribuicao', label: 'Atribuição', icon: Users },
-  { id: 'macros', label: 'Macros', icon: Layers },
+  { id: 'atribuicao', label: 'Distribuição', icon: Users },
+  { id: 'macros', label: 'Ações em 1 clique', icon: Layers },
 ] as const;
 
 export function AutomationsSection({
@@ -422,10 +422,10 @@ export function AutomationsSection({
         <section className="flex flex-col gap-6 max-w-3xl">
           <div>
             <h3 className="font-display text-lg font-bold text-ink">
-              Atribuição automática de conversas
+              Quem atende cada conversa nova
             </h3>
             <p className="text-xs text-muted">
-              Defina como novas conversas serão distribuídas entre os agentes disponíveis.
+              Escolha como o sistema entrega as conversas que chegam para a sua equipe.
             </p>
           </div>
 
@@ -434,19 +434,22 @@ export function AutomationsSection({
               {
                 id: 'round_robin' as const,
                 title: ASSIGNMENT_METHOD_LABELS.round_robin,
-                description: 'Distribui as conversas em sequência circular uniforme entre todos os agentes online.',
+                description:
+                  'Cada conversa nova vai para o próximo atendente da vez. Quando chega no último, recomeça do primeiro.',
                 badge: 'Mais equilibrado',
               },
               {
                 id: 'balanceada' as const,
                 title: ASSIGNMENT_METHOD_LABELS.balanceada,
-                description: 'Prioriza automaticamente agentes com menor número de conversas ativas no momento.',
-                badge: 'Por carga de trabalho',
+                description:
+                  'A conversa vai para quem estiver com menos conversas abertas naquele momento.',
+                badge: 'Menos sobrecarga',
               },
               {
                 id: 'manual' as const,
                 title: ASSIGNMENT_METHOD_LABELS.manual,
-                description: 'As novas conversas permanecem na fila geral até que um agente as assuma manualmente.',
+                description:
+                  'As conversas esperam numa fila e cada atendente escolhe qual vai atender.',
                 badge: 'Fila livre',
               },
             ].map((option) => {
@@ -489,33 +492,33 @@ export function AutomationsSection({
           {/* Configurações complementares */}
           <div className="rounded-2xl border border-line bg-surface p-5 shadow-2xs">
             <h4 className="font-display text-sm font-bold text-ink border-b border-line pb-3">
-              Regras complementares de distribuição
+              Ajustes da distribuição
             </h4>
 
             <div className="divide-y divide-line-soft mt-1">
               <div className="flex items-center justify-between py-3.5">
                 <div>
                   <span className="text-xs font-semibold text-ink">
-                    Considerar apenas agentes online
+                    Enviar só para quem está online
                   </span>
                   <p className="text-[11px] text-muted">
-                    Ignora operadores com status ausente ou desconectados da plataforma.
+                    Quem estiver ausente ou fora do sistema não recebe conversas novas.
                   </p>
                 </div>
                 <Toggle
                   checked={onlyOnlineAgents}
                   onChange={setOnlyOnlineAgents}
-                  label="Agentes online apenas"
+                  label="Enviar só para quem está online"
                 />
               </div>
 
               <div className="flex items-center justify-between py-3.5">
                 <div>
                   <span className="text-xs font-semibold text-ink">
-                    Limite de conversas simultâneas por agente
+                    Máximo de conversas ao mesmo tempo
                   </span>
                   <p className="text-[11px] text-muted">
-                    Não entrega novas conversas a agentes que já atingiram o teto.
+                    Quem já estiver com esse número de conversas abertas para de receber novas.
                   </p>
                 </div>
                 <input
@@ -531,16 +534,17 @@ export function AutomationsSection({
               <div className="flex items-center justify-between py-3.5">
                 <div>
                   <span className="text-xs font-semibold text-ink">
-                    Reatribuir conversas sem resposta
+                    Devolver conversas sem resposta
                   </span>
                   <p className="text-[11px] text-muted">
-                    Se o agente não responder dentro do tempo limite, a conversa volta para a fila.
+                    Se ninguém responder no tempo definido, a conversa volta para a fila e outra
+                    pessoa pode atender.
                   </p>
                 </div>
                 <Toggle
                   checked={autoReassignUnanswered}
                   onChange={setAutoReassignUnanswered}
-                  label="Reatribuir conversas"
+                  label="Devolver conversas sem resposta"
                 />
               </div>
 
@@ -548,10 +552,10 @@ export function AutomationsSection({
                 <div className="flex items-center justify-between py-3.5 pl-4 border-l-2 border-brand/30">
                   <div>
                     <span className="text-xs font-semibold text-ink">
-                      Tempo limite para reatribuição
+                      Tempo de espera antes de devolver
                     </span>
                     <p className="text-[11px] text-muted">
-                      Minutos sem resposta do operador para disparar novo roteamento.
+                      Quantos minutos sem resposta antes de a conversa voltar para a fila.
                     </p>
                   </div>
                   <div className="flex items-center gap-1.5">
@@ -580,10 +584,11 @@ export function AutomationsSection({
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-line pb-4">
             <div>
               <h3 className="font-display text-lg font-bold text-ink">
-                Macros de atendimento
+                Ações em 1 clique
               </h3>
               <p className="text-xs text-muted">
-                Combine respostas, etiquetas e ações em um único comando executável com 1 clique.
+                Junte tarefas que você repete o dia todo — responder, etiquetar, encerrar — num
+                botão só.
               </p>
             </div>
 
@@ -593,12 +598,12 @@ export function AutomationsSection({
               onClick={() =>
                 show({
                   tone: 'info',
-                  title: 'Editor de Macros',
-                  description: 'O criador de novas macros personalizadas será lançado na próxima versão.',
+                  title: 'Criador de ações',
+                  description: 'O criador de ações personalizadas chega na próxima versão.',
                 })
               }
             >
-              Nova macro
+              Nova ação
             </Button>
           </div>
 
@@ -608,10 +613,10 @@ export function AutomationsSection({
                 <Layers className="size-6" />
               </div>
               <h4 className="font-display text-base font-bold text-ink">
-                Nenhuma macro criada ainda
+                Nenhuma ação criada ainda
               </h4>
               <p className="mt-1 max-w-md text-xs text-muted">
-                Combine fluxos de triagem e encerramento em botões rápidos para a equipe.
+                Transforme o que a equipe repete todo dia em um botão só.
               </p>
             </div>
           ) : (
@@ -647,7 +652,7 @@ export function AutomationsSection({
                     </div>
 
                     <div className="mt-4 flex items-center justify-between border-t border-line-soft pt-3 text-[11px] text-dim">
-                      <span>Executa {steps.length} passos em sequência</span>
+                      <span>Faz {steps.length} tarefas de uma vez</span>
                       <button
                         type="button"
                         onClick={() =>

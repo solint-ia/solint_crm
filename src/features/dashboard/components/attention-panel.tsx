@@ -51,7 +51,7 @@ export function AttentionPanel({ items }: AttentionPanelProps) {
           </div>
           <div>
             <h2 className="font-display text-sm font-bold text-ink">Precisa de atenção</h2>
-            <p className="text-[11px] text-muted">Fila prioritária para resposta e triagem</p>
+            <p className="text-[11px] text-muted">Conversas que precisam de resposta primeiro</p>
           </div>
         </div>
 
