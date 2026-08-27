@@ -242,6 +242,36 @@ WORKER_DATABASE_URL="postgresql://postgres.<PROJECT_REF>:<SENHA_CODIFICADA>@aws-
 O `prisma.config.ts` passa a ler `DIRECT_URL`; `src/infrastructure/db/prisma.ts` continua lendo
 `DATABASE_URL`; o worker lê `WORKER_DATABASE_URL`.
 
+#### O orçamento de conexões em modo sessão
+
+O modo sessão do Supabase aceita **~15 clientes**, e o `connection_limit=10` acima não é a conta
+inteira. O worker ocupa duas coisas nessa porta:
+
+| Origem | Porta | Conexões |
+| --- | --- | --- |
+| Pool do Prisma (`WORKER_DATABASE_URL`) | 5432 | até **10** |
+| Escuta `LISTEN` (`postgres-pubsub.ts`) | 5432 | **1**, permanente |
+| Publicação `pg_notify` | 6543 | 0 — vai pelo pooler de propósito |
+
+São **11 das ~15**, não 10. A conexão de escuta não tem escolha de porta: `LISTEN` registra o
+interesse na própria conexão e fica esperando, e no modo transação a conexão volta ao pool ao fim
+de cada comando, levando a inscrição junto — nunca chegaria notificação nenhuma. A de publicação
+tem escolha, e por isso foi movida para 6543: `pg_notify` é um comando isolado, sem estado a
+preservar.
+
+**Isto já estourou neste projeto.** O erro real é `max clients reached in session mode`, e ele
+apareceu durante o `next build`, cujos processos paralelos abriam uma conexão de escuta cada.
+Daí a guarda por `NEXT_PHASE === 'phase-production-build'` em `startListening()`.
+
+O risco que sobra é o **deploy**: enquanto a instância antiga drena e a nova sobe, são 11 + 11 = 22
+disputando ~15. Com um worker só em regime estável, 11 cabe.
+
+Para apertar isso sem reescrever a URL, use **`DB_POOL_SIZE`** — `poolSize()` em
+`src/infrastructure/db/prisma.ts` dá a ela a última palavra sobre o `connection_limit`. A distinção
+importa em quem hospeda o worker: no Render o `connection_limit` é parâmetro **dentro** do valor de
+`WORKER_DATABASE_URL`, enquanto `DB_POOL_SIZE` é uma variável avulsa, editável sozinha. `DB_POOL_SIZE=4`
+é o ajuste sugerido; é endurecimento, não correção de bug pendente.
+
 Além das três URLs, a Fase 3 exige **`WA_ENCRYPTION_KEY`** (ver 5.5) — 32 bytes em `base64url`,
 separada do `AUTH_SECRET`. As quatro variáveis entram no `.env.example` com marcador, nunca com
 valor.
