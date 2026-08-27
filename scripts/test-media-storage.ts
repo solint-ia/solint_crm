@@ -6,12 +6,14 @@
  * exatamente a propriedade que faltava, e a causa dos `404` nas fotos de perfil.
  */
 import fsp from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { prisma } from '../src/infrastructure/db/prisma';
 import { isStorageConfigured } from '../src/infrastructure/storage/supabase-storage';
 import { mediaStore } from '../src/infrastructure/whatsapp/wa-media-store';
 
 const CACHE_DIR = path.resolve(process.cwd(), '.media', 'whatsapp');
+const TMP_CACHE_DIR = path.join(os.tmpdir(), 'solint-crm', 'media', 'whatsapp');
 
 /** PNG 1x1 valido — o menor conteudo real possivel. */
 const PNG = Buffer.from(
@@ -60,6 +62,7 @@ async function main() {
   console.log('\n2) Ler com cache quente');
   const hot = await mediaStore.read(id);
   check('leitura do cache', hot?.size === PNG.length, `${hot?.size} bytes, ${hot?.mimeType}`);
+  check('bytes conferem', Boolean(hot && (await hot.bytes()).equals(PNG)));
 
   console.log('\n3) A prova: apagar o cache e ler de novo');
   await fsp.rm(CACHE_DIR, { recursive: true, force: true });
@@ -75,6 +78,7 @@ async function main() {
   );
   check('mimeType preservado', cold?.mimeType === 'image/png', cold?.mimeType ?? '-');
   check('nome do arquivo preservado', cold?.fileName === 'pixel.png', cold?.fileName ?? '-');
+  check('bytes conferem', Boolean(cold && (await cold.bytes()).equals(PNG)));
 
   console.log('\n4) has() enxerga o que o outro processo gravou');
   await fsp.rm(CACHE_DIR, { recursive: true, force: true });
@@ -88,6 +92,36 @@ async function main() {
     survived?.size === PNG.length,
     'era isto que quebrava os avatares',
   );
+
+  // A prova que faltava. Todos os testes acima rodam num disco gravável, e é
+  // por isso que passavam enquanto a produção respondia `404`: a leitura fria
+  // gravava o cache e relia dele. Na função serverless da Vercel nada disso é
+  // possível — `process.cwd()` é somente leitura —, e a leitura voltava vazia
+  // com os bytes já em memória. Bloquear os dois diretórios candidatos
+  // reproduz aquele ambiente sem depender de permissão de sistema de arquivos.
+  console.log('\n6) Ler sem lugar nenhum para o cache (o caso da Vercel)');
+  await mediaStore.clear();
+  await fsp.rm(CACHE_DIR, { recursive: true, force: true });
+  await fsp.rm(TMP_CACHE_DIR, { recursive: true, force: true });
+  // Um *arquivo* onde o diretório deveria estar: o mkdir falha, como falharia
+  // num sistema de arquivos somente leitura.
+  await fsp.mkdir(path.dirname(CACHE_DIR), { recursive: true });
+  await fsp.writeFile(CACHE_DIR, '', 'utf-8');
+  await fsp.mkdir(path.dirname(TMP_CACHE_DIR), { recursive: true });
+  await fsp.writeFile(TMP_CACHE_DIR, '', 'utf-8');
+
+  try {
+    const readOnly = await mediaStore.read(id);
+    check(
+      'leitura funciona sem cache gravável',
+      readOnly?.size === PNG.length,
+      'era exatamente este o 404 das fotos de perfil',
+    );
+    check('bytes conferem', Boolean(readOnly && (await readOnly.bytes()).equals(PNG)));
+  } finally {
+    await fsp.rm(CACHE_DIR, { force: true });
+    await fsp.rm(TMP_CACHE_DIR, { force: true });
+  }
 
   // Limpeza
   await prisma.mediaObject.delete({ where: { id } }).catch(() => undefined);

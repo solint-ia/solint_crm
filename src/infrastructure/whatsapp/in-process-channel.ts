@@ -8,7 +8,6 @@ import type {
 import { mediaStore } from './wa-media-store';
 import { whatsappService } from './whatsapp-service';
 import type { WhatsAppOwner, WhatsAppStatusPayload } from './whatsapp-events';
-import fsp from 'node:fs/promises';
 
 /**
  * Motor in-process: o Baileys roda dentro do servidor Next.
@@ -59,7 +58,7 @@ export class InProcessWhatsAppChannel implements WhatsAppChannel {
     const stored = await mediaStore.read(media.mediaId);
     if (!stored) return { ok: false, error: 'Anexo não encontrado no depósito local.' };
 
-    const data = await fsp.readFile(stored.filePath);
+    const data = await stored.bytes();
     return whatsappService.sendMediaMessage(target, {
       kind: media.kind,
       data,

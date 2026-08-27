@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 
 import { prisma } from '@/infrastructure/db/prisma';
 import {
@@ -40,7 +42,42 @@ import {
  * `nosniff`). Ver PLANO-BACKEND.md seção 6.3.
  */
 
-const CACHE_DIR = path.resolve(process.cwd(), '.media', 'whatsapp');
+/**
+ * Onde o cache mora — e por que o lugar não é fixo.
+ *
+ * `process.cwd()` é gravável no worker e em desenvolvimento, e **somente
+ * leitura** na função serverless que serve `/api/whatsapp/media/[id]`: lá o
+ * único diretório gravável é o temporário do sistema. Fixar o primeiro fazia
+ * toda gravação de cache falhar na Vercel — silenciosamente, porque falha de
+ * cache não é fatal por design.
+ *
+ * A escolha é feita uma vez, na primeira necessidade, e `null` é resposta
+ * legítima: sem lugar para o cache o depósito continua inteiro, só mais lento.
+ */
+const CACHE_CANDIDATES = [
+  path.resolve(process.cwd(), '.media', 'whatsapp'),
+  path.join(os.tmpdir(), 'solint-crm', 'media', 'whatsapp'),
+] as const;
+
+let resolvedCacheDir: string | null | undefined;
+
+const cacheDir = (): string | null => {
+  if (resolvedCacheDir !== undefined) return resolvedCacheDir;
+  for (const dir of CACHE_CANDIDATES) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      resolvedCacheDir = dir;
+      return dir;
+    } catch {
+      // Sistema de arquivos somente leitura: tenta o próximo candidato.
+    }
+  }
+  console.warn(
+    '[wa-media-store] Nenhum diretório gravável para o cache; servindo direto do Storage.',
+  );
+  resolvedCacheDir = null;
+  return null;
+};
 
 /** Ids vêm do WhatsApp; validar impede que um id forjado escape do diretório. */
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -49,11 +86,25 @@ const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
 /** Retenção do cache em disco. O objeto no Storage não é tocado por isto. */
 const CACHE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
+/**
+ * Mídia pronta para servir.
+ *
+ * **Não expõe caminho de arquivo, de propósito.** Expunha, e todo consumidor
+ * fazia `readFile(filePath)` — o que só funciona quando os bytes couberam no
+ * disco. Na Vercel eles nunca cabem, então uma leitura que já tinha os bytes na
+ * mão em memória voltava `null` por não conseguir gravá-los antes: era esse o
+ * `404` das fotos de perfil, com a linha no banco e o objeto no bucket ambos
+ * presentes. Com um acessador só, de onde vieram os bytes deixa de ser assunto
+ * de quem lê — e não há como um chamador novo reintroduzir a suposição.
+ */
 export interface StoredMedia {
-  readonly filePath: string;
   readonly mimeType: string;
   readonly fileName?: string;
   readonly size: number;
+  /** Bytes completos. Do cache em disco ou do Storage, indistintamente. */
+  readonly bytes: () => Promise<Buffer>;
+  /** Os mesmos bytes em fluxo, para a rota HTTP não carregar 25 MB de uma vez. */
+  readonly stream: () => ReadableStream<Uint8Array>;
 }
 
 interface MediaMeta {
@@ -77,10 +128,24 @@ export interface MediaScope {
 
 export const isSafeMediaId = (id: string): boolean => SAFE_ID.test(id);
 
-const pathsFor = (id: string) => ({
-  bin: path.join(CACHE_DIR, `${id}.bin`),
-  meta: path.join(CACHE_DIR, `${id}.json`),
-});
+const pathsFor = (id: string): { bin: string; meta: string } | null => {
+  const dir = cacheDir();
+  if (!dir) return null;
+  return { bin: path.join(dir, `${id}.bin`), meta: path.join(dir, `${id}.json`) };
+};
+
+/** Fluxo de leitura de um arquivo do cache, no formato que a resposta HTTP usa. */
+const fileStream = (filePath: string): ReadableStream<Uint8Array> =>
+  Readable.toWeb(fs.createReadStream(filePath)) as ReadableStream<Uint8Array>;
+
+/** Fluxo de um buffer já em memória — mesma forma, outra origem. */
+const bufferStream = (data: Buffer): ReadableStream<Uint8Array> =>
+  new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array(data));
+      controller.close();
+    },
+  });
 
 /** URL pública servida por `/api/whatsapp/media/[id]`. */
 export const mediaUrlFor = (id: string): string => `/api/whatsapp/media/${id}`;
@@ -111,36 +176,52 @@ const bucketPathFor = (id: string, scope: MediaScope, mimeType: string): string 
 
 /** Grava no cache local. Falha aqui nunca é fatal: o Storage já tem os bytes. */
 const writeCache = async (id: string, data: Buffer, meta: MediaMeta): Promise<void> => {
+  const paths = pathsFor(id);
+  if (!paths) return;
   try {
-    await fsp.mkdir(CACHE_DIR, { recursive: true });
-    const { bin, meta: metaPath } = pathsFor(id);
-    await fsp.writeFile(bin, data);
-    await fsp.writeFile(metaPath, JSON.stringify(meta), 'utf-8');
+    // Recriado a cada gravação de propósito: o diretório escolhido é lembrado,
+    // mas ele pode sumir por baixo — um `clear()` de outro processo, a faxina
+    // do temporário do sistema — e uma gravação que não se repara sozinha
+    // deixaria o cache desligado até o próximo boot.
+    await fsp.mkdir(path.dirname(paths.bin), { recursive: true });
+    await fsp.writeFile(paths.bin, data);
+    await fsp.writeFile(paths.meta, JSON.stringify(meta), 'utf-8');
   } catch (error) {
     console.warn('[wa-media-store] Não foi possível gravar o cache local:', error);
   }
 };
 
 const readCache = async (id: string): Promise<StoredMedia | null> => {
-  const { bin, meta } = pathsFor(id);
+  const paths = pathsFor(id);
+  if (!paths) return null;
   try {
-    const stat = await fsp.stat(bin);
+    const stat = await fsp.stat(paths.bin);
     let parsed: MediaMeta = { mimeType: 'application/octet-stream' };
     try {
-      parsed = JSON.parse(await fsp.readFile(meta, 'utf-8')) as MediaMeta;
+      parsed = JSON.parse(await fsp.readFile(paths.meta, 'utf-8')) as MediaMeta;
     } catch {
       // Sidecar ausente ou corrompido: serve como binário genérico.
     }
     return {
-      filePath: bin,
       mimeType: parsed.mimeType || 'application/octet-stream',
       ...(parsed.fileName ? { fileName: parsed.fileName } : {}),
       size: stat.size,
+      bytes: () => fsp.readFile(paths.bin),
+      stream: () => fileStream(paths.bin),
     };
   } catch {
     return null;
   }
 };
+
+/** Mídia servida a partir dos bytes em memória, sem passar pelo disco. */
+const fromBuffer = (data: Buffer, meta: MediaMeta): StoredMedia => ({
+  mimeType: meta.mimeType || 'application/octet-stream',
+  ...(meta.fileName ? { fileName: meta.fileName } : {}),
+  size: data.length,
+  bytes: async () => data,
+  stream: () => bufferStream(data),
+});
 
 export const mediaStore = {
   /**
@@ -153,12 +234,22 @@ export const mediaStore = {
    */
   async has(id: string): Promise<boolean> {
     if (!isSafeMediaId(id)) return false;
-    if (fs.existsSync(pathsFor(id).bin)) return true;
-    if (!isStorageConfigured()) return false;
-    // tenant-ok: existência física do arquivo, não entrega de conteúdo. Chamado
-    // só pelo worker para decidir se precisa baixar de novo — quem entrega ao
-    // navegador é `read`, e lá a posse é conferida.
-    return (await prisma.mediaObject.count({ where: { id } })) > 0;
+
+    // Com Storage configurado, a pergunta é sobre **durabilidade**, e o disco
+    // não responde por ela: um arquivo que só existe no cache deste processo é
+    // inalcançável para quem serve a rota, que roda noutra máquina. Responder
+    // `true` por causa dele fazia o worker devolver uma URL que o navegador
+    // recebia como `404` — e, pior, pular o download que teria consertado.
+    if (isStorageConfigured()) {
+      // tenant-ok: existência do registro, não entrega de conteúdo. Chamado só
+      // pelo worker para decidir se precisa baixar de novo — quem entrega ao
+      // navegador é `read`, e lá a posse é conferida.
+      return (await prisma.mediaObject.count({ where: { id } })) > 0;
+    }
+
+    // Sem Storage, quem grava e quem serve são o mesmo host: o disco é a verdade.
+    const paths = pathsFor(id);
+    return paths ? fs.existsSync(paths.bin) : false;
   },
 
   /**
@@ -180,6 +271,9 @@ export const mediaStore = {
     }
 
     const mimeType = meta.mimeType || 'application/octet-stream';
+
+    /** A mídia ficou onde qualquer processo consegue lê-la depois? */
+    let durable = false;
 
     // Sem conta não há caminho com inquilino, e sem isso a mídia não pode ir
     // para um bucket compartilhado. Fica só em cache — degradado, mas servível.
@@ -210,6 +304,10 @@ export const mediaStore = {
               checksum,
             },
           });
+          // O registro é o que torna a mídia localizável: o objeto no bucket
+          // sem a linha no banco não é servível, porque `read` confere a posse
+          // pela linha. Só depois dela a mídia conta como durável.
+          durable = true;
         } catch (error) {
           console.warn('[wa-media-store] Mídia gravada, mas o registro falhou:', error);
         }
@@ -217,6 +315,22 @@ export const mediaStore = {
     }
 
     await writeCache(id, data, { mimeType, ...(meta.fileName ? { fileName: meta.fileName } : {}) });
+
+    // Recusar vale mais do que devolver uma URL que só funciona aqui dentro.
+    //
+    // Quem recebe esta URL a grava — em `Contact.avatarUrl`, no conteúdo da
+    // mensagem — e passa a apontar para algo que existe apenas no disco deste
+    // processo. Era o defeito que este módulo veio corrigir, reintroduzido uma
+    // camada acima: o `undefined` deixa o chamador cair no caminho alternativo
+    // que ele já tem, em vez de gravar um `404` no banco.
+    //
+    // Sem Storage configurado a regra não se aplica: ali o cache é o depósito,
+    // por decisão registrada em `isStorageConfigured`, e a URL funciona.
+    if (isStorageConfigured() && !durable) {
+      console.warn(`[wa-media-store] Mídia ${id} não pôde ser guardada de forma durável.`);
+      return undefined;
+    }
+
     return mediaUrlFor(id);
   },
 
@@ -265,8 +379,13 @@ export const mediaStore = {
       mimeType: object.mimeType,
       ...(object.fileName ? { fileName: object.fileName } : {}),
     };
+
+    // O cache é povoado para a próxima leitura, mas **esta** resposta sai dos
+    // bytes que já estão aqui. Voltar pelo disco fazia a leitura inteira
+    // depender de uma gravação que é opcional por definição — e que é sempre
+    // impossível no sistema de arquivos somente leitura da função serverless.
     await writeCache(id, data, meta);
-    return (await readCache(id)) ?? null;
+    return fromBuffer(data, meta);
   },
 
   /**
@@ -277,12 +396,14 @@ export const mediaStore = {
    * mídia deixar de ser servível — no máximo, a próxima leitura vai à rede.
    */
   async prune(): Promise<void> {
+    const dir = cacheDir();
+    if (!dir) return;
     try {
-      const entries = await fsp.readdir(CACHE_DIR);
+      const entries = await fsp.readdir(dir);
       const deadline = Date.now() - CACHE_RETENTION_MS;
       await Promise.all(
         entries.map(async (entry) => {
-          const target = path.join(CACHE_DIR, entry);
+          const target = path.join(dir, entry);
           const stat = await fsp.stat(target).catch(() => null);
           if (stat && stat.mtimeMs < deadline) {
             await fsp.rm(target, { force: true }).catch(() => undefined);
@@ -303,6 +424,11 @@ export const mediaStore = {
    * um logout. Contato é dado do CRM; sessão é outra coisa.
    */
   async clear(): Promise<void> {
-    await fsp.rm(CACHE_DIR, { recursive: true, force: true }).catch(() => undefined);
+    const dir = cacheDir();
+    if (!dir) return;
+    await fsp.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    // O diretório volta a ser criado sob demanda; guardar a escolha depois de
+    // apagá-lo faria `pathsFor` devolver um caminho que deixou de existir.
+    resolvedCacheDir = undefined;
   },
 };

@@ -801,9 +801,13 @@ export class WhatsAppService {
       // Sem cópia própria, o `avatarUrl` gravado seria a URL assinada do
       // WhatsApp: ela expira em horas e o avatar quebra sozinho no banco.
       const ownUrl = await this.mirrorAvatar(accountId, mediaId, remoteUrl);
-      const url = ownUrl ?? remoteUrl;
-      this.avatarCache.set(jid, { url, at: Date.now() });
-      return url;
+
+      // Por isso a falha da cópia não cai para `remoteUrl`: seria gravar
+      // exatamente aquela URL, e o avatar quebrado só mudaria de data. Deixar
+      // sem foto mantém o que já estiver no banco e refaz a tentativa no
+      // próximo TTL.
+      this.avatarCache.set(jid, { url: ownUrl, at: Date.now() });
+      return ownUrl;
     } catch {
       // Foto privada ou indisponível: mantém a cópia que já existir.
       const fallback = (await mediaStore.has(mediaId)) ? mediaUrlFor(mediaId) : undefined;

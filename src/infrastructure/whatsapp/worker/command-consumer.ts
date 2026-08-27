@@ -1,4 +1,3 @@
-import fsp from 'node:fs/promises';
 import { CHANNELS, postgresPubSub } from '@/infrastructure/db/postgres-pubsub';
 import { prisma } from '@/infrastructure/db/prisma';
 import { pruneCacheKeys } from '../auth/postgres-auth-state';
@@ -257,9 +256,9 @@ export class CommandConsumer {
           throw new Error('Comando de anexo sem identificação da mídia.');
         }
 
-        // O depósito é local ao host. Enquanto worker e site rodam na mesma
-        // máquina isto basta; separá-los exige mover a mídia para o Storage
-        // (Fase 4) — e é aqui que a falta apareceria, de forma explícita.
+        // Os bytes vêm do depósito, que já busca no Storage quando o cache
+        // deste host não os tem — é o que permite ao worker enviar um anexo
+        // recebido pela aplicação rodando noutra máquina.
         const stored = await mediaStore.read(media.mediaId);
         if (!stored) {
           throw new Error(`Anexo ${media.mediaId} não encontrado no depósito do worker.`);
@@ -270,7 +269,7 @@ export class CommandConsumer {
 
           {
             kind: media.kind,
-            data: await fsp.readFile(stored.filePath),
+            data: await stored.bytes(),
             mimeType: media.mimeType ?? stored.mimeType,
             ...(media.fileName ? { fileName: media.fileName } : {}),
             ...(media.caption ? { caption: media.caption } : {}),

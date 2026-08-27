@@ -103,7 +103,12 @@ export const storage = {
         `${cfg.url}/storage/v1/object/${bucket}/${encodeURI(objectPath)}`,
         { headers: authHeaders(cfg.key) },
       );
-      if (!response.ok) return null;
+      // Sem este aviso, um bucket ausente ou uma chave sem permissão viravam um
+      // `404` na rota de mídia sem rastro nenhum no log de quem serviu.
+      if (!response.ok) {
+        console.warn(`[supabase-storage] Falha ao ler ${bucket}/${objectPath}: ${response.status}`);
+        return null;
+      }
       return Buffer.from(await response.arrayBuffer());
     } catch (error) {
       console.warn(`[supabase-storage] Erro de rede ao ler ${bucket}/${objectPath}:`, error);

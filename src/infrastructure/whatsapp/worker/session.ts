@@ -788,9 +788,17 @@ export class WhatsAppSession {
           )
         : undefined;
 
-      const url = ownUrl ?? remoteUrl;
-      this.avatarCache.set(chat.jid, { url, at: Date.now() });
-      await patchContact(chat.conversationId, { avatarUrl: url });
+      // Pela mesma razao, a falha da copia nao cai para `remoteUrl`: seria
+      // gravar justamente aquela URL, e o avatar quebrado so mudaria de data.
+      // Ficar sem foto preserva o que ja estiver no banco e refaz a tentativa
+      // no proximo TTL.
+      if (!ownUrl) {
+        this.avatarCache.set(chat.jid, { url: undefined, at: Date.now() });
+        return;
+      }
+
+      this.avatarCache.set(chat.jid, { url: ownUrl, at: Date.now() });
+      await patchContact(chat.conversationId, { avatarUrl: ownUrl });
     } catch {
       // Foto privada ou indisponivel: mantem a copia que ja existir.
       const fallback = (await mediaStore.has(mediaId)) ? mediaUrlFor(mediaId) : undefined;

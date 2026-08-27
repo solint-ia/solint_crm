@@ -1,5 +1,3 @@
-import { createReadStream } from 'node:fs';
-import { Readable } from 'node:stream';
 import { NextResponse } from 'next/server';
 import { container } from '@/infrastructure/container';
 import { isSafeMediaId, mediaStore } from '@/infrastructure/whatsapp/wa-media-store';
@@ -53,9 +51,11 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ ok: false, error: 'Mídia não encontrada' }, { status: 404 });
   }
 
-  const stream = Readable.toWeb(createReadStream(media.filePath)) as ReadableStream<Uint8Array>;
-
-  return new Response(stream, {
+  // O fluxo vem do depósito: do cache em disco quando ele tem os bytes, da
+  // memória quando vieram do Storage. Esta rota roda numa função serverless,
+  // onde o cache nunca pode ser gravado — abrir o arquivo aqui era o que fazia
+  // toda mídia responder `404` em produção.
+  return new Response(media.stream(), {
     headers: {
       'Content-Type': media.mimeType,
       'Content-Length': String(media.size),
