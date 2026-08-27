@@ -11,6 +11,17 @@ import type { WhatsAppOwner, WhatsAppStatusPayload } from './whatsapp-events';
 import { waitForWorker, workerPresence } from './worker-presence';
 
 /**
+ * Trava viva no banco: prova de que existe um worker operando aquela caixa.
+ *
+ * O worker a renova a cada 15s enquanto a sessão está de pé, e ela vale 30s.
+ * Diferente da batida, este sinal não depende de o processo que pergunta ter
+ * escutado coisa alguma — está gravado, e qualquer um consegue lê-lo.
+ */
+const travaViva = (
+  conn: { lockOwner: string | null; lockExpiresAt: Date | null } | null,
+): boolean => Boolean(conn?.lockOwner && conn.lockExpiresAt && conn.lockExpiresAt > new Date());
+
+/**
  * Motor worker: a aplicação enfileira intenções e um processo separado executa.
  *
  * O que muda para quem chama é uma coisa só: o envio devolve `queued` em vez do
@@ -82,7 +93,7 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
 
 
     // Se o worker possuir trava ativa no banco, também é considerado ativo
-    if (!isOnline && conn?.lockOwner && conn.lockExpiresAt && conn.lockExpiresAt > new Date()) {
+    if (!isOnline && travaViva(conn)) {
       isOnline = true;
     }
 
@@ -142,6 +153,40 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     await this.enqueue(inboxId, 'disconnect', {});
   }
 
+  /**
+   * O worker está no ar?
+   *
+   * Três sinais, e são precisos os três porque nenhum sozinho responde em todo
+   * ambiente.
+   *
+   * A **batida** é instantânea, mas mora na memória *deste* processo: só existe
+   * se ele tiver uma inscrição `LISTEN` aberta e tiver ficado acordado para
+   * receber a notificação. Numa função serverless nenhuma das duas coisas é
+   * garantida — a instância pode ser nova, ou pode ter ficado congelada entre
+   * duas requisições por mais que os 15s da janela de validade. Era isso que
+   * fazia o envio recusar com "o worker não está em execução" enquanto o worker
+   * estava no ar e conectado: `getStatus` e `startSession` já tinham reforço,
+   * o envio não tinha nenhum.
+   *
+   * A **trava no banco** custa uma consulta por chave primária e não depende de
+   * escuta nenhuma, então vem antes da espera.
+   *
+   * A **espera pela batida** fica por último porque é a única que custa tempo
+   * de parede — e ela ainda cobre o caso de o worker estar vivo sem sessão
+   * aberta para esta caixa, quando não há trava para encontrar.
+   */
+  private async workerOnline(inboxId: string): Promise<boolean> {
+    if (workerPresence().online) return true;
+
+    const conn = await prisma.whatsAppConnection.findUnique({
+      where: { inboxId },
+      select: { lockOwner: true, lockExpiresAt: true },
+    });
+    if (travaViva(conn)) return true;
+
+    return waitForWorker(1500);
+  }
+
   private async dispatch(
     context: DispatchContext,
     kind: 'send' | 'send_media',
@@ -152,7 +197,7 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     // movida para uma caixa sem sessão sair pelo número de outra.
     const inboxId = context.inboxId;
     if (!inboxId) return { ok: false, error: 'Conversa sem caixa de entrada definida.' };
-    if (!workerPresence().online) {
+    if (!(await this.workerOnline(inboxId))) {
       return { ok: false, error: 'O worker de WhatsApp não está em execução.' };
     }
 
@@ -192,7 +237,7 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
 
   async markRead(accountId: string, conversationId: string, scopedInboxId?: string): Promise<void> {
     const inboxId = scopedInboxId ?? (await this.inboxOf(accountId));
-    if (!inboxId || !workerPresence().online) return;
+    if (!inboxId || !(await this.workerOnline(inboxId))) return;
     await this.enqueue(inboxId, 'read', { conversationId });
   }
 }
