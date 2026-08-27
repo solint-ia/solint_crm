@@ -327,14 +327,44 @@ export class WhatsAppSession {
     }
   }
 
+  /**
+   * Envolve um listener do Baileys para que uma falha nele nunca derrube o
+   * worker inteiro.
+   *
+   * O `EventEmitter` do Node não aguarda listeners assíncronos nem trata as
+   * rejeições deles: sem isto, qualquer `await` que rejeitasse aqui dentro —
+   * uma consulta ao Postgres, uma chamada de rede — virava uma rejeição não
+   * tratada, e desde o Node 15 isso mata o processo por padrão. Foi assim que
+   * uma falha pontual em `connection.update`, logo após um repareamento,
+   * derrubou o worker inteiro e deixou a trava do banco presa até o TTL vencer
+   * — o `restaurada na tentativa 2` que aparecia no boot seguinte.
+   */
+  private guarded<Args extends unknown[]>(
+    event: string,
+    handler: (...args: Args) => Promise<void>,
+  ): (...args: Args) => Promise<void> {
+    return async (...args: Args) => {
+      try {
+        await handler(...args);
+      } catch (error) {
+        console.error(`[WhatsAppSession ${this.inboxId}] Erro não tratado em '${event}':`, error);
+      }
+    };
+  }
+
   private setupEventHandlers(saveCreds: () => Promise<void>): void {
     if (!this.socket) return;
 
-    this.socket.ev.on('creds.update', async () => {
-      await saveCreds();
-    });
+    this.socket.ev.on(
+      'creds.update',
+      this.guarded('creds.update', async () => {
+        await saveCreds();
+      }),
+    );
 
-    this.socket.ev.on('connection.update', async (update) => {
+    this.socket.ev.on(
+      'connection.update',
+      this.guarded('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
@@ -489,36 +519,46 @@ export class WhatsAppSession {
         console.log(`[WhatsAppSession ${this.inboxId}] Conectado com sucesso como ${ownerName}`);
         void this.socket?.sendPresenceUpdate('available');
       }
-    });
+      }),
+    );
 
 
-    this.socket.ev.on('messaging-history.set', async () => {
-      // Ignora histórico antigo recebido do celular — apenas mensagens novas pós-conexão
-      console.log(`[WhatsAppSession ${this.inboxId}] Histórico antigo ignorado (apenas mensagens novas pós-conexão serão processadas).`);
-    });
+    this.socket.ev.on(
+      'messaging-history.set',
+      this.guarded('messaging-history.set', async () => {
+        // Ignora histórico antigo recebido do celular — apenas mensagens novas pós-conexão
+        console.log(`[WhatsAppSession ${this.inboxId}] Histórico antigo ignorado (apenas mensagens novas pós-conexão serão processadas).`);
+      }),
+    );
 
 
-    this.socket.ev.on('messages.upsert', async ({ messages, type }) => {
-      if (type !== 'notify' && type !== 'append') return;
-      // O `await` aqui não serializa a fila represada: o Baileys emite um
-      // evento por mensagem, então `messages` quase sempre tem um item só.
-      // Quem controla o paralelismo real — entre invocações deste listener,
-      // que o emissor do Baileys não aguarda — é o limitador.
-      for (const msg of messages) {
-        await this.limiter.run(() => this.handleIncomingMessage(msg));
-      }
-    });
+    this.socket.ev.on(
+      'messages.upsert',
+      this.guarded('messages.upsert', async ({ messages, type }) => {
+        if (type !== 'notify' && type !== 'append') return;
+        // O `await` aqui não serializa a fila represada: o Baileys emite um
+        // evento por mensagem, então `messages` quase sempre tem um item só.
+        // Quem controla o paralelismo real — entre invocações deste listener,
+        // que o emissor do Baileys não aguarda — é o limitador.
+        for (const msg of messages) {
+          await this.limiter.run(() => this.handleIncomingMessage(msg));
+        }
+      }),
+    );
 
-    this.socket.ev.on('messages.update', async (updates) => {
-      for (const update of updates) {
-        if (update.update.status && update.key.id) {
-          const status = deliveryStatusFrom(update.update.status);
-          if (status) {
-            await applyDeliveryUpdate(update.key.id, status);
+    this.socket.ev.on(
+      'messages.update',
+      this.guarded('messages.update', async (updates) => {
+        for (const update of updates) {
+          if (update.update.status && update.key.id) {
+            const status = deliveryStatusFrom(update.update.status);
+            if (status) {
+              await applyDeliveryUpdate(update.key.id, status);
+            }
           }
         }
-      }
-    });
+      }),
+    );
   }
 
   /**

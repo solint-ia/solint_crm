@@ -98,7 +98,7 @@ async function main() {
 
   const { flushPendingKeys } = await import('./infrastructure/whatsapp/auth/postgres-auth-state');
 
-  const handleShutdown = async (signal: string) => {
+  const handleShutdown = async (signal: string, exitCode = 0) => {
     console.log(`\n[Worker] Recebido sinal ${signal}. Encerrando sessões com segurança...`);
     clearInterval(beat);
     server.close();
@@ -110,11 +110,40 @@ async function main() {
     // custaria uma rodada de consultas na próxima conexão sem necessidade.
     await flushPendingKeys();
     console.log('[Worker] Todas as conexões encerradas. Tchau!');
-    process.exit(0);
+    // Um encerramento por falha precisa sair diferente de zero: é o código de
+    // saída que diz ao supervisor do Render se aquilo foi um desligamento
+    // pedido ou um problema.
+    process.exit(exitCode);
   };
 
   process.on('SIGINT', () => void handleShutdown('SIGINT'));
   process.on('SIGTERM', () => void handleShutdown('SIGTERM'));
+
+  /**
+   * Rede de segurança para falhas que escapam de todo o resto.
+   *
+   * Os dois casos são tratados de formas deliberadamente diferentes.
+   *
+   * **Rejeição não tratada** quase sempre vem de uma operação isolada — uma
+   * consulta que falhou, uma chamada de rede que caiu — e derrubar a sessão
+   * inteira do WhatsApp por causa dela é um preço alto demais. Desde o Node 15
+   * o padrão é justamente esse: encerrar o processo. Aqui ela é registrada e a
+   * vida segue.
+   *
+   * **Exceção não capturada** é outra história: o processo pode ter ficado num
+   * estado inconsistente, e insistir seria pior. Ele encerra — mas encerra
+   * pelo caminho limpo, que libera a trava da conexão no banco. Morrer com a
+   * trava presa é o que fazia o worker seguinte esperar o TTL de 30s vencer
+   * antes de restaurar a sessão.
+   */
+  process.on('unhandledRejection', (reason) => {
+    console.error('[Worker] Rejeição não tratada (processo mantido de pé):', reason);
+  });
+
+  process.on('uncaughtException', (error) => {
+    console.error('[Worker] Exceção não capturada. Encerrando de forma limpa:', error);
+    void handleShutdown('uncaughtException', 1);
+  });
 }
 
 main().catch((err) => {
