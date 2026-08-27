@@ -36,6 +36,7 @@ import {
   deliveryStatusFrom,
   mediaContent,
   timestampOf,
+  adContextOf,
   type MediaRef,
 } from '../wa-message-content';
 import { mediaStore, mediaUrlFor } from '../wa-media-store';
@@ -696,6 +697,9 @@ export class WhatsAppSession {
       preview: decoded.preview,
       at,
       fromMe,
+      // So faz sentido no que o contato enviou: o eco do que nos mandamos
+      // carrega o mesmo bloco e nao significa clique nenhum.
+      ...(fromMe ? {} : (() => { const a = adContextOf(msg); return a ? { anuncio: a } : {}; })()),
       ...(draining ? { silent: true } : {}),
     });
     medir(`${fromMe ? 'saída' : 'entrada'} em ${chat.conversationId}`);

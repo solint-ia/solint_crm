@@ -507,7 +507,7 @@ export class PrismaSettingsRepository implements SettingsRepository {
   // --- Onda 3: Webhooks ---
   async createWebhook(
     accountId: Id,
-    draft: { name: string; url: string; events: readonly string[] },
+    draft: { name: string; url: string; events: readonly string[]; secret?: string },
   ): Promise<Webhook> {
     const row = await prisma.webhook.create({
       data: {
@@ -515,6 +515,10 @@ export class PrismaSettingsRepository implements SettingsRepository {
         name: draft.name,
         url: draft.url,
         events: asJson(draft.events),
+        // Sem segredo a entrega sai sem assinatura, e quem recebe nao tem como
+        // provar que o evento veio daqui. O campo e opcional porque um endpoint
+        // interno de rede fechada pode dispensar; exposto na internet, nao.
+        ...(draft.secret ? { secret: draft.secret } : {}),
         isActive: true,
       },
     });

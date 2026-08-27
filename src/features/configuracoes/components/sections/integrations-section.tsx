@@ -62,6 +62,7 @@ export function IntegrationsSection({
   const [webhookName, setWebhookName] = useState('');
   const [webhookUrl, setWebhookUrl] = useState('');
   const [webhookEvents, setWebhookEvents] = useState<string[]>(['conversa.criada']);
+  const [webhookSecret, setWebhookSecret] = useState('');
   const [webhookError, setWebhookError] = useState<string | null>(null);
 
   // Token Modal
@@ -80,12 +81,14 @@ export function IntegrationsSection({
         name: webhookName,
         url: webhookUrl,
         events: webhookEvents,
+        ...(webhookSecret.trim() ? { secret: webhookSecret.trim() } : {}),
       });
       if (res.ok) {
         setIsWebhookModalOpen(false);
         setWebhookName('');
         setWebhookUrl('');
         setWebhookEvents(['conversa.criada']);
+        setWebhookSecret('');
         router.refresh();
       } else {
         setWebhookError(res.error ?? 'Erro ao criar webhook.');
@@ -479,6 +482,25 @@ export function IntegrationsSection({
               onChange={(e) => setWebhookUrl(e.target.value)}
               className="h-10 w-full rounded-xl border border-line bg-surface px-3 font-mono text-xs text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 shadow-2xs"
             />
+          </div>
+
+          <div>
+            <label htmlFor="webhook-secret" className="mb-1 block text-xs font-semibold text-ink">
+              Chave de verificação <span className="font-normal text-muted">(opcional)</span>
+            </label>
+            <input
+              id="webhook-secret"
+              type="text"
+              minLength={16}
+              placeholder="mínimo 16 caracteres"
+              value={webhookSecret}
+              onChange={(e) => setWebhookSecret(e.target.value)}
+              className="h-10 w-full rounded-xl border border-line bg-surface px-3 font-mono text-xs text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 shadow-2xs"
+            />
+            <p className="mt-1 text-[11px] text-muted">
+              Cada envio vai assinado no cabeçalho <code>X-Solint-Signature</code>. Guarde a mesma
+              chave do outro lado para confirmar que a chamada veio daqui.
+            </p>
           </div>
 
           <div>

@@ -1,0 +1,1213 @@
+<title>Webhooks WhatsApp</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #f6f5f1;
+    --surface: #ffffff;
+    --surface-2: #ececE6;
+    --ink: #1b1d19;
+    --muted: #62655d;
+    --dim: #8b8e84;
+    --line: #dcdbd4;
+    --line-soft: #e8e7e1;
+    --teal: #2b6f5c;
+    --teal-soft: #e2eee9;
+    --teal-ink: #1c4c3f;
+    --clay: #9a5c17;
+    --clay-soft: #f4e7d3;
+    --rose: #a13a35;
+    --rose-soft: #f5e1de;
+    --console-bg: #171c19;
+    --console-ink: #dfe6e1;
+    --console-dim: #7d8b83;
+    --console-line: #2a332e;
+    --focus: #2b6f5c;
+
+    --font-display: "Zilla Slab", Georgia, "Times New Roman", serif;
+    --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #15160f;
+      --surface: #1b1d17;
+      --surface-2: #23251e;
+      --ink: #ecece4;
+      --muted: #a3a698;
+      --dim: #7c8074;
+      --line: #33352c;
+      --line-soft: #292b23;
+      --teal: #64b39a;
+      --teal-soft: #1d3630;
+      --teal-ink: #a9dcc9;
+      --clay: #d9a15c;
+      --clay-soft: #3a2d16;
+      --rose: #dd8f89;
+      --rose-soft: #3a2320;
+      --console-bg: #101411;
+      --console-ink: #d7e2db;
+      --console-dim: #728077;
+      --console-line: #263028;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper: #15160f;
+    --surface: #1b1d17;
+    --surface-2: #23251e;
+    --ink: #ecece4;
+    --muted: #a3a698;
+    --dim: #7c8074;
+    --line: #33352c;
+    --line-soft: #292b23;
+    --teal: #64b39a;
+    --teal-soft: #1d3630;
+    --teal-ink: #a9dcc9;
+    --clay: #d9a15c;
+    --clay-soft: #3a2d16;
+    --rose: #dd8f89;
+    --rose-soft: #3a2320;
+    --console-bg: #101411;
+    --console-ink: #d7e2db;
+    --console-dim: #728077;
+    --console-line: #263028;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: var(--teal-ink, var(--teal)); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:hover { text-decoration-thickness: 2px; }
+  a:focus-visible, button:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    color: var(--ink);
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  code, kbd, .mono { font-family: var(--font-mono); }
+
+  /* ---------- shell ---------- */
+
+  .shell {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+  }
+
+  header.hero {
+    padding: 56px 0 40px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 40px;
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 14px;
+  }
+
+  h1.title {
+    font-size: clamp(2.1rem, 4vw, 3rem);
+    line-height: 1.08;
+    letter-spacing: -0.01em;
+  }
+
+  .dek {
+    max-width: 62ch;
+    color: var(--muted);
+    font-size: 1.08rem;
+    margin: 18px 0 0;
+    line-height: 1.65;
+  }
+
+  .stat-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 30px;
+  }
+
+  .stat {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    padding: 9px 14px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 13.5px;
+  }
+
+  .stat b {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 15px;
+    color: var(--ink);
+  }
+  .stat span { color: var(--muted); }
+
+  /* ---------- layout: rail + content ---------- */
+
+  .layout {
+    display: grid;
+    grid-template-columns: 216px minmax(0, 1fr);
+    gap: 56px;
+    align-items: start;
+  }
+
+  @media (max-width: 880px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+
+  nav.toc {
+    position: sticky;
+    top: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+    padding-right: 8px;
+  }
+
+  @media (max-width: 880px) {
+    nav.toc {
+      position: static;
+      flex-direction: row;
+      flex-wrap: wrap;
+      max-height: none;
+      padding: 0 0 8px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 8px;
+    }
+  }
+
+  nav.toc .toc-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 10px;
+  }
+  @media (max-width: 880px) { nav.toc .toc-label { display: none; } }
+
+  nav.toc a {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 13.5px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border-left: 2px solid transparent;
+  }
+  nav.toc a:hover { color: var(--ink); background: var(--surface); }
+
+  @media (max-width: 880px) {
+    nav.toc a {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 5px 12px;
+    }
+  }
+
+  main { min-width: 0; }
+
+  section.doc-section {
+    padding-top: 8px;
+    margin-bottom: 64px;
+    scroll-margin-top: 20px;
+  }
+  section.doc-section:last-child { margin-bottom: 0; }
+
+  .section-num {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--dim);
+    letter-spacing: 0.04em;
+  }
+
+  h2.section-title {
+    font-size: 1.55rem;
+    margin-top: 6px;
+    margin-bottom: 6px;
+  }
+
+  .section-intro {
+    max-width: 68ch;
+    color: var(--muted);
+    margin: 14px 0 26px;
+  }
+
+  .prose { max-width: 68ch; }
+  .prose p { margin: 0 0 14px; color: var(--ink); }
+  .prose p.muted { color: var(--muted); }
+  .prose ul, .prose ol { margin: 0 0 14px; padding-left: 22px; color: var(--ink); }
+  .prose li { margin-bottom: 6px; }
+  .prose li::marker { color: var(--dim); }
+
+  h3.sub {
+    font-size: 1.08rem;
+    margin: 30px 0 12px;
+    font-family: var(--font-body);
+    font-weight: 700;
+  }
+
+  /* ---------- status pills ---------- */
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    letter-spacing: 0.03em;
+    padding: 3px 9px 3px 7px;
+    border-radius: 999px;
+    font-weight: 600;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+  .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; flex: none; }
+
+  .pill-ok { background: var(--teal-soft); color: var(--teal-ink, var(--teal)); }
+  .pill-ok::before { background: var(--teal); }
+
+  .pill-pending { background: var(--clay-soft); color: var(--clay); }
+  .pill-pending::before { background: var(--clay); }
+
+  .pill-gap { background: var(--rose-soft); color: var(--rose); }
+  .pill-gap::before { background: var(--rose); }
+
+  /* ---------- flow diagram ---------- */
+
+  .flow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 0;
+    margin: 8px 0 32px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--surface);
+  }
+
+  .flow-node {
+    flex: 1 1 150px;
+    padding: 18px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    justify-content: center;
+  }
+  .flow-node + .flow-node { border-left: 1px solid var(--line); }
+  .flow-node .fn-label { font-size: 13px; font-weight: 700; }
+  .flow-node .fn-sub { font-size: 12px; color: var(--muted); font-family: var(--font-mono); }
+
+  .flow-arrow {
+    flex: 0 0 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface-2);
+    position: relative;
+  }
+  .flow-arrow::after {
+    content: "→";
+    font-size: 18px;
+    color: var(--dim);
+  }
+  .flow-arrow.rev::after { content: "⇢"; }
+  .flow-arrow.ok { background: var(--teal-soft); }
+  .flow-arrow.ok::after { color: var(--teal); }
+  .flow-arrow.gap { background: var(--rose-soft); }
+  .flow-arrow.gap::after { color: var(--rose); }
+
+  .flow-caption {
+    font-size: 12.5px;
+    color: var(--dim);
+    margin-top: 8px;
+  }
+
+  /* ---------- tables ---------- */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    margin: 4px 0 28px;
+  }
+
+  table.ref {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.8px;
+    background: var(--surface);
+  }
+
+  table.ref th {
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--dim);
+    padding: 11px 14px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+
+  table.ref td {
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--line-soft);
+    vertical-align: top;
+    color: var(--ink);
+  }
+  table.ref tr:last-child td { border-bottom: none; }
+
+  table.ref td.field { font-family: var(--font-mono); font-size: 13px; white-space: nowrap; }
+  table.ref td.type { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+  table.ref td.desc { color: var(--muted); max-width: 40ch; }
+  table.ref td.always {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    white-space: nowrap;
+    text-align: center;
+  }
+  table.ref td.always.yes { color: var(--teal); }
+  table.ref td.always.no { color: var(--dim); }
+
+  /* ---------- code / console blocks ---------- */
+
+  .code-block {
+    margin: 4px 0 28px;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--console-line);
+  }
+
+  .code-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background: var(--console-bg);
+    color: var(--console-dim);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    letter-spacing: 0.03em;
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--console-line);
+  }
+
+  .code-label .clabel-method {
+    color: var(--console-ink);
+    font-weight: 600;
+  }
+
+  .code-scroll {
+    overflow-x: auto;
+    background: var(--console-bg);
+  }
+
+  pre.code {
+    margin: 0;
+    padding: 16px 18px;
+    font-family: var(--font-mono);
+    font-size: 12.8px;
+    line-height: 1.65;
+    color: var(--console-ink);
+    white-space: pre;
+    tab-size: 2;
+  }
+
+  pre.code .k { color: #8fc7b3; }
+  pre.code .s { color: #d7c491; }
+  pre.code .c { color: var(--console-dim); font-style: italic; }
+  pre.code .n { color: #e0a97b; }
+
+  code.inline {
+    font-family: var(--font-mono);
+    font-size: 0.87em;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    padding: 1px 6px;
+    border-radius: 5px;
+    color: var(--ink);
+  }
+
+  /* ---------- callouts ---------- */
+
+  .callout {
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin: 4px 0 28px;
+    border: 1px solid var(--line);
+    max-width: 68ch;
+  }
+  .callout p { margin: 0; }
+  .callout p + p { margin-top: 8px; }
+  .callout .callout-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-weight: 700;
+    font-size: 13.5px;
+  }
+
+  .callout-gap { background: var(--rose-soft); border-color: color-mix(in srgb, var(--rose) 30%, var(--line)); }
+  .callout-gap .callout-head { color: var(--rose); }
+  .callout-gap p { color: var(--ink); }
+
+  .callout-pending { background: var(--clay-soft); border-color: color-mix(in srgb, var(--clay) 30%, var(--line)); }
+  .callout-pending .callout-head { color: var(--clay); }
+  .callout-pending p { color: var(--ink); }
+
+  .callout-note { background: var(--surface); }
+  .callout-note .callout-head { color: var(--muted); font-family: var(--font-mono); font-size: 11.5px; letter-spacing: 0.05em; text-transform: uppercase; }
+
+  /* ---------- mapping grid ---------- */
+
+  .map-row {
+    display: grid;
+    grid-template-columns: 1fr 22px 1fr;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--line-soft);
+    font-size: 13.3px;
+  }
+  .map-row:last-child { border-bottom: none; }
+  .map-row .m-from { font-family: var(--font-mono); color: var(--muted); }
+  .map-row .m-to { font-family: var(--font-mono); color: var(--ink); font-weight: 600; }
+  .map-row .m-arrow { color: var(--dim); text-align: center; }
+  .map-note { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .map-wrap {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 4px 16px;
+    background: var(--surface);
+    margin: 4px 0 28px;
+  }
+
+  /* ---------- checklist ---------- */
+
+  .checklist { list-style: none; margin: 0; padding: 0; max-width: 68ch; }
+  .checklist li {
+    display: flex;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .checklist li:last-child { border-bottom: none; }
+  .checklist .cbox {
+    flex: none;
+    width: 20px; height: 20px;
+    border-radius: 5px;
+    border: 1.5px solid var(--line);
+    margin-top: 1px;
+  }
+  .checklist .ctext b { display: block; font-size: 14px; margin-bottom: 2px; }
+  .checklist .ctext span { font-size: 13px; color: var(--muted); }
+
+  footer.doc-footer {
+    margin-top: 72px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    font-size: 12.5px;
+    color: var(--dim);
+    font-family: var(--font-mono);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { scroll-behavior: auto !important; }
+  }
+
+  html { scroll-behavior: smooth; }
+</style>
+
+<div class="shell">
+
+  <header class="hero">
+    <p class="eyebrow">Solint CRM · Referência técnica</p>
+    <h1 class="title">Webhooks WhatsApp</h1>
+    <p class="dek">
+      O contrato completo de integração: os eventos que o CRM envia para fora e as rotas
+      autenticadas por token que um fluxo usa para baixar mídia e responder pelo WhatsApp.
+      Construído a partir da comparação direta com o workflow real da Odonto Excellence.
+    </p>
+    <div class="stat-row">
+      <div class="stat"><b>2</b><span>de 4 eventos disparando</span></div>
+      <div class="stat"><b>14</b><span>campos no payload</span></div>
+      <div class="stat"><b>2</b><span>rotas por token</span></div>
+      <div class="stat"><b>1</b><span>lacuna restante</span></div>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav class="toc" aria-label="Sumário">
+      <p class="toc-label">Nesta página</p>
+      <a href="#direcoes">As duas direções</a>
+      <a href="#disparo">Quando dispara</a>
+      <a href="#campos">Campos do payload</a>
+      <a href="#tipos">Por tipo de mensagem</a>
+      <a href="#anuncio">Contexto de anúncio</a>
+      <a href="#autenticacao">Autenticação</a>
+      <a href="#midia">Baixar mídia</a>
+      <a href="#envio">Enviar resposta</a>
+      <a href="#faltando">O que falta</a>
+      <a href="#checklist">Checklist</a>
+    </nav>
+
+    <main>
+
+      <section class="doc-section" id="direcoes">
+        <p class="section-num">01</p>
+        <h2 class="section-title">As duas direções</h2>
+        <p class="section-intro">
+          Uma integração com o n8n tem duas pernas. O CRM já resolveu a primeira; a segunda ainda
+          não existe.
+        </p>
+
+        <div class="flow">
+          <div class="flow-node">
+            <span class="fn-label">Mensagem chega</span>
+            <span class="fn-sub">worker WhatsApp</span>
+          </div>
+          <div class="flow-arrow ok"></div>
+          <div class="flow-node">
+            <span class="fn-label">CRM grava e dispara</span>
+            <span class="fn-sub">webhook-dispatch.ts</span>
+          </div>
+          <div class="flow-arrow ok"></div>
+          <div class="flow-node">
+            <span class="fn-label">n8n recebe o evento</span>
+            <span class="fn-sub">POST autenticado</span>
+          </div>
+        </div>
+        <p class="flow-caption"><span class="pill pill-ok">Implementado</span>&nbsp; saída — o CRM chama o n8n.</p>
+
+        <div class="flow" style="margin-top: 18px;">
+          <div class="flow-node">
+            <span class="fn-label">Agente decide a resposta</span>
+            <span class="fn-sub">n8n / IA</span>
+          </div>
+          <div class="flow-arrow ok rev"></div>
+          <div class="flow-node">
+            <span class="fn-label">POST /api/v1/mensagens</span>
+            <span class="fn-sub">Bearer sk_live_…</span>
+          </div>
+          <div class="flow-arrow ok"></div>
+          <div class="flow-node">
+            <span class="fn-label">WhatsApp entrega</span>
+            <span class="fn-sub">via worker</span>
+          </div>
+        </div>
+        <p class="flow-caption"><span class="pill pill-ok">Implementado</span>&nbsp; volta — o n8n chama o CRM para enviar. Ver <a href="#envio">§08</a>.</p>
+      </section>
+
+      <section class="doc-section" id="disparo">
+        <p class="section-num">02</p>
+        <h2 class="section-title">Quando o webhook dispara</h2>
+        <div class="prose">
+          <p>
+            O gatilho fica em <code class="inline">commitMessage</code>, o mesmo ponto que já
+            aciona as automações internas do CRM — logo depois da mensagem ser gravada, nunca
+            antes. Só mensagem <strong>recebida</strong> dispara; o eco do que a própria empresa
+            envia não gera evento, senão uma resposta automática acabaria reagindo a si mesma.
+          </p>
+        </div>
+
+        <div class="table-wrap">
+          <table class="ref">
+            <thead>
+              <tr><th>Evento</th><th>Dispara quando</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="field">conversa.criada</td>
+                <td class="desc">A mensagem recebida é a primeira da conversa</td>
+                <td><span class="pill pill-ok">Implementado</span></td>
+              </tr>
+              <tr>
+                <td class="field">mensagem.recebida</td>
+                <td class="desc">A mensagem chega numa conversa que já existia</td>
+                <td><span class="pill pill-ok">Implementado</span></td>
+              </tr>
+              <tr>
+                <td class="field">conversa.resolvida</td>
+                <td class="desc">Um atendente marca a conversa como resolvida</td>
+                <td><span class="pill pill-gap">Sem gancho</span></td>
+              </tr>
+              <tr>
+                <td class="field">contato.criado</td>
+                <td class="desc">Um contato novo é cadastrado</td>
+                <td><span class="pill pill-gap">Sem gancho</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout callout-note">
+          <p class="callout-head">Como inscrever</p>
+          <p>
+            Configurações → Integrações → novo webhook. A URL do n8n e os eventos marcados ficam
+            salvos por conta; cada evento só chega a quem o marcou.
+          </p>
+        </div>
+      </section>
+
+      <section class="doc-section" id="campos">
+        <p class="section-num">03</p>
+        <h2 class="section-title">Campos do payload</h2>
+        <p class="section-intro">
+          Três blocos: quem é a conversa, quem é o contato, o que veio na mensagem. Tudo no
+          primeiro nível — nada que precise navegar dois ou três níveis dentro de um objeto para
+          montar uma condição no n8n.
+        </p>
+
+        <div class="code-block">
+          <div class="code-label">
+            <span><span class="clabel-method">POST</span> {{ sua URL do webhook }}</span>
+            <span>evento: mensagem.recebida</span>
+          </div>
+          <div class="code-scroll"><pre class="code">{
+  "evento": "mensagem.recebida",
+  "enviadoEm": "2026-08-27T03:42:10.000Z",
+  "contaId": "acc-mtaj8qoj",
+  "caixaEntradaId": "ibx-acc-mtaj8qoj",
+  "conversa": {
+    "id": "cv-wa-557998396408",
+    "nova": false
+  },
+  "contato": {
+    "id": "ct-wa-557998396408",
+    "nome": "André Felipe",
+    "telefone": "+5579998396408",
+    "jid": "557998396408@s.whatsapp.net",
+    "ehGrupo": false,
+    "avatarUrl": "/api/whatsapp/media/pp-557998396408",
+    "etiquetas": ["vip"]
+  },
+  "mensagem": {
+    "id": "AC95759C639AD41A3AD55A2F3A237208",
+    "externalId": "AC95759C639AD41A3AD55A2F3A237208",
+    "tipo": "text",
+    "texto": "Bom dia, vocês entregam em Aracaju?",
+    "deMim": false,
+    "autor": "contact",
+    "autorNome": "André Felipe",
+    "recebidaEm": "2026-08-27T03:42:10.000Z"
+  }
+}</pre></div>
+        </div>
+
+        <h3 class="sub">conversa</h3>
+        <div class="table-wrap">
+          <table class="ref">
+            <thead><tr><th>Campo</th><th>Tipo</th><th>Sempre?</th><th>Descrição</th></tr></thead>
+            <tbody>
+              <tr><td class="field">id</td><td class="type">string</td><td class="always yes">sim</td><td class="desc">Id estável da conversa no CRM.</td></tr>
+              <tr><td class="field">nova</td><td class="type">boolean</td><td class="always yes">sim</td><td class="desc"><code class="inline">true</code> quando foi esta mensagem que abriu a conversa — equivale ao evento ser <code class="inline">conversa.criada</code>.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="sub">contato</h3>
+        <div class="table-wrap">
+          <table class="ref">
+            <thead><tr><th>Campo</th><th>Tipo</th><th>Sempre?</th><th>Descrição</th></tr></thead>
+            <tbody>
+              <tr><td class="field">id</td><td class="type">string</td><td class="always yes">sim</td><td class="desc">Id do contato no CRM.</td></tr>
+              <tr><td class="field">nome</td><td class="type">string</td><td class="always yes">sim</td><td class="desc">Nome resolvido — o <code class="inline">pushName</code> do WhatsApp quando disponível.</td></tr>
+              <tr><td class="field">telefone</td><td class="type">string</td><td class="always no">não*</td><td class="desc">E.164, ex. <code class="inline">+5579998396408</code>. Vazio em grupo — que hoje nunca chega aqui.</td></tr>
+              <tr><td class="field">jid</td><td class="type">string</td><td class="always yes">sim</td><td class="desc">JID do WhatsApp. É o identificador de canal, útil se um fluxo precisar chamar outra API que fale JID.</td></tr>
+              <tr><td class="field">ehGrupo</td><td class="type">boolean</td><td class="always yes">sim</td><td class="desc">Sempre <code class="inline">false</code> hoje — grupo é filtrado antes de qualquer processamento.</td></tr>
+              <tr><td class="field">email</td><td class="type">string</td><td class="always no">não</td><td class="desc">Só se cadastrado no CRM.</td></tr>
+              <tr><td class="field">empresa</td><td class="type">string</td><td class="always no">não</td><td class="desc">Campo do contato no CRM.</td></tr>
+              <tr><td class="field">avatarUrl</td><td class="type">string</td><td class="always no">não</td><td class="desc">Caminho da foto de perfil — mesmas regras de autenticação da mídia, ver <a href="#midia">§07</a>.</td></tr>
+              <tr><td class="field">etiquetas</td><td class="type">string[]</td><td class="always yes">sim</td><td class="desc">Pode vir vazio (<code class="inline">[]</code>). Nomes das etiquetas aplicadas ao contato.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="sub">mensagem</h3>
+        <div class="table-wrap">
+          <table class="ref">
+            <thead><tr><th>Campo</th><th>Tipo</th><th>Sempre?</th><th>Descrição</th></tr></thead>
+            <tbody>
+              <tr><td class="field">id</td><td class="type">string</td><td class="always yes">sim</td><td class="desc">Id da mensagem no CRM — <strong>é o mesmo id</strong> usado em <code class="inline">/api/whatsapp/media/{id}</code>.</td></tr>
+              <tr><td class="field">externalId</td><td class="type">string</td><td class="always no">não</td><td class="desc">Id da mensagem no protocolo do WhatsApp (Baileys).</td></tr>
+              <tr><td class="field">tipo</td><td class="type">text · image · video · audio · sticker · document · template · system</td><td class="always yes">sim</td><td class="desc">Tipo já normalizado pelo CRM — não é o tipo cru do protocolo.</td></tr>
+              <tr><td class="field">texto</td><td class="type">string</td><td class="always yes">sim, pode ser ""</td><td class="desc">Representação em texto puro <strong>seja qual for o tipo</strong> — numa foto é a legenda, num documento é o nome do arquivo. Ver <a href="#tipos">§04</a>.</td></tr>
+              <tr><td class="field">deMim</td><td class="type">boolean</td><td class="always yes">sim</td><td class="desc">Hoje sempre <code class="inline">false</code> — só mensagem recebida dispara webhook.</td></tr>
+              <tr><td class="field">autor</td><td class="type">contact · agent · ai · system</td><td class="always yes">sim</td><td class="desc">Em mensagem recebida, sempre <code class="inline">contact</code>.</td></tr>
+              <tr><td class="field">autorNome</td><td class="type">string</td><td class="always no">não</td><td class="desc">Nome de quem enviou, quando resolvido.</td></tr>
+              <tr><td class="field">recebidaEm</td><td class="type">string, ISO 8601</td><td class="always yes">sim</td><td class="desc">Timestamp <strong>real do WhatsApp</strong> — o que o telefone marcou ao enviar, não a hora em que o servidor processou.</td></tr>
+              <tr><td class="field">midia</td><td class="type">objeto</td><td class="always no">não</td><td class="desc">Presente só em image, video, audio, sticker e document. Ver <a href="#tipos">§04</a>.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="sub">De onde cada campo vem</h3>
+        <p class="prose" style="margin-bottom: 14px; color: var(--muted); max-width: 68ch;">
+          Para quem já conhece o payload cru de uma Evolution API / Baileys: o de-para do que o
+          workflow real consultava.
+        </p>
+        <div class="map-wrap">
+          <div class="map-row"><span class="m-from">data.key.id</span><span class="m-arrow">→</span><span class="m-to">mensagem.externalId</span></div>
+          <div class="map-row"><span class="m-from">data.key.remoteJid / remoteJidAlt</span><span class="m-arrow">→</span><span class="m-to">contato.jid</span></div>
+          <div class="map-row"><span class="m-from">data.key.fromMe</span><span class="m-arrow">→</span><span class="m-to">mensagem.deMim</span></div>
+          <div class="map-row"><span class="m-from">data.pushName</span><span class="m-arrow">→</span><span class="m-to">contato.nome</span></div>
+          <div class="map-row"><span class="m-from">data.messageType</span><span class="m-arrow">→</span><span class="m-to">mensagem.tipo</span></div>
+          <div class="map-row"><span class="m-from">data.messageTimestamp</span><span class="m-arrow">→</span><span class="m-to">mensagem.recebidaEm</span></div>
+          <div class="map-row"><span class="m-from">data.message.conversation / extendedTextMessage</span><span class="m-arrow">→</span><span class="m-to">mensagem.texto</span></div>
+          <div class="map-row"><span class="m-from">chatwootConversationId</span><span class="m-arrow">→</span><span class="m-to">conversa.id</span></div>
+          <div class="map-row"><span class="m-from">contextInfo.externalAdReply</span><span class="m-arrow">→</span><span class="m-to" style="color: var(--rose);">nada — ver §05</span></div>
+        </div>
+        <p class="map-note">
+          <code class="inline">remoteJidAlt</code> e <code class="inline">participant</code> existem no protocolo cru para resolver
+          o endereçamento LID→telefone e identificar quem falou dentro de um grupo. O CRM já
+          resolve isso no servidor — é por isso que <code class="inline">contato.telefone</code> chega pronto em E.164,
+          sem o fluxo precisar entender LID.
+        </p>
+      </section>
+
+      <section class="doc-section" id="tipos">
+        <p class="section-num">04</p>
+        <h2 class="section-title">Por tipo de mensagem</h2>
+        <p class="section-intro">
+          O bloco <code class="inline">midia</code> muda de forma conforme o tipo. <code class="inline">mensagem.texto</code> nunca
+          muda de forma — é sempre string, o que permite escrever uma condição no n8n sem
+          ramificar por tipo antes.
+        </p>
+
+        <h3 class="sub">Imagem com legenda</h3>
+        <div class="code-block">
+          <div class="code-label"><span>mensagem.tipo = "image"</span><span></span></div>
+          <div class="code-scroll"><pre class="code">"mensagem": {
+  "id": "AC7CFA2B6CACAAC59011534B0202BD5E",
+  "tipo": "image",
+  "texto": "É esse aqui",
+  "deMim": false,
+  "autor": "contact",
+  "recebidaEm": "2026-08-27T03:44:02.000Z",
+  "midia": {
+    "caminho": "/api/whatsapp/media/AC7CFA2B6CACAAC59011534B0202BD5E",
+    "legenda": "É esse aqui"
+  }
+}</pre></div>
+        </div>
+
+        <h3 class="sub">Áudio</h3>
+        <div class="code-block">
+          <div class="code-label"><span>mensagem.tipo = "audio"</span><span></span></div>
+          <div class="code-scroll"><pre class="code">"mensagem": {
+  "id": "AC1B2C3D4E5F60718293A4B5C6D7E8F9",
+  "tipo": "audio",
+  "texto": "Mensagem de áudio",
+  "deMim": false,
+  "autor": "contact",
+  "recebidaEm": "2026-08-27T03:46:15.000Z",
+  "midia": {
+    "caminho": "/api/whatsapp/media/AC1B2C3D4E5F60718293A4B5C6D7E8F9",
+    "mimeType": "audio/ogg; codecs=opus",
+    "duracao": "0:12"
+  }
+}</pre></div>
+        </div>
+        <p class="prose" style="max-width: 68ch; color: var(--muted); margin-top: -14px;">
+          O workflow analisado transcreve o áudio antes de qualquer outra coisa (baixa o binário,
+          converte para MP3, manda pro Whisper). Hoje isso esbarra na lacuna de <a href="#midia">§07</a> — o CRM
+          não expõe os bytes por um caminho que o n8n consiga chamar.
+        </p>
+
+        <h3 class="sub">Documento</h3>
+        <div class="code-block">
+          <div class="code-label"><span>mensagem.tipo = "document"</span><span></span></div>
+          <div class="code-scroll"><pre class="code">"mensagem": {
+  "id": "AC9F8E7D6C5B4A392817263544536271",
+  "tipo": "document",
+  "texto": "orcamento-outra-clinica.pdf",
+  "deMim": false,
+  "autor": "contact",
+  "recebidaEm": "2026-08-27T03:48:00.000Z",
+  "midia": {
+    "caminho": "/api/whatsapp/media/AC9F8E7D6C5B4A392817263544536271",
+    "nomeArquivo": "orcamento-outra-clinica.pdf"
+  }
+}</pre></div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="ref">
+            <thead><tr><th>Tipo</th><th>midia.caminho</th><th>midia.mimeType</th><th>midia.duracao</th><th>midia.legenda</th><th>midia.nomeArquivo</th></tr></thead>
+            <tbody>
+              <tr><td class="field">image</td><td class="always yes">sim</td><td class="always no">—</td><td class="always no">—</td><td class="always no">se houver</td><td class="always no">—</td></tr>
+              <tr><td class="field">video</td><td class="always yes">sim</td><td class="always no">se houver</td><td class="always no">—</td><td class="always no">se houver</td><td class="always no">—</td></tr>
+              <tr><td class="field">sticker</td><td class="always yes">sim</td><td class="always no">—</td><td class="always no">—</td><td class="always no">—</td><td class="always no">—</td></tr>
+              <tr><td class="field">audio</td><td class="always no">se disponível</td><td class="always no">se houver</td><td class="always yes">sim</td><td class="always no">—</td><td class="always no">—</td></tr>
+              <tr><td class="field">document</td><td class="always no">se disponível</td><td class="always no">—</td><td class="always no">—</td><td class="always no">—</td><td class="always yes">sim</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="doc-section" id="anuncio">
+        <p class="section-num">05</p>
+        <h2 class="section-title">Contexto de anúncio <span class="pill pill-ok">Implementado</span></h2>
+
+        <div class="callout callout-note">
+          <p class="callout-head">Por que este bloco importa</p>
+          <p>
+            Quando um cliente clica num anúncio do Instagram/Facebook e cai direto no WhatsApp, a
+            primeira mensagem carrega um bloco <code class="inline">contextInfo.externalAdReply</code> — título,
+            corpo e link do anúncio, mais um <code class="inline">ctwaClid</code> que identifica o clique. O
+            workflow analisado usa isso pesadamente: é o que permite ao agente responder já
+            sabendo qual tratamento o paciente quer, sem perguntar de novo.
+          </p>
+          <p>
+            O CRM agora lê esse bloco nos dois motores, no ponto em que a mensagem crua ainda
+            existe, e o entrega como <code class="inline">anuncio</code> — no primeiro nível do payload, ao lado de
+            <code class="inline">mensagem</code>.
+          </p>
+        </div>
+
+        <div class="code-block">
+          <div class="code-label"><span>presente só na mensagem que veio do clique</span><span></span></div>
+          <div class="code-scroll"><pre class="code">{
+  "evento": "conversa.criada",
+  "...": "...",
+  "anuncio": {
+    "titulo": "Fechamento de diastema",
+    "conteudo": "Feche o espaço entre os dentes",
+    "clickId": "AbC123xyz",
+    "link": "https://instagram.com/anuncio"
+  },
+  "mensagem": {
+    "tipo": "text",
+    "texto": "Olá, posso ter mais informações sobre isso?",
+    "...": "..."
+  }
+}</pre></div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="ref">
+            <thead><tr><th>Campo</th><th>Tipo</th><th>Sempre?</th><th>Descrição</th></tr></thead>
+            <tbody>
+              <tr><td class="field">titulo</td><td class="type">string</td><td class="always yes">sim</td><td class="desc">Título do anúncio. Pode vir vazio se o anúncio não tiver.</td></tr>
+              <tr><td class="field">conteudo</td><td class="type">string</td><td class="always yes">sim</td><td class="desc">Corpo do anúncio, já limpo — o WhatsApp cola o próprio número e o link no fim, e isso é removido antes de entregar.</td></tr>
+              <tr><td class="field">clickId</td><td class="type">string</td><td class="always no">não</td><td class="desc">Identificador do clique (<code class="inline">ctwaClid</code>, ou <code class="inline">sourceId</code> quando aquele falta). Serve para não tratar o mesmo clique duas vezes.</td></tr>
+              <tr><td class="field">link</td><td class="type">string</td><td class="always no">não</td><td class="desc">URL de origem do anúncio.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout callout-note">
+          <p class="callout-head">Três detalhes de comportamento</p>
+          <p>
+            O bloco é procurado em <strong>três lugares</strong> — texto estendido, imagem e vídeo — porque
+            muda de posição conforme o tipo da mensagem; procurar num só perderia os outros
+            silenciosamente. Um <code class="inline">externalAdReply</code> presente mas inteiramente vazio é
+            descartado como ruído de protocolo, em vez de virar um "clique" falso. E o campo só
+            aparece no que o contato enviou: o eco das mensagens da própria empresa carrega o
+            mesmo bloco e não significa clique nenhum.
+          </p>
+        </div>
+      </section>
+
+      <section class="doc-section" id="autenticacao">
+        <p class="section-num">06</p>
+        <h2 class="section-title">Autenticação <span class="pill pill-ok">Implementado</span></h2>
+        <p class="section-intro">
+          Se o webhook tiver uma chave de verificação cadastrada, toda entrega leva uma assinatura
+          HMAC-SHA256 — o mesmo formato que n8n, Make e Zapier já sabem conferir nativamente. O
+          campo fica na própria tela de cadastro do webhook, em Configurações → Integrações.
+        </p>
+
+        <div class="table-wrap">
+          <table class="ref">
+            <thead><tr><th>Cabeçalho</th><th>Sempre?</th><th>Valor</th></tr></thead>
+            <tbody>
+              <tr><td class="field">Content-Type</td><td class="always yes">sim</td><td class="desc"><code class="inline">application/json</code></td></tr>
+              <tr><td class="field">X-Solint-Event</td><td class="always yes">sim</td><td class="desc">O nome do evento, ex. <code class="inline">mensagem.recebida</code></td></tr>
+              <tr><td class="field">X-Solint-Signature</td><td class="always no">só com segredo cadastrado</td><td class="desc"><code class="inline">sha256=&lt;hex&gt;</code></td></tr>
+              <tr><td class="field">User-Agent</td><td class="always yes">sim</td><td class="desc"><code class="inline">Solint-CRM-Webhook/1</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="sub">Conferindo no n8n</h3>
+        <div class="code-block">
+          <div class="code-label"><span>Code node · JavaScript</span><span></span></div>
+          <div class="code-scroll"><pre class="code">const crypto = require('crypto');
+const segredo = 'SEU_SEGREDO_CADASTRADO_NO_CRM';
+
+const corpoRecebido = JSON.stringify($input.first().json.body);
+const assinaturaRecebida = $input.first().json.headers['x-solint-signature'];
+
+const esperada = 'sha256=' +
+  crypto.createHmac('sha256', segredo).update(corpoRecebido).digest('hex');
+
+if (assinaturaRecebida !== esperada) {
+  throw new Error('Assinatura não confere — descarte esta requisição.');
+}
+
+return $input.all();</pre></div>
+        </div>
+        <div class="callout callout-note">
+          <p class="callout-head">Nota</p>
+          <p>
+            A assinatura é calculada sobre os bytes exatos do corpo. Se o node <code class="inline">Webhook</code> do n8n
+            já reserializou o JSON antes de chegar ao seu Code node, a comparação pode falhar por
+            diferença de formatação — não pelo segredo estar errado. Vale checar a opção de corpo
+            bruto (<em>raw body</em>) do node de entrada se a verificação não bater.
+          </p>
+        </div>
+      </section>
+
+      <section class="doc-section" id="midia">
+        <p class="section-num">07</p>
+        <h2 class="section-title">Baixar mídia <span class="pill pill-ok">Implementado</span></h2>
+
+        <p class="prose">
+          <code class="inline">midia.caminho</code> nunca foi um link aberto, e continua não sendo: é conteúdo de
+          conversa de cliente, protegido por escopo de conta. O que mudou é que a rota passou a
+          aceitar <strong>duas</strong> portas — o cookie do navegador e um token de API. Um fluxo que
+          precise transcrever um áudio ou analisar uma imagem agora consegue buscar os bytes.
+        </p>
+
+        <div class="code-block">
+          <div class="code-label"><span><span class="clabel-method">GET</span> /api/whatsapp/media/{id}</span><span>midia.caminho vem pronto no payload</span></div>
+          <div class="code-scroll"><pre class="code">GET https://seu-crm.com/api/whatsapp/media/AC7CFA2B6CACAAC59011534B0202BD5E
+Authorization: Bearer sk_live_xxxxxxxxxxxxxxxx
+
+→ 200  os bytes, com Content-Type e Content-Disposition corretos
+→ 401  token ausente, inválido ou expirado
+→ 404  mídia inexistente — ou de outra conta</pre></div>
+        </div>
+
+        <div class="callout callout-note">
+          <p class="callout-head">Por que 404 e não 403 para mídia de outra conta</p>
+          <p>
+            Responder 403 confirmaria que aquele id existe em algum lugar do sistema. Se a mídia
+            não é sua, se ela existe ou não é informação que também não lhe pertence.
+          </p>
+        </div>
+
+        <h3 class="sub">Onde criar o token</h3>
+        <p class="prose">
+          Configurações → Integrações → Tokens de API. O segredo (<code class="inline">sk_live_…</code>) aparece
+          <strong>uma única vez</strong>, no momento da criação: o banco guarda apenas o SHA-256 dele. Um
+          token perdido não se recupera, se substitui.
+        </p>
+      </section>
+
+      <section class="doc-section" id="envio">
+        <p class="section-num">08</p>
+        <h2 class="section-title">Enviar uma resposta <span class="pill pill-ok">Implementado</span></h2>
+
+        <p class="section-intro">
+          A perna de volta. Mesma rota para mensagem pública e nota interna, autenticada pelo
+          mesmo token da mídia.
+        </p>
+
+        <div class="code-block">
+          <div class="code-label"><span><span class="clabel-method">POST</span> /api/v1/mensagens</span><span>Bearer sk_live_…</span></div>
+          <div class="code-scroll"><pre class="code">POST https://seu-crm.com/api/v1/mensagens
+Authorization: Bearer sk_live_xxxxxxxxxxxxxxxx
+Content-Type: application/json
+
+{
+  "conversaId": "cv-wa-557998396408",
+  "texto": "Confirmado, Leonardo. Sua avaliação ficou para quinta, 02/07, às 18:30."
+}</pre></div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="ref">
+            <thead><tr><th>Campo</th><th>Tipo</th><th>Obrigatório</th><th>Descrição</th></tr></thead>
+            <tbody>
+              <tr><td class="field">conversaId</td><td class="type">string</td><td class="always yes">sim</td><td class="desc">O <code class="inline">conversa.id</code> que veio no webhook.</td></tr>
+              <tr><td class="field">texto</td><td class="type">string</td><td class="always yes">sim</td><td class="desc">Até 4096 caracteres.</td></tr>
+              <tr><td class="field">notaInterna</td><td class="type">boolean</td><td class="always no">não</td><td class="desc">Padrão <code class="inline">false</code>. Quando <code class="inline">true</code>, a mensagem fica registrada no CRM e <strong>nunca</strong> vai para o WhatsApp.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout callout-note">
+          <p class="callout-head">Nenhuma regra de negócio mora nesta rota</p>
+          <p>
+            Ela autentica, valida a entrada e chama exatamente o mesmo caso de uso que o
+            formulário da tela chama — que é quem confere a permissão, a janela de 24h e o limite
+            de tamanho. Duplicar essas regras aqui criaria dois lugares para elas divergirem.
+          </p>
+        </div>
+
+        <h3 class="sub">Respostas possíveis</h3>
+        <div class="table-wrap">
+          <table class="ref">
+            <thead><tr><th>Status</th><th>Quando</th><th>Corpo</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="field">200</td>
+                <td class="desc">Aceito. <code class="inline">entregue: true</code> quando o canal já confirmou; <code class="inline">enfileirado: true</code> quando o worker aceitou mas ainda não entregou</td>
+                <td class="mono" style="font-size: 12.5px;">{ "ok": true, "mensagemId": "…", "entregue": true }</td>
+              </tr>
+              <tr>
+                <td class="field">400</td>
+                <td class="desc">Corpo inválido, texto vazio ou acima de 4096 caracteres</td>
+                <td class="mono" style="font-size: 12.5px;">{ "ok": false, "erro": "…" }</td>
+              </tr>
+              <tr>
+                <td class="field">401</td>
+                <td class="desc">Token ausente, inválido ou expirado</td>
+                <td class="mono" style="font-size: 12.5px;">{ "ok": false, "erro": "…" }</td>
+              </tr>
+              <tr>
+                <td class="field">403</td>
+                <td class="desc">O token não tem a permissão <code class="inline">conversas:responder</code></td>
+                <td class="mono" style="font-size: 12.5px;">{ "ok": false, "erro": "…" }</td>
+              </tr>
+              <tr>
+                <td class="field">404</td>
+                <td class="desc">conversaId não existe ou não pertence à conta do token</td>
+                <td class="mono" style="font-size: 12.5px;">{ "ok": false, "erro": "…" }</td>
+              </tr>
+              <tr>
+                <td class="field">409</td>
+                <td class="desc">Janela de 24h fechada — sem template aprovado, o WhatsApp recusa</td>
+                <td class="mono" style="font-size: 12.5px;">{ "ok": false, "erro": "…" }</td>
+              </tr>
+              <tr>
+                <td class="field">503</td>
+                <td class="desc">WhatsApp desconectado. A mensagem <strong>já foi gravada</strong> — o <code class="inline">mensagemId</code> vem junto</td>
+                <td class="mono" style="font-size: 12.5px;">{ "ok": false, "mensagemId": "…", "erro": "…" }</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout callout-pending">
+          <p class="callout-head">Uma decisão que vale conhecer</p>
+          <p>
+            No <code class="inline">503</code>, a mensagem <strong>não é desfeita</strong>. Ela já está gravada e visível na
+            timeline com estado de falha. Apagá-la faria o histórico da tela divergir do que quem
+            integra viu acontecer — e o <code class="inline">mensagemId</code> vem na resposta justamente para o fluxo
+            poder acompanhá-la.
+          </p>
+        </div>
+      </section>
+
+      <section class="doc-section" id="faltando">
+        <p class="section-num">09</p>
+        <h2 class="section-title">O que ainda falta</h2>
+        <p class="section-intro">
+          Dois eventos já aparecem na tela de integrações e podem ser marcados, mas nenhum ponto
+          do código os dispara ainda. É a única lacuna que resta na integração.
+        </p>
+        <div class="table-wrap">
+          <table class="ref">
+            <thead><tr><th>Evento</th><th>Dispararia quando</th><th>Onde o gancho entraria</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="field">conversa.resolvida</td>
+                <td class="desc">Um atendente marca a conversa como resolvida na tela</td>
+                <td class="desc">Server Action que muda o status da conversa</td>
+              </tr>
+              <tr>
+                <td class="field">contato.criado</td>
+                <td class="desc">Um contato novo entra no CRM — pelo WhatsApp ou cadastro manual</td>
+                <td class="desc"><code class="inline">upsertContact</code>, no caminho que grava um contato pela primeira vez</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="doc-section" id="checklist">
+        <p class="section-num">10</p>
+        <h2 class="section-title">Checklist para adaptar o fluxo</h2>
+        <ul class="checklist">
+          <li>
+            <span class="cbox"></span>
+            <span class="ctext">
+              <b>Trocar o webhook de entrada</b>
+              <span>Do node Evolution API para o webhook do CRM. Os campos que o fluxo já usa para texto, tipo, nome e telefone têm equivalente direto — ver §03.</span>
+            </span>
+          </li>
+          <li>
+            <span class="cbox"></span>
+            <span class="ctext">
+              <b>Criar um token de API</b>
+              <span>Configurações → Integrações → Tokens de API. O segredo aparece uma única vez. É o mesmo token para baixar mídia e para enviar resposta.</span>
+            </span>
+          </li>
+          <li>
+            <span class="cbox"></span>
+            <span class="ctext">
+              <b>Cadastrar o webhook com chave de verificação</b>
+              <span>URL do n8n, os eventos desejados e uma chave de no mínimo 16 caracteres. Valide X-Solint-Signature antes de processar qualquer evento — ver §06.</span>
+            </span>
+          </li>
+          <li>
+            <span class="cbox"></span>
+            <span class="ctext">
+              <b>Ler o contexto de anúncio do bloco anuncio</b>
+              <span>O bloco [CONTEXTO DO ANÚNCIO] do prompt passa a ser montado a partir de anuncio.titulo e anuncio.conteudo — ver §05. Use anuncio.clickId para não tratar o mesmo clique duas vezes.</span>
+            </span>
+          </li>
+          <li>
+            <span class="cbox"></span>
+            <span class="ctext">
+              <b>Trocar o download de mídia</b>
+              <span>Aponte o node HTTP para midia.caminho com o header Authorization: Bearer — ver §07. Substitui a chamada getBase64FromMediaMessage do fluxo atual.</span>
+            </span>
+          </li>
+          <li>
+            <span class="cbox"></span>
+            <span class="ctext">
+              <b>Trocar o envio de resposta</b>
+              <span>POST /api/v1/mensagens no lugar de sendText da Evolution API — ver §08. Ganha de brinde o registro na timeline do CRM, que a chamada direta não fazia.</span>
+            </span>
+          </li>
+        </ul>
+      </section>
+
+    </main>
+  </div>
+
+  <footer class="doc-footer">
+    Solint CRM — gerado a partir de <code class="inline">webhook-dispatch.ts</code> e do workflow n8n
+    "Odonto Excellence" fornecido para análise.
+  </footer>
+
+</div>

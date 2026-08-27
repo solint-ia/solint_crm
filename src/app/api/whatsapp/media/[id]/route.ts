@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { sessionFromApiToken } from '@/infrastructure/auth/api-token';
 import { container } from '@/infrastructure/container';
 import { isSafeMediaId, mediaStore } from '@/infrastructure/whatsapp/wa-media-store';
 
@@ -29,14 +30,21 @@ const dispositionFor = (mimeType: string, fileName?: string): string => {
  * hoje a sessão de demonstracao e estatica, mas o ponto de verificacao precisa
  * existir para não virar um diretorio público quando a autenticacao real entrar.
  */
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!isSafeMediaId(id)) {
     return NextResponse.json({ ok: false, error: 'Mídia inválida' }, { status: 400 });
   }
 
   // Conteudo de conversa de cliente: sem sessao, nao sai.
-  const session = await container.session.getSession();
+  //
+  // Duas portas, e as duas provam a mesma coisa — a qual conta o requisitante
+  // pertence. O cookie atende o navegador; o `Bearer` atende quem nao e
+  // navegador. Sem a segunda, um fluxo de automacao que precise transcrever um
+  // audio ou ler uma imagem recebida simplesmente nao tinha como baixar os
+  // bytes: HTTP servidor-a-servidor nao carrega cookie de sessao.
+  const session =
+    (await container.session.getSession()) ?? (await sessionFromApiToken(request));
   if (!session) {
     return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 });
   }

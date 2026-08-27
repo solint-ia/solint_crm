@@ -337,6 +337,8 @@ const createWebhookSchema = z.object({
   name: z.string().trim().min(2).max(80),
   url: z.string().trim().url(),
   events: z.array(z.string().min(1)).min(1),
+  /** Assina cada entrega em `X-Solint-Signature`. Opcional, mas recomendado. */
+  secret: z.string().trim().min(16).max(200).optional(),
 });
 
 export async function createWebhookAction(input: unknown): Promise<ActionResult> {

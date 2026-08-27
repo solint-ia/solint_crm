@@ -42,6 +42,7 @@ import {
   deliveryStatusFrom,
   mediaContent,
   timestampOf,
+  adContextOf,
   type MediaRef,
 } from './wa-message-content';
 import { mediaStore, mediaUrlFor } from './wa-media-store';
@@ -598,6 +599,8 @@ export class WhatsAppService {
       preview: decoded.preview,
       at,
       fromMe,
+      // Ver a nota equivalente em `worker/session.ts`.
+      ...(fromMe ? {} : (() => { const a = adContextOf(msg); return a ? { anuncio: a } : {}; })()),
     });
 
     console.log(`[WhatsAppService] Conversa ${chat.conversationId} persistida com sucesso!`);

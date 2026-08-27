@@ -103,7 +103,7 @@ export interface SettingsRepository {
   // Onda 3: Webhooks, Tokens, Respostas Rápidas, Atributos e Equipes
   createWebhook(
     accountId: Id,
-    draft: { name: string; url: string; events: readonly string[] },
+    draft: { name: string; url: string; events: readonly string[]; secret?: string },
   ): Promise<Webhook>;
   toggleWebhook(accountId: Id, webhookId: Id, enabled: boolean): Promise<Webhook>;
   deleteWebhook(accountId: Id, webhookId: Id): Promise<void>;

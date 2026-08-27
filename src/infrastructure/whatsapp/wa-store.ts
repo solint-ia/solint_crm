@@ -9,7 +9,12 @@ import {
   conversationRow,
 } from '@/infrastructure/repositories/prisma/mappers';
 import { dispararAutomacoes } from '@/infrastructure/automations/dispatch';
+import {
+  dispararWebhooks,
+  mensagemDoPayload,
+} from '@/infrastructure/webhooks/webhook-dispatch';
 import type { ChatIdentity } from './wa-identity';
+import type { AdContext } from './wa-message-content';
 import { waEventBus } from './whatsapp-events';
 
 /**
@@ -112,6 +117,14 @@ export interface CommitInput {
   readonly at: Date;
   readonly fromMe: boolean;
   /**
+   * Anuncio que originou a conversa, quando a mensagem veio de um clique.
+   *
+   * Nao e gravado na mensagem: e contexto de origem, e quem o consome e a
+   * automacao do outro lado do webhook. Guardar no banco exigiria decidir onde,
+   * e nenhuma tela pede por ele hoje.
+   */
+  readonly anuncio?: AdContext;
+  /**
    * Grava sem anunciar.
    *
    * Usado enquanto a fila represada do WhatsApp é drenada. Anunciar mensagem
@@ -167,6 +180,28 @@ export const commitMessage = async (input: CommitInput): Promise<void> => {
       trigger: existing ? 'mensagem_recebida' : 'conversa_criada',
       conversationId: chat.conversationId,
       ...(input.preview ? { messageText: input.preview } : {}),
+    });
+
+    // Sistemas de fora recebem o mesmo gatilho das automações internas, e pela
+    // mesma razão de ordem: quem for ler a conversa por API logo depois precisa
+    // encontrá-la no estado que o evento descreve.
+    await dispararWebhooks(existing ? 'mensagem.recebida' : 'conversa.criada', {
+      contaId: input.accountId,
+      ...(input.inboxId ? { caixaEntradaId: input.inboxId } : {}),
+      conversa: { id: chat.conversationId, nova: !existing },
+      contato: {
+        id: contact.id,
+        nome: contact.name,
+        telefone: contact.phone,
+        jid: chat.jid,
+        ehGrupo: chat.isGroup,
+        ...(contact.email ? { email: contact.email } : {}),
+        ...(contact.company ? { empresa: contact.company } : {}),
+        ...(contact.avatarUrl ? { avatarUrl: contact.avatarUrl } : {}),
+        etiquetas: contact.labels.map((etiqueta) => etiqueta.name),
+      },
+      mensagem: mensagemDoPayload(input.message, input.preview, input.at, input.fromMe),
+      ...(input.anuncio ? { anuncio: input.anuncio } : {}),
     });
   }
 };
