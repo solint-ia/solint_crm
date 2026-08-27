@@ -31,6 +31,7 @@ import type {
 } from '@/core/ports/settings-repository';
 import type { Label } from '@/core/domain/label';
 import { prisma, readJson, asJson } from '@/infrastructure/db/prisma';
+import { APP_TIMEZONE } from '@/lib/datetime';
 import {
   articleRow,
   automationRow,
@@ -41,7 +42,7 @@ import {
 } from './mappers';
 
 const nowLabel = (): string =>
-  new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' });
+  new Date().toLocaleDateString('pt-BR', { timeZone: APP_TIMEZONE, day: '2-digit', month: 'short', year: 'numeric' });
 
 const EMPTY_BILLING: BillingInfo = {
   planName: '—',
@@ -161,6 +162,7 @@ export class PrismaSettingsRepository implements SettingsRepository {
         name: tk.name,
         maskedValue: `${tk.tokenPrefix}****${tk.id.slice(-4)}`,
         createdLabel: tk.createdAt.toLocaleDateString('pt-BR', {
+          timeZone: APP_TIMEZONE,
           day: '2-digit',
           month: 'short',
           year: 'numeric',
@@ -199,7 +201,7 @@ export class PrismaSettingsRepository implements SettingsRepository {
         action: al.action,
         target: al.targetType,
         ip: al.ip ?? '—',
-        at: al.createdAt.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }),
+        at: al.createdAt.toLocaleDateString('pt-BR', { timeZone: APP_TIMEZONE, day: '2-digit', month: 'short' }),
       })),
       activeSessions: readJson<readonly ActiveSession[]>(settings?.activeSessions, []),
       company: readJson<CompanyProfile>(settings?.company, {}),
@@ -582,6 +584,7 @@ export class PrismaSettingsRepository implements SettingsRepository {
       name: row.name,
       maskedValue: `sk_live_****${rawSecret.slice(-4)}`,
       createdLabel: row.createdAt.toLocaleDateString('pt-BR', {
+        timeZone: APP_TIMEZONE,
         day: '2-digit',
         month: 'short',
         year: 'numeric',

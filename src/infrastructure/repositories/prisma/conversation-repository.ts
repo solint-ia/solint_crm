@@ -15,10 +15,10 @@ import type {
   NewMessageInput,
 } from '@/core/ports/conversation-repository';
 import { prisma, asJson } from '@/infrastructure/db/prisma';
+import { horaLabel } from '@/lib/datetime';
 import { CONVERSATION_INCLUDE, conversationRow } from './mappers';
 
-const nowLabel = (): string =>
-  new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+const nowLabel = (): string => horaLabel(new Date());
 
 const STATUS_LABELS: Readonly<Record<ConversationStatus, string>> = {
   aberta: 'Em andamento',

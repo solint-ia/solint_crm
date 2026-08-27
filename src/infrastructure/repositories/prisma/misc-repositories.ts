@@ -7,6 +7,7 @@ import type { NotificationRepository } from '@/core/ports/notification-repositor
 import type { PipelineRepository } from '@/core/ports/pipeline-repository';
 import { prisma, readJson, asJson } from '@/infrastructure/db/prisma';
 import { aiAgentRow, dealRow, notificationRow, pipelineRow } from './mappers';
+import { dataCurtaLabel } from '@/lib/datetime';
 
 export class PrismaPipelineRepository implements PipelineRepository {
   async listPipelines(accountId: Id): Promise<readonly Pipeline[]> {
@@ -156,7 +157,7 @@ export class PrismaPipelineRepository implements PipelineRepository {
           ...readJson<Deal['history']>(deal.history, []),
           {
             text: `Movido para ${stage.name}`,
-            date: now.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }),
+            date: dataCurtaLabel(now),
           },
         ]),
       },
@@ -203,7 +204,7 @@ export class PrismaPipelineRepository implements PipelineRepository {
         history: asJson([
           {
             text: `Oportunidade criada: ${draft.title} em ${stage.name}`,
-            date: now.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }),
+            date: dataCurtaLabel(now),
           },
         ]),
       },

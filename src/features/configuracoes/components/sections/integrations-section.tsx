@@ -32,6 +32,7 @@ import {
   toggleWebhookAction,
 } from '@/app/(workspace)/configuracoes/actions';
 import { cn } from '@/lib/cn';
+import { APP_TIMEZONE } from '@/lib/datetime';
 
 interface IntegrationsSectionProps {
   readonly connections: readonly ChannelConnection[];
@@ -201,7 +202,7 @@ export function IntegrationsSection({
                   </div>
 
                   <div className="mt-2 text-[11px] text-dim">
-                    Última sincronização: hoje às {new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                    Última sincronização: hoje às {new Date().toLocaleTimeString('pt-BR', { timeZone: APP_TIMEZONE, hour: '2-digit', minute: '2-digit' })}
                   </div>
                 </div>
 

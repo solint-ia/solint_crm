@@ -2,6 +2,7 @@ import type { Priority } from '@/core/domain/conversation';
 import type { Id } from '@/core/domain/shared';
 import type { AutomationEffects } from '@/core/use-cases/run-automations';
 import { prisma } from '@/infrastructure/db/prisma';
+import { dataCurtaLabel, horaLabel } from '@/lib/datetime';
 
 /**
  * Os efeitos das automações, contra o Postgres.
@@ -111,7 +112,7 @@ export const prismaAutomationEffects: AutomationEffects = {
         authorName: 'Automação',
         contentType: 'texto',
         content: { type: 'texto', text },
-        time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+        time: horaLabel(new Date()),
         isPrivate: true,
         origin: 'automacao',
       },
@@ -137,7 +138,7 @@ export const prismaAutomationEffects: AutomationEffects = {
         userId: conversation.assigneeId,
         kind: 'automacao',
         text: text ? `${text} — ${contato}` : `Automação disparada na conversa com ${contato}`,
-        timeLabel: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+        timeLabel: horaLabel(new Date()),
         href: `/conversas?conversa=${conversationId}`,
         read: false,
       },
@@ -156,7 +157,7 @@ export const prismaAutomationEffects: AutomationEffects = {
    */
   async moveDealToStage(accountId: Id, conversationId: Id, stageName: string) {
     const now = new Date();
-    const hoje = now.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+    const hoje = dataCurtaLabel(now);
     const procuraPorNome = { equals: stageName, mode: 'insensitive' as const };
 
     const deal = await prisma.deal.findFirst({

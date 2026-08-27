@@ -39,6 +39,7 @@ import { WhatsAppModal } from '@/features/whatsapp/components/whatsapp-modal';
 import { UnsavedChangesBar } from '@/features/configuracoes/components/unsaved-changes-bar';
 import { cn } from '@/lib/cn';
 import { createInboxAction, updateInboxAction } from '@/app/(workspace)/configuracoes/actions';
+import { APP_TIMEZONE } from '@/lib/datetime';
 
 interface InboxesSectionProps {
   readonly connections: readonly ChannelConnection[];
@@ -487,7 +488,7 @@ function InboxDetail({
           <div className="flex flex-col">
             <span className="text-[11px] font-semibold uppercase text-dim">Última sincronização</span>
             <span className="mt-1 text-xs text-ink font-medium">
-              Hoje às {new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+              Hoje às {new Date().toLocaleTimeString('pt-BR', { timeZone: APP_TIMEZONE, hour: '2-digit', minute: '2-digit' })}
             </span>
           </div>
           <div className="flex flex-col">

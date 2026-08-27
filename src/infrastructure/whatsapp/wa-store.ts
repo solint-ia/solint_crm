@@ -16,6 +16,7 @@ import {
 import type { ChatIdentity } from './wa-identity';
 import type { AdContext } from './wa-message-content';
 import { waEventBus } from './whatsapp-events';
+import { dataCurtaLabel } from '@/lib/datetime';
 
 /**
  * Persistência das mensagens que chegam do WhatsApp.
@@ -242,7 +243,7 @@ const createConversationWith = async (input: CommitInput): Promise<void> => {
         protocols: asJson([
           {
             code: `#AT-${Math.floor(10000 + Math.random() * 90000)}`,
-            date: at.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }),
+            date: dataCurtaLabel(at),
             status: 'Em andamento',
           },
         ]),

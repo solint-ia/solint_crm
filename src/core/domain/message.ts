@@ -1,4 +1,4 @@
-import type { Id } from './shared';
+import type { Id, IsoDateTime } from './shared';
 
 export type MessageAuthorKind = 'contact' | 'agent' | 'ai' | 'system';
 
@@ -48,7 +48,15 @@ export interface Message {
   readonly author: MessageAuthorKind;
   readonly authorName?: string;
   readonly content: MessageContent;
+  /**
+   * Rótulo de exibição ("14:32") gravado no momento da escrita.
+   *
+   * Prefira `createdAt` para mostrar a hora: rótulos escritos antes da correção
+   * de fuso estão em UTC, e este campo não sabe de que dia é.
+   */
   readonly time: string;
+  /** Instante real do envio. Ausente apenas em mensagens otimistas da tela. */
+  readonly createdAt?: IsoDateTime;
   readonly deliveryStatus?: DeliveryStatus;
   /** Nota interna: NUNCA é enviada ao canal externo (regra de negócio crítica). */
   readonly isPrivate: boolean;

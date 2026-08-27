@@ -1,4 +1,5 @@
 import { PhoneNumber } from '@/core/domain/contact';
+import { horaLabel } from '@/lib/datetime';
 import { userOf } from './wa-identity';
 
 /**
@@ -22,8 +23,13 @@ export const toneFor = (key: string): string => {
   return AVATAR_TONES[hash % AVATAR_TONES.length] as string;
 };
 
-export const timeLabel = (date: Date): string =>
-  date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+/**
+ * Rótulo de hora da mensagem.
+ *
+ * O fuso é explícito porque este código roda no worker do Render, cujo relógio
+ * é UTC: sem ele toda mensagem nascia com o rótulo 3 horas adiantado.
+ */
+export const timeLabel = (date: Date): string => horaLabel(date);
 
 /**
  * Código de desconexão do Baileys.

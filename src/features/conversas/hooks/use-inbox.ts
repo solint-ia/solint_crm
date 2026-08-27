@@ -12,6 +12,7 @@ import { activityTimeOf, matchesScope, PRIORITY_WEIGHT } from '@/core/domain/con
 import type { Label } from '@/core/domain/label';
 import type { Message } from '@/core/domain/message';
 import { previewOfMessage } from '@/core/domain/message';
+import { horaLabel } from '@/lib/datetime';
 import type { ComposerMode } from '../components/composer';
 import { useConversationEvents } from '@/features/realtime/conversation-events';
 
@@ -271,7 +272,10 @@ export function useInbox({
         authorName: currentUserName,
         origin: 'crm',
         content: { type: 'text', text },
-        time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+        time: horaLabel(new Date()),
+        // A mensagem otimista já nasce com o instante real: assim a hora na tela
+        // não muda quando a versão do servidor chegar e substituí-la.
+        createdAt: new Date().toISOString(),
         isPrivate,
         deliveryStatus: isPrivate ? undefined : 'enviando',
       };

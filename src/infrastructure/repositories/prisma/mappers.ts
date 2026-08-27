@@ -23,6 +23,7 @@ import type { Deal, Pipeline } from '@/core/domain/pipeline';
 import type { ChannelConnection } from '@/core/domain/settings';
 import type { User } from '@/core/domain/user';
 import { readJson } from '@/infrastructure/db/prisma';
+import { dataCurtaLabel, inicioDoDia } from '@/lib/datetime';
 import type {
   AiAgent as DbAiAgent,
   Automation as DbAutomation,
@@ -96,6 +97,9 @@ export const messageRow = (row: DbMessage): Message => ({
   author: row.author as Message['author'],
   content: readJson<MessageContent>(row.content, { type: 'text', text: '' }),
   time: row.time,
+  // O instante real vai junto para a tela formatar a hora no fuso de exibição.
+  // Sem ele a bolha só teria o rótulo gravado, que nasceu em UTC no servidor.
+  createdAt: row.createdAt.toISOString(),
   isPrivate: row.isPrivate,
   ...(row.authorName ? { authorName: row.authorName } : {}),
   ...(row.deliveryStatus
@@ -108,21 +112,23 @@ export const messageRow = (row: DbMessage): Message => ({
 
 const DAY_MS = 86_400_000;
 
-const startOfDay = (date: Date): number =>
-  new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-
 /**
  * Rótulo do divisor de dia.
  *
  * A versão em memória trazia os divisores prontos no seed. Agora eles são
  * derivados de `createdAt`, que é o instante real — o campo `time` é só um
  * rótulo ("14:32") e não sabe de que dia é.
+ *
+ * O corte do dia sai de `inicioDoDia`, que respeita o fuso de exibição. Com o
+ * corte em UTC, tudo que fosse enviado depois das 21h em Brasília já contava
+ * como o dia seguinte e a conversa da noite aparecia sob "Hoje" na manhã
+ * seguinte.
  */
 const dayLabel = (date: Date, today: number): string => {
-  const diff = Math.round((today - startOfDay(date)) / DAY_MS);
+  const diff = Math.round((today - inicioDoDia(date)) / DAY_MS);
   if (diff <= 0) return 'Hoje';
   if (diff === 1) return 'Ontem';
-  return date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+  return dataCurtaLabel(date);
 };
 
 /** `createdAt` ja faz parte do modelo: e dele que saem os divisores de dia. */
@@ -133,12 +139,12 @@ export const buildTimeline = (
   rows: readonly MessageRow[],
   now: Date = new Date(),
 ): readonly TimelineItem[] => {
-  const today = startOfDay(now);
+  const today = inicioDoDia(now);
   const items: TimelineItem[] = [];
   let currentDay: number | undefined;
 
   for (const row of rows) {
-    const day = startOfDay(row.createdAt);
+    const day = inicioDoDia(row.createdAt);
     if (day !== currentDay) {
       currentDay = day;
       items.push({ kind: 'divider', label: dayLabel(row.createdAt, today) });

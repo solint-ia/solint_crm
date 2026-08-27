@@ -9,6 +9,16 @@ import { ChannelDot } from '@/components/domain/channel-badge';
 import { PRIORITY_LABEL, PRIORITY_TONE } from '@/components/domain/presentation-maps';
 import { LabelChips } from '@/components/domain/label-chip';
 import { cn } from '@/lib/cn';
+import { horaLabel } from '@/lib/datetime';
+
+/**
+ * Mesma regra da bolha: o instante real manda, o rótulo gravado é reserva.
+ * `lastMessageAt` é texto escrito no servidor, e em UTC no histórico antigo.
+ */
+const horaDaConversa = (conversation: Conversation): string =>
+  conversation.lastActivityAt
+    ? horaLabel(new Date(conversation.lastActivityAt))
+    : conversation.lastMessageAt;
 
 interface ConversationListItemProps {
   readonly conversation: Conversation;
@@ -68,7 +78,7 @@ export function ConversationListItem({
             </div>
 
             <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted">
-              {conversation.lastMessageAt}
+              {horaDaConversa(conversation)}
             </span>
           </div>
 

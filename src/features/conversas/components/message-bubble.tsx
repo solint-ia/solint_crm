@@ -3,6 +3,7 @@
 import { Download, FileText, Lock, Mic, Music, Smartphone } from 'lucide-react';
 import type { Message, MessageContent } from '@/core/domain/message';
 import { cn } from '@/lib/cn';
+import { horaDaMensagem } from '@/lib/datetime';
 import { DeliveryTicks } from './delivery-ticks';
 
 const AUDIO_LABEL = 'Mensagem de áudio';
@@ -38,7 +39,7 @@ export function MessageBubble({ message, showAuthorName, onResend }: MessageBubb
           {message.content.type === 'text' ? message.content.text : AUDIO_LABEL}
         </p>
         <footer className="mt-2 text-[11px] font-medium text-amber-600/80 dark:text-amber-400/80">
-          {message.authorName} · {message.time}
+          {message.authorName} · {horaDaMensagem(message)}
         </footer>
       </article>
     );
@@ -94,7 +95,7 @@ export function MessageBubble({ message, showAuthorName, onResend }: MessageBubb
               {message.authorName}
             </span>
           )}
-          <span className="tabular-nums font-mono">{message.time}</span>
+          <span className="tabular-nums font-mono">{horaDaMensagem(message)}</span>
           {!isInbound && message.deliveryStatus && (
             <DeliveryTicks status={message.deliveryStatus} />
           )}

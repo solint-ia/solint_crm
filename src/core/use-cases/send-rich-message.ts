@@ -4,9 +4,9 @@ import type { Message, MessageContent } from '../domain/message';
 import { DomainError, fail, ok, type Id, type Result } from '../domain/shared';
 import { can, type Session } from '../domain/user';
 import type { ConversationRepository } from '../ports/conversation-repository';
+import { horaLabel } from '@/lib/datetime';
 
-const nowLabel = (): string =>
-  new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+const nowLabel = (): string => horaLabel(new Date());
 
 const newId = (): Id => `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 

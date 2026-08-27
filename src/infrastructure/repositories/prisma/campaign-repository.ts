@@ -8,6 +8,7 @@ import type {
 import { NotFoundError, type Id } from '@/core/domain/shared';
 import type { CampaignRepository } from '@/core/ports/campaign-repository';
 import { prisma, readJson, asJson } from '@/infrastructure/db/prisma';
+import { APP_TIMEZONE } from '@/lib/datetime';
 
 export class PrismaCampaignRepository implements CampaignRepository {
   async list(accountId: Id): Promise<readonly Campaign[]> {
@@ -27,7 +28,7 @@ export class PrismaCampaignRepository implements CampaignRepository {
         segmentName: r.segment?.name ?? 'Base geral de contatos',
         templateName: r.template?.name ?? 'Template padrão',
         scheduledLabel: r.scheduledAt
-          ? r.scheduledAt.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+          ? r.scheduledAt.toLocaleDateString('pt-BR', { timeZone: APP_TIMEZONE, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
           : 'Disparo manual',
         metrics: {
           recipients: stats.recipients ?? 0,
@@ -56,7 +57,7 @@ export class PrismaCampaignRepository implements CampaignRepository {
       segmentName: r.segment?.name ?? 'Base geral de contatos',
       templateName: r.template?.name ?? 'Template padrão',
       scheduledLabel: r.scheduledAt
-        ? r.scheduledAt.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+        ? r.scheduledAt.toLocaleDateString('pt-BR', { timeZone: APP_TIMEZONE, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
         : 'Disparo manual',
       metrics: {
         recipients: stats.recipients ?? 0,
@@ -146,7 +147,7 @@ export class PrismaCampaignRepository implements CampaignRepository {
       segmentName: row.segment?.name ?? 'Base geral de contatos',
       templateName: row.template?.name ?? 'Template padrão',
       scheduledLabel: row.scheduledAt
-        ? row.scheduledAt.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+        ? row.scheduledAt.toLocaleDateString('pt-BR', { timeZone: APP_TIMEZONE, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
         : 'Disparo manual',
       metrics: { recipients: 0, sent: 0, delivered: 0, read: 0, failed: 0 },
     };
@@ -178,7 +179,7 @@ export class PrismaCampaignRepository implements CampaignRepository {
       segmentName: row.segment?.name ?? 'Base geral de contatos',
       templateName: row.template?.name ?? 'Template padrão',
       scheduledLabel: row.scheduledAt
-        ? row.scheduledAt.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+        ? row.scheduledAt.toLocaleDateString('pt-BR', { timeZone: APP_TIMEZONE, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
         : 'Disparo manual',
       metrics: {
         recipients: stats.recipients ?? 0,

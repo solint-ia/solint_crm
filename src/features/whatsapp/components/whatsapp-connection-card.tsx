@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { useWhatsAppConnection } from '../hooks/use-whatsapp-connection';
+import { dataHoraLabel } from '@/lib/datetime';
 
 interface WhatsAppConnectionCardProps {
   readonly user: User;
@@ -15,7 +16,7 @@ interface WhatsAppConnectionCardProps {
 }
 
 const formatDateTime = (iso?: string): string =>
-  iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+  iso ? dataHoraLabel(new Date(iso)) : '—';
 
 /**
  * Vinculo entre o perfil do usuário do CRM e o número de WhatsApp pareado.
