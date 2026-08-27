@@ -23,6 +23,7 @@ import { defaultBusinessHours } from '@/core/domain/business-hours';
 import type {
   ArticleDraft,
   AutomationDraft,
+  InboxDeletionImpact,
   InboxDraft,
   InboxSettingsPatch,
   LabelDraft,
@@ -391,6 +392,88 @@ export class PrismaSettingsRepository implements SettingsRepository {
         },
       }),
     );
+  }
+
+  async inboxDeletionImpact(accountId: Id, connectionId: Id): Promise<InboxDeletionImpact> {
+    const inbox = await prisma.inbox.findFirst({
+      where: { id: connectionId, accountId },
+      select: { id: true },
+    });
+    if (!inbox) throw new NotFoundError('Caixa de entrada', connectionId);
+
+    const [conversations, messages, campaigns] = await Promise.all([
+      prisma.conversation.count({ where: { accountId, inboxId: connectionId } }),
+      prisma.message.count({ where: { conversation: { accountId, inboxId: connectionId } } }),
+      prisma.campaign.count({ where: { accountId, inboxId: connectionId } }),
+    ]);
+
+    return { conversations, messages, campaigns };
+  }
+
+  /**
+   * Exclui a caixa e tudo que dependia dela.
+   *
+   * O banco recusa apagar uma caixa que ainda tenha conversa ou campanha
+   * (`onDelete: Restrict` nas duas), e isso é proposital: essas linhas são
+   * histórico de atendimento, não sobra. Então elas são apagadas aqui, de
+   * forma explícita, dentro da mesma transação — nunca por efeito colateral de
+   * um cascade que ninguém leu.
+   *
+   * O que **não** é apagado: os contatos. Eles são da conta, não da caixa, e
+   * costumam aparecer em negócios, campanhas e outras conversas.
+   */
+  async deleteInbox(accountId: Id, connectionId: Id, confirmName: string): Promise<void> {
+    const inbox = await prisma.inbox.findFirst({
+      where: { id: connectionId, accountId },
+      select: { id: true, name: true, channel: true },
+    });
+    if (!inbox) throw new NotFoundError('Caixa de entrada', connectionId);
+
+    if (confirmName.trim() !== inbox.name.trim()) {
+      throw new Error('O nome digitado não confere com o nome da caixa de entrada.');
+    }
+
+    if (inbox.channel === 'whatsapp') {
+      // Comandos pendentes desta caixa perderam o sentido — inclusive envios
+      // para conversas que estão prestes a deixar de existir. Só o
+      // `disconnect` fica, e ele é enfileirado depois da limpeza justamente
+      // para não ser varrido junto.
+      await prisma.whatsAppCommand.deleteMany({ where: { inboxId: connectionId } });
+
+      // A sessão vive no worker, noutro processo: derrubá-la é um pedido, não
+      // uma chamada. A linha da conexão (e as credenciais dentro dela) sai por
+      // cascade junto com a caixa; o comando existe para o socket não ficar de
+      // pé até o próximo reinício do worker.
+      await prisma.whatsAppCommand.create({
+        data: { inboxId: connectionId, kind: 'disconnect', payload: {}, status: 'pending' },
+      });
+    }
+
+    // `Deal.conversationId` é um id solto, sem chave estrangeira — apagar a
+    // conversa deixaria o card do funil apontando para o nada, e o link "abrir
+    // conversa" levaria a um 404.
+    const conversationIds = (
+      await prisma.conversation.findMany({
+        where: { accountId, inboxId: connectionId },
+        select: { id: true },
+      })
+    ).map((row) => row.id);
+
+    await prisma.$transaction([
+      ...(conversationIds.length > 0
+        ? [
+            prisma.deal.updateMany({
+              where: { accountId, conversationId: { in: conversationIds } },
+              data: { conversationId: null },
+            }),
+          ]
+        : []),
+      // As mensagens saem por cascade a partir da conversa, e os destinatários
+      // a partir da campanha.
+      prisma.campaign.deleteMany({ where: { accountId, inboxId: connectionId } }),
+      prisma.conversation.deleteMany({ where: { accountId, inboxId: connectionId } }),
+      prisma.inbox.delete({ where: { id: connectionId, accountId } }),
+    ]);
   }
 
   async saveArticle(accountId: Id, draft: ArticleDraft): Promise<KnowledgeArticle> {

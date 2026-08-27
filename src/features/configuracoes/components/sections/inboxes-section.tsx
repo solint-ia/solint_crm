@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   Clock,
   Globe,
+  Inbox as InboxIcon,
   Link2,
   MoonStar,
   Plus,
@@ -12,6 +13,8 @@ import {
   Radio,
   Send,
   Sun,
+  Trash2,
+  TriangleAlert,
   Zap,
 } from 'lucide-react';
 import type { BusinessHours, Weekday } from '@/core/domain/business-hours';
@@ -38,7 +41,13 @@ import { useToast } from '@/components/ui/toast';
 import { WhatsAppModal } from '@/features/whatsapp/components/whatsapp-modal';
 import { UnsavedChangesBar } from '@/features/configuracoes/components/unsaved-changes-bar';
 import { cn } from '@/lib/cn';
-import { createInboxAction, updateInboxAction } from '@/app/(workspace)/configuracoes/actions';
+import type { InboxDeletionImpact } from '@/core/ports/settings-repository';
+import {
+  createInboxAction,
+  deleteInboxAction,
+  inboxDeletionImpactAction,
+  updateInboxAction,
+} from '@/app/(workspace)/configuracoes/actions';
 import { APP_TIMEZONE } from '@/lib/datetime';
 
 interface InboxesSectionProps {
@@ -78,6 +87,27 @@ export function InboxesSection({ connections }: InboxesSectionProps) {
     router.refresh();
   };
 
+  /**
+   * A caixa excluída sai da lista e a seleção passa para a vizinha.
+   *
+   * Deixar `selectedId` apontando para o que não existe mais faria a coluna da
+   * direita sumir sem explicação — a tela pareceria quebrada logo depois de
+   * uma ação que deu certo.
+   */
+  const handleDeleted = (deletedId: string) => {
+    setConnectionList((prev) => {
+      const next = prev.filter((connection) => connection.id !== deletedId);
+      setSelectedId((current) => (current === deletedId ? (next[0]?.id ?? '') : current));
+      return next;
+    });
+    setDrafts((prev) => {
+      const next = { ...prev };
+      delete next[deletedId];
+      return next;
+    });
+    router.refresh();
+  };
+
   return (
     <div className="flex flex-col gap-6 animate-in fade-in duration-200">
       {/* ============================================================ */}
@@ -110,60 +140,67 @@ export function InboxesSection({ connections }: InboxesSectionProps) {
       {/* ============================================================ */}
       {/* LAYOUT PRINCIPAL: LISTA LATERAL + DETALHES                    */}
       {/* ============================================================ */}
-      <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
-        {/* Coluna Esquerda: Lista de Canais */}
-        <nav aria-label="Caixas de entrada" className="flex flex-col gap-2">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-dim px-1">
-            Canais disponíveis
-          </span>
-          <div className="flex gap-2 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible lg:pb-0">
-            {connectionList.map((connection) => {
-              const draft = drafts[connection.id] ?? connection;
-              const active = connection.id === (selected?.id ?? selectedId);
-              return (
-                <button
-                  key={connection.id}
-                  type="button"
-                  onClick={() => setSelectedId(connection.id)}
-                  aria-current={active ? 'true' : undefined}
-                  className={cn(
-                    'group flex w-full flex-col gap-1.5 rounded-2xl border p-3.5 text-left transition-all',
-                    active
-                      ? 'border-brand/60 bg-blue-500/5 shadow-2xs ring-1 ring-brand/20 dark:bg-blue-500/10'
-                      : 'border-line bg-surface hover:border-brand/30 hover:bg-surface-2 shadow-2xs',
-                  )}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-body font-bold text-ink">
-                      {connection.name}
-                    </span>
-                    <Badge tone={CONNECTION_STATUS_TONE[connection.status]} withDot>
-                      {CONNECTION_STATUS_LABEL[connection.status]}
-                    </Badge>
-                  </div>
+      {/* Sem nenhuma caixa não há o que listar nem o que detalhar: a grade de
+          duas colunas viraria uma coluna vazia ao lado de um vazio. */}
+      {connectionList.length === 0 ? (
+        <EmptyInboxState onCreate={() => setIsNewModalOpen(true)} />
+      ) : (
+        <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
+          {/* Coluna Esquerda: Lista de Canais */}
+          <nav aria-label="Caixas de entrada" className="flex flex-col gap-2">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-dim px-1">
+              Canais disponíveis
+            </span>
+            <div className="flex gap-2 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible lg:pb-0">
+              {connectionList.map((connection) => {
+                const draft = drafts[connection.id] ?? connection;
+                const active = connection.id === (selected?.id ?? selectedId);
+                return (
+                  <button
+                    key={connection.id}
+                    type="button"
+                    onClick={() => setSelectedId(connection.id)}
+                    aria-current={active ? 'true' : undefined}
+                    className={cn(
+                      'group flex w-full flex-col gap-1.5 rounded-2xl border p-3.5 text-left transition-all',
+                      active
+                        ? 'border-brand/60 bg-blue-500/5 shadow-2xs ring-1 ring-brand/20 dark:bg-blue-500/10'
+                        : 'border-line bg-surface hover:border-brand/30 hover:bg-surface-2 shadow-2xs',
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-body font-bold text-ink">
+                        {connection.name}
+                      </span>
+                      <Badge tone={CONNECTION_STATUS_TONE[connection.status]} withDot>
+                        {CONNECTION_STATUS_LABEL[connection.status]}
+                      </Badge>
+                    </div>
 
-                  <div className="flex items-center justify-between gap-2 text-meta text-muted">
-                    <span className="truncate font-mono text-[11px]">
-                      {connection.identifier}
-                    </span>
-                    <OpenNowDot hours={draft.businessHours} />
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </nav>
+                    <div className="flex items-center justify-between gap-2 text-meta text-muted">
+                      <span className="truncate font-mono text-[11px]">
+                        {connection.identifier}
+                      </span>
+                      <OpenNowDot hours={draft.businessHours} />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </nav>
 
-        {/* Coluna Direita: Área de Configuração da Caixa Selecionada */}
-        {selected ? (
-          <InboxDetail
-            key={selected.id}
-            connection={selected}
-            onSaved={(updated) => setDrafts((current) => ({ ...current, [updated.id]: updated }))}
-            onOpenQr={(conn) => setQrTarget(conn)}
-          />
-        ) : null}
-      </div>
+          {/* Coluna Direita: Área de Configuração da Caixa Selecionada */}
+          {selected ? (
+            <InboxDetail
+              key={selected.id}
+              connection={selected}
+              onSaved={(updated) => setDrafts((current) => ({ ...current, [updated.id]: updated }))}
+              onOpenQr={(conn) => setQrTarget(conn)}
+              onDeleted={handleDeleted}
+            />
+          ) : null}
+        </div>
+      )}
 
       {/* Modal Criar Nova Caixa */}
       <CreateInboxModal
@@ -279,7 +316,8 @@ function CreateInboxModal({
         </Field>
 
         <p className="text-meta text-muted">
-          A caixa será configurada com horários de atendimento padrão (Segunda a Sexta, 8h às 18h) prontos para personalizar e parear via QR Code.
+          A caixa será configurada com horários de atendimento padrão (Segunda a Sexta, 8h às 18h)
+          prontos para personalizar e parear via QR Code.
         </p>
 
         <div className="flex justify-end gap-2 border-t border-line pt-4">
@@ -292,6 +330,196 @@ function CreateInboxModal({
         </div>
       </form>
     </Modal>
+  );
+}
+
+/**
+ * Confirmação de exclusão da caixa.
+ *
+ * Pede o nome digitado por escrito. Um "tem certeza?" com dois botões é
+ * respondido no reflexo — e o que está do outro lado deste é o histórico de
+ * atendimento de contatos reais, sem lixeira e sem desfazer. Digitar o nome
+ * obriga a olhar para qual caixa é, que é justamente o erro que este tipo de
+ * ação costuma produzir: apagar a certa pelo motivo errado, ou a errada por
+ * distração.
+ *
+ * Os números vêm do servidor ao abrir. Enquanto não chegam, o botão espera:
+ * confirmar sem saber o tamanho do estrago é o mesmo que não ter confirmado.
+ */
+function DeleteInboxModal({
+  open,
+  connection,
+  onClose,
+  onDeleted,
+}: {
+  readonly open: boolean;
+  readonly connection: ChannelConnection;
+  readonly onClose: () => void;
+  readonly onDeleted: (connectionId: string) => void;
+}) {
+  const [typedName, setTypedName] = useState('');
+  const [impact, setImpact] = useState<InboxDeletionImpact | undefined>();
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+  const { show } = useToast();
+
+  useEffect(() => {
+    if (!open) return;
+
+    setTypedName('');
+    setImpact(undefined);
+    setError(undefined);
+    setIsDeleting(false);
+
+    let cancelled = false;
+    void inboxDeletionImpactAction({ connectionId: connection.id }).then((result) => {
+      if (cancelled) return;
+      if (result.ok && result.impact) setImpact(result.impact);
+      else setError(result.error ?? 'Não foi possível ler o conteúdo desta caixa.');
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, connection.id]);
+
+  const nameMatches = typedName.trim() === connection.name.trim();
+  const canDelete = nameMatches && impact !== undefined && !isDeleting;
+
+  const handleDelete = async () => {
+    if (!canDelete) return;
+
+    setError(undefined);
+    setIsDeleting(true);
+
+    const result = await deleteInboxAction({
+      connectionId: connection.id,
+      confirmName: typedName.trim(),
+    });
+
+    if (!result.ok) {
+      setIsDeleting(false);
+      setError(result.error ?? 'Erro ao excluir a caixa de entrada.');
+      return;
+    }
+
+    show({
+      tone: 'sucesso',
+      title: 'Caixa de entrada excluída',
+      description: `${connection.name} e o histórico dela foram removidos.`,
+    });
+
+    onDeleted(connection.id);
+    onClose();
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`Excluir ${connection.name}`}
+      description="Esta ação é permanente. Não há lixeira e não é possível desfazer."
+      className="max-w-md"
+    >
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void handleDelete();
+        }}
+        className="flex flex-col gap-4 pt-1"
+      >
+        {error ? (
+          <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-meta text-red-600 dark:text-red-400">
+            {error}
+          </p>
+        ) : null}
+
+        <div className="rounded-xl border border-red-line/50 bg-red-soft/40 p-3.5">
+          <div className="flex items-center gap-2">
+            <TriangleAlert className="size-4 shrink-0 text-red-600 dark:text-red-400" />
+            <span className="text-xs font-bold text-ink">O que será apagado</span>
+          </div>
+
+          {impact ? (
+            <ul className="mt-2.5 flex flex-col gap-1 text-xs text-muted">
+              <li>
+                <strong className="text-ink tabular-nums">{impact.conversations}</strong>{' '}
+                {impact.conversations === 1 ? 'conversa' : 'conversas'} desta caixa
+              </li>
+              <li>
+                <strong className="text-ink tabular-nums">{impact.messages}</strong>{' '}
+                {impact.messages === 1 ? 'mensagem' : 'mensagens'} do histórico
+              </li>
+              {impact.campaigns > 0 ? (
+                <li>
+                  <strong className="text-ink tabular-nums">{impact.campaigns}</strong>{' '}
+                  {impact.campaigns === 1 ? 'campanha' : 'campanhas'} que usavam este canal
+                </li>
+              ) : null}
+              {connection.channel === 'whatsapp' ? (
+                <li>A conexão do WhatsApp e o pareamento do número</li>
+              ) : null}
+            </ul>
+          ) : (
+            <p className="mt-2.5 text-xs text-muted">Somando o que há na caixa…</p>
+          )}
+
+          <p className="mt-3 border-t border-red-line/40 pt-2.5 text-[11px] text-muted">
+            Os contatos continuam na conta, com as conversas que tiverem em outras caixas.
+          </p>
+        </div>
+
+        <Field
+          label="Digite o nome da caixa para confirmar"
+          htmlFor={`confirm-delete-${connection.id}`}
+          hint={connection.name}
+        >
+          <TextInput
+            id={`confirm-delete-${connection.id}`}
+            value={typedName}
+            onChange={(event) => setTypedName(event.target.value)}
+            placeholder={connection.name}
+            autoComplete="off"
+            autoFocus
+          />
+        </Field>
+
+        <div className="flex justify-end gap-2 border-t border-line pt-4">
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button
+            type="submit"
+            variant="danger"
+            icon={<Trash2 className="size-3.5" />}
+            disabled={!canDelete}
+          >
+            {isDeleting ? 'Excluindo…' : 'Excluir definitivamente'}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/** Nenhuma caixa restou — a coluna de detalhes precisa dizer o que fazer agora. */
+function EmptyInboxState({ onCreate }: { readonly onCreate: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-line bg-surface-2/40 px-6 py-14 text-center">
+      <div className="flex size-12 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
+        <InboxIcon className="size-6" />
+      </div>
+      <div>
+        <h3 className="font-display text-base font-bold text-ink">Nenhuma caixa de entrada</h3>
+        <p className="mt-1 max-w-sm text-xs text-muted">
+          Sem uma caixa conectada, a conta não recebe mensagem nenhuma. Crie uma para parear um
+          número de WhatsApp.
+        </p>
+      </div>
+      <Button size="sm" icon={<Plus className="size-4" />} onClick={onCreate}>
+        Nova caixa
+      </Button>
+    </div>
   );
 }
 
@@ -324,11 +552,14 @@ function InboxDetail({
   connection,
   onSaved,
   onOpenQr,
+  onDeleted,
 }: {
   readonly connection: ChannelConnection;
   readonly onSaved: (connection: ChannelConnection) => void;
   readonly onOpenQr: (connection: ChannelConnection) => void;
+  readonly onDeleted: (connectionId: string) => void;
 }) {
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [hours, setHours] = useState<BusinessHours>(connection.businessHours);
   const [away, setAway] = useState(connection.awayMessage);
   const [greeting, setGreeting] = useState(connection.greeting);
@@ -442,13 +673,12 @@ function InboxDetail({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-display text-lg font-bold text-ink">
-                  {connection.name}
-                </h3>
+                <h3 className="font-display text-lg font-bold text-ink">{connection.name}</h3>
                 <ChannelBadge channel={connection.channel} />
               </div>
               <p className="font-mono text-xs text-muted">
-                {connection.identifier} · {describeChannel(connection.channel).label} ({connection.provider})
+                {connection.identifier} · {describeChannel(connection.channel).label} (
+                {connection.provider})
               </p>
             </div>
           </div>
@@ -486,9 +716,16 @@ function InboxDetail({
             </div>
           </div>
           <div className="flex flex-col">
-            <span className="text-[11px] font-semibold uppercase text-dim">Última sincronização</span>
+            <span className="text-[11px] font-semibold uppercase text-dim">
+              Última sincronização
+            </span>
             <span className="mt-1 text-xs text-ink font-medium">
-              Hoje às {new Date().toLocaleTimeString('pt-BR', { timeZone: APP_TIMEZONE, hour: '2-digit', minute: '2-digit' })}
+              Hoje às{' '}
+              {new Date().toLocaleTimeString('pt-BR', {
+                timeZone: APP_TIMEZONE,
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
             </span>
           </div>
           <div className="flex flex-col">
@@ -510,9 +747,7 @@ function InboxDetail({
               <Clock className="size-4" />
             </div>
             <div>
-              <h4 className="font-display text-sm font-bold text-ink">
-                Horário de atendimento
-              </h4>
+              <h4 className="font-display text-sm font-bold text-ink">Horário de atendimento</h4>
               <p className="text-xs text-muted">
                 {summary} · Fuso: {hours.timezone}
               </p>
@@ -576,9 +811,7 @@ function InboxDetail({
                       />
                     </div>
                   ) : (
-                    <span className="text-xs text-dim font-medium italic">
-                      Sem atendimento
-                    </span>
+                    <span className="text-xs text-dim font-medium italic">Sem atendimento</span>
                   )}
                 </li>
               );
@@ -592,9 +825,7 @@ function InboxDetail({
       {/* ------------------------------------------------------------ */}
       <div className="flex flex-col gap-3">
         <div>
-          <h4 className="font-display text-sm font-bold text-ink">
-            Mensagens automáticas
-          </h4>
+          <h4 className="font-display text-sm font-bold text-ink">Mensagens automáticas</h4>
           <p className="text-xs text-muted">
             Configure respostas automáticas enviadas em momentos-chave do ciclo de atendimento.
           </p>
@@ -697,6 +928,49 @@ function InboxDetail({
           </div>
         </div>
       </div>
+
+      {/* ------------------------------------------------------------ */}
+      {/* CARD 5: ZONA DE RISCO                                        */}
+      {/* ------------------------------------------------------------ */}
+      <div className="rounded-2xl border border-red-line/50 bg-red-soft/30 p-5">
+        <div className="flex items-center gap-2.5 border-b border-red-line/40 pb-4">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-red-500/10 text-red-600 dark:text-red-400">
+            <TriangleAlert className="size-4" />
+          </div>
+          <div>
+            <h4 className="font-display text-sm font-bold text-ink">Zona de risco</h4>
+            <p className="text-xs text-muted">Ações daqui não podem ser desfeitas.</p>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-ink">Excluir esta caixa de entrada</p>
+            <p className="mt-0.5 text-[11px] text-muted">
+              A conexão do WhatsApp é encerrada e as conversas e mensagens desta caixa são apagadas
+              junto. Os contatos permanecem na conta.
+            </p>
+          </div>
+
+          <Button
+            type="button"
+            variant="danger"
+            size="sm"
+            icon={<Trash2 className="size-3.5" />}
+            onClick={() => setIsDeleteOpen(true)}
+            className="shrink-0"
+          >
+            Excluir caixa
+          </Button>
+        </div>
+      </div>
+
+      <DeleteInboxModal
+        open={isDeleteOpen}
+        connection={connection}
+        onClose={() => setIsDeleteOpen(false)}
+        onDeleted={onDeleted}
+      />
 
       {/* ============================================================ */}
       {/* BARRA FIXA INFERIOR FLUTUANTE DE ALTERAÇÕES                  */}

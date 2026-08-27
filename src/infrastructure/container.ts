@@ -101,7 +101,7 @@ const globalRef = globalThis as typeof globalThis & { __solintContainer?: Contai
 if (
   process.env.NODE_ENV !== 'production' ||
   (globalRef.__solintContainer &&
-    typeof globalRef.__solintContainer.settings.createInbox !== 'function')
+    typeof globalRef.__solintContainer.settings.deleteInbox !== 'function')
 ) {
   delete globalRef.__solintContainer;
 }

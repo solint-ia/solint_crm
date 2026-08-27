@@ -73,6 +73,19 @@ export interface ArticleDraft {
   readonly tags: readonly string[];
 }
 
+/**
+ * O que some junto com a caixa de entrada.
+ *
+ * Existe para a confirmação poder dizer números em vez de "isto é
+ * irreversível": "3 conversas e 148 mensagens" é uma informação sobre a qual
+ * dá para decidir; um aviso genérico só transfere o risco para quem clica.
+ */
+export interface InboxDeletionImpact {
+  readonly conversations: number;
+  readonly messages: number;
+  readonly campaigns: number;
+}
+
 export interface SettingsRepository {
   get(accountId: Id): Promise<WorkspaceSettings>;
   setAutomationEnabled(accountId: Id, automationId: Id, enabled: boolean): Promise<Automation>;
@@ -89,6 +102,20 @@ export interface SettingsRepository {
     connectionId: Id,
     patch: InboxSettingsPatch,
   ): Promise<ChannelConnection>;
+  /**
+   * Apaga a caixa **com o que estava dentro dela**: conversas, mensagens e
+   * campanhas. Não há lixeira — o que sai daqui não volta.
+   *
+   * `confirmName` é o nome exato da caixa, e a exclusão só acontece se ele
+   * bater. A confirmação vive aqui, e não só na tela, porque a tela é a parte
+   * fácil de contornar: uma chamada direta à Server Action apagaria o
+   * histórico de atendimento de uma conta inteira sem nenhum obstáculo. E é
+   * aqui que o nome já foi lido do banco — checar em qualquer outro lugar
+   * custaria uma segunda consulta para saber o que esta já sabe.
+   */
+  deleteInbox(accountId: Id, connectionId: Id, confirmName: string): Promise<void>;
+  /** Quanto histórico a exclusão levaria junto. Só conta — não apaga nada. */
+  inboxDeletionImpact(accountId: Id, connectionId: Id): Promise<InboxDeletionImpact>;
 
   saveArticle(accountId: Id, draft: ArticleDraft): Promise<KnowledgeArticle>;
   deleteArticle(accountId: Id, articleId: Id): Promise<void>;

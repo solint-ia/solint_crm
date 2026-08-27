@@ -11,6 +11,7 @@ import { can } from '@/core/domain/user';
 import { WEEKDAYS } from '@/core/domain/business-hours';
 import { createInvite } from '@/infrastructure/auth/invites';
 import { container } from '@/infrastructure/container';
+import type { InboxDeletionImpact } from '@/core/ports/settings-repository';
 import { PrismaSettingsRepository } from '@/infrastructure/repositories/prisma/settings-repository';
 
 export interface ActionResult {
@@ -242,6 +243,77 @@ export async function updateInboxAction(input: unknown): Promise<ActionResult> {
     return { ok: true };
   } catch (error) {
     return failureOf(error, 'Erro ao salvar a caixa de entrada.');
+  }
+}
+
+const inboxImpactSchema = z.object({ connectionId: z.string().min(1).max(64) });
+
+/**
+ * Quanto histórico a exclusão levaria junto — lido quando o modal abre.
+ *
+ * Fica fora do payload de `WorkspaceSettings` de propósito: contar mensagem de
+ * todas as caixas a cada carregamento da tela de configurações custaria caro
+ * para um número que só interessa a quem está prestes a apagar uma delas.
+ */
+export async function inboxDeletionImpactAction(
+  input: unknown,
+): Promise<ActionResult & { readonly impact?: InboxDeletionImpact }> {
+  const parsed = inboxImpactSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: 'Caixa de entrada inválida.' };
+  }
+
+  try {
+    const session = await assertCanWrite();
+    const settingsRepo =
+      typeof container.settings.inboxDeletionImpact === 'function'
+        ? container.settings
+        : new PrismaSettingsRepository();
+    const impact = await settingsRepo.inboxDeletionImpact(
+      session.account.id,
+      parsed.data.connectionId,
+    );
+    return { ok: true, impact };
+  } catch (error) {
+    return failureOf(error, 'Erro ao consultar o conteúdo da caixa de entrada.');
+  }
+}
+
+const deleteInboxSchema = z.object({
+  connectionId: z.string().min(1).max(64),
+  /** Nome exato da caixa, digitado por quem pediu a exclusão. */
+  confirmName: z.string().trim().min(1).max(100),
+});
+
+/**
+ * Exclui a caixa de entrada com as conversas e mensagens dentro.
+ *
+ * A operação é irreversível e não tem lixeira, então ela não se contenta com o
+ * id: quem chama precisa repetir o nome da caixa, e é o repositório que
+ * confere contra o nome que está no banco.
+ */
+export async function deleteInboxAction(input: unknown): Promise<ActionResult> {
+  const parsed = deleteInboxSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: 'Dados inválidos para excluir a caixa de entrada.' };
+  }
+
+  try {
+    const session = await assertCanWrite();
+    const settingsRepo =
+      typeof container.settings.deleteInbox === 'function'
+        ? container.settings
+        : new PrismaSettingsRepository();
+    await settingsRepo.deleteInbox(
+      session.account.id,
+      parsed.data.connectionId,
+      parsed.data.confirmName,
+    );
+    revalidatePath('/configuracoes');
+    revalidatePath('/conversas');
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao excluir a caixa de entrada.');
   }
 }
 
