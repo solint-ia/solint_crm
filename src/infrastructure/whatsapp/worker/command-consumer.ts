@@ -319,7 +319,25 @@ export class CommandConsumer {
       data: { externalId, deliveryStatus: 'enviado' },
     });
 
-    await this.emitMessageUpdate(accountId, conversationId, messageId);
+    // O aviso para a tela é cortesia, e por isso não pode derrubar o comando.
+    //
+    // A mensagem **já saiu** e já está marcada como enviada duas linhas acima.
+    // Quando este `emit` falhava — e falhava por esgotamento do pool de conexões,
+    // nada a ver com o envio — a exceção subia até o `catch` de `process`, que
+    // chamava `markMessageFailed` e regravava `falha` por cima do `enviado`. A
+    // tela mostrava o alerta vermelho e oferecia reenviar uma mensagem que o
+    // destinatário já tinha recebido.
+    //
+    // Perder o aviso custa a bolha não atualizar sozinha até o próximo carregamento.
+    // Perder a verdade sobre a entrega custava uma mensagem duplicada.
+    try {
+      await this.emitMessageUpdate(accountId, conversationId, messageId);
+    } catch (error) {
+      console.warn(
+        `[CommandConsumer] Envio ${messageId} concluído, mas o aviso à tela falhou:`,
+        error,
+      );
+    }
   }
 
   /** Marca a bolha como falha quando o comando de envio não pôde ser executado. */
@@ -341,7 +359,15 @@ export class CommandConsumer {
 
     try {
       await prisma.message.updateMany({
-        where: { id: messageId, conversationId, conversation: { accountId } },
+        where: {
+          id: messageId,
+          conversationId,
+          conversation: { accountId },
+          // Nunca rebaixar o que o canal já confirmou. Qualquer passo posterior
+          // ao envio que venha a falhar — hoje o aviso à tela, amanhã outro —
+          // encontra esta guarda em vez de reescrever o histórico.
+          deliveryStatus: { notIn: ['enviado', 'entregue', 'lido'] },
+        },
         data: { deliveryStatus: 'falha' },
       });
       await this.emitMessageUpdate(accountId, conversationId, messageId);

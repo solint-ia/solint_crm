@@ -324,10 +324,23 @@ export const mediaStore = {
     // camada acima: o `undefined` deixa o chamador cair no caminho alternativo
     // que ele já tem, em vez de gravar um `404` no banco.
     //
-    // Sem Storage configurado a regra não se aplica: ali o cache é o depósito,
-    // por decisão registrada em `isStorageConfigured`, e a URL funciona.
-    if (isStorageConfigured() && !durable) {
-      console.warn(`[wa-media-store] Mídia ${id} não pôde ser guardada de forma durável.`);
+    // **Quem serve a rota decide se o disco vale como depósito.** Rodando dentro
+    // do site, o cache local é alcançável e a URL funciona — é a queda graciosa
+    // que `isStorageConfigured` autoriza. No worker não: ele é outro processo,
+    // quase sempre noutra máquina, e o disco dele nunca é lido por quem atende o
+    // navegador. Sem esta distinção, um worker sem `SUPABASE_URL` gravava a
+    // mídia no próprio disco, devolvia a URL, e toda foto recebida virava um
+    // `404` silencioso na tela — com a linha do banco apontando para o vazio.
+    const precisaSerDuravel = isStorageConfigured() || Boolean(process.env.SOLINT_WORKER);
+
+    if (precisaSerDuravel && !durable) {
+      console.warn(
+        `[wa-media-store] Mídia ${id} não pôde ser guardada de forma durável` +
+          (isStorageConfigured()
+            ? '.'
+            : ': o worker não tem SUPABASE_URL/SUPABASE_SECRET_KEY, e o disco dele ' +
+              'não é alcançável por quem serve /api/whatsapp/media.'),
+      );
       return undefined;
     }
 
