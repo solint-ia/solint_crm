@@ -122,6 +122,10 @@ export class WhatsAppService {
     // com WhatsApp salvo faziam o banco decidir qual delas seria atendida — e a
     // resposta podia mudar a cada reinicio, sem aviso. Atender varias caixas ao
     // mesmo tempo e o papel do worker (`src/worker.ts`), nao deste servico.
+    if (process.env.VERCEL || process.env.NEXT_RUNTIME) {
+      return;
+    }
+
     setTimeout(async () => {
       try {
         const saved = await prisma.whatsAppConnection.findMany({
