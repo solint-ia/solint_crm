@@ -136,7 +136,7 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
     const pendings: PendingConversation[] = attentionCandidates.slice(0, 8).map((c) => {
       const isUnassigned = !c.assigneeId;
       const isUnread = c.unreadCount > 0;
-      const priority = (c.priority as PendingConversation['priority']) || 'media';
+      const priority = (c.priority as PendingConversation['priority']) || 'baixa';
 
       return {
         conversationId: c.id,

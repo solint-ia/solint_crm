@@ -17,19 +17,14 @@ const TONES = [
   { hz: 1320, atraso: 0.1, duracao: 0.18 },
 ] as const;
 
-const PICO = 0.06;
+const MAX_PICO = 0.25;
+const STORAGE_VOLUME_KEY = 'solint_notif_volume';
+const STORAGE_MUTED_KEY = 'solint_notif_muted';
 
 type AudioContextCtor = typeof AudioContext;
 
 let contexto: AudioContext | null = null;
 
-/**
- * O contexto é criado uma vez e reaproveitado.
- *
- * Criar um por toque estoura o limite do navegador em poucos minutos de uso —
- * o Chrome permite meia dúzia por página e depois recusa em silêncio, o que
- * apareceria como "o som parou de funcionar depois de um tempo".
- */
 const obterContexto = (): AudioContext | null => {
   if (contexto) return contexto;
   if (typeof window === 'undefined') return null;
@@ -47,23 +42,68 @@ const obterContexto = (): AudioContext | null => {
   }
 };
 
+export const getNotificationVolume = (): number => {
+  if (typeof window === 'undefined') return 80;
+  try {
+    const saved = localStorage.getItem(STORAGE_VOLUME_KEY);
+    if (saved !== null) {
+      const parsed = Number.parseInt(saved, 10);
+      if (!Number.isNaN(parsed) && parsed >= 0 && parsed <= 100) return parsed;
+    }
+  } catch {
+    // Ignora restrições de localStorage
+  }
+  return 80;
+};
+
+export const setNotificationVolume = (volume: number): void => {
+  if (typeof window === 'undefined') return;
+  const clamped = Math.max(0, Math.min(100, Math.round(volume)));
+  try {
+    localStorage.setItem(STORAGE_VOLUME_KEY, String(clamped));
+    window.dispatchEvent(new CustomEvent('solint_notif_volume_changed', { detail: { volume: clamped } }));
+  } catch {
+    // Ignora
+  }
+};
+
+export const isNotificationMuted = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  try {
+    return localStorage.getItem(STORAGE_MUTED_KEY) === 'true';
+  } catch {
+    return false;
+  }
+};
+
+export const setNotificationMuted = (muted: boolean): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(STORAGE_MUTED_KEY, String(muted));
+    window.dispatchEvent(new CustomEvent('solint_notif_volume_changed', { detail: { muted } }));
+  } catch {
+    // Ignora
+  }
+};
+
 /**
- * Toca o aviso.
- *
- * Falha em silêncio por princípio: o navegador bloqueia áudio em página que
- * ainda não recebeu interação, e uma exceção aqui derrubaria o processamento
- * do evento — a mensagem deixaria de aparecer por causa do som dela.
+ * Toca o aviso com o volume configurado.
  */
-export const playNotificationSound = (): void => {
+export const playNotificationSound = (forceVolume?: number): void => {
+  const muted = isNotificationMuted();
+  if (muted && forceVolume === undefined) return;
+
+  const volume = forceVolume ?? getNotificationVolume();
+  if (volume <= 0) return;
+
   const ctx = obterContexto();
   if (!ctx) return;
 
-  // A página pode ter sido aberta em segundo plano: o contexto nasce suspenso e
-  // só volta com um gesto. Pedir a retomada aqui aproveita o primeiro que vier.
   if (ctx.state === 'suspended') void ctx.resume().catch(() => undefined);
 
   try {
     const agora = ctx.currentTime;
+    const peakGain = (volume / 100) * MAX_PICO;
 
     for (const tom of TONES) {
       const oscilador = ctx.createOscillator();
@@ -72,12 +112,10 @@ export const playNotificationSound = (): void => {
       oscilador.type = 'sine';
       oscilador.frequency.value = tom.hz;
 
-      // A rampa existe para não estalar: um ganho que salta de 0 para o pico
-      // produz um clique audível na maioria das caixas de som.
       const inicio = agora + tom.atraso;
       const fim = inicio + tom.duracao;
       ganho.gain.setValueAtTime(0, inicio);
-      ganho.gain.linearRampToValueAtTime(PICO, inicio + 0.015);
+      ganho.gain.linearRampToValueAtTime(peakGain, inicio + 0.015);
       ganho.gain.exponentialRampToValueAtTime(0.0001, fim);
 
       oscilador.connect(ganho).connect(ctx.destination);
@@ -85,6 +123,10 @@ export const playNotificationSound = (): void => {
       oscilador.stop(fim + 0.02);
     }
   } catch {
-    // Contexto fechado pelo navegador, aba descartada: nada a fazer.
+    // Contexto fechado pelo navegador, aba descartada
   }
+};
+
+export const testNotificationSound = (previewVolume?: number): void => {
+  playNotificationSound(previewVolume ?? getNotificationVolume());
 };

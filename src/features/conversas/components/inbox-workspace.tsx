@@ -18,6 +18,7 @@ import { InboxSortMenu } from './inbox-sort-menu';
 import { ContextPanel } from './context-panel';
 import { ConversationListItem } from './conversation-list-item';
 import { InboxDisconnectedState } from './inbox-disconnected-state';
+import { NotificationVolumeControl } from './notification-volume-control';
 
 import {
   activeFilterCount,
@@ -256,6 +257,7 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
                 sort={inbox.sort}
                 onChange={inbox.setSort}
               />
+              <NotificationVolumeControl />
             </div>
           </div>
 

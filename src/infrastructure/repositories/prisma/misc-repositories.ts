@@ -197,7 +197,7 @@ export class PrismaPipelineRepository implements PipelineRepository {
         company: draft.companyName ?? null,
         amountInCents: draft.value,
         ownerName: draft.ownerName ?? 'Não atribuído',
-        priority: draft.priority ?? 'media',
+        priority: draft.priority ?? 'baixa',
         nextAction: draft.nextAction ?? 'Entrar em contato para qualificação',
         enteredStageAt: now.toISOString(),
         stageAgeLabel: 'hoje',
@@ -466,6 +466,13 @@ export class PrismaNotificationRepository implements NotificationRepository {
       take: 50,
     });
     return rows.map(notificationRow);
+  }
+
+  async markAsRead(accountId: Id, userId: Id, notificationId: Id): Promise<void> {
+    await prisma.notification.updateMany({
+      where: { id: notificationId, accountId, OR: [{ userId }, { userId: null }] },
+      data: { read: true },
+    });
   }
 
   async markAllAsRead(accountId: Id, userId: Id): Promise<void> {

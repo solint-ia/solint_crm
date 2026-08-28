@@ -240,7 +240,7 @@ model Conversation {
   queue              String
   status             String
   statusLabel        String
-  priority           String
+  priority           String    @default("baixa")
   assigneeId         String?
   assigneeName       String?
   unreadCount        Int       @default(0)
@@ -369,7 +369,7 @@ model Deal {
   /// Centavos. Dinheiro nunca é float.
   amountInCents  Int
   ownerName      String
-  priority       String
+  priority       String    @default("baixa")
   enteredStageAt String
   stageAgeLabel  String
   nextAction     String

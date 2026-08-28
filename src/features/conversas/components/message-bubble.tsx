@@ -1,8 +1,10 @@
 'use client';
 
-import { Ban, Download, FileText, Lock, Mic, Music, Reply, Smartphone, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { Ban, Download, FileText, Lock, Maximize2, Mic, Music, Reply, Smartphone, Trash2 } from 'lucide-react';
 import { previewOfMessage, type Message, type MessageContent } from '@/core/domain/message';
 import { WaText } from '@/components/domain/wa-text';
+import { MediaLightbox, type LightboxMedia } from '@/components/ui/media-lightbox';
 import { cn } from '@/lib/cn';
 import { horaDaMensagem } from '@/lib/datetime';
 import { DeliveryTicks } from './delivery-ticks';
@@ -30,6 +32,8 @@ export function MessageBubble({
   onReply,
   onDelete,
 }: MessageBubbleProps) {
+  const [lightboxMedia, setLightboxMedia] = useState<LightboxMedia | null>(null);
+
   if (message.content.type === 'system') {
     return (
       <div className="my-2.5 flex items-center justify-center">
@@ -88,129 +92,103 @@ export function MessageBubble({
   const deleted = Boolean(message.deletedAt);
   const sentFromPhone = !isInbound && message.origin === 'canal';
   const authorLabel = isAi || (isInbound && showAuthorName) ? message.authorName : undefined;
-  // Uma mensagem apagada não tem mídia nem legenda: ela é o aviso de que houve
-  // algo ali. Molduras especiais (figurinha, GIF) deixam de valer junto.
   const frameless = !deleted && isFrameless(message.content);
 
-  // O WhatsApp só permite remover para todos o que **nós** mandamos; oferecer o
-  // botão numa mensagem do contato prometeria algo que o protocolo recusa.
   const canDelete = Boolean(onDelete) && !isInbound && !deleted;
   const canReply = Boolean(onReply) && !deleted;
 
   return (
-    <article
-      className={cn(
-        'group/mensagem flex w-full items-end gap-1.5',
-        isInbound ? 'justify-start' : 'justify-end',
-      )}
-    >
-      {!isInbound && (canReply || canDelete) ? (
-        <MessageActions
-          message={message}
-          {...(canReply && onReply ? { onReply } : {})}
-          {...(canDelete && onDelete ? { onDelete } : {})}
-        />
-      ) : null}
-
-      <div
+    <>
+      <article
         className={cn(
-          'max-w-[82%] sm:max-w-[72%] text-sm leading-relaxed transition-all',
-          frameless
-            ? 'flex flex-col gap-1'
-            : cn(
-                'rounded-2xl px-4 py-2.5 shadow-xs',
-                isInbound && 'rounded-tl-xs border border-line bg-surface text-ink',
-                !isInbound &&
-                  !isAi &&
-                  'rounded-tr-xs bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-xs shadow-blue-600/15',
-                isAi && 'rounded-tr-xs border border-cyan-500/30 bg-cyan-500/10 text-cyan-800 dark:text-cyan-200',
-              ),
-          !frameless && message.content.type === 'image' && 'p-1.5',
+          'group/mensagem flex w-full items-end gap-1.5',
+          isInbound ? 'justify-start' : 'justify-end',
         )}
       >
-        {authorLabel && (
-          <p
-            className={cn(
-              'text-[11px] font-bold tracking-tight opacity-90',
-              message.content.type === 'image' ? 'px-2.5 pt-1.5' : 'mb-1 text-cyan-600 dark:text-cyan-400',
-            )}
-          >
-            {authorLabel}
-          </p>
-        )}
+        {!isInbound && (canReply || canDelete) ? (
+          <MessageActions
+            message={message}
+            {...(canReply && onReply ? { onReply } : {})}
+            {...(canDelete && onDelete ? { onDelete } : {})}
+          />
+        ) : null}
 
-        {quoted && !deleted ? <QuotedPreview message={quoted} inbound={isInbound} /> : null}
-
-        {deleted ? (
-          <p className="flex items-center gap-1.5 italic opacity-80">
-            <Ban className="size-3.5 shrink-0" />
-            {isInbound ? 'Esta mensagem foi apagada' : 'Você apagou esta mensagem'}
-          </p>
-        ) : (
-          <MediaContent content={message.content} />
-        )}
-
-        <footer
+        <div
           className={cn(
-            'flex items-center justify-end gap-1.5 text-[11px] font-medium opacity-80',
-            frameless ? 'mt-0' : 'mt-1.5',
-            message.content.type === 'image' && !frameless && 'px-2 pb-1',
+            'max-w-[82%] sm:max-w-[72%] text-sm leading-relaxed transition-all',
+            frameless
+              ? 'flex flex-col gap-1'
+              : cn(
+                  'rounded-2xl px-4 py-2.5 shadow-xs',
+                  isInbound && 'rounded-tl-xs border border-line bg-surface text-ink',
+                  !isInbound &&
+                    !isAi &&
+                    'rounded-tr-xs bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-xs shadow-blue-600/15',
+                  isAi && 'rounded-tr-xs border border-cyan-500/30 bg-cyan-500/10 text-cyan-800 dark:text-cyan-200',
+                ),
+            !frameless && message.content.type === 'image' && 'p-1.5',
           )}
         >
-          {sentFromPhone && (
-            <span className="mr-auto flex items-center gap-1 opacity-90" title="Enviada pelo aparelho pareado">
-              <Smartphone className="size-3" />
-              {message.authorName}
-            </span>
-          )}
-          <span className="tabular-nums font-mono">{horaDaMensagem(message)}</span>
-          {/* Mensagem apagada não tem estado de entrega a relatar: os ticks
-              descreveriam o percurso de um conteúdo que não existe mais. */}
-          {!isInbound && !deleted && message.deliveryStatus && (
-            <DeliveryTicks status={message.deliveryStatus} />
-          )}
-        </footer>
-
-        {/* O aviso de falha não depende mais de haver um `onResend`.
-            Sem ele, uma mensagem que o canal recusou aparecia igual às outras,
-            com um ícone de 12px como única diferença — e quem escreveu seguia
-            achando que a pessoa tinha recebido. O texto é o aviso; tentar de
-            novo é o extra que só existe onde alguém sabe como refazer o envio. */}
-        {!deleted &&
-          message.deliveryStatus === 'falha' &&
-          (onResend ? (
-            <button
-              type="button"
-              onClick={() => onResend(message.id)}
-              className="mt-1.5 block text-right text-xs font-semibold text-red-500 hover:underline"
+          {authorLabel && (
+            <p
+              className={cn(
+                'text-[11px] font-bold tracking-tight opacity-90',
+                message.content.type === 'image' ? 'px-2.5 pt-1.5' : 'mb-1 text-cyan-600 dark:text-cyan-400',
+              )}
             >
-              Não entregue · Clique para tentar novamente
-            </button>
-          ) : (
-            <p className="mt-1.5 text-right text-xs font-semibold text-red-500">
-              Não entregue pelo canal
+              {authorLabel}
             </p>
-          ))}
-      </div>
+          )}
 
-      {isInbound && canReply ? (
-        <MessageActions message={message} {...(onReply ? { onReply } : {})} />
-      ) : null}
-    </article>
+          {quoted && !deleted ? <QuotedPreview message={quoted} inbound={isInbound} /> : null}
+
+          {deleted ? (
+            <p className="flex items-center gap-1.5 italic opacity-80">
+              <Ban className="size-3.5 shrink-0" />
+              {isInbound ? 'Esta mensagem foi apagada' : 'Você apagou esta mensagem'}
+            </p>
+          ) : (
+            <MediaContent content={message.content} onOpenLightbox={setLightboxMedia} />
+          )}
+
+          <footer
+            className={cn(
+              'flex items-center justify-end gap-1.5 text-[11px] font-medium opacity-80',
+              frameless ? 'mt-0' : 'mt-1.5',
+              message.content.type === 'image' && !frameless && 'px-2 pb-1',
+            )}
+          >
+            {sentFromPhone && (
+              <span title="Enviada direto pelo WhatsApp">
+                <Smartphone className="size-3 opacity-70" />
+              </span>
+            )}
+            <span>{horaDaMensagem(message)}</span>
+            {!isInbound && message.deliveryStatus && (
+              <DeliveryTicks
+                status={message.deliveryStatus}
+                {...(message.deliveryStatus === 'falha' && onResend
+                  ? { onRetry: () => onResend(message.id) }
+                  : {})}
+              />
+            )}
+          </footer>
+        </div>
+
+        {isInbound && (canReply || canDelete) ? (
+          <MessageActions
+            message={message}
+            {...(canReply && onReply ? { onReply } : {})}
+            {...(canDelete && onDelete ? { onDelete } : {})}
+          />
+        ) : null}
+      </article>
+
+      <MediaLightbox media={lightboxMedia} onClose={() => setLightboxMedia(null)} />
+    </>
   );
 }
 
-/**
- * Ações da mensagem: responder e apagar.
- *
- * Ficam **fora** do balão, do lado de dentro da conversa, e só aparecem sob o
- * cursor. Dentro do balão elas disputariam espaço com o texto em toda mensagem
- * curta; visíveis o tempo todo, transformariam a leitura da conversa numa
- * parede de ícones.
- *
- * `focus-within` acompanha o `hover` porque quem navega por teclado também
- * precisa alcançá-las — sem isso o botão existiria só para quem usa mouse.
- */
 function MessageActions({
   message,
   onReply,
@@ -221,42 +199,31 @@ function MessageActions({
   readonly onDelete?: (message: Message) => void;
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-0.5 self-center opacity-0 transition-opacity group-hover/mensagem:opacity-100 focus-within:opacity-100">
-      {onReply ? (
+    <div className="flex items-center gap-0.5 opacity-0 group-hover/mensagem:opacity-100 transition-opacity">
+      {onReply && (
         <button
           type="button"
           onClick={() => onReply(message)}
-          title="Responder esta mensagem"
-          aria-label="Responder esta mensagem"
-          className="flex size-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-brand"
+          title="Responder"
+          className="rounded-lg p-1.5 text-muted hover:bg-surface-2 hover:text-ink transition-colors"
         >
           <Reply className="size-3.5" />
         </button>
-      ) : null}
-
-      {onDelete ? (
+      )}
+      {onDelete && (
         <button
           type="button"
           onClick={() => onDelete(message)}
-          title="Apagar para todos"
-          aria-label="Apagar mensagem para todos"
-          className="flex size-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-red-500"
+          title="Apagar mensagem"
+          className="rounded-lg p-1.5 text-muted hover:bg-red-500/15 hover:text-red-500 transition-colors"
         >
           <Trash2 className="size-3.5" />
         </button>
-      ) : null}
+      )}
     </div>
   );
 }
 
-/**
- * A citação dentro do balão.
- *
- * Uma faixa com barra lateral, como no próprio WhatsApp: quem lê precisa
- * reconhecer o formato antes de ler o conteúdo. O texto é o mesmo resumo que a
- * lista de conversas usa — uma foto citada aparece como "📷 Foto", não como um
- * vazio.
- */
 function QuotedPreview({
   message,
   inbound,
@@ -279,7 +246,13 @@ function QuotedPreview({
   );
 }
 
-function MediaContent({ content }: { readonly content: MessageContent }) {
+function MediaContent({
+  content,
+  onOpenLightbox,
+}: {
+  readonly content: MessageContent;
+  readonly onOpenLightbox: (media: LightboxMedia) => void;
+}) {
   switch (content.type) {
     case 'text':
     case 'template':
@@ -292,14 +265,22 @@ function MediaContent({ content }: { readonly content: MessageContent }) {
 
     case 'image':
       return (
-        <figure>
+        <figure
+          onClick={() => onOpenLightbox({ type: 'image', url: content.url, caption: content.caption })}
+          className="group/media relative cursor-pointer overflow-hidden rounded-xl"
+        >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={content.url}
             alt={content.caption ?? 'Foto recebida'}
             loading="lazy"
-            className="max-h-80 w-full rounded-xl object-cover"
+            className="max-h-80 w-full rounded-xl object-cover transition-transform duration-300 group-hover/media:scale-[1.02]"
           />
+          <div className="absolute inset-0 bg-black/0 group-hover/media:bg-black/20 transition-colors flex items-center justify-center pointer-events-none">
+            <span className="opacity-0 group-hover/media:opacity-100 transition-opacity bg-black/60 backdrop-blur-xs text-white p-2 rounded-full shadow-md">
+              <Maximize2 className="size-4" />
+            </span>
+          </div>
           {content.caption && (
             <figcaption className="px-2 pt-2 text-xs leading-relaxed">
               {content.caption}
@@ -310,15 +291,34 @@ function MediaContent({ content }: { readonly content: MessageContent }) {
 
     case 'video':
       return (
-        <figure>
+        <figure className="group/media relative overflow-hidden rounded-xl">
           <video
             src={content.url}
             controls={!content.gif}
             autoPlay={Boolean(content.gif)}
             loop={Boolean(content.gif)}
             muted={Boolean(content.gif)}
+            playsInline
             className="max-h-80 w-full rounded-xl"
           />
+          {!content.gif && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenLightbox({
+                  type: 'video',
+                  url: content.url,
+                  caption: content.caption,
+                  isGif: content.gif,
+                });
+              }}
+              title="Ver em tela cheia"
+              className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-white backdrop-blur-xs shadow-md transition-all opacity-80 hover:opacity-100"
+            >
+              <Maximize2 className="size-3.5" />
+            </button>
+          )}
           {content.caption && (
             <figcaption className="px-2 pt-2 text-xs leading-relaxed">
               {content.caption}

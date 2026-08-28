@@ -30,21 +30,45 @@ export function ConversationEventsProvider({ children }: { readonly children: Re
   const handlers = useRef(new Set<Handler>());
 
   useEffect(() => {
-    const source = new EventSource('/api/conversas/events');
+    let source: EventSource | null = null;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+    let isMounted = true;
 
-    source.onmessage = (event) => {
-      let payload: ConversationEventPayload;
-      try {
-        payload = JSON.parse(event.data) as ConversationEventPayload;
-      } catch {
-        return; // Heartbeat ou evento não-JSON.
-      }
-      // Uma cópia do conjunto: um handler que se desinscreve durante o laço
-      // não pode corromper a iteração dos demais.
-      for (const handler of [...handlers.current]) handler(payload);
+    const connect = () => {
+      if (!isMounted) return;
+      source = new EventSource('/api/conversas/events');
+
+      source.onmessage = (event) => {
+        let payload: ConversationEventPayload;
+        try {
+          payload = JSON.parse(event.data) as ConversationEventPayload;
+        } catch {
+          return; // Heartbeat ou evento não-JSON.
+        }
+        for (const handler of [...handlers.current]) handler(payload);
+      };
+
+      source.onerror = () => {
+        if (source) {
+          source.close();
+          source = null;
+        }
+        if (isMounted && !reconnectTimeout) {
+          reconnectTimeout = setTimeout(() => {
+            reconnectTimeout = null;
+            connect();
+          }, 2500);
+        }
+      };
     };
 
-    return () => source.close();
+    connect();
+
+    return () => {
+      isMounted = false;
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (source) source.close();
+    };
   }, []);
 
   const api = useMemo<EventsApi>(

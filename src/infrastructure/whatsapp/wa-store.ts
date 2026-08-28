@@ -341,7 +341,7 @@ const createConversationWith = async (input: CommitInput): Promise<void> => {
         queue: chat.isGroup ? 'Grupos' : 'Geral',
         status: 'aberta',
         statusLabel: 'Em andamento',
-        priority: 'media',
+        priority: 'baixa',
         unreadCount: fromMe ? 0 : 1,
         lastMessagePreview: preview,
         lastMessageAt: message.time,
@@ -560,7 +560,7 @@ export const openOutboundConversation = async (input: {
         queue: 'Geral',
         status: 'aberta',
         statusLabel: 'Em andamento',
-        priority: 'media',
+        priority: 'baixa',
         // Ninguém escreveu para nós: a conversa nasce lida.
         unreadCount: 0,
         lastMessagePreview: '',
@@ -855,6 +855,10 @@ const publish = async (
     return;
   }
 
+  const conversation = waEventBus.hasConversationListeners
+    ? await loadConversation(accountId, conversationId).catch(() => null)
+    : null;
+
   // O `messageId` acompanha o evento porque é ele que sobrevive à travessia do
   // `NOTIFY`: o objeto da mensagem fica para trás, e é por este id que o outro
   // processo a encontra ao reidratar.
@@ -862,9 +866,10 @@ const publish = async (
     type,
     accountId,
     conversationId,
-    inboxId,
+    inboxId: inboxId ?? conversation?.inboxId,
     messageId: message.id,
     message,
+    ...(conversation ? { conversation } : {}),
   });
 };
 

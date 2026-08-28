@@ -14,6 +14,10 @@ import {
 } from 'lucide-react';
 import type { AppNotification, NotificationKind } from '@/core/domain/notification';
 import { useLiveNotifications } from '@/features/realtime/live-notifications';
+import {
+  markAllNotificationsAsReadAction,
+  markNotificationAsReadAction,
+} from './notification-actions';
 import { cn } from '@/lib/cn';
 
 interface NotificationsMenuProps {
@@ -69,6 +73,7 @@ export function NotificationsMenu({ notifications }: NotificationsMenuProps) {
   const markAllAsRead = () => {
     setItems((current) => current.map((item) => ({ ...item, read: true })));
     live.markAllRead();
+    void markAllNotificationsAsReadAction();
   };
 
   /** Abrir é ler: marcar individualmente evita zerar o que ainda não foi visto. */
@@ -77,6 +82,9 @@ export function NotificationsMenu({ notifications }: NotificationsMenuProps) {
       current.map((item) => (item.id === id ? { ...item, read: true } : item)),
     );
     live.markRead(id);
+    if (!id.startsWith('live-')) {
+      void markNotificationAsReadAction(id);
+    }
   };
 
   return (
