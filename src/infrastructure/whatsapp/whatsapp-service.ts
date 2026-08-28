@@ -24,6 +24,7 @@ import {
   commitMessage as persistMessage,
   conversationExists,
   findStoredContact as loadStoredContact,
+  markMessageRevoked,
   patchContact,
   patchContactByThread,
   resolveStoredIds,
@@ -42,6 +43,7 @@ import {
   decodeWaMessage,
   deliveryStatusFrom,
   mediaContent,
+  revokedMessageId,
   timestampOf,
   adContextOf,
   type MediaRef,
@@ -362,6 +364,13 @@ export class WhatsAppService {
 
       sock.ev.on('messages.update', (updates) => {
         for (const update of updates) {
+          // Revoke: o Baileys manda `message: null` com `key.id` já apontando
+          // para a apagada. Redundante com o ramo de `messages.upsert`, mas
+          // `markMessageRevoked` é idempotente.
+          if (update.update?.message === null && update.key.id) {
+            void markMessageRevoked(update.key.id);
+            continue;
+          }
           void this.applyDeliveryUpdate(update.key, update.update?.status);
         }
       });
@@ -635,6 +644,16 @@ export class WhatsAppService {
     }
 
     const fromMe = Boolean(msg.key.fromMe);
+
+    // Apagar "para todos" chega como uma mensagem nova cujo conteúdo manda
+    // revogar outra. Vem antes da checagem de eco: quando nós apagamos a linha
+    // já foi marcada e `markMessageRevoked` sai sem fazer nada; quando o contato
+    // apaga, o id não está em `crmSentIds` e o `return` seguinte engoliria tudo.
+    const revogada = revokedMessageId(msg);
+    if (revogada) {
+      await markMessageRevoked(revogada);
+      return;
+    }
 
     // Mensagem despachada por esta plataforma: ja esta na timeline e o eco so
     // duplicaria a bolha. O status de entrega chega por `messages.update`.

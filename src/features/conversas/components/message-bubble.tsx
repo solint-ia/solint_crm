@@ -144,7 +144,7 @@ export function MessageBubble({
         {deleted ? (
           <p className="flex items-center gap-1.5 italic opacity-80">
             <Ban className="size-3.5 shrink-0" />
-            Esta mensagem foi apagada
+            {isInbound ? 'Esta mensagem foi apagada' : 'Você apagou esta mensagem'}
           </p>
         ) : (
           <MediaContent content={message.content} />

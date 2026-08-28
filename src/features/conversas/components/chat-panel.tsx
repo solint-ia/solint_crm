@@ -13,6 +13,7 @@ import {
   PanelRightClose,
   PauseCircle,
   PlugZap,
+  RotateCcw,
   Trash2,
   UserCheck,
   Users,
@@ -26,7 +27,6 @@ import type { CannedResponse } from '@/core/domain/settings';
 import { Avatar } from '@/components/ui/avatar';
 import { Menu, MenuHeader, MenuItem } from '@/components/ui/menu';
 import { Modal } from '@/components/ui/modal';
-import { ChannelBadge } from '@/components/domain/channel-badge';
 import { StatusBadge } from '@/components/domain/status-badge';
 import { Composer, type ComposerMode, type MediaResult } from './composer';
 import {
@@ -92,6 +92,18 @@ export function ChatPanel({
 
   const hsmOpen = isHsmWindowOpen(conversation);
   const isGroup = isGroupContact(conversation.contact);
+
+  /**
+   * Os botões de status agora ligam e desligam.
+   *
+   * Antes cada um só empurrava a conversa para o seu estado e ficava
+   * desabilitado depois — não havia como desfazer "em espera" ou reabrir um
+   * atendimento que se finalizou por engano sem passar pelo menu de status. O
+   * clique repetido volta para `aberta`, que é o estado neutro de um
+   * atendimento em curso.
+   */
+  const toggleStatus = (alvo: ConversationStatus) =>
+    onChangeStatus(conversation.status === alvo ? 'aberta' : alvo);
 
   /**
    * As mensagens por id, para resolver a citação sem varrer a timeline por
@@ -178,7 +190,6 @@ export function ChatPanel({
                 <h2 className="truncate font-display text-xs sm:text-sm font-semibold text-ink group-hover:text-brand transition-colors">
                   {conversation.contact.name}
                 </h2>
-                <ChannelBadge channel={conversation.channel} />
                 {isGroup && (
                   <span className="flex items-center gap-1 rounded-md bg-surface-2 border border-line-soft px-1.5 py-0.5 text-[10px] font-semibold text-muted">
                     <Users className="size-3" />
@@ -215,11 +226,15 @@ export function ChatPanel({
 
               <button
                 type="button"
-                onClick={() => onChangeStatus('espera')}
-                disabled={conversation.status === 'espera'}
-                title="Colocar atendimento em espera"
+                onClick={() => toggleStatus('espera')}
+                aria-pressed={conversation.status === 'espera'}
+                title={
+                  conversation.status === 'espera'
+                    ? 'Tirar da espera (reabrir atendimento)'
+                    : 'Colocar atendimento em espera'
+                }
                 className={cn(
-                  'hidden md:inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-ink transition-all hover:bg-surface-2 disabled:opacity-40 disabled:cursor-not-allowed',
+                  'hidden md:inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-ink transition-all hover:bg-surface-2',
                   conversation.status === 'espera' && 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-300 font-semibold',
                 )}
               >
@@ -229,11 +244,15 @@ export function ChatPanel({
 
               <button
                 type="button"
-                onClick={() => onChangeStatus('pendente')}
-                disabled={conversation.status === 'pendente'}
-                title="Marcar como pendente"
+                onClick={() => toggleStatus('pendente')}
+                aria-pressed={conversation.status === 'pendente'}
+                title={
+                  conversation.status === 'pendente'
+                    ? 'Tirar de pendente (reabrir atendimento)'
+                    : 'Marcar como pendente'
+                }
                 className={cn(
-                  'hidden md:inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-ink transition-all hover:bg-surface-2 disabled:opacity-40 disabled:cursor-not-allowed',
+                  'hidden md:inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-ink transition-all hover:bg-surface-2',
                   conversation.status === 'pendente' && 'border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-300 font-semibold',
                 )}
               >
@@ -256,21 +275,27 @@ export function ChatPanel({
                       <MenuHeader>Status & Responsável</MenuHeader>
                       <MenuItem
                         onClick={() => {
-                          onChangeStatus('espera');
+                          toggleStatus('espera');
                           close();
                         }}
                       >
                         <PauseCircle className="size-3.5 text-amber-500" />
-                        <span>Colocar em espera</span>
+                        <span>
+                          {conversation.status === 'espera' ? 'Tirar da espera' : 'Colocar em espera'}
+                        </span>
                       </MenuItem>
                       <MenuItem
                         onClick={() => {
-                          onChangeStatus('pendente');
+                          toggleStatus('pendente');
                           close();
                         }}
                       >
                         <Clock className="size-3.5 text-sky-500" />
-                        <span>Marcar como pendente</span>
+                        <span>
+                          {conversation.status === 'pendente'
+                            ? 'Tirar de pendente'
+                            : 'Marcar como pendente'}
+                        </span>
                       </MenuItem>
                       <MenuItem
                         onClick={() => {
@@ -302,21 +327,27 @@ export function ChatPanel({
                     <MenuHeader>Ações Rápidas</MenuHeader>
                     <MenuItem
                       onClick={() => {
-                        onChangeStatus('espera');
+                        toggleStatus('espera');
                         close();
                       }}
                     >
                       <PauseCircle className="size-3.5 text-amber-500" />
-                      <span>Colocar em espera</span>
+                      <span>
+                        {conversation.status === 'espera' ? 'Tirar da espera' : 'Colocar em espera'}
+                      </span>
                     </MenuItem>
                     <MenuItem
                       onClick={() => {
-                        onChangeStatus('pendente');
+                        toggleStatus('pendente');
                         close();
                       }}
                     >
                       <Clock className="size-3.5 text-sky-500" />
-                      <span>Marcar como pendente</span>
+                      <span>
+                        {conversation.status === 'pendente'
+                          ? 'Tirar de pendente'
+                          : 'Marcar como pendente'}
+                      </span>
                     </MenuItem>
                     <MenuItem
                       onClick={() => {
@@ -333,20 +364,36 @@ export function ChatPanel({
             </div>
           )}
 
-          {/* Ação Principal: Finalizar Atendimento */}
-          <button
-            type="button"
-            onClick={() => onChangeStatus('resolvida')}
-            disabled={conversation.status === 'resolvida'}
-            title="Finalizar e resolver atendimento"
-            className={cn(
-              'inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-white shadow-xs shadow-emerald-600/25 transition-all hover:bg-emerald-500 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed',
-            )}
-          >
-            <CheckCircle2 className="size-3.5 shrink-0" />
-            <span className="hidden sm:inline">Finalizar atendimento</span>
-            <span className="sm:hidden">Finalizar</span>
-          </button>
+          {/* Ação Principal: Finalizar / Reabrir Atendimento.
+              Resolvido, o mesmo botão reabre — finalizar por engano era um beco
+              sem saída aqui, só o menu de status trazia a conversa de volta. */}
+          {conversation.status === 'resolvida' ? (
+            <button
+              type="button"
+              onClick={() => onChangeStatus('aberta')}
+              title="Reabrir este atendimento"
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-lg border border-emerald-600/40 bg-emerald-500/10 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-300 transition-all hover:bg-emerald-500/20 active:scale-[0.98]',
+              )}
+            >
+              <RotateCcw className="size-3.5 shrink-0" />
+              <span className="hidden sm:inline">Reabrir atendimento</span>
+              <span className="sm:hidden">Reabrir</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onChangeStatus('resolvida')}
+              title="Finalizar e resolver atendimento"
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-white shadow-xs shadow-emerald-600/25 transition-all hover:bg-emerald-500 active:scale-[0.98]',
+              )}
+            >
+              <CheckCircle2 className="size-3.5 shrink-0" />
+              <span className="hidden sm:inline">Finalizar atendimento</span>
+              <span className="sm:hidden">Finalizar</span>
+            </button>
+          )}
 
           {/* Botão de Alternar Barra Lateral de Detalhes */}
           {onToggleContext && (

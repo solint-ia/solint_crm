@@ -635,6 +635,74 @@ export const applyDeliveryUpdate = async (
   });
 };
 
+/**
+ * O contato (ou o próprio aparelho pareado) apagou uma mensagem "para todos".
+ *
+ * O WhatsApp entrega isso como um `protocolMessage` do tipo `REVOKE`, com a
+ * chave da mensagem original dentro — não como conteúdo de conversa, e é por
+ * isso que `decodeWaMessage` o ignora. Aqui a linha original ganha `deletedAt`
+ * e tem o conteúdo esvaziado: a bolha vira "Esta mensagem foi apagada", igual
+ * ao que o próprio WhatsApp mostra, e a conversa não se recostura sem ela.
+ *
+ * Idempotente por construção: o `deletedAt: null` no filtro faz o eco do nosso
+ * próprio "apagar" (que já marcou a linha antes de mandar o comando) não
+ * disparar um segundo evento à toa.
+ */
+export const markMessageRevoked = async (externalId: string): Promise<void> => {
+  const row = await prisma.message.findFirst({
+    where: { OR: [{ externalId }, { id: externalId }] },
+    select: {
+      id: true,
+      conversationId: true,
+      deletedAt: true,
+      conversation: { select: { accountId: true } },
+    },
+  });
+  if (!row || row.deletedAt) return;
+
+  const accountId = row.conversation.accountId;
+
+  await prisma.message.updateMany({
+    where: { id: row.id, deletedAt: null },
+    data: {
+      deletedAt: new Date(),
+      contentType: 'text',
+      content: asJson({ type: 'text', text: '' }),
+    },
+  });
+
+  // Se a apagada era a última, o resumo da conversa ainda mostra o texto dela
+  // na lista — o conteúdo sobrevivendo no lugar mais visível do produto.
+  const ultima = await prisma.message.findFirst({
+    where: { conversationId: row.conversationId, isPrivate: false },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true },
+  });
+  if (ultima?.id === row.id) {
+    await prisma.conversation.updateMany({
+      where: { id: row.conversationId, accountId },
+      data: { lastMessagePreview: '🚫 Mensagem apagada' },
+    });
+  }
+
+  const updated = waEventBus.hasConversationListeners
+    ? await loadConversation(accountId, row.conversationId).catch(() => null)
+    : null;
+
+  const message = updated?.timeline.find(
+    (item) => item.kind === 'message' && item.message.id === row.id,
+  );
+
+  waEventBus.emitConversation({
+    type: 'message_updated',
+    accountId,
+    conversationId: row.conversationId,
+    messageId: row.id,
+    message: message?.kind === 'message' ? message.message : undefined,
+    ...(updated ? { conversation: updated } : {}),
+  });
+};
+
 export interface ContactPatch {
   readonly name?: string;
   readonly avatarUrl?: string;

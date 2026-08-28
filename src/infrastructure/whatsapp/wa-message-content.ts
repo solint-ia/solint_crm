@@ -1,4 +1,5 @@
 import {
+  proto,
   WAMessageStatus,
   normalizeMessageContent,
   type WAMessage,
@@ -6,6 +7,28 @@ import {
 } from '@whiskeysockets/baileys';
 
 import type { DeliveryStatus, MessageContent } from '@/core/domain/message';
+
+/**
+ * A mensagem foi apagada "para todos"?
+ *
+ * O WhatsApp não manda um evento próprio para isso: manda uma mensagem nova
+ * cujo conteúdo é um `protocolMessage` do tipo `REVOKE`, carregando a chave da
+ * mensagem original. `decodeWaMessage` devolve `null` para `protocolMessage`
+ * (não é conteúdo de conversa), então esta checagem precisa vir **antes** dele.
+ *
+ * Devolve o id da mensagem revogada no canal, ou `undefined` quando não é um
+ * revoke.
+ */
+export const revokedMessageId = (raw: WAMessage): string | undefined => {
+  // `normalizeMessageContent` desembrulha `ephemeralMessage`/`viewOnceMessage`:
+  // num chat com mensagens temporárias o `protocolMessage` chega aninhado, e
+  // ler `raw.message.protocolMessage` direto perderia o revoke ali.
+  const protocolo = normalizeMessageContent(raw.message)?.protocolMessage;
+  if (!protocolo || protocolo.type !== proto.Message.ProtocolMessage.Type.REVOKE) {
+    return undefined;
+  }
+  return protocolo.key?.id ?? undefined;
+};
 
 /**
  * Traducao do payload bruto do WhatsApp para o modelo de mensagem do dominio.

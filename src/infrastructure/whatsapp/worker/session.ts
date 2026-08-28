@@ -20,6 +20,7 @@ import {
   commitMessage,
   findSentMessage,
   findStoredContact,
+  markMessageRevoked,
   patchContact,
   resolveStoredIds,
 } from '../wa-store';
@@ -35,6 +36,7 @@ import {
   decodeWaMessage,
   deliveryStatusFrom,
   mediaContent,
+  revokedMessageId,
   timestampOf,
   adContextOf,
   type MediaRef,
@@ -605,6 +607,14 @@ export class WhatsAppSession {
       'messages.update',
       this.guarded('messages.update', async (updates) => {
         for (const update of updates) {
+          // O Baileys também traduz o revoke para cá (`message: null`), com
+          // `update.key.id` já sendo o id da apagada. Redundante com o ramo de
+          // `messages.upsert`, mas `markMessageRevoked` é idempotente e cobrir
+          // os dois protege contra o Baileys mudar por qual caminho o entrega.
+          if (update.update.message === null && update.key.id) {
+            await markMessageRevoked(update.key.id);
+            continue;
+          }
           if (update.update.status && update.key.id) {
             const status = deliveryStatusFrom(update.update.status);
             if (status) {
@@ -759,6 +769,18 @@ export class WhatsAppSession {
     if (!messageId) return;
 
     const fromMe = Boolean(msg.key.fromMe);
+
+    // Apagar "para todos" chega como uma mensagem nova cujo conteúdo é a ordem
+    // de revogar outra. Vem antes da checagem de eco: quando *nós* apagamos, a
+    // linha já foi marcada e `markMessageRevoked` sai sem fazer nada — mas
+    // quando o contato apaga, `crmSentIds` não tem o id e o `return` seguinte
+    // engoliria o aviso.
+    const revogada = revokedMessageId(msg);
+    if (revogada) {
+      await markMessageRevoked(revogada);
+      return;
+    }
+
     if (fromMe && this.crmSentIds.has(messageId)) return;
 
     const decoded = decodeWaMessage(msg);
