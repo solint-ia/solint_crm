@@ -5,6 +5,7 @@ import { CHANNELS } from '@/core/domain/channel';
 import { can } from '@/core/domain/user';
 import { container } from '@/infrastructure/container';
 import { prisma, asJson } from '@/infrastructure/db/prisma';
+import { postgresPubSub, CHANNELS as DB_CHANNELS } from '@/infrastructure/db/postgres-pubsub';
 import { whatsappService } from '@/infrastructure/whatsapp/whatsapp-service';
 
 export interface ActionResult<T = unknown> {
@@ -304,20 +305,69 @@ export async function syncWhatsAppContactsAction(): Promise<ActionResult<{ synce
       }
     }
 
+    const previousContacts = await prisma.contact.count({
+      where: { accountId, kind: { not: 'grupo' } },
+    });
+
+    let localExecuted = false;
+
     // 2. Sincroniza todos os contatos da agenda do celular registrados na sessão do WhatsApp
     try {
       const storedResult = await whatsappService.syncAllStoredContacts(accountId);
-      syncedCount += storedResult.synced;
-      updatedCount += storedResult.created;
+      if (storedResult.synced > 0) {
+        localExecuted = true;
+      }
     } catch {
       // Ignora suavemente se a instância em memória não estiver ativa neste processo
     }
 
+    // Se estiver em modo worker separado, despacha comando de sincronização e aguarda
+    if (!localExecuted) {
+      const inboxes = await prisma.inbox.findMany({
+        where: { accountId, channel: 'whatsapp' },
+        select: { id: true, waConnection: { select: { credsCipher: true } } },
+        orderBy: { id: 'asc' },
+      });
+      const targetInbox = inboxes.find((i) => i.waConnection?.credsCipher) ?? inboxes[0];
+      if (targetInbox) {
+        const cmd = await prisma.whatsAppCommand.create({
+          data: {
+            inboxId: targetInbox.id,
+            kind: 'sync_contacts',
+            payload: { accountId },
+            status: 'pending',
+          },
+        });
+        await postgresPubSub.publish(DB_CHANNELS.COMMANDS, {
+          inboxId: targetInbox.id,
+          kind: 'sync_contacts',
+          id: cmd.id,
+        });
+
+        // Aguarda até 4 segundos o worker processar
+        const start = Date.now();
+        while (Date.now() - start < 4000) {
+          await new Promise((r) => setTimeout(r, 400));
+          const updatedCmd = await prisma.whatsAppCommand.findUnique({
+            where: { id: cmd.id },
+            select: { status: true },
+          });
+          if (updatedCmd?.status === 'completed' || updatedCmd?.status === 'failed') {
+            break;
+          }
+        }
+      }
+    }
+
+    const currentContacts = await prisma.contact.count({
+      where: { accountId, kind: { not: 'grupo' } },
+    });
+
     return {
       ok: true,
       data: {
-        syncedCount,
-        newCount: updatedCount,
+        syncedCount: currentContacts,
+        newCount: Math.max(0, currentContacts - previousContacts),
       },
     };
   } catch (error) {
@@ -375,22 +425,75 @@ export async function syncWhatsAppGroupsAction(): Promise<
     const session = await assertCanWrite();
     const accountId = session.account.id;
 
-    let syncedCount = 0;
-    let newCount = 0;
+    // Busca as conexões de WhatsApp da conta
+    const inboxes = await prisma.inbox.findMany({
+      where: { accountId, channel: 'whatsapp' },
+      select: { id: true, waConnection: { select: { credsCipher: true, status: true } } },
+      orderBy: { id: 'asc' },
+    });
+
+    const pareada = inboxes.find((inbox) => inbox.waConnection?.credsCipher);
+    const targetInbox = pareada ?? inboxes[0];
+
+    if (!targetInbox) {
+      return { ok: false, error: 'Nenhuma conexão de WhatsApp encontrada para esta conta.' };
+    }
+
+    const previousCount = await prisma.contact.count({
+      where: { accountId, kind: 'grupo' },
+    });
+
+    let localExecuted = false;
 
     try {
       const res = await whatsappService.syncAllGroups(accountId);
-      syncedCount = res.synced;
-      newCount = res.created;
+      if (res.synced > 0) {
+        localExecuted = true;
+      }
     } catch {
-      // Ignora suavemente se a instância em memória não estiver ativa neste processo
+      // Ignora se não houver socket local
     }
+
+    if (!localExecuted) {
+      // Despacha comando para o worker (Render / processo separado)
+      const command = await prisma.whatsAppCommand.create({
+        data: {
+          inboxId: targetInbox.id,
+          kind: 'sync_groups',
+          payload: { accountId },
+          status: 'pending',
+        },
+      });
+
+      await postgresPubSub.publish(DB_CHANNELS.COMMANDS, {
+        inboxId: targetInbox.id,
+        kind: 'sync_groups',
+        id: command.id,
+      });
+
+      // Aguarda o worker processar e salvar os grupos
+      const start = Date.now();
+      while (Date.now() - start < 4000) {
+        await new Promise((r) => setTimeout(r, 400));
+        const updatedCmd = await prisma.whatsAppCommand.findUnique({
+          where: { id: command.id },
+          select: { status: true },
+        });
+        if (updatedCmd?.status === 'completed' || updatedCmd?.status === 'failed') {
+          break;
+        }
+      }
+    }
+
+    const currentCount = await prisma.contact.count({
+      where: { accountId, kind: 'grupo' },
+    });
 
     return {
       ok: true,
       data: {
-        syncedCount,
-        newCount,
+        syncedCount: currentCount,
+        newCount: Math.max(0, currentCount - previousCount),
       },
     };
   } catch (error) {

@@ -338,6 +338,25 @@ export class CommandConsumer {
         break;
       }
 
+      case 'sync_groups': {
+        const session = this.sessionManager.get(inboxId);
+        if (session) {
+          const accountId = typeof payload['accountId'] === 'string' ? payload['accountId'] : undefined;
+          if (accountId) {
+            await session.syncAllGroups(accountId);
+          }
+        }
+        break;
+      }
+
+      case 'sync_contacts': {
+        const session = this.sessionManager.get(inboxId);
+        if (session) {
+          await session.syncAllStoredContacts();
+        }
+        break;
+      }
+
       default: {
         console.warn(`[CommandConsumer] Tipo de comando desconhecido: ${kind}`);
       }
