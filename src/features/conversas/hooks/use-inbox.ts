@@ -91,6 +91,20 @@ const upsertConversation = (
 ): readonly Conversation[] => [conversation, ...current.filter((c) => c.id !== conversation.id)];
 
 /**
+ * Validade de um "digitando" sem confirmação.
+ *
+ * O WhatsApp avisa quando o contato para de escrever, mas esse aviso é a parte
+ * que se perde: o app fechado no meio da frase, a conexão que cai, o evento que
+ * não atravessa. Sem prazo, os três pontinhos ficariam pulsando para sempre
+ * anunciando uma resposta que ninguém está escrevendo — e o indicador que
+ * mente é pior que o indicador que não existe.
+ *
+ * Dez segundos é a ordem de grandeza que o próprio WhatsApp usa: quem continua
+ * digitando gera um aviso novo bem antes disso, e a marca se renova sozinha.
+ */
+const TYPING_TTL_MS = 10_000;
+
+/**
  * Estado da caixa de entrada.
  * A filtragem reutiliza as regras do dominio, sem duplicar logica na UI.
  */
@@ -146,8 +160,61 @@ export function useInbox({
     }
   }, [initialUnread]);
 
+  /**
+   * "Digitando" vive só na tela, com prazo de validade.
+   *
+   * Não vem do banco e não vai para ele: é um estado de segundos. O relógio por
+   * conversa é o que garante que ele suma sozinho quando o aviso de parada não
+   * chega — ver `TYPING_TTL_MS`.
+   */
+  const typingTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  const markTyping = useCallback((conversationId: string, isTyping: boolean) => {
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.id === conversationId ? { ...conversation, isTyping } : conversation,
+      ),
+    );
+
+    const timers = typingTimers.current;
+    const running = timers.get(conversationId);
+    if (running) clearTimeout(running);
+    timers.delete(conversationId);
+    if (!isTyping) return;
+
+    timers.set(
+      conversationId,
+      setTimeout(() => {
+        timers.delete(conversationId);
+        setConversations((current) =>
+          current.map((conversation) =>
+            conversation.id === conversationId
+              ? { ...conversation, isTyping: false }
+              : conversation,
+          ),
+        );
+      }, TYPING_TTL_MS),
+    );
+  }, []);
+
+  useEffect(() => {
+    const timers = typingTimers.current;
+    return () => {
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
+    };
+  }, []);
+
   // Tempo real vem do barramento compartilhado do workspace (uma unica conexao SSE).
   useConversationEvents((payload) => {
+    // Presença não mexe na timeline nem na ordem da lista: é um estado à parte,
+    // com relógio próprio, e tratá-lo como os demais eventos faria cada tecla
+    // do contato reordenar a caixa de entrada.
+    if (payload.type === 'typing') {
+      markTyping(payload.conversationId, payload.isTyping === true);
+      return;
+    }
+
     // O servidor envia a conversa completa: substituir e sempre mais seguro
     // que remendar a timeline no cliente — e descarta a bolha otimista.
     const incoming = payload.conversation as Conversation | undefined;
@@ -201,6 +268,9 @@ export function useInbox({
         lastMessagePreview: previewOfMessage(message),
         lastMessageAt: message.time,
         lastActivityAt: new Date().toISOString(),
+        // A mensagem chegando é a prova de que a frase terminou: manter os três
+        // pontinhos depois dela mostraria o contato digitando o que já mandou.
+        isTyping: false,
         unreadCount: message.author === 'contact' ? existing.unreadCount + 1 : existing.unreadCount,
       });
     });

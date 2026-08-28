@@ -32,6 +32,16 @@ export interface MediaResult {
 }
 
 interface ComposerProps {
+  /**
+   * Conversa a que este compositor pertence.
+   *
+   * O compositor guarda rascunho, anexo e gravação em estado local, e sem saber
+   * de qual conversa esse estado é ele os carregava para a próxima: escolher um
+   * vídeo, trocar de conversa e encontrar o mesmo vídeo pronto para ir para
+   * **outra** pessoa. O anexo não é um rascunho do painel, é um rascunho
+   * daquele atendimento.
+   */
+  readonly conversationId?: string;
   readonly disabledReason?: string;
   readonly onSend: (text: string, mode: ComposerMode) => void;
   readonly onSendMedia?: (form: FormData) => Promise<MediaResult>;
@@ -55,6 +65,15 @@ const humanSize = (bytes: number): string =>
 const clock = (seconds: number): string =>
   `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 
+/**
+ * Mesmo teto de `sendMediaAction`, conferido antes da subida.
+ *
+ * Recusar aqui não é redundância: o arquivo grande custava a subida inteira
+ * para receber a recusa no fim, e no caminho ainda esbarrava no limite de corpo
+ * do Next — que falha sem devolver mensagem nenhuma para a tela.
+ */
+const MAX_UPLOAD_BYTES = 16 * 1024 * 1024;
+
 const RECORDING_TYPES = ['audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm'];
 
 const pickRecordingType = (): string | undefined => {
@@ -63,6 +82,7 @@ const pickRecordingType = (): string | undefined => {
 };
 
 export function Composer({
+  conversationId,
   disabledReason,
   onSend,
   onSendMedia,
@@ -179,14 +199,76 @@ export function Composer({
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  /**
+   * Trocar de conversa esvazia o compositor.
+   *
+   * O anexo é o caso visível — um vídeo escolhido para uma pessoa continuava
+   * armado na caixa de qualquer outra —, mas rascunho, modo e erro carregavam
+   * do mesmo jeito. Uma gravação em curso é interrompida junto: ela era do
+   * atendimento que acabou de sair da tela.
+   */
+  useEffect(() => {
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+      recorderRef.current.stream.getTracks().forEach((track) => track.stop());
+      recorderRef.current.stop();
+    }
+    recorderRef.current = null;
+    chunksRef.current = [];
+    setText('');
+    setMode('publica');
+    setAttachment(undefined);
+    setRecording(undefined);
+    setMediaError(undefined);
+    setIsRecording(false);
+    setElapsed(0);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }, [conversationId]);
+
+  /**
+   * Sobe um anexo e limpa o compositor no sucesso.
+   *
+   * O `catch` é o ponto todo desta função. Sem ele, a promessa rejeitada — o
+   * limite de corpo do Next, uma queda de rede no meio da subida — escapava do
+   * `submit` sem virar nada na tela: o botão voltava ao normal, o anexo
+   * continuava lá e nada dizia que o envio tinha falhado. Era exatamente esse o
+   * "não envia e não fala nada" de vídeo e áudio.
+   */
+  const uploadMedia = async (build: () => FormData, fallbackError: string) => {
+    if (!onSendMedia) return;
+    setUploading(true);
+    setMediaError(undefined);
+    try {
+      const res = await onSendMedia(build());
+      if (!res.ok) {
+        setMediaError(res.error || fallbackError);
+        return;
+      }
+      clearMedia();
+      setText('');
+    } catch (error) {
+      console.error('[Composer] Falha ao enviar anexo:', error);
+      setMediaError(
+        error instanceof Error && /body|size|limit|413/i.test(error.message)
+          ? `O arquivo é grande demais para o envio. O limite é ${humanSize(MAX_UPLOAD_BYTES)}.`
+          : fallbackError,
+      );
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (blocked || uploading || pending) return;
 
     if (attachment && onSendMedia) {
-      setUploading(true);
-      setMediaError(undefined);
-      try {
+      if (attachment.size > MAX_UPLOAD_BYTES) {
+        setMediaError(
+          `O arquivo tem ${humanSize(attachment.size)}. O limite é ${humanSize(MAX_UPLOAD_BYTES)}.`,
+        );
+        return;
+      }
+      await uploadMedia(() => {
         const form = new FormData();
         form.set('file', attachment);
         // `kind` era calculado aqui só para aparecer no rótulo do anexo e nunca
@@ -196,23 +278,19 @@ export function Composer({
         form.set('kind', kindOf(attachment.type));
         form.set('isPrivate', String(isNote));
         if (text.trim()) form.set('caption', text.trim());
-        const res = await onSendMedia(form);
-        if (!res.ok) {
-          setMediaError(res.error || 'Não foi possível enviar o anexo.');
-          return;
-        }
-        clearMedia();
-        setText('');
-      } finally {
-        setUploading(false);
-      }
+        return form;
+      }, 'Não foi possível enviar o anexo.');
       return;
     }
 
     if (recording && onSendMedia) {
-      setUploading(true);
-      setMediaError(undefined);
-      try {
+      if (recording.blob.size > MAX_UPLOAD_BYTES) {
+        setMediaError(
+          `A gravação tem ${humanSize(recording.blob.size)}. O limite é ${humanSize(MAX_UPLOAD_BYTES)}.`,
+        );
+        return;
+      }
+      await uploadMedia(() => {
         const form = new FormData();
         const ext = recording.blob.type.includes('ogg') ? 'ogg' : 'webm';
         form.set('file', recording.blob, `audio-${Date.now()}.${ext}`);
@@ -224,16 +302,8 @@ export function Composer({
         form.set('voice', 'true');
         form.set('durationSeconds', String(recording.seconds));
         if (text.trim()) form.set('caption', text.trim());
-        const res = await onSendMedia(form);
-        if (!res.ok) {
-          setMediaError(res.error || 'Não foi possível enviar o áudio.');
-          return;
-        }
-        clearMedia();
-        setText('');
-      } finally {
-        setUploading(false);
-      }
+        return form;
+      }, 'Não foi possível enviar o áudio.');
       return;
     }
 
@@ -464,6 +534,16 @@ export function Composer({
           const file = event.target.files?.[0];
           if (!file) return;
           setRecording(undefined);
+          // O aviso vem na hora de escolher, não depois da subida: um vídeo de
+          // 40 MB não tem por que ocupar a rede para ser recusado no fim.
+          if (file.size > MAX_UPLOAD_BYTES) {
+            setAttachment(undefined);
+            setMediaError(
+              `${file.name} tem ${humanSize(file.size)}. O limite é ${humanSize(MAX_UPLOAD_BYTES)}.`,
+            );
+            event.target.value = '';
+            return;
+          }
           setMediaError(undefined);
           setAttachment(file);
         }}

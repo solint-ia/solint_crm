@@ -307,6 +307,33 @@
   }
 }
 
+/* Balão "digitando".
+
+   Os três pontos sobem em sequência, e é o atraso desigual entre eles que faz
+   a leitura de "alguém está escrevendo" em vez de "algo está carregando" — um
+   pulso simultâneo lê como spinner. O deslocamento é de 3px de propósito: o
+   suficiente para o olho pegar o movimento na periferia, pouco o bastante para
+   não puxar a atenção para fora da conversa.
+
+   Quem pediu menos movimento já é atendido pelo bloco de
+   `prefers-reduced-motion` acima, que neutraliza a duração. */
+@keyframes typing-dot {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  30% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+
+.typing-dot {
+  animation: typing-dot 1.2s ease-in-out infinite;
+}
+
 /* ==========================================================================
    Telas de entrada (login, cadastro, recuperar senha)
    ==========================================================================

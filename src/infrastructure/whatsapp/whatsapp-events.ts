@@ -42,7 +42,16 @@ export type ConversationEventType =
   /** Mudou algo da conversa sem mensagem nova (nome do grupo, foto, leitura). */
   | 'conversation_updated'
   /** Uma mensagem existente mudou (confirmação de entrega/leitura). */
-  | 'message_updated';
+  | 'message_updated'
+  /**
+   * O contato começou ou parou de escrever.
+   *
+   * Não toca no banco de propósito: "digitando" vale por alguns segundos e some
+   * sozinho. Gravá-lo faria toda tecla do contato virar uma escrita — e, pior,
+   * um estado que sobrevive ao recarregamento da página descrevendo algo que
+   * terminou há muito tempo.
+   */
+  | 'typing';
 
 export interface ConversationEventPayload {
   readonly type: ConversationEventType;
@@ -62,6 +71,8 @@ export interface ConversationEventPayload {
   readonly messageId?: string;
   readonly message?: unknown;
   readonly conversation?: unknown;
+  /** Só em `type: 'typing'`: se o contato está escrevendo agora. */
+  readonly isTyping?: boolean;
 }
 
 /**
@@ -103,6 +114,9 @@ const thin = (payload: ConversationEventPayload) => ({
   conversationId: payload.conversationId,
   ...(payload.inboxId ? { inboxId: payload.inboxId } : {}),
   ...(payload.messageId ? { messageId: payload.messageId } : {}),
+  // `isTyping` é o evento inteiro, não um enfeite dele: sem este campo o
+  // "digitando" atravessaria o `NOTIFY` sem dizer se começou ou parou.
+  ...(payload.type === 'typing' ? { isTyping: payload.isTyping === true } : {}),
 });
 
 class WhatsAppEventBus extends EventEmitter {
@@ -134,7 +148,9 @@ class WhatsAppEventBus extends EventEmitter {
   private async receiveConversation(payload: ConversationEventPayload): Promise<void> {
     if (this.listenerCount('conversation') === 0) return;
 
-    if (payload.conversation || payload.message) {
+    // "Digitando" já está inteiro no payload: ir ao banco buscar a conversa
+    // custaria uma consulta por tecla do contato para não acrescentar nada.
+    if (payload.conversation || payload.message || payload.type === 'typing') {
       this.emitLocal('conversation', payload);
       return;
     }

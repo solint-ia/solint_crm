@@ -92,6 +92,19 @@ export class WhatsAppService {
   private readonly crmSentIds = new Set<string>();
   /** Última mensagem recebida por conversa: base para confirmar leitura no celular. */
   private readonly lastInboundKey = new Map<string, WAMessageKey>();
+  /**
+   * Chats de que já pedimos presença — ver a nota gêmea em `worker/session.ts`.
+   *
+   * Guarda conta e conversa porque o evento de presença chega com o JID e nada
+   * mais, e ir ao banco a cada tecla do contato para descobrir o resto seria
+   * pagar uma consulta por caractere digitado.
+   */
+  private readonly presenceByJid = new Map<
+    string,
+    { readonly accountId: string; readonly inboxId: string; readonly conversationId: string }
+  >();
+  /** Último "digitando" anunciado por conversa, para não reemitir o mesmo estado. */
+  private readonly typingByConversation = new Map<string, boolean>();
   private readonly logger = pino({ level: 'silent' });
 
   constructor() {
@@ -372,6 +385,10 @@ export class WhatsAppService {
         for (const contact of contacts) void this.applyContactUpdate(contact);
       });
 
+      sock.ev.on('presence.update', ({ id, presences }) => {
+        this.applyPresenceUpdate(id, presences);
+      });
+
       return this.currentStatus;
     } catch (error) {
       this.isInitializing = false;
@@ -536,6 +553,60 @@ export class WhatsAppService {
   }
 
   // ---------------------------------------------------------------------------
+  // Presença ("digitando")
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Pede ao WhatsApp a presença deste chat.
+   *
+   * A assinatura é obrigatória: o servidor não envia presença de quem não foi
+   * pedido. Uma vez por chat basta — ela vale enquanto o socket viver, e o mapa
+   * é esvaziado junto com ele.
+   *
+   * Falhar aqui não interrompe nada. Presença é enfeite; a mensagem que trouxe
+   * este chat até aqui continua sendo gravada normalmente.
+   */
+  private watchPresence(
+    jid: string,
+    scope: { readonly accountId: string; readonly inboxId: string; readonly conversationId: string },
+  ): void {
+    const novo = !this.presenceByJid.has(jid);
+    this.presenceByJid.set(jid, scope);
+    if (!novo) return;
+
+    void this.socket?.presenceSubscribe(jid).catch(() => {
+      // Chat que não aceita assinatura de presença: segue sem "digitando".
+    });
+  }
+
+  private applyPresenceUpdate(
+    jid: string,
+    presences: Record<string, { lastKnownPresence?: string } | undefined> | undefined,
+  ): void {
+    const scope = this.presenceByJid.get(jid);
+    if (!scope || !presences) return;
+
+    // `recording` é o áudio sendo gravado — para quem espera, é a mesma
+    // informação que `composing`: o contato está respondendo agora.
+    const typing = Object.values(presences).some(
+      (presence) =>
+        presence?.lastKnownPresence === 'composing' ||
+        presence?.lastKnownPresence === 'recording',
+    );
+
+    if (this.typingByConversation.get(scope.conversationId) === typing) return;
+    this.typingByConversation.set(scope.conversationId, typing);
+
+    waEventBus.emitConversation({
+      type: 'typing',
+      accountId: scope.accountId,
+      conversationId: scope.conversationId,
+      inboxId: scope.inboxId,
+      isTyping: typing,
+    });
+  }
+
+  // ---------------------------------------------------------------------------
   // Entrada de mensagens
   // ---------------------------------------------------------------------------
 
@@ -577,6 +648,11 @@ export class WhatsAppService {
     // Ver `resolveStoredIds`: os ids da identidade valem para chat novo; os de
     // um chat que ja existe sao os que o banco tem.
     const chat = await resolveStoredIds(accountId, inboxId, identity);
+
+    // A mensagem é o gancho para assinar a presença deste chat: sem assinatura
+    // o WhatsApp não manda "digitando" nenhum. Ver `watchPresence`.
+    this.watchPresence(chat.jid, { accountId, inboxId, conversationId: chat.conversationId });
+    this.typingByConversation.delete(chat.conversationId);
 
     console.log(`[WhatsAppService] Nova mensagem de ${chat.phone || chat.jid} (ID: ${messageId})`);
 
@@ -1046,11 +1122,17 @@ export class WhatsAppService {
       this.socket.ev.removeAllListeners('groups.update');
       this.socket.ev.removeAllListeners('contacts.update');
       this.socket.ev.removeAllListeners('contacts.upsert');
+      this.socket.ev.removeAllListeners('presence.update');
       this.socket.end(undefined);
     } catch {
       // Ignora
     }
     this.socket = null;
+    // As assinaturas de presença morrem com o socket. Mantê-las faria a sessão
+    // seguinte julgar que já assinou o que ninguém assinou — e o "digitando"
+    // pararia de chegar depois da primeira reconexão.
+    this.presenceByJid.clear();
+    this.typingByConversation.clear();
   }
 
   private resetCaches() {
@@ -1059,6 +1141,8 @@ export class WhatsAppService {
     this.avatarCache.clear();
     this.crmSentIds.clear();
     this.lastInboundKey.clear();
+    this.presenceByJid.clear();
+    this.typingByConversation.clear();
   }
 
   private cleanSessionFolder() {

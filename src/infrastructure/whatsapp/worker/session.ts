@@ -162,6 +162,23 @@ export class WhatsAppSession {
   private readonly crmSentIds = new Set<string>();
   private readonly lastInboundKey = new Map<string, WAMessageKey>();
   /**
+   * Chats de que já pedimos presença, e a conversa de cada um.
+   *
+   * O WhatsApp só manda "digitando" de quem se assinou explicitamente, e a
+   * assinatura é por chat. O mapa serve às duas pontas: evita reassinar o mesmo
+   * chat a cada mensagem e traduz o JID do evento de presença de volta para a
+   * conversa, sem uma ida ao banco por tecla que o contato digita.
+   */
+  private readonly presenceByJid = new Map<string, string>();
+  /**
+   * Último "digitando" anunciado por conversa.
+   *
+   * O Baileys reemite a presença corrente com frequência; sem esta comparação,
+   * um contato escrevendo uma frase gerava dezenas de eventos idênticos
+   * atravessando o `NOTIFY` e o SSE para não mudar nada na tela.
+   */
+  private readonly typingByConversation = new Map<string, boolean>();
+  /**
    * Silencioso por padrão, verboso sob demanda.
    *
    * Era `pino({ level: 'silent' })` fixo, e foi por isso que uma saturação do
@@ -598,6 +615,59 @@ export class WhatsAppSession {
         }
       }),
     );
+
+    this.socket.ev.on(
+      'presence.update',
+      this.guarded('presence.update', async ({ id, presences }) => {
+        const conversationId = this.presenceByJid.get(id);
+        // Presença de chat que esta sessão não acompanha — grupo, status, ou um
+        // chat que ainda não trouxe mensagem nenhuma. Sem conversa a que
+        // pertencer, o evento não tem para onde ir.
+        if (!conversationId || !presences) return;
+
+        // `recording` é o áudio sendo gravado. Para quem espera do outro lado é
+        // a mesma informação de `composing`: o contato está respondendo agora.
+        const typing = Object.values(presences).some(
+          (presence) =>
+            presence?.lastKnownPresence === 'composing' ||
+            presence?.lastKnownPresence === 'recording',
+        );
+
+        if (this.typingByConversation.get(conversationId) === typing) return;
+        this.typingByConversation.set(conversationId, typing);
+
+        waEventBus.emitConversation({
+          type: 'typing',
+          accountId: this.accountId,
+          conversationId,
+          inboxId: this.inboxId,
+          isTyping: typing,
+        });
+      }),
+    );
+  }
+
+  /**
+   * Pede ao WhatsApp a presença deste chat.
+   *
+   * Sem a assinatura nenhum "digitando" chega — o servidor não a envia por
+   * conta própria. Uma vez por chat basta: ela vale enquanto o socket viver, e
+   * o mapa é esvaziado junto com ele em `teardownSocket`.
+   *
+   * A falha é engolida de propósito. Presença é enfeite; um chat cuja
+   * assinatura o servidor recusou continua entregando mensagens normalmente, e
+   * derrubar o processamento da mensagem por causa disso seria trocar o
+   * essencial pelo acessório.
+   */
+  private watchPresence(jid: string, conversationId: string): void {
+    if (this.presenceByJid.get(jid) === conversationId) return;
+    const novo = !this.presenceByJid.has(jid);
+    this.presenceByJid.set(jid, conversationId);
+    if (!novo) return;
+
+    void this.socket?.presenceSubscribe(jid).catch((error) => {
+      waLog.debug(`[sessão ${this.inboxId}] Presença de ${jid} não assinada:`, error);
+    });
   }
 
   /**
@@ -706,6 +776,14 @@ export class WhatsAppSession {
     // tudo abaixo — gravacao, eventos de tempo real, drenagem — fale do mesmo
     // id que esta no banco.
     const chat = await resolveStoredIds(this.accountId, this.inboxId, identity);
+
+    // A mensagem é a prova de que este chat está vivo — e o gancho para pedir a
+    // presença dele. Só aqui: assinar tudo o que existe na agenda encheria o
+    // socket de tráfego de presença de conversas que ninguém tem aberta.
+    this.watchPresence(chat.jid, chat.conversationId);
+    // Quem mandou a mensagem parou de digitar. Zerar a marca faz o próximo
+    // "digitando" contar como mudança e voltar a ser anunciado.
+    this.typingByConversation.delete(chat.conversationId);
 
     const at = new Date(timestampOf(msg));
     const contact = await this.resolveContact(chat, msg, fromMe);
@@ -1062,11 +1140,17 @@ export class WhatsAppSession {
       this.socket.ev.removeAllListeners('messages.upsert');
       this.socket.ev.removeAllListeners('messages.update');
       this.socket.ev.removeAllListeners('messaging-history.set');
+      this.socket.ev.removeAllListeners('presence.update');
       this.socket.end(undefined);
     } catch {
       // Ignora erro ao fechar socket
     }
     this.socket = null;
+    // As assinaturas de presença morrem com o socket: guardá-las faria a sessão
+    // seguinte achar que já assinou o que ninguém assinou, e o "digitando"
+    // simplesmente pararia de chegar depois da primeira reconexão.
+    this.presenceByJid.clear();
+    this.typingByConversation.clear();
   }
 
   async stop(): Promise<void> {

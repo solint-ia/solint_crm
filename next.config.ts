@@ -60,6 +60,21 @@ const nextConfig: NextConfig = {
   ],
   experimental: {
     optimizePackageImports: ['lucide-react'],
+    /**
+     * Teto do corpo de uma Server Action.
+     *
+     * O padrão do Next é **1 MB**, e `sendMediaAction` recebe o arquivo inteiro
+     * por `FormData`: uma foto comprimida passava por baixo desse teto e um
+     * vídeo — ou um áudio de mais de um minuto — nunca passava. O Next recusa a
+     * requisição antes de a Server Action rodar, então nada no servidor
+     * registrava a recusa e a tela não recebia `{ ok: false }` nenhum; só uma
+     * promessa rejeitada. Era essa a diferença entre "imagem envia" e "vídeo
+     * não envia".
+     *
+     * O valor acompanha `MAX_UPLOAD_BYTES` (16 MB) com folga para o
+     * envelope multipart, que sempre acrescenta alguns por cento.
+     */
+    serverActions: { bodySizeLimit: '20mb' },
   },
   async headers() {
     return [

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
@@ -79,12 +79,39 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const [transferOpen, setTransferOpen] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const prevConversationIdRef = useRef<string | null>(null);
+
   const hsmOpen = isHsmWindowOpen(conversation);
   const isGroup = isGroupContact(conversation.contact);
 
   const identity = isGroup
     ? `${conversation.contact.participantCount ?? 0} participantes`
     : PhoneNumber.format(conversation.contact.phone) || 'Sem telefone';
+
+  // Rola para a mensagem mais recente (final da conversa) por padrão
+  useEffect(() => {
+    const isDifferentConversation = prevConversationIdRef.current !== conversation.id;
+    prevConversationIdRef.current = conversation.id;
+
+    const scrollToBottom = (behavior: ScrollBehavior = 'auto') => {
+      if (messagesContainerRef.current) {
+        messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+      }
+      messagesEndRef.current?.scrollIntoView({ behavior });
+    };
+
+    if (isDifferentConversation) {
+      // Ao abrir / trocar de conversa: rolagem imediata para as mensagens mais recentes
+      scrollToBottom('auto');
+      const timer = setTimeout(() => scrollToBottom('auto'), 50);
+      return () => clearTimeout(timer);
+    } else {
+      // Nova mensagem na conversa atual: rolagem suave
+      scrollToBottom('smooth');
+    }
+  }, [conversation.id, conversation.timeline.length]);
 
   return (
     <section className="flex min-w-0 flex-1 flex-col bg-chat h-full overflow-hidden">
@@ -339,7 +366,10 @@ export function ChatPanel({
       )}
 
       {/* ---------- Stream de Mensagens ---------- */}
-      <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4 sm:p-6">
+      <div
+        ref={messagesContainerRef}
+        className="flex flex-1 flex-col gap-3 overflow-y-auto p-4 sm:p-6"
+      >
         {conversation.timeline.map((item) =>
           item.kind === 'divider' ? (
             <div key={`divider-${item.label}`} className="my-3 flex items-center justify-center">
@@ -356,11 +386,9 @@ export function ChatPanel({
           ),
         )}
 
-        {conversation.isTyping && (
-          <p className="text-xs text-brand animate-pulse font-medium">
-            {conversation.contact.name} está digitando...
-          </p>
-        )}
+        {conversation.isTyping && <TypingBubble name={conversation.contact.name} />}
+
+        <div ref={messagesEndRef} className="h-px shrink-0" aria-hidden="true" />
       </div>
 
       {/* Aviso de Janela de 24h Meta/HSM */}
@@ -381,6 +409,9 @@ export function ChatPanel({
       {/* ---------- Compositor de Mensagens Fixo na Base ---------- */}
       <div className="shrink-0 border-t border-line bg-surface p-3 md:p-4">
         <Composer
+          // O compositor guarda rascunho e anexo: sem saber de qual conversa
+          // são, ele os levava para a próxima que fosse aberta.
+          conversationId={conversation.id}
           disabledReason={
             !hsmOpen && conversation.channel === 'whatsapp'
               ? 'Janela de 24h encerrada. Envie um template para falar com o contato.'
@@ -414,5 +445,34 @@ export function ChatPanel({
         }}
       />
     </section>
+  );
+}
+
+/**
+ * "Digitando" como bolha, não como aviso.
+ *
+ * Fica alinhada à esquerda e com a mesma moldura das mensagens de quem escreve
+ * porque é isso que ela é: o lugar reservado da mensagem que está sendo
+ * escrita. Uma linha de texto solta acima do compositor dizia a mesma coisa e
+ * lia como notificação do sistema.
+ *
+ * O nome vai no rótulo acessível, não no desenho — em conversa de duas pessoas
+ * a posição da bolha já diz de quem é.
+ */
+function TypingBubble({ name }: { readonly name: string }) {
+  return (
+    <div className="flex w-full justify-start" aria-live="polite">
+      <div className="flex items-center gap-1.5 rounded-2xl rounded-tl-xs border border-line bg-surface px-4 py-3 shadow-xs">
+        <span className="sr-only">{name} está digitando</span>
+        {[0, 1, 2].map((index) => (
+          <span
+            key={index}
+            aria-hidden="true"
+            className="typing-dot size-1.5 rounded-full bg-muted"
+            style={{ animationDelay: `${index * 160}ms` }}
+          />
+        ))}
+      </div>
+    </div>
   );
 }

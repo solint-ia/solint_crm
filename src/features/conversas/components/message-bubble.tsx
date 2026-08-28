@@ -101,15 +101,25 @@ export function MessageBubble({ message, showAuthorName, onResend }: MessageBubb
           )}
         </footer>
 
-        {message.deliveryStatus === 'falha' && onResend && (
-          <button
-            type="button"
-            onClick={() => onResend(message.id)}
-            className="mt-1.5 text-xs font-semibold text-red-500 hover:underline block text-right"
-          >
-            Falha ao enviar · Clique para tentar novamente
-          </button>
-        )}
+        {/* O aviso de falha não depende mais de haver um `onResend`.
+            Sem ele, uma mensagem que o canal recusou aparecia igual às outras,
+            com um ícone de 12px como única diferença — e quem escreveu seguia
+            achando que a pessoa tinha recebido. O texto é o aviso; tentar de
+            novo é o extra que só existe onde alguém sabe como refazer o envio. */}
+        {message.deliveryStatus === 'falha' &&
+          (onResend ? (
+            <button
+              type="button"
+              onClick={() => onResend(message.id)}
+              className="mt-1.5 block text-right text-xs font-semibold text-red-500 hover:underline"
+            >
+              Não entregue · Clique para tentar novamente
+            </button>
+          ) : (
+            <p className="mt-1.5 text-right text-xs font-semibold text-red-500">
+              Não entregue pelo canal
+            </p>
+          ))}
       </div>
     </article>
   );
