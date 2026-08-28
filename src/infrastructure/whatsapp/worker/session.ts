@@ -1107,7 +1107,21 @@ export class WhatsAppSession {
       await ensureContact(this.accountId, contact, true);
       // Se o grupo não estiver autorizado pelo administrador, descarta a mensagem
       if (!isGroupAllowedInChat(contact)) {
-        return;
+        const dbContact = await prisma.contact.findFirst({
+          where: { id: contact.id, accountId: this.accountId },
+          select: { customFields: true },
+        });
+        const fields = Array.isArray(dbContact?.customFields)
+          ? (dbContact.customFields as { label: string; value: string }[])
+          : [];
+        const isAllowed = fields.some(
+          (f) =>
+            (f.label === 'group_chat_enabled' || f.label === 'Permitido no Chat') &&
+            f.value === 'true',
+        );
+        if (!isAllowed) {
+          return;
+        }
       }
     }
 

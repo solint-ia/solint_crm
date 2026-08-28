@@ -153,12 +153,16 @@ export const findStoredContact = async (
     include: { contact: { include: { labels: true } } },
   });
   if (conversation) return contactRow(conversation.contact);
-  if (chat.isGroup) return undefined;
 
   const contact = await prisma.contact.findFirst({
     where: {
       accountId,
-      OR: [{ id: chat.contactId }, ...(chat.phone ? [{ phone: chat.phone }] : [])],
+      OR: [
+        { id: chat.contactId },
+        { id: `ct-wa-${accountId}-${chat.key}` },
+        { id: `ct-wa-${chat.key}` },
+        ...(chat.phone ? [{ phone: chat.phone }] : []),
+      ],
     },
     include: { labels: true },
   });
@@ -537,9 +541,22 @@ export const openOutboundConversation = async (input: {
 }): Promise<{ readonly id: string; readonly created: boolean }> => {
   const { accountId, inboxId, contact } = input;
 
-  const digits = contact.phone.replace(/\D/g, '');
-  if (!digits) throw new Error('O contato não tem telefone para receber uma mensagem.');
-  const jid = `${digits}@s.whatsapp.net`;
+  let jid: string;
+  let id: string;
+
+  if (contact.kind === 'grupo') {
+    const match = contact.id.match(/^ct-wa-[^-]+-g-(.+)$/);
+    const matched = match?.[1];
+    const groupId = matched ?? contact.id.replace(/^ct-wa-[^-]+-/, '');
+    jid = groupId.endsWith('@g.us') ? groupId : `${groupId}@g.us`;
+    const cleanId = groupId.replace('@g.us', '');
+    id = `cv-wa-${inboxId}-g-${cleanId}`;
+  } else {
+    const digits = contact.phone.replace(/\D/g, '');
+    if (!digits) throw new Error('O contato não tem telefone para receber uma mensagem.');
+    jid = `${digits}@s.whatsapp.net`;
+    id = `cv-wa-${inboxId}-${digits}`;
+  }
 
   const existing = await prisma.conversation.findFirst({
     where: { accountId, inboxId, channelThreadId: jid },
@@ -548,10 +565,6 @@ export const openOutboundConversation = async (input: {
   if (existing) return { id: existing.id, created: false };
 
   const at = new Date();
-  // Mesmo formato da entrada (ver `identityFromKey`): é o que faz a resposta do
-  // contato cair nesta conversa, e o que mantém dois números da empresa como
-  // dois atendimentos separados com a mesma pessoa.
-  const id = `cv-wa-${inboxId}-${digits}`;
 
   try {
     const created = await prisma.conversation.create({

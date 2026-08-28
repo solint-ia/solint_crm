@@ -627,7 +627,7 @@ export async function findContactConversationAction(
   );
   if (existente) return { ok: true, conversationId: existente.id };
 
-  if (!contact.phone.trim()) {
+  if (!contact.phone.trim() && contact.kind !== 'grupo') {
     return { ok: false, error: 'Este contato não tem telefone cadastrado.' };
   }
 
