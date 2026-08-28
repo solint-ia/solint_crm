@@ -1,18 +1,121 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import {
+  AlertCircle,
+  ArrowRight,
+  CheckCircle2,
+  FileSpreadsheet,
+  FileText,
+  Loader2,
+  UploadCloud,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
-import { ProgressBar } from '@/components/ui/progress-bar';
+import { importContactsCsvAction, type ImportCsvResult } from '@/app/(workspace)/contatos/actions';
 
-const COLUMNS = [
-  { csv: 'nome_completo', field: 'Nome' },
-  { csv: 'telefone', field: 'Telefone (E.164)' },
-  { csv: 'email', field: 'E-mail' },
-  { csv: 'empresa', field: 'Empresa' },
-] as const;
+export interface ParsedCsvRow {
+  readonly [key: string]: string;
+}
 
-/** Importacao CSV: mapeamento de colunas, progresso e relatorio de erros. */
+export type TargetField = 'name' | 'phone' | 'email' | 'company' | 'notes' | 'ignore';
+
+const TARGET_FIELDS: { key: TargetField; label: string; required: boolean }[] = [
+  { key: 'name', label: 'Nome do contato', required: true },
+  { key: 'phone', label: 'Telefone / WhatsApp', required: true },
+  { key: 'email', label: 'E-mail', required: false },
+  { key: 'company', label: 'Empresa', required: false },
+  { key: 'notes', label: 'Notas / Observações', required: false },
+  { key: 'ignore', label: '(Ignorar esta coluna)', required: false },
+];
+
+/** Divide uma linha CSV respeitando aspas */
+function parseCsvLine(line: string, delimiter: string): string[] {
+  const result: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === delimiter && !inQuotes) {
+      result.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  result.push(current.trim());
+  return result;
+}
+
+/** Detecta se o delimitador é vírgula ou ponto-e-vírgula */
+function detectDelimiter(text: string): string {
+  const firstLine = text.split(/\r?\n/)[0] ?? '';
+  const commaCount = (firstLine.match(/,/g) || []).length;
+  const semicolonCount = (firstLine.match(/;/g) || []).length;
+  const tabCount = (firstLine.match(/\t/g) || []).length;
+
+  if (semicolonCount > commaCount && semicolonCount >= tabCount) return ';';
+  if (tabCount > commaCount && tabCount > semicolonCount) return '\t';
+  return ',';
+}
+
+function parseCsv(text: string): { headers: string[]; rows: ParsedCsvRow[] } {
+  const clean = text.replace(/^\uFEFF/, '');
+  const lines = clean.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return { headers: [], rows: [] };
+
+  const delimiter = detectDelimiter(clean);
+  const headers = parseCsvLine(lines[0]!, delimiter).map((h) =>
+    h.replace(/^["']|["']$/g, '').trim(),
+  );
+
+  const rows: ParsedCsvRow[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const values = parseCsvLine(lines[i]!, delimiter);
+    const row: Record<string, string> = {};
+    headers.forEach((header, index) => {
+      row[header] = (values[index] ?? '').replace(/^["']|["']$/g, '').trim();
+    });
+    rows.push(row);
+  }
+
+  return { headers, rows };
+}
+
+function autoDetectField(header: string): TargetField {
+  const h = header.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (['nome', 'name', 'nomecompleto', 'fullname', 'contato', 'cliente'].includes(h)) return 'name';
+  if (
+    [
+      'telefone',
+      'phone',
+      'celular',
+      'whatsapp',
+      'mobile',
+      'fone',
+      'tel',
+      'numero',
+      'número',
+      'phonenumber',
+    ].includes(h)
+  )
+    return 'phone';
+  if (['email', 'e-mail', 'mail', 'correio'].includes(h)) return 'email';
+  if (['empresa', 'company', 'organizacao', 'organização', 'firma'].includes(h)) return 'company';
+  if (['notas', 'notes', 'observacao', 'observação', 'obs', 'detalhes', 'comments'].includes(h))
+    return 'notes';
+  return 'ignore';
+}
+
 export function ImportCsvModal({
   open,
   onClose,
@@ -20,66 +123,358 @@ export function ImportCsvModal({
   readonly open: boolean;
   readonly onClose: () => void;
 }) {
-  const [step, setStep] = useState<'mapeamento' | 'progresso'>('mapeamento');
+  const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const close = () => {
-    setStep('mapeamento');
+  const [step, setStep] = useState<'upload' | 'mapeamento' | 'resultado'>('upload');
+  const [fileName, setFileName] = useState<string>('');
+  const [headers, setHeaders] = useState<string[]>([]);
+  const [rows, setRows] = useState<ParsedCsvRow[]>([]);
+  const [mapping, setMapping] = useState<Record<string, TargetField>>({});
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [result, setResult] = useState<ImportCsvResult | null>(null);
+
+  const reset = () => {
+    setStep('upload');
+    setFileName('');
+    setHeaders([]);
+    setRows([]);
+    setMapping({});
+    setLoading(false);
+    setErrorMsg(null);
+    setResult(null);
+  };
+
+  const handleClose = () => {
+    reset();
     onClose();
+  };
+
+  const handleFile = (file: File) => {
+    if (!file.name.endsWith('.csv') && file.type !== 'text/csv') {
+      setErrorMsg('Por favor, selecione um arquivo válido no formato .csv');
+      return;
+    }
+
+    setFileName(file.name);
+    setErrorMsg(null);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target?.result as string;
+      if (!content) {
+        setErrorMsg('O arquivo está vazio.');
+        return;
+      }
+
+      const parsed = parseCsv(content);
+      if (parsed.headers.length === 0 || parsed.rows.length === 0) {
+        setErrorMsg('Nenhuma linha de contato encontrada no arquivo.');
+        return;
+      }
+
+      const initialMapping: Record<string, TargetField> = {};
+      parsed.headers.forEach((h) => {
+        initialMapping[h] = autoDetectField(h);
+      });
+
+      setHeaders(parsed.headers);
+      setRows(parsed.rows);
+      setMapping(initialMapping);
+      setStep('mapeamento');
+    };
+
+    reader.onerror = () => {
+      setErrorMsg('Falha ao ler o arquivo selecionado.');
+    };
+
+    reader.readAsText(file);
+  };
+
+  const handleImport = async () => {
+    const mappedValues = Object.values(mapping);
+    const hasName = mappedValues.includes('name');
+    const hasPhone = mappedValues.includes('phone');
+
+    if (!hasName || !hasPhone) {
+      setErrorMsg('É necessário mapear as colunas de Nome e Telefone para continuar.');
+      return;
+    }
+
+    setErrorMsg(null);
+    setLoading(true);
+
+    try {
+      const contactsToImport = rows
+        .map((row) => {
+          let name = '';
+          let phone = '';
+          let email = '';
+          let company = '';
+          let notes = '';
+
+          Object.entries(mapping).forEach(([csvHeader, targetField]) => {
+            const val = row[csvHeader] ?? '';
+            if (targetField === 'name') name = val;
+            if (targetField === 'phone') phone = val;
+            if (targetField === 'email') email = val;
+            if (targetField === 'company') company = val;
+            if (targetField === 'notes') notes = val;
+          });
+
+          return { name, phone, email, company, notes };
+        })
+        .filter((c) => c.name && c.phone);
+
+      if (contactsToImport.length === 0) {
+        setErrorMsg('Nenhum contato com Nome e Telefone preenchidos foi encontrado.');
+        setLoading(false);
+        return;
+      }
+
+      const res = await importContactsCsvAction({ contacts: contactsToImport });
+
+      if (!res.ok || !res.data) {
+        setErrorMsg(res.error ?? 'Erro ao importar contatos.');
+        setLoading(false);
+        return;
+      }
+
+      setResult(res.data);
+      setStep('resultado');
+      router.refresh();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Erro inesperado na importação.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <Modal
       open={open}
-      onClose={close}
+      onClose={handleClose}
       title="Importar contatos por CSV"
-      description="Relacione as colunas do arquivo aos campos do CRM antes de importar."
+      description="Importe planilhas de contatos, clientes ou leads diretamente para a sua base do CRM."
       footer={
-        step === 'mapeamento' ? (
+        step === 'upload' ? (
+          <Button variant="secondary" size="sm" onClick={handleClose}>
+            Cancelar
+          </Button>
+        ) : step === 'mapeamento' ? (
           <>
-            <Button variant="secondary" size="sm" onClick={close}>
-              Cancelar
+            <Button variant="secondary" size="sm" onClick={() => setStep('upload')} disabled={loading}>
+              Voltar
             </Button>
-            <Button size="sm" onClick={() => setStep('progresso')}>
-              Iniciar importação
+            <Button size="sm" onClick={handleImport} disabled={loading}>
+              {loading ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  <span>Importando...</span>
+                </>
+              ) : (
+                <>
+                  <span>Importar {rows.length} contatos</span>
+                  <ArrowRight className="size-4" />
+                </>
+              )}
             </Button>
           </>
         ) : (
-          <Button size="sm" onClick={close}>
+          <Button size="sm" onClick={handleClose}>
             Concluir
           </Button>
         )
       }
     >
-      {step === 'mapeamento' ? (
-        <ul className="flex flex-col gap-2">
-          {COLUMNS.map((column) => (
-            <li
-              key={column.csv}
-              className="flex items-center justify-between gap-3 rounded-control border border-line px-3 py-2"
-            >
-              <span className="font-mono text-meta text-muted">{column.csv}</span>
-              <span className="text-dim">para</span>
-              <span className="text-body font-semibold text-ink">{column.field}</span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <div className="flex flex-col gap-3">
-          <div>
-            <div className="mb-1.5 flex items-center justify-between text-meta">
-              <span className="text-ink">Importando 1.280 de 2.000 contatos</span>
-              <span className="text-muted">64%</span>
+      {errorMsg && (
+        <div className="mb-4 flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3.5 py-2.5 text-xs text-red-600 dark:text-red-300">
+          <AlertCircle className="size-4 shrink-0 text-red-500" />
+          <span>{errorMsg}</span>
+        </div>
+      )}
+
+      {step === 'upload' && (
+        <div className="flex flex-col gap-4">
+          <label
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              const file = e.dataTransfer.files[0];
+              if (file) handleFile(file);
+            }}
+            className="flex flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-line-soft bg-surface-2/40 p-8 text-center cursor-pointer transition-all hover:border-brand/40 hover:bg-surface-2"
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleFile(file);
+              }}
+            />
+            <div className="flex size-12 items-center justify-center rounded-2xl bg-brand/12 text-brand">
+              <UploadCloud className="size-6" />
             </div>
-            <ProgressBar value={64} label="Progresso da importação" />
-          </div>
-          <div className="rounded-control border border-red-line bg-red-soft px-3 py-2.5">
-            <p className="text-body font-semibold text-red-text">12 linhas com erro</p>
-            <ul className="mt-1 list-disc pl-4 text-meta text-red-text">
-              <li>8 telefones fora do padrão E.164</li>
-              <li>3 e-mails inválidos</li>
-              <li>1 linha duplicada</li>
+            <div>
+              <p className="text-sm font-semibold text-ink">
+                Clique para selecionar ou arraste o arquivo CSV
+              </p>
+              <p className="mt-1 text-xs text-muted">
+                Suporta planilhas exportadas do Excel, Google Sheets ou outros CRMs.
+              </p>
+            </div>
+          </label>
+
+          <div className="rounded-xl border border-line bg-surface p-3.5 text-xs text-muted">
+            <p className="font-semibold text-ink mb-1.5 flex items-center gap-1.5">
+              <FileSpreadsheet className="size-3.5 text-brand" />
+              <span>Colunas recomendadas no CSV:</span>
+            </p>
+            <ul className="list-disc pl-4 space-y-1 text-dim">
+              <li>
+                <strong className="text-ink">Nome</strong> (obrigatório): Nome completo do contato
+              </li>
+              <li>
+                <strong className="text-ink">Telefone / Celular</strong> (obrigatório): Com DDD (ex:
+                11999998888 ou +55 11 99999-8888)
+              </li>
+              <li>
+                <strong className="text-ink">E-mail, Empresa, Notas</strong> (opcionais)
+              </li>
             </ul>
           </div>
+        </div>
+      )}
+
+      {step === 'mapeamento' && (
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between border-b border-line pb-2.5">
+            <div className="flex items-center gap-2">
+              <FileText className="size-4 text-brand" />
+              <span className="text-xs font-semibold text-ink">{fileName}</span>
+              <span className="rounded-md bg-surface-2 px-1.5 py-0.5 text-[10px] font-bold text-muted">
+                {rows.length} linhas
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setStep('upload')}
+              className="text-xs text-muted hover:text-ink"
+            >
+              Trocar arquivo
+            </button>
+          </div>
+
+          <p className="text-xs text-muted">
+            Relacione as colunas da sua planilha aos campos correspondentes no CRM:
+          </p>
+
+          <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+            {headers.map((header) => (
+              <div
+                key={header}
+                className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface px-3 py-2 text-xs"
+              >
+                <div className="min-w-0 flex-1">
+                  <span className="font-semibold text-ink truncate block">{header}</span>
+                  <span className="text-[11px] text-muted truncate block">
+                    Ex: {rows[0]?.[header] || '(vazio)'}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <ArrowRight className="size-3.5 text-muted" />
+                  <select
+                    value={mapping[header] ?? 'ignore'}
+                    onChange={(e) =>
+                      setMapping((prev) => ({
+                        ...prev,
+                        [header]: e.target.value as TargetField,
+                      }))
+                    }
+                    className="h-8 rounded-lg border border-line bg-surface-2 px-2 text-xs font-semibold text-ink outline-none focus:border-brand"
+                  >
+                    {TARGET_FIELDS.map((field) => (
+                      <option key={field.key} value={field.key}>
+                        {field.label} {field.required ? '*' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Prévia dos Primeiros Contatos */}
+          <div className="rounded-xl border border-line-soft bg-surface-2/40 p-3">
+            <p className="text-[11px] font-bold text-ink mb-2">Prévia dos primeiros registros:</p>
+            <div className="overflow-x-auto text-[11px]">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-line text-muted">
+                    <th className="pb-1 pr-2 font-medium">Nome</th>
+                    <th className="pb-1 pr-2 font-medium">Telefone</th>
+                    <th className="pb-1 font-medium">Empresa</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line-soft">
+                  {rows.slice(0, 3).map((r, i) => {
+                    const nameHeader = Object.keys(mapping).find((k) => mapping[k] === 'name');
+                    const phoneHeader = Object.keys(mapping).find((k) => mapping[k] === 'phone');
+                    const companyHeader = Object.keys(mapping).find((k) => mapping[k] === 'company');
+
+                    return (
+                      <tr key={i}>
+                        <td className="py-1 pr-2 font-semibold text-ink">
+                          {nameHeader ? r[nameHeader] : '-'}
+                        </td>
+                        <td className="py-1 pr-2 text-muted">
+                          {phoneHeader ? r[phoneHeader] : '-'}
+                        </td>
+                        <td className="py-1 text-muted">
+                          {companyHeader ? r[companyHeader] : '-'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {step === 'resultado' && result && (
+        <div className="flex flex-col gap-4 animate-in fade-in">
+          <div className="flex items-center gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-emerald-700 dark:text-emerald-300">
+            <CheckCircle2 className="size-6 shrink-0 text-emerald-500" />
+            <div>
+              <p className="text-sm font-bold text-ink">Importação concluída com sucesso!</p>
+              <p className="text-xs text-muted mt-0.5">
+                {result.importedCount} novos contatos criados e {result.updatedCount} atualizados.
+              </p>
+            </div>
+          </div>
+
+          {result.errorCount > 0 && (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 text-xs text-amber-800 dark:text-amber-200">
+              <p className="font-bold flex items-center gap-1.5">
+                <AlertCircle className="size-4 text-amber-500" />
+                <span>{result.errorCount} linha(s) ignorada(s):</span>
+              </p>
+              <ul className="mt-2 list-disc pl-4 space-y-1 max-h-36 overflow-y-auto text-[11px]">
+                {result.errors.map((err, i) => (
+                  <li key={i}>
+                    Linha {err.line} ({err.name}): {err.error}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
     </Modal>

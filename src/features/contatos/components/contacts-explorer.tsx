@@ -11,6 +11,8 @@ import {
   Download,
   ExternalLink,
   Kanban,
+  Loader2,
+  MessageSquare,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -35,7 +37,7 @@ import { EditContactModal } from './edit-contact-modal';
 import { StartConversationButton } from './start-conversation-button';
 import { SaveSegmentModal } from './save-segment-modal';
 import { ImportCsvModal } from './import-csv-modal';
-import { deleteContactAction } from '@/app/(workspace)/contatos/actions';
+import { deleteContactAction, syncWhatsAppContactsAction } from '@/app/(workspace)/contatos/actions';
 import { cn } from '@/lib/cn';
 
 type SortField = 'name' | 'phone' | 'company' | 'lastContactAt' | 'ownerName';
@@ -183,43 +185,103 @@ export function ContactsExplorer({ contacts }: ContactsExplorerProps) {
     });
   };
 
-  // Exportação CSV
+  // Exportação CSV otimizada com Blob nativo e UTF-8 BOM
   const handleExportCsv = (onlySelected = false) => {
     const listToExport = onlySelected
       ? sortedContacts.filter((c) => selected.includes(c.id))
       : sortedContacts;
 
-    const rows = [
-      ['Nome', 'Telefone', 'Email', 'Empresa', 'Etiquetas', 'Ultimo Contato', 'Responsavel'],
-      ...listToExport.map((c) => [
-        `"${c.name.replace(/"/g, '""')}"`,
-        `"${c.phone}"`,
-        `"${(c.email ?? '').replace(/"/g, '""')}"`,
-        `"${(c.company ?? '').replace(/"/g, '""')}"`,
-        `"${c.labels.map((l) => l.name).join('; ')}"`,
-        `"${c.lastContactLabel ?? ''}"`,
-        `"${c.ownerName ?? ''}"`,
-      ]),
+    if (listToExport.length === 0) {
+      show({
+        tone: 'alerta',
+        title: 'Nenhum contato',
+        description: 'Não há contatos disponíveis para exportação.',
+      });
+      return;
+    }
+
+    const escapeCsv = (val: string | null | undefined): string => {
+      const str = (val ?? '').toString();
+      if (
+        str.includes(',') ||
+        str.includes(';') ||
+        str.includes('"') ||
+        str.includes('\n') ||
+        str.includes('\r')
+      ) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const headers = [
+      'Nome',
+      'Telefone',
+      'Email',
+      'Empresa',
+      'Etiquetas',
+      'Ultimo Contato',
+      'Responsavel',
     ];
+    const rows = listToExport.map((c) => [
+      escapeCsv(c.name),
+      escapeCsv(c.phone),
+      escapeCsv(c.email),
+      escapeCsv(c.company),
+      escapeCsv(c.labels.map((l) => l.name).join('; ')),
+      escapeCsv(c.lastContactLabel),
+      escapeCsv(c.ownerName),
+    ]);
 
     const csvContent =
-      'data:text/csv;charset=utf-8,\uFEFF' + rows.map((e) => e.join(',')).join('\n');
-    const encodedUri = encodeURI(csvContent);
+      '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute(
-      'download',
-      `contatos_solint_${new Date().toISOString().slice(0, 10)}.csv`,
-    );
+    link.href = url;
+    link.download = `contatos_solint_${new Date().toISOString().slice(0, 10)}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
 
     show({
       tone: 'sucesso',
       title: 'Exportação concluída',
-      description: `${listToExport.length} contatos exportados em formato CSV.`,
+      description: `${listToExport.length} contato(s) exportado(s) com sucesso em formato CSV.`,
     });
+  };
+
+  const [isSyncingWa, setIsSyncingWa] = useState(false);
+
+  const handleSyncWhatsApp = async () => {
+    setIsSyncingWa(true);
+    try {
+      const res = await syncWhatsAppContactsAction();
+      if (!res.ok || !res.data) {
+        show({
+          tone: 'erro',
+          title: 'Erro ao sincronizar',
+          description: res.error ?? 'Falha ao sincronizar contatos do WhatsApp.',
+        });
+        return;
+      }
+
+      show({
+        tone: 'sucesso',
+        title: 'Sincronização concluída',
+        description: `${res.data.syncedCount} contato(s) do WhatsApp sincronizados e atualizados na base.`,
+      });
+      router.refresh();
+    } catch {
+      show({
+        tone: 'erro',
+        title: 'Erro inesperado',
+        description: 'Não foi possível completar a sincronização do WhatsApp.',
+      });
+    } finally {
+      setIsSyncingWa(false);
+    }
   };
 
   return (
@@ -254,6 +316,28 @@ export function ContactsExplorer({ contacts }: ContactsExplorerProps) {
 
           {/* Botões de Ação */}
           <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              size="md"
+              icon={
+                isSyncingWa ? (
+                  <Loader2 className="size-3.5 animate-spin text-emerald-600 dark:text-emerald-400" />
+                ) : (
+                  <MessageSquare className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+                )
+              }
+              onClick={handleSyncWhatsApp}
+              disabled={isSyncingWa}
+              title="Importar e sincronizar contatos de todos os canais de WhatsApp conectados"
+            >
+              <span className="hidden lg:inline">
+                {isSyncingWa ? 'Sincronizando...' : 'Sincronizar WhatsApp'}
+              </span>
+              <span className="lg:hidden">
+                {isSyncingWa ? 'Sincronizando...' : 'WhatsApp'}
+              </span>
+            </Button>
+
             <Button
               variant="secondary"
               size="md"

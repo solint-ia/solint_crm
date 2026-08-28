@@ -5,6 +5,7 @@ import {
   jidNormalizedUser,
   makeCacheableSignalKeyStore,
   makeWASocket,
+  type Contact as WAContact,
   type WAMessage,
   type WAMessageKey,
   type WASocket,
@@ -13,7 +14,7 @@ import pino from 'pino';
 import type { Contact } from '@/core/domain/contact';
 import type { Message, MessageContent } from '@/core/domain/message';
 import { PhoneNumber } from '@/core/domain/contact';
-import { DB_POOL_SIZE, prisma } from '@/infrastructure/db/prisma';
+import { DB_POOL_SIZE, asJson, prisma } from '@/infrastructure/db/prisma';
 import { initPostgresAuthState, isPairedCreds } from '../auth/postgres-auth-state';
 import {
   applyDeliveryUpdate,
@@ -564,9 +565,12 @@ export class WhatsAppSession {
 
     this.socket.ev.on(
       'messaging-history.set',
-      this.guarded('messaging-history.set', async () => {
-        // Ignora histórico antigo recebido do celular — apenas mensagens novas pós-conexão
-        console.log(`[WhatsAppSession ${this.inboxId}] Histórico antigo ignorado (apenas mensagens novas pós-conexão serão processadas).`);
+      this.guarded('messaging-history.set', async (history) => {
+        if ('contacts' in history && Array.isArray(history.contacts)) {
+          for (const contact of history.contacts) {
+            await this.handleContactSync(contact);
+          }
+        }
       }),
     );
 
@@ -654,6 +658,84 @@ export class WhatsAppSession {
         });
       }),
     );
+
+    this.socket.ev.on(
+      'contacts.upsert',
+      this.guarded('contacts.upsert', async (contacts) => {
+        for (const contact of contacts) {
+          await this.handleContactSync(contact);
+        }
+      }),
+    );
+
+    this.socket.ev.on(
+      'contacts.update',
+      this.guarded('contacts.update', async (updates) => {
+        for (const update of updates) {
+          await this.handleContactSync(update);
+        }
+      }),
+    );
+  }
+
+  private async handleContactSync(contact: Partial<WAContact>): Promise<void> {
+    const rawJid = contact.phoneNumber ?? contact.id;
+    if (!rawJid || rawJid.endsWith('@g.us') || rawJid.includes('status@broadcast')) return;
+
+    const jid = jidNormalizedUser(rawJid);
+    const phoneDigits = userOf(jid);
+    if (!phoneDigits) return;
+
+    const phone = PhoneNumber.normalize(`+${phoneDigits}`);
+    if (!PhoneNumber.isValid(phone)) return;
+
+    const name = contact.name?.trim() || contact.notify?.trim() || contact.verifiedName?.trim();
+    const avatarUrl =
+      typeof contact.imgUrl === 'string' && contact.imgUrl !== 'changed' ? contact.imgUrl : undefined;
+
+    try {
+      const existing = await prisma.contact.findFirst({
+        where: {
+          accountId: this.accountId,
+          OR: [
+            { phone },
+            { id: `ct-wa-${phoneDigits}` },
+            { id: `ct-wa-${this.accountId}-${phoneDigits}` },
+          ],
+        },
+      });
+
+      if (existing) {
+        const shouldUpdateName = name && (existing.name.startsWith('+') || existing.name === phone);
+        if (shouldUpdateName || avatarUrl) {
+          await prisma.contact.update({
+            where: { id: existing.id, accountId: this.accountId },
+            data: {
+              ...(shouldUpdateName ? { name } : {}),
+              ...(avatarUrl ? { avatarUrl } : {}),
+            },
+          });
+        }
+      } else {
+        const contactId = `ct-wa-${this.accountId}-${phoneDigits}`;
+        await prisma.contact.create({
+          data: {
+            id: contactId,
+            accountId: this.accountId,
+            name: name || PhoneNumber.format(phone) || phone,
+            phone,
+            channel: 'whatsapp',
+            avatarTone: 'blue',
+            kind: 'pessoa',
+            avatarUrl: avatarUrl ?? null,
+            customFields: asJson([]),
+            timeline: asJson([]),
+          },
+        });
+      }
+    } catch {
+      // Ignora colisões concorrentes normais do Baileys
+    }
   }
 
   /**
