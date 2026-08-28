@@ -74,51 +74,41 @@ export const resolveStoredIds = async (
   inboxId: string | undefined,
   chat: ChatIdentity,
 ): Promise<ChatIdentity> => {
+  const phoneDigits = chat.phone.replace(/\D/g, '');
+  const digitsWithout9 =
+    phoneDigits.length === 13 && phoneDigits.startsWith('55') && phoneDigits[4] === '9'
+      ? `${phoneDigits.slice(0, 4)}${phoneDigits.slice(5)}`
+      : undefined;
+  const digitsWith9 =
+    phoneDigits.length === 12 && phoneDigits.startsWith('55')
+      ? `${phoneDigits.slice(0, 4)}9${phoneDigits.slice(4)}`
+      : undefined;
+
   const conversation = inboxId
     ? await prisma.conversation.findFirst({
-        where: { accountId, inboxId, channelThreadId: chat.jid },
+        where: {
+          accountId,
+          inboxId,
+          OR: [
+            { channelThreadId: chat.jid },
+            ...(phoneDigits ? [{ channelThreadId: `${phoneDigits}@s.whatsapp.net` }] : []),
+            ...(digitsWithout9 ? [{ channelThreadId: `${digitsWithout9}@s.whatsapp.net` }] : []),
+            ...(digitsWith9 ? [{ channelThreadId: `${digitsWith9}@s.whatsapp.net` }] : []),
+            ...(chat.phone ? [{ contact: { phone: chat.phone } }] : []),
+            ...(digitsWithout9 ? [{ contact: { phone: `+${digitsWithout9}` } }] : []),
+            ...(digitsWith9 ? [{ contact: { phone: `+${digitsWith9}` } }] : []),
+            { id: chat.conversationId },
+            { id: `cv-wa-${accountId}-${chat.key}` },
+            { id: `cv-wa-${chat.key}` },
+          ],
+        },
+        orderBy: { lastActivityAt: 'desc' },
         select: { id: true, contactId: true },
       })
     : null;
 
-  /**
-   * Desempate pelos ids antigos — **dentro desta caixa**.
-   *
-   * Existem três formatos vivos: `cv-wa-<numero>` (original),
-   * `cv-wa-<conta>-<numero>` e o atual `cv-wa-<caixa>-<numero>`. Os dois
-   * primeiros não dizem de qual caixa a conversa é, e era exatamente por aqui
-   * que a mensagem vazava: uma caixa procurava por id, encontrava a conversa
-   * que **outra** caixa da mesma conta tinha criado e gravava a mensagem lá.
-   *
-   * Filtrar por `inboxId` fecha isso. Uma conversa antiga que pertence a outra
-   * caixa deixa de ser encontrada aqui, e a mensagem abre a conversa que
-   * faltava — que é o comportamento certo: são dois atendimentos, por dois
-   * números.
-   *
-   * A consulta só roda quando a chave natural não achou nada, e cobre o caso
-   * de uma linha antiga sem `channelThreadId` gravado.
-   */
-  const legacy =
-    conversation ??
-    (inboxId
-      ? await prisma.conversation.findFirst({
-          where: {
-            accountId,
-            inboxId,
-            id: {
-              in: [
-                chat.conversationId,
-                `cv-wa-${accountId}-${chat.key}`,
-                `cv-wa-${chat.key}`,
-              ],
-            },
-          },
-          select: { id: true, contactId: true },
-        })
-      : null);
-
-  if (legacy) {
-    return { ...chat, conversationId: legacy.id, contactId: legacy.contactId };
+  if (conversation) {
+    return { ...chat, conversationId: conversation.id, contactId: conversation.contactId };
   }
 
   // Sem conversa, o contato ainda pode existir — cadastrado à mão no CRM, ou
@@ -131,10 +121,24 @@ export const resolveStoredIds = async (
         { id: chat.contactId },
         { id: `ct-wa-${chat.key}` },
         ...(chat.phone ? [{ phone: chat.phone }] : []),
+        ...(digitsWithout9 ? [{ phone: `+${digitsWithout9}` }] : []),
+        ...(digitsWith9 ? [{ phone: `+${digitsWith9}` }] : []),
       ],
     },
     select: { id: true },
   });
+
+  if (contact && inboxId) {
+    // Se o contato já tem conversa nesta caixa, reutiliza a conversa dele
+    const existingConv = await prisma.conversation.findFirst({
+      where: { accountId, inboxId, contactId: contact.id },
+      orderBy: { lastActivityAt: 'desc' },
+      select: { id: true },
+    });
+    if (existingConv) {
+      return { ...chat, conversationId: existingConv.id, contactId: contact.id };
+    }
+  }
 
   return contact ? { ...chat, contactId: contact.id } : chat;
 };
@@ -845,12 +849,10 @@ const publish = async (
       type,
       accountId,
       conversationId,
-      inboxId,
+      inboxId: inboxId ?? conversation?.inboxId,
       messageId: message.id,
       message,
-      conversation: conversation
-        ? { ...conversation, timeline: [{ kind: 'message' as const, message }] }
-        : undefined,
+      ...(conversation ? { conversation } : {}),
     });
     return;
   }

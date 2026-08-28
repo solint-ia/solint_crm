@@ -45,6 +45,7 @@ export const isSupportedChatJid = (jid: string | undefined | null): jid is strin
 export const userOf = (jid: string | undefined): string => jidDecode(jid)?.user ?? '';
 
 export const phoneFromJid = (jid: string | undefined): string => {
+  if (!jid || isLidUser(jid) || jid.endsWith('@lid')) return '';
   const user = userOf(jid);
   return /^\d{8,15}$/.test(user) ? `+${user}` : '';
 };
@@ -59,11 +60,11 @@ export const resolvePhoneJid = async (
   jid: string,
   altJid?: string,
 ): Promise<string> => {
-  if (!isLidUser(jid)) return jidNormalizedUser(jid);
-  if (altJid && !isLidUser(altJid)) return jidNormalizedUser(altJid);
+  if (!isLidUser(jid) && !jid.endsWith('@lid')) return jidNormalizedUser(jid);
+  if (altJid && !isLidUser(altJid) && !altJid.endsWith('@lid')) return jidNormalizedUser(altJid);
   try {
-    const mapped = await socket.signalRepository.lidMapping.getPNForLID(jidNormalizedUser(jid));
-    if (mapped) return jidNormalizedUser(mapped);
+    const mapped = await socket.signalRepository?.lidMapping?.getPNForLID(jidNormalizedUser(jid));
+    if (mapped && !isLidUser(mapped) && !mapped.endsWith('@lid')) return jidNormalizedUser(mapped);
   } catch {
     // Mapeamento indisponivel — segue com o LID como identidade.
   }

@@ -222,10 +222,30 @@ export function useInbox({
     }
 
     // O servidor envia a conversa completa: substituir e sempre mais seguro
-    // que remendar a timeline no cliente — e descarta a bolha otimista.
+    // que remendar a timeline no cliente — preservando mensagens otimistas em voo.
     const incoming = payload.conversation as Conversation | undefined;
     if (incoming) {
-      setConversations((current) => upsertConversation(current, incoming));
+      setConversations((current) => {
+        const existing = current.find((c) => c.id === incoming.id);
+        if (!existing) {
+          return upsertConversation(current, incoming);
+        }
+        const incomingMsgIds = new Set(
+          incoming.timeline
+            .filter((item) => item.kind === 'message')
+            .map((item) => (item.kind === 'message' ? item.message.id : '')),
+        );
+        const localOptimistic = existing.timeline.filter(
+          (item) =>
+            item.kind === 'message' &&
+            item.message.id.startsWith('local-') &&
+            !incomingMsgIds.has(item.message.id),
+        );
+        return upsertConversation(current, {
+          ...incoming,
+          timeline: [...incoming.timeline, ...localOptimistic],
+        });
+      });
       return;
     }
 
@@ -274,8 +294,6 @@ export function useInbox({
         lastMessagePreview: previewOfMessage(message),
         lastMessageAt: message.time,
         lastActivityAt: new Date().toISOString(),
-        // A mensagem chegando é a prova de que a frase terminou: manter os três
-        // pontinhos depois dela mostraria o contato digitando o que já mandou.
         isTyping: false,
         unreadCount: message.author === 'contact' ? existing.unreadCount + 1 : existing.unreadCount,
       });

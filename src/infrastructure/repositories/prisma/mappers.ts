@@ -154,7 +154,9 @@ export const buildTimeline = (
   const items: TimelineItem[] = [];
   let currentDay: number | undefined;
 
-  for (const row of rows) {
+  const sorted = [...rows].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+  for (const row of sorted) {
     const day = inicioDoDia(row.createdAt);
     if (day !== currentDay) {
       currentDay = day;

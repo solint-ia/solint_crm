@@ -1138,11 +1138,14 @@ export class WhatsAppSession {
       };
     }
 
-    const inboundName = fromMe ? undefined : msg.pushName?.trim();
+    const inboundName = fromMe
+      ? undefined
+      : msg.pushName?.trim() || msg.verifiedBizName?.trim();
+    const storedName = this.contactsStore.get(jidNormalizedUser(chat.jid))?.name?.trim();
     const name =
       inboundName ||
+      storedName ||
       existing?.name ||
-      msg.verifiedBizName?.trim() ||
       fallbackPersonName(chat.phone, chat.jid);
 
     return {
