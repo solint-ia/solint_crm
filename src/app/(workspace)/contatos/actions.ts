@@ -301,10 +301,15 @@ export async function syncWhatsAppContactsAction(): Promise<ActionResult<{ synce
 
     const inboxes = await prisma.inbox.findMany({
       where: { accountId, channel: 'whatsapp' },
-      select: { id: true, waConnection: { select: { credsCipher: true } } },
+      include: { waConnection: true },
       orderBy: { id: 'asc' },
     });
-    const targetInbox = inboxes.find((i) => i.waConnection?.credsCipher) ?? inboxes[0];
+
+    const conectada = inboxes.find(
+      (i) => i.waConnection?.status === 'conectado' || Boolean(i.waConnection?.lockOwner),
+    );
+    const pareada = inboxes.find((i) => Boolean(i.waConnection?.credsCipher));
+    const targetInbox = conectada ?? pareada ?? inboxes[0];
 
     if (targetInbox) {
       const cmd = await prisma.whatsAppCommand.create({
@@ -405,12 +410,15 @@ export async function syncWhatsAppGroupsAction(): Promise<
     // Busca as conexões de WhatsApp da conta
     const inboxes = await prisma.inbox.findMany({
       where: { accountId, channel: 'whatsapp' },
-      select: { id: true, waConnection: { select: { credsCipher: true, status: true } } },
+      include: { waConnection: true },
       orderBy: { id: 'asc' },
     });
 
-    const pareada = inboxes.find((inbox) => inbox.waConnection?.credsCipher);
-    const targetInbox = pareada ?? inboxes[0];
+    const conectada = inboxes.find(
+      (i) => i.waConnection?.status === 'conectado' || Boolean(i.waConnection?.lockOwner),
+    );
+    const pareada = inboxes.find((i) => Boolean(i.waConnection?.credsCipher));
+    const targetInbox = conectada ?? pareada ?? inboxes[0];
 
     if (!targetInbox) {
       return { ok: false, error: 'Nenhuma conexão de WhatsApp encontrada para esta conta.' };

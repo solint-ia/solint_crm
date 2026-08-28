@@ -339,20 +339,28 @@ export class CommandConsumer {
       }
 
       case 'sync_groups': {
-        const session = this.sessionManager.get(inboxId);
+        const accountId = typeof payload['accountId'] === 'string' ? payload['accountId'] : undefined;
+        const session =
+          this.sessionManager.get(inboxId) ??
+          (accountId ? this.sessionManager.getByAccountId(accountId) : undefined);
         if (session) {
-          const accountId = typeof payload['accountId'] === 'string' ? payload['accountId'] : undefined;
-          if (accountId) {
-            await session.syncAllGroups(accountId);
-          }
+          const accId = accountId ?? session.accountId;
+          await session.syncAllGroups(accId);
+        } else {
+          console.warn(`[CommandConsumer] Nenhuma sessão ativa encontrada para sincronizar grupos (inbox: ${inboxId})`);
         }
         break;
       }
 
       case 'sync_contacts': {
-        const session = this.sessionManager.get(inboxId);
+        const accountId = typeof payload['accountId'] === 'string' ? payload['accountId'] : undefined;
+        const session =
+          this.sessionManager.get(inboxId) ??
+          (accountId ? this.sessionManager.getByAccountId(accountId) : undefined);
         if (session) {
           await session.syncAllStoredContacts();
+        } else {
+          console.warn(`[CommandConsumer] Nenhuma sessão ativa encontrada para sincronizar contatos (inbox: ${inboxId})`);
         }
         break;
       }

@@ -152,6 +152,13 @@ export class WhatsAppSessionManager {
     return this.sessions.get(inboxId);
   }
 
+  getByAccountId(accountId: string): WhatsAppSession | undefined {
+    for (const session of this.sessions.values()) {
+      if (session.accountId === accountId) return session;
+    }
+    return undefined;
+  }
+
   /**
    * Restaura todas as sessões salvas no Postgres na inicialização do worker.
    */
