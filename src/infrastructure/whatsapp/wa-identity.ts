@@ -170,3 +170,17 @@ export const jidFromPhone = (phone: string): string => {
   const digits = phone.replace(/\D/g, '');
   return `${digits}@s.whatsapp.net`;
 };
+
+/** Normaliza destinatário livre (telefone, JID individual, JID de grupo) para envio no socket. */
+export const normalizeTargetJid = (raw: string | undefined | null): string | undefined => {
+  if (!raw) return undefined;
+  if (raw.endsWith('@g.us')) {
+    const gIndex = raw.indexOf('-g-');
+    if (gIndex !== -1) {
+      const clean = raw.slice(gIndex + 3);
+      return clean.endsWith('@g.us') ? clean : `${clean}@g.us`;
+    }
+    return raw;
+  }
+  return isSupportedChatJid(raw) ? raw : jidFromPhone(raw);
+};

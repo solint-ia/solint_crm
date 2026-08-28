@@ -29,7 +29,7 @@ import {
 } from '../wa-store';
 import {
   isSupportedChatJid,
-  jidFromPhone,
+  normalizeTargetJid,
   resolveChatIdentity,
   resolveSenderIdentity,
   userOf,
@@ -961,7 +961,7 @@ export class WhatsAppSession {
   ): Promise<void> {
     if (!this.socket) return;
     const raw = recipient.channelThreadId ?? recipient.jid ?? recipient.phone;
-    const targetJid = raw ? (isSupportedChatJid(raw) ? raw : jidFromPhone(raw)) : undefined;
+    const targetJid = normalizeTargetJid(raw);
     if (!targetJid) return;
 
     try {
@@ -1371,7 +1371,7 @@ export class WhatsAppSession {
     }
 
     const raw = recipient.channelThreadId ?? recipient.jid ?? recipient.phone;
-    const targetJid = raw ? (isSupportedChatJid(raw) ? raw : jidFromPhone(raw)) : undefined;
+    const targetJid = normalizeTargetJid(raw);
     if (!targetJid) {
       throw new Error('Destinatário inválido: forneça telefone ou JID.');
     }
@@ -1421,7 +1421,7 @@ export class WhatsAppSession {
     }
 
     const raw = recipient.channelThreadId ?? recipient.jid ?? recipient.phone;
-    const targetJid = raw ? (isSupportedChatJid(raw) ? raw : jidFromPhone(raw)) : undefined;
+    const targetJid = normalizeTargetJid(raw);
     if (!targetJid) {
       throw new Error('Destinatário inválido: forneça telefone ou JID.');
     }
@@ -1453,7 +1453,7 @@ export class WhatsAppSession {
     }
 
     const raw = recipient.channelThreadId ?? recipient.jid ?? recipient.phone;
-    const targetJid = raw ? (isSupportedChatJid(raw) ? raw : jidFromPhone(raw)) : undefined;
+    const targetJid = normalizeTargetJid(raw);
     if (!targetJid) {
       throw new Error('Destinatário inválido: forneça telefone ou JID.');
     }
