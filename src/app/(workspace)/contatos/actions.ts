@@ -266,9 +266,13 @@ export async function syncWhatsAppContactsAction(): Promise<ActionResult<{ synce
     const session = await assertCanWrite();
     const accountId = session.account.id;
 
-    // Busca todas as conversas ativas no WhatsApp desta conta
+    // Busca exclusivamente conversas 1:1 privadas ativas no WhatsApp desta conta
     const conversations = await prisma.conversation.findMany({
-      where: { accountId, channel: 'whatsapp' },
+      where: {
+        accountId,
+        channel: 'whatsapp',
+        channelThreadId: { not: { endsWith: '@g.us' } },
+      },
       include: { contact: true },
     });
 

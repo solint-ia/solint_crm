@@ -14,7 +14,7 @@ import pino from 'pino';
 import type { Contact } from '@/core/domain/contact';
 import type { Message, MessageContent } from '@/core/domain/message';
 import { PhoneNumber } from '@/core/domain/contact';
-import { DB_POOL_SIZE, asJson, prisma } from '@/infrastructure/db/prisma';
+import { DB_POOL_SIZE, prisma } from '@/infrastructure/db/prisma';
 import { initPostgresAuthState, isPairedCreds } from '../auth/postgres-auth-state';
 import {
   applyDeliveryUpdate,
@@ -694,9 +694,12 @@ export class WhatsAppSession {
       typeof contact.imgUrl === 'string' && contact.imgUrl !== 'changed' ? contact.imgUrl : undefined;
 
     try {
+      // APENAS atualiza contatos privados que já existem no CRM.
+      // NUNCA cria contatos avulsos que vieram de metadados ou participantes de grupos do WhatsApp.
       const existing = await prisma.contact.findFirst({
         where: {
           accountId: this.accountId,
+          kind: { not: 'grupo' },
           OR: [
             { phone },
             { id: `ct-wa-${phoneDigits}` },
@@ -716,22 +719,6 @@ export class WhatsAppSession {
             },
           });
         }
-      } else {
-        const contactId = `ct-wa-${this.accountId}-${phoneDigits}`;
-        await prisma.contact.create({
-          data: {
-            id: contactId,
-            accountId: this.accountId,
-            name: name || PhoneNumber.format(phone) || phone,
-            phone,
-            channel: 'whatsapp',
-            avatarTone: 'blue',
-            kind: 'pessoa',
-            avatarUrl: avatarUrl ?? null,
-            customFields: asJson([]),
-            timeline: asJson([]),
-          },
-        });
       }
     } catch {
       // Ignora colisões concorrentes normais do Baileys

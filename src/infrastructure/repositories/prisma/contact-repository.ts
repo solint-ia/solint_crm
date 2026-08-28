@@ -12,6 +12,7 @@ export class PrismaContactRepository implements ContactRepository {
     const rows = await prisma.contact.findMany({
       where: {
         accountId,
+        kind: { not: 'grupo' },
         ...(filter?.ownerName ? { ownerName: filter.ownerName } : {}),
         ...(filter?.labelId ? { labels: { some: { id: filter.labelId } } } : {}),
       },
