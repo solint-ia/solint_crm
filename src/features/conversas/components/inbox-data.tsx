@@ -1,3 +1,4 @@
+import type { InboxScope } from '@/core/domain/conversation';
 import { can, canSeeInbox } from '@/core/domain/user';
 import { AccessDenied } from '@/components/layout/access-denied';
 import { container } from '@/infrastructure/container';
@@ -29,9 +30,13 @@ import { InboxWorkspace } from './inbox-workspace';
 export async function InboxData({
   selectedId,
   initialInboxId,
+  initialScope,
+  initialUnread,
 }: {
   readonly selectedId?: string;
   readonly initialInboxId?: string;
+  readonly initialScope?: InboxScope;
+  readonly initialUnread?: boolean;
 }) {
   const session = await container.session.getCurrentSession();
   if (!can(session, 'conversas:ler')) return <AccessDenied permission="conversas:ler" />;
@@ -79,6 +84,8 @@ export async function InboxData({
       sendMedia={sendMediaAction}
       {...(selectedId ? { initialSelectedId: selectedId } : {})}
       {...(initialInboxId ? { initialInboxId } : {})}
+      {...(initialScope ? { initialScope } : {})}
+      {...(initialUnread !== undefined ? { initialUnread } : {})}
     />
   );
 }

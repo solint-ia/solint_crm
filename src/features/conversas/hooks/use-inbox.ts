@@ -65,6 +65,8 @@ interface UseInboxParams {
   /** Conversa aberta ao carregar — vem da URL em /conversas/[id]. */
   readonly initialSelectedId?: string;
   readonly initialInboxId?: string;
+  readonly initialScope?: InboxScope;
+  readonly initialUnread?: boolean;
 }
 
 /** Recortes combináveis da lista. `undefined` significa "não filtrar por isto". */
@@ -108,18 +110,21 @@ export function useInbox({
   moveInbox,
   initialSelectedId,
   initialInboxId,
+  initialScope,
+  initialUnread,
 }: UseInboxParams) {
   const [conversations, setConversations] = useState<readonly Conversation[]>(initialConversations);
   const [selectedId, setSelectedId] = useState<string | undefined>(
     initialSelectedId ?? initialConversations[0]?.id,
   );
-  const [scope, setScope] = useState<InboxScope>('todas');
+  const [scope, setScope] = useState<InboxScope>(initialScope ?? 'todas');
   const [statusTab, setStatusTab] = useState<StatusTab>('todas');
   const [sort, setSort] = useState<SortKey>('recentes');
   const [search, setSearch] = useState('');
-  const [filters, setFilters] = useState<InboxFilters>(
-    initialInboxId ? { inboxId: initialInboxId } : {},
-  );
+  const [filters, setFilters] = useState<InboxFilters>(() => ({
+    ...(initialInboxId ? { inboxId: initialInboxId } : {}),
+    ...(initialUnread ? { unreadOnly: true } : {}),
+  }));
   const [error, setError] = useState<string | undefined>();
   const [pending, startTransition] = useTransition();
 
@@ -128,6 +133,18 @@ export function useInbox({
       setFilters((prev) => ({ ...prev, inboxId: initialInboxId || undefined }));
     }
   }, [initialInboxId]);
+
+  useEffect(() => {
+    if (initialScope !== undefined) {
+      setScope(initialScope);
+    }
+  }, [initialScope]);
+
+  useEffect(() => {
+    if (initialUnread !== undefined) {
+      setFilters((prev) => ({ ...prev, unreadOnly: initialUnread || undefined }));
+    }
+  }, [initialUnread]);
 
   // Tempo real vem do barramento compartilhado do workspace (uma unica conexao SSE).
   useConversationEvents((payload) => {

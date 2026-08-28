@@ -20,10 +20,15 @@ export default async function ConversasPage({
 }) {
   const params = await searchParams;
   const caixa = typeof params?.caixa === 'string' ? params.caixa : undefined;
+  const scope =
+    params?.scope === 'minhas' || params?.scope === 'nao_atribuidas' || params?.scope === 'todas'
+      ? params.scope
+      : undefined;
+  const unread = params?.unread === 'true';
 
   return (
     <Suspense fallback={<InboxSkeleton />}>
-      <InboxData initialInboxId={caixa} />
+      <InboxData initialInboxId={caixa} initialScope={scope} initialUnread={unread} />
     </Suspense>
   );
 }

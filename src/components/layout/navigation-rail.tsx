@@ -21,7 +21,11 @@ import { Avatar } from '@/components/ui/avatar';
 import { LogoutButton } from '@/features/auth/components/logout-button';
 import { cn } from '@/lib/cn';
 import { ThemeToggle } from './theme-toggle';
-import { InboxNavDropdown, type AccessibleInbox } from './inbox-nav-dropdown';
+import {
+  InboxNavDropdown,
+  type AccessibleInbox,
+  type ConversationCounts,
+} from './inbox-nav-dropdown';
 
 const ICONS: Readonly<Record<NavIcon, typeof Inbox>> = {
   inbox: Inbox,
@@ -40,6 +44,7 @@ interface NavigationRailProps {
   readonly userTone: string;
   readonly availability: AvailabilityStatus;
   readonly accessibleInboxes?: readonly AccessibleInbox[];
+  readonly conversationCounts?: ConversationCounts;
   readonly canManageInboxes?: boolean;
   readonly roleName?: string;
 }
@@ -51,6 +56,7 @@ export function NavigationRail({
   userTone,
   availability,
   accessibleInboxes = [],
+  conversationCounts,
   canManageInboxes = false,
   roleName,
 }: NavigationRailProps) {
@@ -103,6 +109,7 @@ export function NavigationRail({
                   key={item.id}
                   accessibleInboxes={accessibleInboxes}
                   totalUnreadCount={unreadCount}
+                  conversationCounts={conversationCounts}
                   canManageInboxes={canManageInboxes}
                   roleName={roleName}
                   active={active}
@@ -130,17 +137,7 @@ export function NavigationRail({
           })}
         </div>
 
-        {/*
-          Rodapé da Barra Lateral.
-
-          O botão de QR que ficava aqui saiu. Ele conectava "o WhatsApp da
-          conta" — uma ideia que só existia quando havia um número por conta.
-          Com várias caixas ele precisava escolher uma sozinho, e escolhia pela
-          ordem do id: numa conta com Principal, Cobrança e Oral Plus, o atalho
-          apontava para alguma delas sem dizer qual, e reconectar a caixa certa
-          era coincidência. Parear agora é uma ação da caixa, onde a caixa tem
-          nome: Configurações › Caixas de entrada.
-        */}
+        {/* Rodapé da Barra Lateral */}
         <div className="flex flex-col items-center gap-2.5">
           <ThemeToggle />
           <LogoutButton />
@@ -197,7 +194,7 @@ export function NavigationRail({
           />
           <nav
             aria-label="Navegação principal"
-            className="relative flex h-full w-64 flex-col border-r border-line bg-surface shadow-2xl animate-in slide-in-from-left duration-200"
+            className="relative flex h-full w-64 flex-col border-r border-line bg-surface shadow-2xl animate-in slide-in-from-left-2 duration-200"
           >
             <div className="flex items-center justify-between border-b border-line px-4 py-3">
               <span className="font-display text-base font-bold tracking-tight text-ink">
@@ -218,7 +215,7 @@ export function NavigationRail({
                 const Icon = ICONS[item.icon];
                 const active = isActive(item);
 
-                if (item.id === 'conversas' && accessibleInboxes.length > 0) {
+                if (item.id === 'conversas') {
                   return (
                     <li key={item.id} className="flex flex-col">
                       <div className="flex items-center gap-1">
@@ -244,7 +241,7 @@ export function NavigationRail({
                           type="button"
                           onClick={() => setMobileInboxesOpen((v) => !v)}
                           className="flex size-9 items-center justify-center rounded-xl text-muted hover:bg-surface-2 hover:text-ink"
-                          title="Expandir caixas"
+                          title="Expandir caixas e conversas"
                         >
                           <ChevronDown
                             className={cn(
@@ -256,23 +253,75 @@ export function NavigationRail({
                       </div>
 
                       {mobileInboxesOpen && (
-                        <ul className="ml-5 mt-1 flex flex-col gap-1 border-l-2 border-line pl-3 py-1 animate-in fade-in duration-150">
-                          {accessibleInboxes.map((inbox) => (
-                            <li key={inbox.id}>
+                        <div className="ml-4 mt-1 flex flex-col gap-2 border-l-2 border-line pl-2.5 py-1 animate-in fade-in duration-150">
+                          {/* Conversas */}
+                          {conversationCounts && (
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-[9px] font-bold uppercase tracking-wider text-dim px-1">
+                                Conversas
+                              </span>
                               <Link
-                                href={`/conversas?caixa=${inbox.id}`}
-                                className="flex items-center justify-between rounded-lg px-2.5 py-1.5 text-xs text-muted hover:bg-surface-2 hover:text-ink"
+                                href="/conversas"
+                                className="flex items-center justify-between rounded-lg px-2 py-1 text-xs text-muted hover:bg-surface-2 hover:text-ink"
                               >
-                                <span className="truncate">{inbox.name}</span>
-                                {inbox.unreadCount > 0 && (
-                                  <span className="rounded-full bg-blue-600 px-1.5 text-[10px] font-bold text-white">
-                                    {inbox.unreadCount}
-                                  </span>
-                                )}
+                                <span>Todas</span>
+                                <span className="text-[10px] tabular-nums font-bold text-dim">
+                                  {conversationCounts.todas}
+                                </span>
                               </Link>
-                            </li>
-                          ))}
-                        </ul>
+                              <Link
+                                href="/conversas?scope=minhas"
+                                className="flex items-center justify-between rounded-lg px-2 py-1 text-xs text-muted hover:bg-surface-2 hover:text-ink"
+                              >
+                                <span>Minhas</span>
+                                <span className="text-[10px] tabular-nums font-bold text-dim">
+                                  {conversationCounts.minhas}
+                                </span>
+                              </Link>
+                              <Link
+                                href="/conversas?scope=nao_atribuidas"
+                                className="flex items-center justify-between rounded-lg px-2 py-1 text-xs text-muted hover:bg-surface-2 hover:text-ink"
+                              >
+                                <span>Não atendidas</span>
+                                <span className="text-[10px] tabular-nums font-bold text-dim">
+                                  {conversationCounts.nao_atribuidas}
+                                </span>
+                              </Link>
+                              <Link
+                                href="/conversas?unread=true"
+                                className="flex items-center justify-between rounded-lg px-2 py-1 text-xs text-muted hover:bg-surface-2 hover:text-ink"
+                              >
+                                <span>Não lidas</span>
+                                <span className="text-[10px] tabular-nums font-bold text-white bg-blue-600 rounded-full px-1">
+                                  {conversationCounts.naoLidas}
+                                </span>
+                              </Link>
+                            </div>
+                          )}
+
+                          {/* Canais */}
+                          {accessibleInboxes.length > 0 && (
+                            <div className="flex flex-col gap-0.5 pt-1 border-t border-line-soft">
+                              <span className="text-[9px] font-bold uppercase tracking-wider text-dim px-1">
+                                Canais
+                              </span>
+                              {accessibleInboxes.map((inbox) => (
+                                <Link
+                                  key={inbox.id}
+                                  href={`/conversas?caixa=${inbox.id}`}
+                                  className="flex items-center justify-between rounded-lg px-2 py-1 text-xs text-muted hover:bg-surface-2 hover:text-ink"
+                                >
+                                  <span className="truncate">{inbox.name}</span>
+                                  {inbox.unreadCount > 0 && (
+                                    <span className="rounded-full bg-blue-600 px-1.5 text-[10px] font-bold text-white">
+                                      {inbox.unreadCount}
+                                    </span>
+                                  )}
+                                </Link>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       )}
                     </li>
                   );

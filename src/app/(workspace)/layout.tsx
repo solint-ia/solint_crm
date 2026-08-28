@@ -43,6 +43,13 @@ export default async function WorkspaceLayout({
     0,
   );
 
+  const conversationCounts = {
+    todas: conversations.length,
+    minhas: conversations.filter((c) => c.assigneeId === session.user.id).length,
+    nao_atribuidas: conversations.filter((c) => !c.assigneeId).length,
+    naoLidas: conversations.filter((c) => c.unreadCount > 0).length,
+  };
+
   const accessibleInboxes = inboxes
     .filter((inbox) => canSeeInbox(session, inbox.id))
     .map((inbox) => ({
@@ -72,6 +79,7 @@ export default async function WorkspaceLayout({
             userTone={session.user.avatarTone}
             availability={session.user.availability}
             accessibleInboxes={accessibleInboxes}
+            conversationCounts={conversationCounts}
             canManageInboxes={can(session, 'configuracoes:escrever') || can(session, 'caixas:todas')}
             roleName={role?.name ?? session.user.roleSlug}
           />

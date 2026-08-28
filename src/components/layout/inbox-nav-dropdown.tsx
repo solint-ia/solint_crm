@@ -2,15 +2,20 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import type { Route } from 'next';
+import { usePathname, useSearchParams } from 'next/navigation';
 import {
   ChevronRight,
   Globe,
   Inbox,
   Mail,
+  MailOpen,
   MessageSquare,
+  MessagesSquare,
   Settings,
   Sparkles,
+  UserRound,
+  UserRoundX,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
@@ -24,9 +29,17 @@ export interface AccessibleInbox {
   readonly unreadCount: number;
 }
 
+export interface ConversationCounts {
+  readonly todas: number;
+  readonly minhas: number;
+  readonly nao_atribuidas: number;
+  readonly naoLidas: number;
+}
+
 interface InboxNavDropdownProps {
   readonly accessibleInboxes: readonly AccessibleInbox[];
   readonly totalUnreadCount: number;
+  readonly conversationCounts?: ConversationCounts;
   readonly canManageInboxes?: boolean;
   readonly roleName?: string;
   readonly active?: boolean;
@@ -35,28 +48,25 @@ interface InboxNavDropdownProps {
 export function InboxNavDropdown({
   accessibleInboxes,
   totalUnreadCount,
+  conversationCounts,
   canManageInboxes = false,
   roleName,
   active = false,
 }: InboxNavDropdownProps) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [isOpen, setIsOpen] = useState(false);
-  const [currentCaixa, setCurrentCaixa] = useState<string | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Detecta se a URL atual tem ?caixa=...
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      setCurrentCaixa(params.get('caixa'));
-    }
-  }, [pathname]);
+  const currentCaixa = searchParams.get('caixa');
+  const currentScope = searchParams.get('scope');
+  const currentUnread = searchParams.get('unread') === 'true';
 
   // Fecha no Escape e fecha ao navegar
   useEffect(() => {
     setIsOpen(false);
-  }, [pathname]);
+  }, [pathname, searchParams]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -101,6 +111,22 @@ export function InboxNavDropdown({
     }
   };
 
+  const getScopeHref = (scope?: string, unread?: boolean): Route => {
+    const params = new URLSearchParams();
+    if (currentCaixa) params.set('caixa', currentCaixa);
+    if (scope) params.set('scope', scope);
+    if (unread) params.set('unread', 'true');
+    const query = params.toString();
+    return (`/conversas${query ? `?${query}` : ''}`) as Route;
+  };
+
+  const isScopeActive = (scope?: string, unread?: boolean) => {
+    if (pathname !== '/conversas') return false;
+    if (unread) return currentUnread;
+    if (!currentUnread && !currentScope && !scope) return true;
+    return currentScope === scope && !currentUnread;
+  };
+
   return (
     <div className="relative">
       {/* Botão de disparo na Barra Lateral */}
@@ -137,7 +163,7 @@ export function InboxNavDropdown({
         />
       </button>
 
-      {/* Flyout Dropdown Flutuante ao lado da Rail */}
+      {/* Flyout Subcomponente Flutuante ao lado da Navbar */}
       {isOpen && (
         <>
           <div
@@ -149,10 +175,10 @@ export function InboxNavDropdown({
           <div
             ref={menuRef}
             role="menu"
-            aria-label="Caixas de entrada disponíveis"
-            className="fixed left-16 top-14 z-50 ml-2.5 w-80 rounded-2xl border border-line bg-surface/95 backdrop-blur-xl p-2 shadow-2xl animate-in fade-in slide-in-from-left-2 duration-150"
+            aria-label="Caixas de entrada e conversas"
+            className="fixed left-16 top-10 z-50 ml-2.5 w-84 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-2xl border border-line bg-surface/95 backdrop-blur-xl p-2.5 shadow-2xl animate-in fade-in slide-in-from-left-2 duration-150"
           >
-            {/* Cabeçalho do Dropdown */}
+            {/* Cabeçalho do Menu */}
             <div className="flex items-center justify-between border-b border-line pb-2.5 px-2 pt-1">
               <div className="flex items-center gap-2">
                 <span className="flex size-7 items-center justify-center rounded-lg bg-blue-500/10 text-brand">
@@ -163,102 +189,220 @@ export function InboxNavDropdown({
                     Caixas de entrada
                   </h3>
                   <p className="text-[10px] text-muted">
-                    {roleName ? `Perfil: ${roleName}` : 'Acesso por equipe'}
+                    {roleName ? `Perfil: ${roleName}` : 'Central de Atendimento'}
                   </p>
                 </div>
               </div>
 
               <span className="rounded-md bg-surface-2 px-1.5 py-0.5 text-[10px] font-semibold text-dim border border-line-soft">
-                {accessibleInboxes.length} {accessibleInboxes.length === 1 ? 'caixa' : 'caixas'}
+                {accessibleInboxes.length} {accessibleInboxes.length === 1 ? 'canal' : 'canais'}
               </span>
             </div>
 
-            {/*
-              O atalho "Todas as caixas" saiu daqui.
-
-              Ele levava a `/conversas` sem caixa, e o resultado era uma lista
-              com os cinco números da conta embaralhados: uma cobrança ao lado
-              de um agendamento, sem nada dizendo de qual número cada conversa
-              veio. A caixa passou a ser o recorte da tela, e "todas as
-              conversas" agora significa todas as **daquela** caixa — a escolha
-              vive na coluna de canais, ao lado da lista.
-            */}
-
-            {/* Separador de Seção */}
-            <div className="my-1.5 border-t border-line-soft px-2 pt-1.5">
-              <span className="block text-[9px] font-bold uppercase tracking-wider text-dim">
-                Canais e Equipes Permitidos
-              </span>
-            </div>
-
-            {/* Lista de Caixas com Acesso */}
-            <div className="max-h-56 overflow-y-auto space-y-0.5 pr-0.5">
-              {accessibleInboxes.length > 0 ? (
-                accessibleInboxes.map((inbox) => {
-                  const isSelected = currentCaixa === inbox.id;
-                  const isOnline =
-                    inbox.status === 'conectado' ||
-                    inbox.status === 'ativo' ||
-                    inbox.status === 'online';
-
-                  return (
-                    <Link
-                      key={inbox.id}
-                      href={`/conversas?caixa=${inbox.id}`}
-                      onClick={() => {
-                        setCurrentCaixa(inbox.id);
-                        setIsOpen(false);
-                      }}
-                      className={cn(
-                        'flex items-center justify-between gap-2.5 rounded-xl px-2.5 py-2 text-xs transition-all',
-                        isSelected
-                          ? 'bg-brand/10 text-brand font-semibold border border-brand/20'
-                          : 'text-ink hover:bg-surface-2',
-                      )}
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        {channelIcon(inbox.channel)}
-                        <div className="truncate min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-semibold text-ink truncate block">
-                              {inbox.name}
-                            </span>
-                            <span
-                              className={cn(
-                                'size-1.5 shrink-0 rounded-full',
-                                isOnline ? 'bg-emerald-500 ring-2 ring-emerald-500/20' : 'bg-amber-500',
-                              )}
-                              title={isOnline ? 'Conectado' : 'Aguardando conexão'}
-                            />
-                          </div>
-                          <span className="block text-[10px] text-muted truncate">
-                            {inbox.teamName
-                              ? `Equipe: ${inbox.teamName}`
-                              : isOnline
-                                ? inbox.identifier || 'Canal conectado'
-                                : 'Aguardando conexão (QR Code)'}
-                          </span>
-                        </div>
-                      </div>
-
-                      {inbox.unreadCount > 0 && (
-                        <span className="flex min-w-4 h-4 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-bold text-white shrink-0">
-                          {inbox.unreadCount}
-                        </span>
-                      )}
-                    </Link>
-                  );
-                })
-              ) : (
-                <div className="p-3 text-center text-xs text-muted">
-                  Nenhuma caixa vinculada ao seu usuário ou equipe no momento.
+            {/* SEÇÃO 1: CONVERSAS & FILTROS DE FILA */}
+            {conversationCounts && (
+              <div className="py-2">
+                <div className="px-2 pb-1.5 pt-0.5">
+                  <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-dim">
+                    <MessagesSquare className="size-3 text-muted" />
+                    <span>Conversas</span>
+                  </span>
                 </div>
-              )}
+
+                <div className="space-y-0.5">
+                  <Link
+                    href={getScopeHref(undefined, false)}
+                    onClick={() => setIsOpen(false)}
+                    className={cn(
+                      'flex items-center justify-between rounded-xl px-2.5 py-2 text-xs transition-all',
+                      isScopeActive(undefined, false)
+                        ? 'bg-brand/10 text-brand font-semibold border border-brand/20'
+                        : 'text-ink hover:bg-surface-2',
+                    )}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <MessagesSquare className="size-3.5 text-muted" />
+                      <span>Todas as conversas</span>
+                    </div>
+                    {conversationCounts.todas > 0 && (
+                      <span
+                        className={cn(
+                          'rounded-full px-1.5 text-[10px] font-bold tabular-nums',
+                          isScopeActive(undefined, false)
+                            ? 'bg-brand text-white'
+                            : 'bg-surface-2 text-muted border border-line-soft',
+                        )}
+                      >
+                        {conversationCounts.todas}
+                      </span>
+                    )}
+                  </Link>
+
+                  <Link
+                    href={getScopeHref('minhas')}
+                    onClick={() => setIsOpen(false)}
+                    className={cn(
+                      'flex items-center justify-between rounded-xl px-2.5 py-2 text-xs transition-all',
+                      isScopeActive('minhas')
+                        ? 'bg-brand/10 text-brand font-semibold border border-brand/20'
+                        : 'text-ink hover:bg-surface-2',
+                    )}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <UserRound className="size-3.5 text-muted" />
+                      <span>Atribuídas a mim</span>
+                    </div>
+                    {conversationCounts.minhas > 0 && (
+                      <span
+                        className={cn(
+                          'rounded-full px-1.5 text-[10px] font-bold tabular-nums',
+                          isScopeActive('minhas')
+                            ? 'bg-brand text-white'
+                            : 'bg-surface-2 text-muted border border-line-soft',
+                        )}
+                      >
+                        {conversationCounts.minhas}
+                      </span>
+                    )}
+                  </Link>
+
+                  <Link
+                    href={getScopeHref('nao_atribuidas')}
+                    onClick={() => setIsOpen(false)}
+                    className={cn(
+                      'flex items-center justify-between rounded-xl px-2.5 py-2 text-xs transition-all',
+                      isScopeActive('nao_atribuidas')
+                        ? 'bg-brand/10 text-brand font-semibold border border-brand/20'
+                        : 'text-ink hover:bg-surface-2',
+                    )}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <UserRoundX className="size-3.5 text-muted" />
+                      <span>Não atendidas</span>
+                    </div>
+                    {conversationCounts.nao_atribuidas > 0 && (
+                      <span
+                        className={cn(
+                          'rounded-full px-1.5 text-[10px] font-bold tabular-nums',
+                          isScopeActive('nao_atribuidas')
+                            ? 'bg-brand text-white'
+                            : 'bg-surface-2 text-muted border border-line-soft',
+                        )}
+                      >
+                        {conversationCounts.nao_atribuidas}
+                      </span>
+                    )}
+                  </Link>
+
+                  <Link
+                    href={getScopeHref(undefined, true)}
+                    onClick={() => setIsOpen(false)}
+                    className={cn(
+                      'flex items-center justify-between rounded-xl px-2.5 py-2 text-xs transition-all',
+                      isScopeActive(undefined, true)
+                        ? 'bg-brand/10 text-brand font-semibold border border-brand/20'
+                        : 'text-ink hover:bg-surface-2',
+                    )}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <MailOpen className="size-3.5 text-muted" />
+                      <span>Não lidas</span>
+                    </div>
+                    {conversationCounts.naoLidas > 0 && (
+                      <span
+                        className={cn(
+                          'rounded-full px-1.5 text-[10px] font-bold tabular-nums',
+                          isScopeActive(undefined, true)
+                            ? 'bg-brand text-white'
+                            : 'bg-blue-600 text-white',
+                        )}
+                      >
+                        {conversationCounts.naoLidas}
+                      </span>
+                    )}
+                  </Link>
+                </div>
+              </div>
+            )}
+
+            {/* SEÇÃO 2: CANAIS DISPONÍVEIS */}
+            <div className="border-t border-line-soft pt-2">
+              <div className="px-2 pb-1.5 pt-0.5">
+                <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-dim">
+                  <Inbox className="size-3 text-muted" />
+                  <span>Canais & Caixas de Entrada</span>
+                </span>
+              </div>
+
+              <div className="max-h-48 overflow-y-auto space-y-0.5 pr-0.5">
+                {accessibleInboxes.length > 0 ? (
+                  accessibleInboxes.map((inbox) => {
+                    const isSelected = currentCaixa === inbox.id;
+                    const isOnline =
+                      inbox.status === 'conectado' ||
+                      inbox.status === 'ativo' ||
+                      inbox.status === 'online';
+
+                    const href = (`/conversas?caixa=${inbox.id}${currentScope ? `&scope=${currentScope}` : ''}${currentUnread ? '&unread=true' : ''}`) as Route;
+
+                    return (
+                      <Link
+                        key={inbox.id}
+                        href={href}
+                        onClick={() => setIsOpen(false)}
+                        className={cn(
+                          'flex items-center justify-between gap-2.5 rounded-xl px-2.5 py-2 text-xs transition-all',
+                          isSelected
+                            ? 'bg-brand/10 text-brand font-semibold border border-brand/20'
+                            : 'text-ink hover:bg-surface-2',
+                        )}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          {channelIcon(inbox.channel)}
+                          <div className="truncate min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-semibold text-ink truncate block">
+                                {inbox.name}
+                              </span>
+                              <span
+                                className={cn(
+                                  'size-1.5 shrink-0 rounded-full',
+                                  isOnline
+                                    ? 'bg-emerald-500 ring-2 ring-emerald-500/20'
+                                    : 'bg-amber-500',
+                                )}
+                                title={isOnline ? 'Conectado' : 'Aguardando conexão'}
+                              />
+                            </div>
+                            <span className="block text-[10px] text-muted truncate">
+                              {inbox.teamName
+                                ? `Equipe: ${inbox.teamName}`
+                                : isOnline
+                                  ? inbox.identifier || 'Canal conectado'
+                                  : 'Aguardando conexão'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {inbox.unreadCount > 0 && (
+                          <span className="flex min-w-4.5 h-4.5 items-center justify-center rounded-full bg-blue-600 px-1.5 text-[10px] font-bold text-white shrink-0 shadow-xs">
+                            {inbox.unreadCount}
+                          </span>
+                        )}
+                      </Link>
+                    );
+                  })
+                ) : (
+                  <div className="p-3 text-center text-xs text-muted">
+                    Nenhum canal disponível para você.
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Rodapé de Gestão de Caixas */}
             {canManageInboxes && (
-              <div className="mt-1.5 border-t border-line pt-1.5">
+              <div className="mt-2 border-t border-line pt-2">
                 <Link
                   href="/configuracoes?secao=caixas"
                   onClick={() => setIsOpen(false)}
@@ -266,7 +410,7 @@ export function InboxNavDropdown({
                 >
                   <div className="flex items-center gap-2">
                     <Settings className="size-3 text-dim" />
-                    <span>Gerenciar caixas de entrada</span>
+                    <span>Gerenciar canais</span>
                   </div>
                   <ChevronRight className="size-3 text-dim" />
                 </Link>

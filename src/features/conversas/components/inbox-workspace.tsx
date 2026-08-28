@@ -3,12 +3,11 @@
 import { useEffect, useState } from 'react';
 import {
   ArrowLeft,
-  Inbox,
   MessageSquare,
   Search,
   X,
 } from 'lucide-react';
-import type { Conversation, ConversationStatus, Priority } from '@/core/domain/conversation';
+import type { Conversation, ConversationStatus, InboxScope, Priority } from '@/core/domain/conversation';
 import type { Message } from '@/core/domain/message';
 import type { CannedResponse } from '@/core/domain/settings';
 import { cn } from '@/lib/cn';
@@ -17,7 +16,6 @@ import type { InboxCatalog } from './conversation-toolbar';
 import { InboxFiltersMenu } from './inbox-filters';
 import { InboxSortMenu } from './inbox-sort-menu';
 import { ContextPanel } from './context-panel';
-import { ChannelsSidebar } from './channels-sidebar';
 import { ConversationListItem } from './conversation-list-item';
 import { InboxDisconnectedState } from './inbox-disconnected-state';
 
@@ -90,6 +88,8 @@ interface InboxWorkspaceProps {
   readonly cannedResponses: readonly CannedResponse[];
   readonly initialSelectedId?: string;
   readonly initialInboxId?: string;
+  readonly initialScope?: InboxScope;
+  readonly initialUnread?: boolean;
 }
 
 const STATUS_TABS = [
@@ -106,17 +106,9 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
   /**
    * A tela abre com as caixas que existem, conectadas ou não.
    *
-   * Aqui havia um `useWhatsAppConnection()` sem caixa nenhuma, e o resultado
-   * dele trocava a tela inteira pela parede de "Conectar WhatsApp". Sem caixa,
-   * esse status vem de uma escolhida por ordem de id — então, numa conta com
-   * Principal, Cobrança e Oral Plus, bastava a sorteada estar fora do ar para
-   * o atendimento inteiro sumir, incluindo as conversas das outras duas, que
-   * estavam funcionando.
-   *
-   * A conexão é um estado **de cada canal**, e é onde ela aparece agora: o
-   * ponto âmbar na coluna de canais, o aviso na conversa aberta e o bloqueio
-   * do envio, que já era por caixa. A parede só faz sentido quando não há
-   * canal nenhum para mostrar.
+   * A conexão é um estado de cada canal: o ponto verde/âmbar no seletor
+   * e no dropdown da barra lateral, e o aviso na conversa aberta.
+   * A parede só faz sentido quando não há canal nenhum para mostrar.
    */
   const semCanais = props.inboxes.length === 0;
   const [pane, setPane] = useState<MobilePane>(props.initialSelectedId ? 'conversa' : 'lista');
@@ -139,17 +131,19 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
     moveInbox: props.moveInbox,
     initialSelectedId: props.initialSelectedId,
     initialInboxId: props.initialInboxId,
+    initialScope: props.initialScope,
+    initialUnread: props.initialUnread,
   });
 
   /**
    * A caixa escolhida, com um padrão que nunca é "todas".
    *
    * A tela sempre fala de uma caixa. Sem esta escolha inicial ela abriria
-   * misturando os números da conta, que é exatamente o que a coluna de canais
-   * veio desfazer. A primeira da lista é um padrão arbitrário, mas estável — e
-   * a pessoa troca num clique.
+   * misturando os números da conta. A primeira da lista é um padrão
+   * arbitrário, mas estável — e a pessoa troca num clique.
    */
   const caixaAtual = inbox.filters.inboxId ?? props.inboxes[0]?.id;
+  const caixaObj = props.inboxes.find((i) => i.id === caixaAtual);
 
   useEffect(() => {
     if (!inbox.filters.inboxId && caixaAtual) {
@@ -169,29 +163,6 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
 
   return (
     <div className="flex h-full min-h-0 flex-1 overflow-hidden bg-app text-ink">
-
-      {/* ============================================================ */}
-      {/* COLUNA 0: CANAIS E FILTROS                                   */}
-      {/* ============================================================ */}
-      <ChannelsSidebar
-        inboxes={props.inboxes}
-        {...(caixaAtual ? { selectedInboxId: caixaAtual } : {})}
-        onSelectInbox={(inboxId) =>
-          inbox.setFilters((atual) => ({ ...atual, inboxId }))
-        }
-        counts={inbox.counts}
-        scope={inbox.scope}
-        onSelectScope={inbox.setScope}
-        statusTab={inbox.statusTab}
-        onSelectStatus={inbox.setStatusTab}
-        unreadOnly={inbox.filters.unreadOnly ?? false}
-        onToggleUnread={(only) =>
-          inbox.setFilters((atual) => ({ ...atual, unreadOnly: only || undefined }))
-        }
-        unreadByInbox={inbox.unreadByInbox}
-        canManageInboxes={props.canManageInboxes}
-      />
-
       {/* ============================================================ */}
       {/* COLUNA 1: LISTA DE CONVERSAS (320px - 360px)                 */}
       {/* ============================================================ */}
@@ -202,8 +173,45 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
           pane !== 'lista' && 'hidden lg:flex',
         )}
       >
-        {/* Cabeçalho da Lista: Busca e Filtros */}
+        {/* Cabeçalho da Lista: Canal, Busca e Filtros */}
         <div className="flex flex-col gap-2.5 shrink-0 border-b border-line p-3 bg-surface-2/60">
+          {/* Linha 0: Canal Atual & Seletor de Canal */}
+          {props.inboxes.length > 0 && (
+            <div className="flex items-center justify-between gap-2 rounded-xl border border-line-soft bg-surface px-2.5 py-1.5 shadow-2xs">
+              <div className="flex items-center gap-2 min-w-0">
+                <span
+                  className={cn(
+                    'size-2 shrink-0 rounded-full',
+                    caixaObj?.status === 'conectado'
+                      ? 'bg-emerald-500 ring-2 ring-emerald-500/20'
+                      : 'bg-amber-500',
+                  )}
+                  title={caixaObj?.status === 'conectado' ? 'Canal conectado' : 'Aguardando conexão'}
+                />
+                <span className="truncate text-xs font-bold text-ink">
+                  {caixaObj?.name ?? 'Canal de atendimento'}
+                </span>
+              </div>
+
+              {props.inboxes.length > 1 && (
+                <select
+                  value={caixaAtual}
+                  onChange={(event) =>
+                    inbox.setFilters((atual) => ({ ...atual, inboxId: event.target.value }))
+                  }
+                  aria-label="Trocar canal"
+                  className="cursor-pointer rounded-lg border border-line-soft bg-surface-2 px-2 py-0.5 text-[11px] font-semibold text-ink outline-none transition-colors hover:border-brand/40"
+                >
+                  {props.inboxes.map((caixa) => (
+                    <option key={caixa.id} value={caixa.id}>
+                      {caixa.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+
           {/* Linha 1: Campo de Busca + Menu de Filtros + Ordenação */}
           <div className="flex items-center gap-2">
             <div className="relative flex-1 min-w-0">
@@ -284,34 +292,6 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
               );
             })}
           </div>
-
-          {/*
-            Qual caixa está sendo lida.
-
-            Fora do XL a coluna de canais não cabe, e sem ela nada na tela diria
-            de qual dos números a lista é. O seletor faz o papel dela: troca de
-            caixa, sem a opção de misturar todas — que era o que este bloco
-            oferecia com um "×" e o que devolvia a lista embaralhada.
-          */}
-          {props.inboxes.length > 1 && caixaAtual ? (
-            <label className="mt-1 flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1 text-[11px] text-muted xl:hidden">
-              <Inbox className="size-3.5 shrink-0" />
-              <span className="sr-only">Caixa de entrada</span>
-              <select
-                value={caixaAtual}
-                onChange={(event) =>
-                  inbox.setFilters((atual) => ({ ...atual, inboxId: event.target.value }))
-                }
-                className="min-w-0 flex-1 bg-transparent font-semibold text-ink outline-none"
-              >
-                {props.inboxes.map((caixa) => (
-                  <option key={caixa.id} value={caixa.id}>
-                    {caixa.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
         </div>
 
         {/* Lista Rolável de Conversas */}
