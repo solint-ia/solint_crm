@@ -182,6 +182,24 @@ class WhatsAppEventBus extends EventEmitter {
   }
 
   /**
+   * Alguém **neste processo** escuta eventos de conversa?
+   *
+   * Separa dois mundos que a mesma chamada atende. No motor in-process quem
+   * ouve é a rota de SSE, ali do lado, e o payload gordo — a conversa inteira,
+   * já em memória — é o que evita uma releitura do banco no cliente. No worker
+   * não há ouvinte nenhum: o evento sai daqui pelo `NOTIFY`, que só carrega
+   * identificadores, e quem recebe do outro lado recarrega a conversa.
+   *
+   * Sem esta pergunta, o worker montava a conversa inteira para ninguém — uma
+   * consulta pesada por mensagem nova, no processo cujo pool de conexões é o
+   * mais escasso. E quando essa consulta falhava por pool esgotado, a exceção
+   * subia e derrubava o **anúncio da primeira mensagem** junto.
+   */
+  get hasConversationListeners(): boolean {
+    return this.listenerCount('conversation') > 0;
+  }
+
+  /**
    * Emite o evento apenas para listeners conectados a esta instância local Node.
    */
   emitLocal(event: 'status' | 'conversation', payload: unknown) {

@@ -90,6 +90,15 @@ model User {
   passwordHash     String
   avatarTone       String
   signature        String?
+  /// A assinatura vai ou não vai junto com o que a pessoa escreve.
+  ///
+  /// Separado do texto porque desligar não é apagar: quem tira a assinatura por
+  /// uma semana não deveria ter de reescrevê-la depois. O padrão é `false`
+  /// porque ligar isto muda o que o cliente recebe — uma linha a mais em toda
+  /// mensagem —, e essa não é uma decisão para tomar em nome de ninguém.
+  signatureEnabled Boolean @default(false)
+  /// JSON: NotificationPreferences — avisos pessoais, som e resumo diário.
+  notificationPrefs Json?
   twoFactorEnabled Boolean @default(false)
   lastActiveAt     String?
 
@@ -279,7 +288,14 @@ model Message {
   createdAt      DateTime @default(now())
   deliveryStatus String?
   isPrivate      Boolean  @default(false)
+  /// Mensagem citada. Guarda o `Message.id`, não o id do canal: é por ele que a
+  /// timeline encontra o original para desenhar a citação.
   replyToId      String?
+  /// Quando a mensagem foi apagada. A linha continua: a timeline precisa do
+  /// buraco no lugar certo ("Mensagem apagada"), como o próprio WhatsApp faz.
+  /// Apagar a linha reordenaria o histórico e quebraria as citações que a
+  /// apontam.
+  deletedAt      DateTime?
   externalId     String?
   origin         String?
 

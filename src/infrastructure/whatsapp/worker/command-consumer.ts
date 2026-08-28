@@ -57,7 +57,9 @@ const CLEANUP_EVERY_N_SWEEPS = 240;
  * independentes. Nada no domínio pede que uma espere a outra.
  */
 const LANES = {
-  envio: new Set(['send', 'send_media']),
+  // `delete` entra na raia de envio porque é escrita no mesmo chat: a ordem
+  // entre mandar e apagar é a única que não pode se inverter.
+  envio: new Set(['send', 'send_media', 'delete']),
   sessao: new Set(['connect', 'disconnect']),
   leitura: new Set(['read']),
 } as const;
@@ -249,12 +251,32 @@ export class CommandConsumer {
       case 'send': {
         const session =
           this.sessionManager.get(inboxId) ?? (await this.sessionManager.start(inboxId));
+        const quote = payload['quote'] as
+          | { externalId: string; fromMe: boolean; text: string }
+          | undefined;
         const externalId = await session.sendMessage(
           (payload['recipient'] ?? {}) as { phone?: string; jid?: string; channelThreadId?: string },
           (payload['content'] ?? {}) as { text?: string },
-          (payload['options'] ?? {}) as { paced?: boolean },
+          {
+            ...((payload['options'] ?? {}) as { paced?: boolean }),
+            ...(quote ? { quote } : {}),
+          },
         );
         await this.stampMessage(payload, externalId);
+        break;
+      }
+
+      case 'delete': {
+        const session =
+          this.sessionManager.get(inboxId) ?? (await this.sessionManager.start(inboxId));
+        const externalId = payload['externalId'];
+        if (typeof externalId !== 'string' || !externalId) {
+          throw new Error('Comando de exclusão sem o id da mensagem no canal.');
+        }
+        await session.deleteMessage(
+          (payload['recipient'] ?? {}) as { phone?: string; jid?: string; channelThreadId?: string },
+          externalId,
+        );
         break;
       }
 
@@ -400,7 +422,12 @@ export class CommandConsumer {
     conversationId: string,
     messageId: string,
   ): Promise<void> {
-    const conversation = await loadConversationForEvent(accountId, conversationId);
+    // Ver a nota em `hasConversationListeners`: no worker este `emit` local não
+    // tem ouvinte, e carregar a conversa inteira só para descartá-la no
+    // `NOTIFY` custava uma consulta pesada por envio concluído.
+    const conversation = waEventBus.hasConversationListeners
+      ? await loadConversationForEvent(accountId, conversationId)
+      : null;
     const item = conversation?.timeline.find(
       (entry) => entry.kind === 'message' && entry.message.id === messageId,
     );

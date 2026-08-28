@@ -3,6 +3,7 @@ import { prisma } from '../db/prisma';
 import type {
   DispatchContext,
   DispatchMedia,
+  DispatchQuote,
   DispatchResult,
   DispatchTarget,
   WhatsAppChannel,
@@ -191,7 +192,7 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
 
   private async dispatch(
     context: DispatchContext,
-    kind: 'send' | 'send_media',
+    kind: 'send' | 'send_media' | 'delete',
     body: object,
   ): Promise<DispatchResult> {
     // A caixa vem da conversa, não de `inboxOf`: aquele método escolhe pela
@@ -208,7 +209,11 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
         ...body,
         accountId: context.accountId,
         conversationId: context.conversationId,
-        messageId: context.messageId,
+        // Exclusão não carrega `messageId`: quando um comando falha, o worker
+        // usa esse campo para marcar a bolha como não entregue — e uma exclusão
+        // recusada carimbaria "falha" numa mensagem que foi entregue com
+        // sucesso, dizendo o contrário da verdade sobre ela.
+        ...(kind === 'delete' ? {} : { messageId: context.messageId }),
       });
       return { ok: true, queued: true };
     } catch (error) {
@@ -223,8 +228,23 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     context: DispatchContext,
     target: DispatchTarget,
     text: string,
+    quote?: DispatchQuote,
   ): Promise<DispatchResult> {
-    return this.dispatch(context, 'send', { recipient: target, content: { text } });
+    return this.dispatch(context, 'send', {
+      recipient: target,
+      content: { text },
+      ...(quote ? { quote } : {}),
+    });
+  }
+
+  async deleteMessage(
+    context: DispatchContext,
+    target: DispatchTarget,
+    externalId: string,
+  ): Promise<DispatchResult> {
+    // Raia de envio de propósito: apagar é uma escrita no mesmo chat, e a ordem
+    // entre "mandei" e "apaguei" é a única coisa que não pode se inverter.
+    return this.dispatch(context, 'delete', { recipient: target, externalId });
   }
 
   async sendMedia(

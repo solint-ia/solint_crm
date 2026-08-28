@@ -27,7 +27,12 @@ interface UseInboxParams {
     conversationId: string;
     text: string;
     isPrivate: boolean;
+    replyToId?: string;
   }) => Promise<{ ok: boolean; error?: string; message?: Message }>;
+  readonly deleteMessage?: (input: {
+    conversationId: string;
+    messageId: string;
+  }) => Promise<{ ok: boolean; error?: string }>;
   readonly changeStatus: (input: {
     conversationId: string;
     status: ConversationStatus;
@@ -113,6 +118,7 @@ export function useInbox({
   currentUserId,
   currentUserName,
   sendMessage,
+  deleteMessage,
   changeStatus,
   markAsRead,
   assign,
@@ -385,7 +391,7 @@ export function useInbox({
   }, [selected, markAsRead]);
 
   const appendLocalMessage = useCallback(
-    (conversationId: string, text: string, mode: ComposerMode) => {
+    (conversationId: string, text: string, mode: ComposerMode, replyToId?: string) => {
       const isPrivate = mode === 'nota';
       const message: Message = {
         id: `local-${Date.now()}`,
@@ -393,6 +399,7 @@ export function useInbox({
         author: 'agent',
         authorName: currentUserName,
         origin: 'crm',
+        ...(replyToId ? { replyToId } : {}),
         content: { type: 'text', text },
         time: horaLabel(new Date()),
         // A mensagem otimista já nasce com o instante real: assim a hora na tela
@@ -437,26 +444,83 @@ export function useInbox({
     );
   }, []);
 
+  /**
+   * Troca a bolha otimista pela mensagem que o servidor gravou.
+   *
+   * A troca é por **id**, no lugar em que a bolha já está. A alternativa que
+   * existia — deixar a bolha e esperar o evento de tempo real removê-la
+   * comparando o conteúdo — quebrava assim que o servidor mudasse o texto, e
+   * ele passou a mudar: a assinatura entra na gravação, então o conteúdo
+   * devolvido não é mais igual ao que foi digitado, e a comparação deixava as
+   * duas bolhas na tela.
+   */
+  const commitLocalMessage = useCallback(
+    (conversationId: string, localId: string, saved: Message) => {
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.id === conversationId
+            ? {
+                ...conversation,
+                timeline: conversation.timeline.map((item) =>
+                  item.kind === 'message' && item.message.id === localId
+                    ? { kind: 'message' as const, message: saved }
+                    : item,
+                ),
+                lastMessagePreview: saved.isPrivate
+                  ? conversation.lastMessagePreview
+                  : previewOfMessage(saved),
+              }
+            : conversation,
+        ),
+      );
+    },
+    [],
+  );
+
   const handleSend = useCallback(
-    (text: string, mode: ComposerMode) => {
+    (text: string, mode: ComposerMode, replyToId?: string) => {
       if (!selected) return;
       setError(undefined);
       const conversationId = selected.id;
-      const localId = appendLocalMessage(conversationId, text, mode);
+      const localId = appendLocalMessage(conversationId, text, mode, replyToId);
 
       startTransition(async () => {
         const result = await sendMessage({
           conversationId,
           text,
           isPrivate: mode === 'nota',
+          ...(replyToId ? { replyToId } : {}),
         });
         if (!result.ok) setError(result.error);
         // Sem mensagem persistida o envio não chegou ao dominio: não deixe uma
         // bolha fantasma sugerindo que a mensagem existe.
-        if (!result.message) dropLocalMessage(conversationId, localId);
+        if (result.message) commitLocalMessage(conversationId, localId, result.message);
+        else dropLocalMessage(conversationId, localId);
       });
     },
-    [selected, appendLocalMessage, dropLocalMessage, sendMessage],
+    [selected, appendLocalMessage, commitLocalMessage, dropLocalMessage, sendMessage],
+  );
+
+  /**
+   * Apaga a mensagem — sem atualização otimista, de propósito.
+   *
+   * Apagar depende do WhatsApp aceitar, e ele pode recusar (número fora do ar,
+   * mensagem antiga demais). Riscar a bolha antes da confirmação mostraria como
+   * removido algo que continua no aparelho do contato — que é exatamente o erro
+   * que esta função existe para não cometer. A confirmação chega pelo evento de
+   * tempo real, com a conversa já no estado novo.
+   */
+  const handleDeleteMessage = useCallback(
+    (messageId: string) => {
+      if (!selected || !deleteMessage) return;
+      setError(undefined);
+      const conversationId = selected.id;
+      startTransition(async () => {
+        const result = await deleteMessage({ conversationId, messageId });
+        if (!result.ok) setError(result.error);
+      });
+    },
+    [selected, deleteMessage],
   );
 
   const handleChangeStatus = useCallback(
@@ -636,6 +700,7 @@ export function useInbox({
     setFilters,
     select: setSelectedId,
     send: handleSend,
+    deleteMessage: handleDeleteMessage,
     changeStatus: handleChangeStatus,
     assign: handleAssign,
     changePriority: handleChangePriority,

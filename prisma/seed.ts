@@ -126,6 +126,7 @@ async function main() {
       passwordHash,
       avatarTone: user.avatarTone,
       signature: user.signature ?? null,
+      signatureEnabled: user.signatureEnabled,
       twoFactorEnabled: user.twoFactorEnabled,
       lastActiveAt: user.lastActiveAt ?? null,
     })),

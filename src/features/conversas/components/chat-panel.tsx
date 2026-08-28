@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
@@ -13,16 +13,19 @@ import {
   PanelRightClose,
   PauseCircle,
   PlugZap,
+  Trash2,
   UserCheck,
   Users,
 } from 'lucide-react';
 import type { Conversation, ConversationStatus, Priority } from '@/core/domain/conversation';
 import { isHsmWindowOpen } from '@/core/domain/conversation';
+import { previewOfMessage, type Message } from '@/core/domain/message';
 import { isGroupContact, PhoneNumber } from '@/core/domain/contact';
 import type { Label } from '@/core/domain/label';
 import type { CannedResponse } from '@/core/domain/settings';
 import { Avatar } from '@/components/ui/avatar';
 import { Menu, MenuHeader, MenuItem } from '@/components/ui/menu';
+import { Modal } from '@/components/ui/modal';
 import { ChannelBadge } from '@/components/domain/channel-badge';
 import { StatusBadge } from '@/components/domain/status-badge';
 import { Composer, type ComposerMode, type MediaResult } from './composer';
@@ -44,7 +47,8 @@ interface ChatPanelProps {
   readonly currentUserId: string;
   readonly catalog: InboxCatalog;
   readonly cannedResponses: readonly CannedResponse[];
-  readonly onSend: (text: string, mode: ComposerMode) => void;
+  readonly onSend: (text: string, mode: ComposerMode, replyToId?: string) => void;
+  readonly onDeleteMessage?: (messageId: string) => void;
   readonly onSendMedia: (form: FormData) => Promise<MediaResult>;
   readonly onSendTemplate: (templateId: string, values: readonly string[]) => void;
   readonly onChangeStatus: (status: ConversationStatus) => void;
@@ -65,6 +69,7 @@ export function ChatPanel({
   catalog,
   cannedResponses,
   onSend,
+  onDeleteMessage,
   onSendMedia,
   onSendTemplate,
   onChangeStatus,
@@ -79,12 +84,35 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const [transferOpen, setTransferOpen] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
+  const [replyTo, setReplyTo] = useState<Message | undefined>();
+  const [pendingDelete, setPendingDelete] = useState<Message | undefined>();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const prevConversationIdRef = useRef<string | null>(null);
 
   const hsmOpen = isHsmWindowOpen(conversation);
   const isGroup = isGroupContact(conversation.contact);
+
+  /**
+   * As mensagens por id, para resolver a citação sem varrer a timeline por
+   * bolha. Numa conversa longa, procurar a citada dentro de cada balão seria
+   * quadrático — e a timeline chega a centenas de itens.
+   */
+  const byId = useMemo(() => {
+    const mapa = new Map<string, Message>();
+    for (const item of conversation.timeline) {
+      if (item.kind === 'message') mapa.set(item.message.id, item.message);
+    }
+    return mapa;
+  }, [conversation.timeline]);
+
+  // Trocar de conversa descarta a resposta em curso: ela era daquele
+  // atendimento, e uma citação apontando para a timeline anterior não faz
+  // sentido nenhum aqui.
+  useEffect(() => {
+    setReplyTo(undefined);
+    setPendingDelete(undefined);
+  }, [conversation.id]);
 
   const identity = isGroup
     ? `${conversation.contact.participantCount ?? 0} participantes`
@@ -382,6 +410,11 @@ export function ChatPanel({
               key={item.message.id}
               message={item.message}
               showAuthorName={isGroup}
+              {...(item.message.replyToId && byId.has(item.message.replyToId)
+                ? { quoted: byId.get(item.message.replyToId) }
+                : {})}
+              onReply={setReplyTo}
+              {...(onDeleteMessage ? { onDelete: setPendingDelete } : {})}
             />
           ),
         )}
@@ -417,6 +450,19 @@ export function ChatPanel({
               ? 'Janela de 24h encerrada. Envie um template para falar com o contato.'
               : undefined
           }
+          {...(replyTo
+            ? {
+                replyTo: {
+                  id: replyTo.id,
+                  author:
+                    replyTo.author === 'contact'
+                      ? (replyTo.authorName ?? conversation.contact.name)
+                      : 'você mesmo',
+                  preview: previewOfMessage(replyTo),
+                },
+              }
+            : {})}
+          onCancelReply={() => setReplyTo(undefined)}
           onSend={onSend}
           onSendMedia={onSendMedia}
           cannedResponses={cannedResponses}
@@ -433,6 +479,48 @@ export function ChatPanel({
         currentUserId={currentUserId}
         onAssign={onAssign}
       />
+
+      {/* Apagar pede confirmação porque não tem volta: o texto sai daqui e sai
+          do aparelho do contato, e não há lixeira nem desfazer. O balão é
+          mostrado dentro do aviso para que a confirmação seja sobre *aquela*
+          mensagem, não sobre uma pergunta abstrata. */}
+      <Modal
+        open={Boolean(pendingDelete)}
+        onClose={() => setPendingDelete(undefined)}
+        title="Apagar mensagem"
+        description="A mensagem some desta conversa e também do aparelho do contato. Não é possível desfazer."
+        className="max-w-md"
+      >
+        {pendingDelete ? (
+          <div className="flex flex-col gap-4 pt-1">
+            <p className="line-clamp-4 rounded-xl border-l-2 border-l-line bg-surface-2 px-3 py-2 text-xs text-muted">
+              {previewOfMessage(pendingDelete)}
+            </p>
+
+            <div className="flex justify-end gap-2 border-t border-line pt-4">
+              <button
+                type="button"
+                onClick={() => setPendingDelete(undefined)}
+                className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-2"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onDeleteMessage?.(pendingDelete.id);
+                  setPendingDelete(undefined);
+                  if (replyTo?.id === pendingDelete.id) setReplyTo(undefined);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-red-500"
+              >
+                <Trash2 className="size-3.5" />
+                Apagar para todos
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
 
       <TemplatePicker
         open={templateOpen}

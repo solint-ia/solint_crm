@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 
-import { PERMISSIONS, type Permission, type Session } from '@/core/domain/user';
+import {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  PERMISSIONS,
+  type Permission,
+  type Session,
+} from '@/core/domain/user';
 import { prisma, readJson } from '@/infrastructure/db/prisma';
 
 /**
@@ -52,6 +57,11 @@ const sessaoDoToken = (
       avatarTone: 'slate',
       availability: 'disponivel',
       teams: [],
+      // Um token não escreve mensagem em nome de ninguém e não recebe aviso
+      // nenhum: assinatura desligada e preferências no padrão são a descrição
+      // honesta de algo que não tem preferências.
+      signatureEnabled: false,
+      notifications: DEFAULT_NOTIFICATION_PREFERENCES,
       twoFactorEnabled: false,
     },
     account: {

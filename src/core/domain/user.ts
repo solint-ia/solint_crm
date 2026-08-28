@@ -53,6 +53,47 @@ export interface Role {
   readonly isSystem: boolean;
 }
 
+/**
+ * Avisos pessoais — o que interrompe a pessoa, e como.
+ *
+ * Tudo opcional e com padrão explícito em `DEFAULT_NOTIFICATION_PREFERENCES`:
+ * a coluna nasce nula para quem já existia, e um campo novo aqui não pode
+ * significar "desligado" para toda a base por omissão.
+ */
+export interface NotificationPreferences {
+  /** Conversa atribuída diretamente a mim. */
+  readonly assigned: boolean;
+  /** Menções com @ em notas internas. */
+  readonly mentions: boolean;
+  /** Prazo de resposta estourando. */
+  readonly sla: boolean;
+  /** Conclusão de campanhas em massa. */
+  readonly campaigns: boolean;
+  /** Resumo diário por email. */
+  readonly dailySummary: boolean;
+  /**
+   * Para onde o resumo vai.
+   *
+   * Separado do email de login de propósito: o resumo costuma ser lido pela
+   * gerência ou por uma caixa compartilhada, que raramente é a mesma conta que
+   * atende. Vazio significa "manda para o email do meu login".
+   */
+  readonly dailySummaryEmail?: string;
+  /** O navegador emite um som quando chega mensagem nova. */
+  readonly sound: boolean;
+}
+
+export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
+  assigned: true,
+  mentions: true,
+  sla: true,
+  campaigns: false,
+  dailySummary: false,
+  // Som ligado por padrão: quem atende costuma estar noutra aba, e o aviso
+  // silencioso não avisa ninguém. Desligar é um clique.
+  sound: true,
+};
+
 export interface User {
   readonly id: Id;
   readonly accountId: Id;
@@ -63,9 +104,40 @@ export interface User {
   readonly availability: AvailabilityStatus;
   readonly teams: readonly string[];
   readonly signature?: string;
+  /** A assinatura acompanha as mensagens enviadas? Ver `signatureFor`. */
+  readonly signatureEnabled: boolean;
+  readonly notifications: NotificationPreferences;
   readonly twoFactorEnabled: boolean;
   readonly lastActiveAt?: string;
 }
+
+/**
+ * Como a assinatura entra na mensagem.
+ *
+ * Em negrito e numa linha própria acima do texto, que é a convenção do próprio
+ * WhatsApp (`*texto*`) e o formato que os CRMs do mercado usam. Fica **acima**
+ * e não abaixo porque quem lê precisa saber quem está falando antes de ler o
+ * que foi dito — numa conversa atendida por três pessoas, descobrir isso só no
+ * fim custa reler.
+ *
+ * Devolve `undefined` quando não há o que assinar: desligada, vazia, ou nota
+ * interna (que ninguém de fora lê, então não há a quem se identificar).
+ */
+export const signatureFor = (user: User): string | undefined => {
+  if (!user.signatureEnabled) return undefined;
+  const texto = (user.signature ?? '').trim();
+  return texto ? texto : undefined;
+};
+
+/** Aplica a assinatura ao corpo da mensagem, se houver uma. */
+export const withSignature = (user: User, text: string): string => {
+  const assinatura = signatureFor(user);
+  if (!assinatura) return text;
+  // Já assinada — reenvio, automação que montou o texto pronto — não ganha uma
+  // segunda linha com o mesmo nome.
+  if (text.startsWith(`*${assinatura}*`)) return text;
+  return `*${assinatura}*\n${text}`;
+};
 
 export interface Account {
   readonly id: Id;

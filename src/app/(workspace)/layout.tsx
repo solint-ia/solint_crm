@@ -3,7 +3,7 @@ import { ToastProvider } from '@/components/ui/toast';
 import { NAV_ITEMS } from '@/config/navigation';
 import { can, canSeeInbox } from '@/core/domain/user';
 import { ConversationEventsProvider } from '@/features/realtime/conversation-events';
-import { RealtimeToasts } from '@/features/realtime/realtime-toasts';
+import { LiveNotificationsProvider } from '@/features/realtime/live-notifications';
 import { container } from '@/infrastructure/container';
 import { prisma } from '@/infrastructure/db/prisma';
 
@@ -38,10 +38,17 @@ export default async function WorkspaceLayout({
     }),
   ]);
 
-  const unreadCount = conversations.reduce(
-    (total, conversation) => total + conversation.unreadCount,
-    0,
-  );
+  /**
+   * O selo conta **conversas**, não mensagens.
+   *
+   * Somava `unreadCount` de todas as conversas, e o número resultante não
+   * respondia a nenhuma pergunta que alguém faça: um contato que mandou
+   * quinze mensagens seguidas virava "15" ao lado do ícone, enquanto quinze
+   * pessoas esperando viravam o mesmo "15". Quem olha o selo quer saber
+   * **quantos atendimentos estão à espera** — é isso que dimensiona o trabalho
+   * e é isso que a lista mostra quando ele clica.
+   */
+  const unreadCount = conversations.filter((conversation) => conversation.unreadCount > 0).length;
 
   const conversationCounts = {
     todas: conversations.length,
@@ -61,32 +68,41 @@ export default async function WorkspaceLayout({
         : inbox.identifier,
       status: inbox.waConnection?.status ?? inbox.status,
       teamName: inbox.teamName ?? undefined,
-      unreadCount: conversations
-        .filter((c) => c.inboxId === inbox.id && c.unreadCount > 0)
-        .reduce((sum, c) => sum + c.unreadCount, 0),
+      // Mesma unidade do selo global: conversas esperando, não mensagens
+      // acumuladas. Com as duas contagens iguais, a soma das caixas fecha com o
+      // número do ícone — antes não fechava, e não havia como saber por quê.
+      unreadCount: conversations.filter((c) => c.inboxId === inbox.id && c.unreadCount > 0).length,
     }));
 
   const items = NAV_ITEMS.filter((item) => can(session, item.permission));
 
   return (
     <ConversationEventsProvider>
-      <ToastProvider>
-        <div className="flex h-screen w-screen flex-col overflow-hidden bg-app md:flex-row">
-          <NavigationRail
-            items={items}
-            unreadCount={unreadCount}
-            userName={session.user.name}
-            userTone={session.user.avatarTone}
-            availability={session.user.availability}
-            accessibleInboxes={accessibleInboxes}
-            conversationCounts={conversationCounts}
-            canManageInboxes={can(session, 'configuracoes:escrever') || can(session, 'caixas:todas')}
-            roleName={role?.name ?? session.user.roleSlug}
-          />
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
-        </div>
-        <RealtimeToasts />
-      </ToastProvider>
+      {/* Mensagem nova vira aviso no sininho, e não mais cartão flutuante no
+          canto: o cartão sumia sozinho em sete segundos e quem estivesse longe
+          da tela nesse intervalo nunca soube que algo chegou. O provider mora
+          aqui, no layout, porque o sininho é remontado a cada navegação e o
+          que ele guardasse morreria na primeira troca de tela. */}
+      <LiveNotificationsProvider soundEnabled={session.user.notifications.sound}>
+        <ToastProvider>
+          <div className="flex h-screen w-screen flex-col overflow-hidden bg-app md:flex-row">
+            <NavigationRail
+              items={items}
+              unreadCount={unreadCount}
+              userName={session.user.name}
+              userTone={session.user.avatarTone}
+              availability={session.user.availability}
+              accessibleInboxes={accessibleInboxes}
+              conversationCounts={conversationCounts}
+              canManageInboxes={
+                can(session, 'configuracoes:escrever') || can(session, 'caixas:todas')
+              }
+              roleName={role?.name ?? session.user.roleSlug}
+            />
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
+          </div>
+        </ToastProvider>
+      </LiveNotificationsProvider>
     </ConversationEventsProvider>
   );
 }

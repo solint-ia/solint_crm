@@ -34,7 +34,12 @@ interface InboxWorkspaceProps {
     conversationId: string;
     text: string;
     isPrivate: boolean;
+    replyToId?: string;
   }) => Promise<{ ok: boolean; error?: string; message?: Message }>;
+  readonly deleteMessage: (input: {
+    conversationId: string;
+    messageId: string;
+  }) => Promise<{ ok: boolean; error?: string }>;
   readonly changeStatus: (input: {
     conversationId: string;
     status: ConversationStatus;
@@ -120,6 +125,7 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
     currentUserId: props.currentUserId,
     currentUserName: props.currentUserName,
     sendMessage: props.sendMessage,
+    deleteMessage: props.deleteMessage,
     changeStatus: props.changeStatus,
     markAsRead: props.markAsRead,
     assign: props.assign,
@@ -367,6 +373,7 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
               onMoveInbox={inbox.moveInbox}
               cannedResponses={props.cannedResponses}
               onSend={inbox.send}
+              onDeleteMessage={inbox.deleteMessage}
               onSendMedia={inbox.sendMedia}
               onSendTemplate={inbox.sendTemplate}
               onChangeStatus={inbox.changeStatus}

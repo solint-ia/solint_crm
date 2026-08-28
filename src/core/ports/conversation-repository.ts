@@ -29,6 +29,8 @@ export interface NewMessageInput {
   readonly isPrivate: boolean;
   readonly authorId: Id;
   readonly authorName: string;
+  /** Mensagem citada, quando esta é uma resposta a uma anterior. */
+  readonly replyToId?: Id;
 }
 
 /** Leitura de conversas (ISP: quem só lista não depende de escrita). */
@@ -94,6 +96,15 @@ export interface ConversationWriter {
   /** Anexa uma mensagem já montada (mídia, template) sem passar por texto puro. */
   appendRichMessage(accountId: Id, conversationId: Id, message: Message): Promise<Message>;
   markAsRead(accountId: Id, conversationId: Id): Promise<void>;
+  /** Uma mensagem da conversa, escopada pela conta. `null` quando não existe. */
+  findMessage(accountId: Id, conversationId: Id, messageId: Id): Promise<Message | null>;
+  /**
+   * Marca a mensagem como apagada e esvazia o conteúdo.
+   *
+   * A linha continua para a timeline não se recosturar sem ela, mas o conteúdo
+   * sai de verdade: "apagar" que deixa o texto legível no banco não é apagar.
+   */
+  markMessageDeleted(accountId: Id, conversationId: Id, messageId: Id): Promise<Conversation | null>;
 }
 
 export interface ConversationRepository extends ConversationReader, ConversationWriter {}

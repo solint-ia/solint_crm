@@ -11,6 +11,16 @@ import { dataHoraLabel } from '@/lib/datetime';
 
 interface WhatsAppConnectionCardProps {
   readonly user: User;
+  /**
+   * Caixa a que este cartão pertence.
+   *
+   * Sem ela o cartão fala da rota global, que resolve **uma** caixa no servidor
+   * (`findFirst`) e ignora as demais — era por isso que uma conta com três
+   * números via um só no perfil, sempre o mesmo, sem nada que explicasse o
+   * sumiço dos outros dois. Com o id, cada cartão assina o fluxo da sua caixa.
+   */
+  readonly inboxId?: string;
+  readonly inboxName?: string;
   /** Abre a tela onde o QR Code e exibido (Configurações › Integrações). */
   readonly onOpenPairing?: () => void;
 }
@@ -23,9 +33,14 @@ const formatDateTime = (iso?: string): string =>
  * Deixa explicito *qual conta* esta atendendo em nome deste perfil — sem isso
  * o agente não tem como saber por qual número suas respostas estao saindo.
  */
-export function WhatsAppConnectionCard({ user, onOpenPairing }: WhatsAppConnectionCardProps) {
+export function WhatsAppConnectionCard({
+  user,
+  inboxId,
+  inboxName,
+  onOpenPairing,
+}: WhatsAppConnectionCardProps) {
   const { statusData, errorMessage, isPending, isConnected, isConnecting, connect, disconnect } =
-    useWhatsAppConnection();
+    useWhatsAppConnection(true, inboxId);
 
   const ownedByOther = Boolean(statusData.owner && statusData.owner.userId !== user.id);
 
@@ -34,10 +49,12 @@ export function WhatsAppConnectionCard({ user, onOpenPairing }: WhatsAppConnecti
       <div className="flex items-start justify-between gap-3">
         <div>
           <h3 className="font-display text-title font-bold text-ink tracking-tight">
-            WhatsApp vinculado ao perfil
+            {inboxName ?? 'WhatsApp vinculado ao perfil'}
           </h3>
           <p className="text-body text-muted">
-            Número usado para enviar e receber suas conversas no CRM.
+            {inboxName
+              ? 'Número desta caixa de entrada.'
+              : 'Número usado para enviar e receber suas conversas no CRM.'}
           </p>
         </div>
         {isConnected ? (
@@ -116,7 +133,9 @@ export function WhatsAppConnectionCard({ user, onOpenPairing }: WhatsAppConnecti
           <p className="text-body text-muted">
             {isConnecting
               ? 'Gerando o QR Code de pareamento...'
-              : 'Nenhum número vinculado a este perfil. Conecte para atender pelo seu WhatsApp.'}
+              : inboxName
+                ? 'Esta caixa ainda não tem número pareado. Conecte para começar a atender por ela.'
+                : 'Nenhum número vinculado a este perfil. Conecte para atender pelo seu WhatsApp.'}
           </p>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -125,7 +144,7 @@ export function WhatsAppConnectionCard({ user, onOpenPairing }: WhatsAppConnecti
               disabled={isPending || isConnecting}
               icon={<Wifi className="size-3.5" />}
             >
-              {isPending ? 'Iniciando...' : 'Conectar meu WhatsApp'}
+              {isPending ? 'Iniciando...' : inboxName ? 'Conectar número' : 'Conectar meu WhatsApp'}
             </Button>
             {onOpenPairing ? (
               <Button variant="secondary" size="sm" onClick={onOpenPairing}>

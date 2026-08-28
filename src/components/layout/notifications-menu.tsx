@@ -3,8 +3,17 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
-import { AtSign, Bell, Megaphone, Settings2, Timer, UserPlus } from 'lucide-react';
+import {
+  AtSign,
+  Bell,
+  Megaphone,
+  MessageSquare,
+  Settings2,
+  Timer,
+  UserPlus,
+} from 'lucide-react';
 import type { AppNotification, NotificationKind } from '@/core/domain/notification';
+import { useLiveNotifications } from '@/features/realtime/live-notifications';
 import { cn } from '@/lib/cn';
 
 interface NotificationsMenuProps {
@@ -18,6 +27,7 @@ const KIND_ICON: Readonly<Record<NotificationKind, typeof Bell>> = {
   campanha: Megaphone,
   mencao: AtSign,
   sistema: Settings2,
+  mensagem: MessageSquare,
 };
 
 const KIND_TONE: Readonly<Record<NotificationKind, string>> = {
@@ -26,13 +36,26 @@ const KIND_TONE: Readonly<Record<NotificationKind, string>> = {
   campanha: 'text-violet-text',
   mencao: 'text-brand',
   sistema: 'text-dim',
+  mensagem: 'text-green-text',
 };
 
 export function NotificationsMenu({ notifications }: NotificationsMenuProps) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState(notifications);
   const panelRef = useRef<HTMLDivElement>(null);
-  const unread = items.filter((item) => !item.read).length;
+
+  /**
+   * Duas origens, uma lista.
+   *
+   * As gravadas vêm do servidor com a página; as de mensagem nova chegam pelo
+   * barramento de tempo real e vivem no layout, que não é remontado a cada
+   * navegação. Misturá-las só na exibição mantém cada uma com o ciclo de vida
+   * que ela tem — e é o que faz o "marcar como lida" continuar significando
+   * coisas diferentes para cada uma sem que a tela precise saber disso.
+   */
+  const live = useLiveNotifications();
+  const visible = [...live.items, ...items];
+  const unread = visible.filter((item) => !item.read).length;
 
   useEffect(() => {
     if (!open) return;
@@ -43,13 +66,18 @@ export function NotificationsMenu({ notifications }: NotificationsMenuProps) {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [open]);
 
-  const markAllAsRead = () => setItems(items.map((item) => ({ ...item, read: true })));
+  const markAllAsRead = () => {
+    setItems((current) => current.map((item) => ({ ...item, read: true })));
+    live.markAllRead();
+  };
 
   /** Abrir é ler: marcar individualmente evita zerar o que ainda não foi visto. */
-  const markAsRead = (id: string) =>
+  const markAsRead = (id: string) => {
     setItems((current) =>
       current.map((item) => (item.id === id ? { ...item, read: true } : item)),
     );
+    live.markRead(id);
+  };
 
   return (
     <div className="relative">
@@ -62,8 +90,14 @@ export function NotificationsMenu({ notifications }: NotificationsMenuProps) {
         className="relative flex size-9 items-center justify-center rounded-control text-muted transition-colors hover:bg-surface-2 hover:text-ink"
       >
         <Bell className="size-[18px]" />
+        {/* O número, não um ponto. O ponto dizia "há algo"; a pergunta que
+            alguém faz de relance é "quanto". Acima de nove vira "9+" porque a
+            diferença entre 12 e 30 não muda decisão nenhuma e o algarismo a
+            mais deforma o selo. */}
         {unread > 0 ? (
-          <span className="absolute top-1.5 right-1.5 size-2 rounded-full bg-brand" />
+          <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-brand px-1 text-[10px] font-bold tabular-nums text-white">
+            {unread > 9 ? '9+' : unread}
+          </span>
         ) : null}
       </button>
 
@@ -95,13 +129,13 @@ export function NotificationsMenu({ notifications }: NotificationsMenuProps) {
               ) : null}
             </header>
 
-            {items.length === 0 ? (
+            {visible.length === 0 ? (
               <p className="px-4 py-6 text-center text-body text-dim">
                 Nada por aqui. Avisos de atribuição, SLA e menções aparecem nesta lista.
               </p>
             ) : (
               <ul className="max-h-80 overflow-auto">
-                {items.map((item) => {
+                {visible.map((item) => {
                   const Icon = KIND_ICON[item.kind];
                   return (
                     <li key={item.id} className="flex items-stretch">

@@ -4,9 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { CONVERSATION_STATUSES, PRIORITIES } from '@/core/domain/conversation';
-import type { Message, MessageContent } from '@/core/domain/message';
+import { previewOfMessage, type Message, type MessageContent } from '@/core/domain/message';
 import { stageLabelIds } from '@/core/domain/pipeline';
-import { can, canSeeInbox } from '@/core/domain/user';
+import { can, canSeeInbox, withSignature } from '@/core/domain/user';
 import { canSendFreeText, MAX_MESSAGE_LENGTH } from '@/core/use-cases/send-message';
 import { container } from '@/infrastructure/container';
 import { dispararAutomacoes } from '@/infrastructure/automations/dispatch';
@@ -74,6 +74,8 @@ const sendMessageSchema = z.object({
   conversationId: z.string().min(1).max(64),
   text: z.string().trim().min(1).max(MAX_MESSAGE_LENGTH),
   isPrivate: z.boolean(),
+  /** Mensagem citada. Vem da timeline aberta, então é sempre um id do CRM. */
+  replyToId: z.string().min(1).max(128).optional(),
 });
 
 export async function sendMessageAction(input: unknown): Promise<SendMessageResult> {
@@ -83,7 +85,23 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
   }
 
   const session = await container.session.getCurrentSession();
-  const result = await container.useCases.sendMessage({ session, ...parsed.data });
+
+  /**
+   * A assinatura entra aqui, antes de gravar — não na hora de despachar.
+   *
+   * Gravar o texto sem ela e mandar com ela deixaria a timeline do CRM
+   * descrevendo uma mensagem que não é a que o cliente recebeu, e é justamente
+   * a timeline que alguém abre para conferir o que foi dito.
+   *
+   * Nota interna nunca é assinada: ninguém de fora a lê, e não há a quem se
+   * identificar. Template também não passa por aqui — o corpo dele é aprovado
+   * pela Meta e uma linha a mais o invalidaria.
+   */
+  const text = parsed.data.isPrivate
+    ? parsed.data.text
+    : withSignature(session.user, parsed.data.text);
+
+  const result = await container.useCases.sendMessage({ session, ...parsed.data, text });
 
   if (!result.ok) {
     return { ok: false, error: result.error.message };
@@ -103,6 +121,28 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
       const channelStatus = await channel.getStatus(session.account.id, conversation.inboxId);
 
       if (channelStatus.status === 'conectado') {
+        /**
+         * A citação só viaja se a citada existir **no canal**.
+         *
+         * `externalId` é o que o WhatsApp entende por "aquela mensagem"; uma
+         * nota interna ou uma mensagem que nunca saiu não tem um, e mandar a
+         * citação sem ele produziria uma citação quebrada no aparelho do
+         * contato. Aqui a resposta simplesmente sai como mensagem normal — no
+         * CRM ela continua ligada à original pelo `replyToId`.
+         *
+         * A busca vai ao banco em vez de varrer `conversation.timeline`: a
+         * timeline que o caso de uso devolve é recortada nas últimas mensagens,
+         * e responder a uma mais antiga — o caso em que citar é mais útil —
+         * cairia fora dela sem aviso nenhum.
+         */
+        const quotedMessage = parsed.data.replyToId
+          ? await container.conversations.findMessage(
+              session.account.id,
+              conversation.id,
+              parsed.data.replyToId,
+            )
+          : null;
+
         const sent = await channel.sendText(
           {
             accountId: session.account.id,
@@ -111,7 +151,14 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
             inboxId: conversation.inboxId,
           },
           { channelThreadId: conversation.channelThreadId, phone: conversation.contact.phone },
-          parsed.data.text,
+          text,
+          quotedMessage?.externalId && !quotedMessage.isPrivate
+            ? {
+                externalId: quotedMessage.externalId,
+                fromMe: quotedMessage.author !== 'contact',
+                text: previewOfMessage(quotedMessage),
+              }
+            : undefined,
         );
         const applied = await applyDispatch(session.account.id, conversation.id, message, sent);
         message = applied.message;
@@ -141,6 +188,99 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
   }
 
   return dispatchError ? { ok: false, error: dispatchError, message } : { ok: true, message };
+}
+
+const deleteMessageSchema = z.object({
+  conversationId: z.string().min(1).max(64),
+  messageId: z.string().min(1).max(128),
+});
+
+/**
+ * Apaga uma mensagem enviada — aqui e no aparelho do contato.
+ *
+ * Só o que **saiu daqui** pode ser apagado. O WhatsApp não permite remover
+ * mensagem de terceiro do aparelho dele, e oferecer o botão assim mesmo criaria
+ * a pior das situações: o operador acharia que removeu algo que o cliente
+ * continua vendo.
+ *
+ * O canal vem antes do banco de propósito. Marcar como apagada e só então
+ * descobrir que o WhatsApp recusou deixaria a tela dizendo "apagada" sobre uma
+ * mensagem que ainda está lá do outro lado — e não há como voltar atrás sem o
+ * texto, que este fluxo já teria destruído.
+ */
+export async function deleteMessageAction(input: unknown): Promise<ActionResult> {
+  const parsed = deleteMessageSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Mensagem inválida.' };
+
+  const session = await container.session.getCurrentSession();
+  if (!can(session, 'conversas:responder')) {
+    return { ok: false, error: 'Sem permissão para apagar mensagens.' };
+  }
+
+  const conversation = await container.conversations.findById(
+    session.account.id,
+    parsed.data.conversationId,
+    session.inboxAccess,
+  );
+  if (!conversation) return { ok: false, error: 'Conversa não encontrada.' };
+
+  const message = await container.conversations.findMessage(
+    session.account.id,
+    parsed.data.conversationId,
+    parsed.data.messageId,
+  );
+  if (!message) return { ok: false, error: 'Mensagem não encontrada.' };
+  if (message.deletedAt) return { ok: true };
+  if (message.author === 'contact') {
+    return { ok: false, error: 'Só é possível apagar mensagens enviadas por você.' };
+  }
+
+  // Nota interna nunca saiu para o canal: apagar é só aqui dentro.
+  if (!message.isPrivate && message.externalId && conversation.channel === 'whatsapp') {
+    const channel = await getWhatsAppChannel();
+    const channelStatus = await channel.getStatus(session.account.id, conversation.inboxId);
+
+    if (channelStatus.status !== 'conectado') {
+      return {
+        ok: false,
+        error: 'WhatsApp desconectado: reconecte para apagar a mensagem também para o contato.',
+      };
+    }
+
+    const removed = await channel.deleteMessage(
+      {
+        accountId: session.account.id,
+        conversationId: conversation.id,
+        messageId: message.id,
+        inboxId: conversation.inboxId,
+      },
+      { channelThreadId: conversation.channelThreadId, phone: conversation.contact.phone },
+      message.externalId,
+    );
+
+    // `queued` é o motor worker dizendo "aceitei". A exclusão sai da fila em
+    // seguida, e não há recibo a esperar — diferente de um envio, aqui não há
+    // id novo para carimbar.
+    if (!removed.ok) {
+      return { ok: false, error: removed.error ?? 'O WhatsApp recusou apagar a mensagem.' };
+    }
+  }
+
+  const updated = await container.conversations.markMessageDeleted(
+    session.account.id,
+    parsed.data.conversationId,
+    parsed.data.messageId,
+  );
+
+  waEventBus.emitConversation({
+    type: 'conversation_updated',
+    accountId: session.account.id,
+    conversationId: parsed.data.conversationId,
+    inboxId: conversation.inboxId,
+    ...(updated ? { conversation: updated } : {}),
+  });
+
+  return { ok: true };
 }
 
 const changeStatusSchema = z.object({

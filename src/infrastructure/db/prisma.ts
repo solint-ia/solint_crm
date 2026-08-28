@@ -43,6 +43,23 @@ const DEV_MIN_POOL = 10;
  * `DB_POOL_SIZE` tem a última palavra, para quando for preciso ajustar sem
  * reescrever a URL de conexão.
  */
+/**
+ * Teto do worker sobre um pooler em **modo sessão**.
+ *
+ * O modo sessão do Supabase entrega ~15 clientes para o projeto inteiro, e o
+ * worker não é o único a gastá-los: a escuta `LISTEN` do próprio worker é mais
+ * uma, a do processo do site mais outra, e `prisma migrate deploy` abre a sua
+ * durante o build. Com o `connection_limit=10` que o `.env.example` sugeria, um
+ * redeploy — em que o worker antigo ainda segura as conexões enquanto o novo
+ * sobe — passava do teto e o Postgres respondia `EMAXCONNSESSION` a **tudo**:
+ * gravar mensagem, publicar evento, ler conversa.
+ *
+ * Seis deixa folga para todos os outros e continua sendo três vezes o que o
+ * limitador de gravação do WhatsApp consome. `DB_POOL_SIZE` tem a última
+ * palavra para quem tiver um banco maior.
+ */
+const WORKER_MAX_POOL = 6;
+
 const poolSize = (connectionString: string): number => {
   const explicit = Number(process.env.DB_POOL_SIZE);
   if (Number.isInteger(explicit) && explicit > 0) return explicit;
@@ -50,8 +67,25 @@ const poolSize = (connectionString: string): number => {
   const declared = Number(new URL(connectionString).searchParams.get('connection_limit'));
   const fromUrl = Number.isInteger(declared) && declared > 0 ? declared : DEV_MIN_POOL;
 
-  return process.env.NODE_ENV === 'production' ? fromUrl : Math.max(fromUrl, DEV_MIN_POOL);
+  const base =
+    process.env.NODE_ENV === 'production' ? fromUrl : Math.max(fromUrl, DEV_MIN_POOL);
+
+  return process.env.SOLINT_WORKER ? Math.min(base, WORKER_MAX_POOL) : base;
 };
+
+/**
+ * Tamanho do pool em uso, para quem precisa dimensionar trabalho por ele.
+ *
+ * O limitador de gravação do WhatsApp derivava do `DB_POOL_SIZE` por conta
+ * própria e chutava 10 quando a variável não existia — o que ficava errado
+ * exatamente quando o pool era menor que isso, que é o caso que importa.
+ */
+export const DB_POOL_SIZE = (() => {
+  const connectionString =
+    (process.env.SOLINT_WORKER ? process.env.WORKER_DATABASE_URL : undefined) ??
+    process.env.DATABASE_URL;
+  return connectionString ? poolSize(connectionString) : DEV_MIN_POOL;
+})();
 
 const createClient = (): PrismaClient => {
   // O worker é um processo longo que mantém `LISTEN` e grava lotes de chaves:

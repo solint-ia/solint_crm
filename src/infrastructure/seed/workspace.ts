@@ -1,6 +1,6 @@
 import type { Label } from '@/core/domain/label';
 import type { Account, Permission, Role, Session, User } from '@/core/domain/user';
-import { PERMISSIONS } from '@/core/domain/user';
+import { DEFAULT_NOTIFICATION_PREFERENCES, PERMISSIONS } from '@/core/domain/user';
 
 export const ACCOUNT_ID = 'acc-solint';
 
@@ -81,6 +81,8 @@ export const USERS: readonly User[] = [
     availability: 'disponivel',
     teams: ['Comercial', 'Suporte N1'],
     signature: 'Rafael Souza · Solint CRM',
+    signatureEnabled: false,
+    notifications: DEFAULT_NOTIFICATION_PREFERENCES,
     twoFactorEnabled: true,
     lastActiveAt: 'agora',
   },
@@ -93,6 +95,8 @@ export const USERS: readonly User[] = [
     avatarTone: '#8B5CF6',
     availability: 'disponivel',
     teams: ['Comercial'],
+    signatureEnabled: false,
+    notifications: DEFAULT_NOTIFICATION_PREFERENCES,
     twoFactorEnabled: true,
     lastActiveAt: 'ha 4 min',
   },
@@ -105,6 +109,8 @@ export const USERS: readonly User[] = [
     avatarTone: 'var(--color-slate-text)',
     availability: 'ausente',
     teams: ['Suporte N1'],
+    signatureEnabled: false,
+    notifications: DEFAULT_NOTIFICATION_PREFERENCES,
     twoFactorEnabled: false,
     lastActiveAt: 'ha 2 h',
   },

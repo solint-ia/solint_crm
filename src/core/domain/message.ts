@@ -60,11 +60,24 @@ export interface Message {
   readonly deliveryStatus?: DeliveryStatus;
   /** Nota interna: NUNCA é enviada ao canal externo (regra de negócio crítica). */
   readonly isPrivate: boolean;
+  /** Id da mensagem citada por esta. Ver `quotedOf` para o resumo a exibir. */
   readonly replyToId?: Id;
+  /**
+   * Quando foi apagada.
+   *
+   * A mensagem continua na timeline, com o conteúdo trocado pelo aviso — é o
+   * que o WhatsApp faz, e é o que preserva o sentido do que veio antes e
+   * depois. Removê-la deixaria a conversa costurada de um jeito que nunca
+   * aconteceu.
+   */
+  readonly deletedAt?: IsoDateTime;
   /** Identificador da mensagem no provedor externo (ex.: id da mensagem no WhatsApp). */
   readonly externalId?: string;
   readonly origin?: MessageOrigin;
 }
+
+/** Uma mensagem apagada não mostra conteúdo, só o rastro de que existiu. */
+export const isDeleted = (message: Message): boolean => Boolean(message.deletedAt);
 
 /** Divisor de data renderizado entre grupos de mensagens. */
 export interface MessageDayDivider {
@@ -86,6 +99,7 @@ export const isDeliverable = (message: Message): boolean => !message.isPrivate;
  * operador acha que nada chegou.
  */
 export const previewOfMessage = (message: Message): string => {
+  if (message.deletedAt) return '🚫 Mensagem apagada';
   const content = message.content;
   switch (content.type) {
     case 'text':

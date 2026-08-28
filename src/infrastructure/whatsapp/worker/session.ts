@@ -13,7 +13,7 @@ import pino from 'pino';
 import type { Contact } from '@/core/domain/contact';
 import type { Message, MessageContent } from '@/core/domain/message';
 import { PhoneNumber } from '@/core/domain/contact';
-import { prisma } from '@/infrastructure/db/prisma';
+import { DB_POOL_SIZE, prisma } from '@/infrastructure/db/prisma';
 import { initPostgresAuthState, isPairedCreds } from '../auth/postgres-auth-state';
 import {
   applyDeliveryUpdate,
@@ -40,6 +40,7 @@ import {
   type MediaRef,
 } from '../wa-message-content';
 import { mediaStore, mediaUrlFor } from '../wa-media-store';
+import { deletionKey, quotedStub } from '../wa-quote';
 import { baileysLogLevel, waLog } from '../wa-log';
 import { waVersion } from '../wa-version';
 
@@ -124,9 +125,7 @@ const createLimiter = (max: number) => {
  * desta conta; a folga que sobra é para as consultas do próprio Baileys e para
  * a fila de comandos, que dividem o mesmo pool.
  */
-const limiteDeGravacao = createLimiter(
-  Math.max(2, Math.floor((Number(process.env.DB_POOL_SIZE) || 10) / 2)),
-);
+const limiteDeGravacao = createLimiter(Math.max(2, Math.floor(DB_POOL_SIZE / 2)));
 
 export class WhatsAppSession {
   readonly inboxId: string;
@@ -1020,7 +1019,10 @@ export class WhatsAppSession {
   async sendMessage(
     recipient: { phone?: string; jid?: string; channelThreadId?: string },
     content: { text?: string },
-    options: { paced?: boolean } = {},
+    options: {
+      paced?: boolean;
+      quote?: { externalId: string; fromMe: boolean; text: string };
+    } = {},
   ): Promise<string> {
     if (!this.socket || !this.isAuthenticated) {
       throw new Error(`Sessão WhatsApp ${this.inboxId} não está conectada.`);
@@ -1048,13 +1050,41 @@ export class WhatsAppSession {
     // de "a fila está lenta". Sem esta medida, um envio de 3 minutos podia ser
     // qualquer um dos dois, e a diferença muda inteiramente onde se procura.
     const medir = waLog.timer(`[sessão ${this.inboxId}] socket.sendMessage`);
-    const result = await this.socket.sendMessage(targetJid, { text });
+    const result = await this.socket.sendMessage(
+      targetJid,
+      { text },
+      options.quote ? { quoted: quotedStub(targetJid, options.quote) } : {},
+    );
     medir(`texto de ${text.length} caractere(s) para ${targetJid}`);
 
     const msgId = result?.key.id ?? `sent-${Date.now()}`;
 
     this.trackSentId(msgId);
     return msgId;
+  }
+
+  /**
+   * Apaga a mensagem para todos.
+   *
+   * `{ delete: chave }` é o protocolo do WhatsApp: a mensagem some do aparelho
+   * do contato e vira o aviso cinza. Apagar só no CRM esconderia de nós o que
+   * continua visível para quem recebeu — que é o pior dos dois resultados.
+   */
+  async deleteMessage(
+    recipient: { phone?: string; jid?: string; channelThreadId?: string },
+    externalId: string,
+  ): Promise<void> {
+    if (!this.socket || !this.isAuthenticated) {
+      throw new Error(`Sessão WhatsApp ${this.inboxId} não está conectada.`);
+    }
+
+    const raw = recipient.channelThreadId ?? recipient.jid ?? recipient.phone;
+    const targetJid = raw ? (isSupportedChatJid(raw) ? raw : jidFromPhone(raw)) : undefined;
+    if (!targetJid) {
+      throw new Error('Destinatário inválido: forneça telefone ou JID.');
+    }
+
+    await this.socket.sendMessage(targetJid, { delete: deletionKey(targetJid, externalId) });
   }
 
   /**

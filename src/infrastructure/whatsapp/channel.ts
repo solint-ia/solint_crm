@@ -34,6 +34,22 @@ export interface DispatchContext {
   readonly inboxId: string;
 }
 
+/**
+ * Mensagem citada, no mínimo que o WhatsApp precisa para desenhar a citação.
+ *
+ * Não é a mensagem original inteira: o Baileys monta a citação a partir de uma
+ * chave e de um corpo, e é só isso que atravessa a fila. Guardar a `WAMessage`
+ * completa exigiria serializá-la no comando — e ela não cabe, nem faria falta.
+ */
+export interface DispatchQuote {
+  /** Id da mensagem **no canal** (`externalId`), não o id do CRM. */
+  readonly externalId: string;
+  /** A citada saiu daqui ou veio do contato? Decide o `fromMe` da chave. */
+  readonly fromMe: boolean;
+  /** Texto que aparece dentro da citação. Vazio para mídia sem legenda. */
+  readonly text: string;
+}
+
 export interface DispatchMedia {
   readonly kind: 'image' | 'video' | 'audio' | 'document';
   readonly mediaId: string;
@@ -81,12 +97,27 @@ export interface WhatsAppChannel {
     context: DispatchContext,
     target: DispatchTarget,
     text: string,
+    quote?: DispatchQuote,
   ): Promise<DispatchResult>;
 
   sendMedia(
     context: DispatchContext,
     target: DispatchTarget,
     media: DispatchMedia,
+  ): Promise<DispatchResult>;
+
+  /**
+   * Apaga a mensagem para todo mundo, inclusive no aparelho do contato.
+   *
+   * Só o `externalId` viaja: a chave da mensagem no WhatsApp se reconstrói a
+   * partir dele mais o destino, e é ela que o protocolo pede. Apagar só do
+   * nosso lado seria pior que não apagar — o operador acharia que retirou algo
+   * que continua na tela do cliente.
+   */
+  deleteMessage(
+    context: DispatchContext,
+    target: DispatchTarget,
+    externalId: string,
   ): Promise<DispatchResult>;
 
   /** `inboxId` é o da conversa: confirmar leitura na sessão errada não confirma nada. */

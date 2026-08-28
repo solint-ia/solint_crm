@@ -6,6 +6,7 @@ import {
   assignConversationAction,
   changeConversationPriorityAction,
   changeConversationStatusAction,
+  deleteMessageAction,
   markConversationReadAction,
   moveConversationToInboxAction,
   sendMediaAction,
@@ -74,6 +75,7 @@ export async function InboxData({
       catalog={{ members: settings.members, labels: settings.labels, templates }}
       cannedResponses={settings.cannedResponses}
       sendMessage={sendMessageAction}
+      deleteMessage={deleteMessageAction}
       changeStatus={changeConversationStatusAction}
       markAsRead={markConversationReadAction}
       assign={assignConversationAction}

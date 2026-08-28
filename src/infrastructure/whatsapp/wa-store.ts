@@ -392,7 +392,32 @@ const createConversationWith = async (input: CommitInput): Promise<void> => {
   }
 
   if (!input.silent) {
-    await publish(input.accountId, 'new_conversation', chat.conversationId, message, targetInboxId);
+    await announce(input.accountId, 'new_conversation', chat.conversationId, message, targetInboxId);
+  }
+};
+
+/**
+ * Anuncia sem poder derrubar quem gravou.
+ *
+ * A gravação já aconteceu quando isto roda. Deixar uma falha de anúncio subir
+ * trocava um problema pequeno — a tela demora a saber, e sabe no próximo
+ * carregamento — por um grande: a exceção sobe até o listener do Baileys, e o
+ * que vem depois no `commitMessage` (automações, webhooks) não roda.
+ */
+const announce = async (
+  accountId: string,
+  type: 'new_message' | 'new_conversation',
+  conversationId: string,
+  message: Message,
+  inboxId?: string,
+): Promise<void> => {
+  try {
+    await publish(accountId, type, conversationId, message, inboxId);
+  } catch (error) {
+    console.warn(
+      `[wa-store] Mensagem ${message.id} gravada, mas o anúncio de ${type} falhou:`,
+      error,
+    );
   }
 };
 
@@ -459,7 +484,7 @@ const attachToConversation = async (
   }
 
   if (!input.silent) {
-    await publish(input.accountId, 'new_message', chat.conversationId, message, targetInboxId);
+    await announce(input.accountId, 'new_message', chat.conversationId, message, targetInboxId);
   }
 };
 
@@ -587,10 +612,16 @@ export const applyDeliveryUpdate = async (
 
   await prisma.message.update({ where: { id: row.id }, data: { deliveryStatus } });
 
-  const updated = await loadConversation(row.conversation.accountId, row.conversationId);
-  if (!updated) return;
+  // Um recibo por mensagem entregue e outro por mensagem lida — e cada um
+  // carregava a conversa **inteira**, com timeline, contato e etiquetas. No
+  // worker essa leitura não tinha destinatário nenhum (o evento sai por
+  // `NOTIFY`, que leva só ids) e era a maior consumidora do pool na hora de
+  // maior tráfego: era daqui que saía o `EMAXCONNSESSION` do log.
+  const updated = waEventBus.hasConversationListeners
+    ? await loadConversation(row.conversation.accountId, row.conversationId).catch(() => null)
+    : null;
 
-  const message = updated.timeline.find(
+  const message = updated?.timeline.find(
     (item) => item.kind === 'message' && item.message.id === row.id,
   );
 
@@ -600,7 +631,7 @@ export const applyDeliveryUpdate = async (
     conversationId: row.conversationId,
     messageId: row.id,
     message: message?.kind === 'message' ? message.message : undefined,
-    conversation: updated,
+    ...(updated ? { conversation: updated } : {}),
   });
 };
 
@@ -722,7 +753,26 @@ const publish = async (
   inboxId?: string,
 ): Promise<void> => {
   if (type === 'new_conversation') {
-    const conversation = await loadConversation(accountId, conversationId);
+    /**
+     * A conversa só é carregada quando há quem a receba **aqui dentro**.
+     *
+     * Era carregada sempre, e no worker isso era uma consulta pesada por
+     * conversa nova entregue a ninguém: o evento sai deste processo pelo
+     * `NOTIFY`, que leva só identificadores, e quem recarrega a conversa é o
+     * processo do site — ver `hasConversationListeners`.
+     *
+     * O custo não era só desperdício. Esta era a **única** leitura de banco no
+     * caminho do anúncio da primeira mensagem de uma conversa, e ela ficava
+     * depois da gravação: com o pool esgotado (`EMAXCONNSESSION`, que é o que o
+     * log de produção mostrava), a exceção subia daqui, a conversa ficava
+     * gravada e o anúncio nunca saía. Na tela, a conversa nova simplesmente não
+     * aparecia — até a segunda mensagem, que segue por `new_message` e não
+     * passa por aqui.
+     */
+    const conversation = waEventBus.hasConversationListeners
+      ? await loadConversation(accountId, conversationId).catch(() => null)
+      : null;
+
     waEventBus.emitConversation({
       type,
       accountId,

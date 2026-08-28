@@ -16,7 +16,7 @@ import type {
 } from '@/core/ports/conversation-repository';
 import { prisma, asJson } from '@/infrastructure/db/prisma';
 import { horaLabel } from '@/lib/datetime';
-import { CONVERSATION_INCLUDE, conversationRow } from './mappers';
+import { CONVERSATION_INCLUDE, conversationRow, messageRow } from './mappers';
 
 const nowLabel = (): string => horaLabel(new Date());
 
@@ -90,6 +90,7 @@ export class PrismaConversationRepository implements ConversationRepository {
       time: nowLabel(),
       isPrivate: input.isPrivate,
       origin: 'crm',
+      ...(input.replyToId ? { replyToId: input.replyToId } : {}),
       ...(input.isPrivate ? {} : { deliveryStatus: 'enviando' as const }),
     };
     return this.persistMessage(input.accountId, input.conversationId, message);
@@ -266,6 +267,56 @@ export class PrismaConversationRepository implements ConversationRepository {
       where: { id: conversationId, accountId },
       data: { unreadCount: 0 },
     });
+  }
+
+  async findMessage(accountId: Id, conversationId: Id, messageId: Id): Promise<Message | null> {
+    // A conta entra pela relação, como em `attachExternalId`: um id de outra
+    // conta não casa linha nenhuma e responde "não existe", que é a resposta
+    // certa — inclusive para quem estiver sondando ids.
+    const row = await prisma.message.findFirst({
+      where: { id: messageId, conversationId, conversation: { accountId } },
+    });
+    return row ? messageRow(row) : null;
+  }
+
+  async markMessageDeleted(
+    accountId: Id,
+    conversationId: Id,
+    messageId: Id,
+  ): Promise<Conversation | null> {
+    const { count } = await prisma.message.updateMany({
+      where: { id: messageId, conversationId, conversation: { accountId }, deletedAt: null },
+      data: {
+        deletedAt: new Date(),
+        // O conteúdo sai de verdade. Guardar o texto original numa linha
+        // marcada como apagada seria manter, no banco e em toda API que lê
+        // mensagens, exatamente aquilo que alguém pediu para remover.
+        contentType: 'text',
+        content: asJson({ type: 'text', text: '' }),
+      },
+    });
+    if (count === 0) return null;
+
+    /**
+     * O resumo da conversa é refeito quando a apagada era a última.
+     *
+     * `lastMessagePreview` é uma cópia do texto, e ela não se atualiza sozinha:
+     * sem isto, a lista de conversas continuaria exibindo o trecho da mensagem
+     * que acabou de ser apagada — o texto sobrevivendo justamente no lugar mais
+     * visível do produto.
+     */
+    const ultima = await prisma.message.findFirst({
+      where: { conversationId, isPrivate: false },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (ultima) {
+      await prisma.conversation.updateMany({
+        where: { id: conversationId, accountId },
+        data: { lastMessagePreview: previewOfMessage(messageRow(ultima)) },
+      });
+    }
+
+    return this.findById(accountId, conversationId, 'todas');
   }
 
   async syncContact(accountId: Id, contact: Contact): Promise<void> {

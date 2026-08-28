@@ -1,7 +1,8 @@
 'use client';
 
-import { Download, FileText, Lock, Mic, Music, Smartphone } from 'lucide-react';
-import type { Message, MessageContent } from '@/core/domain/message';
+import { Ban, Download, FileText, Lock, Mic, Music, Reply, Smartphone, Trash2 } from 'lucide-react';
+import { previewOfMessage, type Message, type MessageContent } from '@/core/domain/message';
+import { WaText } from '@/components/domain/wa-text';
 import { cn } from '@/lib/cn';
 import { horaDaMensagem } from '@/lib/datetime';
 import { DeliveryTicks } from './delivery-ticks';
@@ -12,12 +13,23 @@ interface MessageBubbleProps {
   readonly message: Message;
   readonly showAuthorName?: boolean;
   readonly onResend?: (messageId: string) => void;
+  /** Mensagem citada por esta, já resolvida pela timeline. */
+  readonly quoted?: Message;
+  readonly onReply?: (message: Message) => void;
+  readonly onDelete?: (message: Message) => void;
 }
 
 const isFrameless = (content: MessageContent): boolean =>
   content.type === 'sticker' || (content.type === 'video' && Boolean(content.gif));
 
-export function MessageBubble({ message, showAuthorName, onResend }: MessageBubbleProps) {
+export function MessageBubble({
+  message,
+  showAuthorName,
+  onResend,
+  quoted,
+  onReply,
+  onDelete,
+}: MessageBubbleProps) {
   if (message.content.type === 'system') {
     return (
       <div className="my-2.5 flex items-center justify-center">
@@ -35,11 +47,37 @@ export function MessageBubble({ message, showAuthorName, onResend }: MessageBubb
           <Lock className="size-3.5" />
           <span>Nota interna · visível apenas para a equipe</span>
         </header>
-        <p className="text-sm leading-relaxed text-note-text font-normal">
-          {message.content.type === 'text' ? message.content.text : AUDIO_LABEL}
+        <p
+          className={cn(
+            'text-sm leading-relaxed text-note-text font-normal',
+            message.deletedAt && 'flex items-center gap-1.5 italic opacity-75',
+          )}
+        >
+          {message.deletedAt ? (
+            <>
+              <Ban className="size-3.5 shrink-0" />
+              Esta nota foi apagada
+            </>
+          ) : message.content.type === 'text' ? (
+            <WaText text={message.content.text} />
+          ) : (
+            AUDIO_LABEL
+          )}
         </p>
-        <footer className="mt-2 text-[11px] font-medium text-amber-600/80 dark:text-amber-400/80">
-          {message.authorName} · {horaDaMensagem(message)}
+        <footer className="mt-2 flex items-center justify-between gap-2 text-[11px] font-medium text-amber-600/80 dark:text-amber-400/80">
+          <span>
+            {message.authorName} · {horaDaMensagem(message)}
+          </span>
+          {onDelete && !message.deletedAt ? (
+            <button
+              type="button"
+              onClick={() => onDelete(message)}
+              title="Apagar nota interna"
+              className="rounded p-1 transition-colors hover:bg-amber-500/15 hover:text-red-500"
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          ) : null}
         </footer>
       </article>
     );
@@ -47,12 +85,33 @@ export function MessageBubble({ message, showAuthorName, onResend }: MessageBubb
 
   const isInbound = message.author === 'contact';
   const isAi = message.author === 'ai';
+  const deleted = Boolean(message.deletedAt);
   const sentFromPhone = !isInbound && message.origin === 'canal';
   const authorLabel = isAi || (isInbound && showAuthorName) ? message.authorName : undefined;
-  const frameless = isFrameless(message.content);
+  // Uma mensagem apagada não tem mídia nem legenda: ela é o aviso de que houve
+  // algo ali. Molduras especiais (figurinha, GIF) deixam de valer junto.
+  const frameless = !deleted && isFrameless(message.content);
+
+  // O WhatsApp só permite remover para todos o que **nós** mandamos; oferecer o
+  // botão numa mensagem do contato prometeria algo que o protocolo recusa.
+  const canDelete = Boolean(onDelete) && !isInbound && !deleted;
+  const canReply = Boolean(onReply) && !deleted;
 
   return (
-    <article className={cn('flex w-full', isInbound ? 'justify-start' : 'justify-end')}>
+    <article
+      className={cn(
+        'group/mensagem flex w-full items-end gap-1.5',
+        isInbound ? 'justify-start' : 'justify-end',
+      )}
+    >
+      {!isInbound && (canReply || canDelete) ? (
+        <MessageActions
+          message={message}
+          {...(canReply && onReply ? { onReply } : {})}
+          {...(canDelete && onDelete ? { onDelete } : {})}
+        />
+      ) : null}
+
       <div
         className={cn(
           'max-w-[82%] sm:max-w-[72%] text-sm leading-relaxed transition-all',
@@ -80,7 +139,16 @@ export function MessageBubble({ message, showAuthorName, onResend }: MessageBubb
           </p>
         )}
 
-        <MediaContent content={message.content} />
+        {quoted && !deleted ? <QuotedPreview message={quoted} inbound={isInbound} /> : null}
+
+        {deleted ? (
+          <p className="flex items-center gap-1.5 italic opacity-80">
+            <Ban className="size-3.5 shrink-0" />
+            Esta mensagem foi apagada
+          </p>
+        ) : (
+          <MediaContent content={message.content} />
+        )}
 
         <footer
           className={cn(
@@ -96,7 +164,9 @@ export function MessageBubble({ message, showAuthorName, onResend }: MessageBubb
             </span>
           )}
           <span className="tabular-nums font-mono">{horaDaMensagem(message)}</span>
-          {!isInbound && message.deliveryStatus && (
+          {/* Mensagem apagada não tem estado de entrega a relatar: os ticks
+              descreveriam o percurso de um conteúdo que não existe mais. */}
+          {!isInbound && !deleted && message.deliveryStatus && (
             <DeliveryTicks status={message.deliveryStatus} />
           )}
         </footer>
@@ -106,7 +176,8 @@ export function MessageBubble({ message, showAuthorName, onResend }: MessageBubb
             com um ícone de 12px como única diferença — e quem escreveu seguia
             achando que a pessoa tinha recebido. O texto é o aviso; tentar de
             novo é o extra que só existe onde alguém sabe como refazer o envio. */}
-        {message.deliveryStatus === 'falha' &&
+        {!deleted &&
+          message.deliveryStatus === 'falha' &&
           (onResend ? (
             <button
               type="button"
@@ -121,7 +192,90 @@ export function MessageBubble({ message, showAuthorName, onResend }: MessageBubb
             </p>
           ))}
       </div>
+
+      {isInbound && canReply ? (
+        <MessageActions message={message} {...(onReply ? { onReply } : {})} />
+      ) : null}
     </article>
+  );
+}
+
+/**
+ * Ações da mensagem: responder e apagar.
+ *
+ * Ficam **fora** do balão, do lado de dentro da conversa, e só aparecem sob o
+ * cursor. Dentro do balão elas disputariam espaço com o texto em toda mensagem
+ * curta; visíveis o tempo todo, transformariam a leitura da conversa numa
+ * parede de ícones.
+ *
+ * `focus-within` acompanha o `hover` porque quem navega por teclado também
+ * precisa alcançá-las — sem isso o botão existiria só para quem usa mouse.
+ */
+function MessageActions({
+  message,
+  onReply,
+  onDelete,
+}: {
+  readonly message: Message;
+  readonly onReply?: (message: Message) => void;
+  readonly onDelete?: (message: Message) => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-0.5 self-center opacity-0 transition-opacity group-hover/mensagem:opacity-100 focus-within:opacity-100">
+      {onReply ? (
+        <button
+          type="button"
+          onClick={() => onReply(message)}
+          title="Responder esta mensagem"
+          aria-label="Responder esta mensagem"
+          className="flex size-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-brand"
+        >
+          <Reply className="size-3.5" />
+        </button>
+      ) : null}
+
+      {onDelete ? (
+        <button
+          type="button"
+          onClick={() => onDelete(message)}
+          title="Apagar para todos"
+          aria-label="Apagar mensagem para todos"
+          className="flex size-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-red-500"
+        >
+          <Trash2 className="size-3.5" />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * A citação dentro do balão.
+ *
+ * Uma faixa com barra lateral, como no próprio WhatsApp: quem lê precisa
+ * reconhecer o formato antes de ler o conteúdo. O texto é o mesmo resumo que a
+ * lista de conversas usa — uma foto citada aparece como "📷 Foto", não como um
+ * vazio.
+ */
+function QuotedPreview({
+  message,
+  inbound,
+}: {
+  readonly message: Message;
+  readonly inbound: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        'mb-1.5 flex flex-col gap-0.5 rounded-lg border-l-2 px-2.5 py-1.5 text-xs',
+        inbound ? 'border-l-brand bg-surface-2' : 'border-l-white/70 bg-black/15',
+      )}
+    >
+      <span className="font-semibold opacity-90">
+        {message.author === 'contact' ? (message.authorName ?? 'Contato') : 'Você'}
+      </span>
+      <span className="line-clamp-2 opacity-75">{previewOfMessage(message)}</span>
+    </div>
   );
 }
 
@@ -130,7 +284,11 @@ function MediaContent({ content }: { readonly content: MessageContent }) {
     case 'text':
     case 'template':
     case 'system':
-      return <p className="break-words whitespace-pre-wrap">{content.text}</p>;
+      return (
+        <p className="break-words whitespace-pre-wrap">
+          <WaText text={content.text} />
+        </p>
+      );
 
     case 'image':
       return (

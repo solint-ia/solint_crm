@@ -1,6 +1,7 @@
 import type {
   DispatchContext,
   DispatchMedia,
+  DispatchQuote,
   DispatchResult,
   DispatchTarget,
   WhatsAppChannel,
@@ -43,8 +44,17 @@ export class InProcessWhatsAppChannel implements WhatsAppChannel {
     _context: DispatchContext,
     target: DispatchTarget,
     text: string,
+    quote?: DispatchQuote,
   ): Promise<DispatchResult> {
-    return whatsappService.sendTextMessage(target, text);
+    return whatsappService.sendTextMessage(target, text, quote);
+  }
+
+  async deleteMessage(
+    _context: DispatchContext,
+    target: DispatchTarget,
+    externalId: string,
+  ): Promise<DispatchResult> {
+    return whatsappService.deleteMessage(target, externalId);
   }
 
   async sendMedia(

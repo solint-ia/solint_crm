@@ -10,6 +10,7 @@ import {
 } from 'react';
 import {
   CalendarClock,
+  CornerUpLeft,
   Loader2,
   Lock,
   Mic,
@@ -43,7 +44,16 @@ interface ComposerProps {
    */
   readonly conversationId?: string;
   readonly disabledReason?: string;
-  readonly onSend: (text: string, mode: ComposerMode) => void;
+  /**
+   * Mensagem sendo respondida.
+   *
+   * Controlada de fora porque quem escolhe a citada é a timeline, não o
+   * compositor — e porque trocar de conversa precisa limpá-la junto com o
+   * resto.
+   */
+  readonly replyTo?: { readonly id: string; readonly author: string; readonly preview: string };
+  readonly onCancelReply?: () => void;
+  readonly onSend: (text: string, mode: ComposerMode, replyToId?: string) => void;
   readonly onSendMedia?: (form: FormData) => Promise<MediaResult>;
   readonly cannedResponses?: readonly CannedResponse[];
   readonly pending?: boolean;
@@ -84,6 +94,8 @@ const pickRecordingType = (): string | undefined => {
 export function Composer({
   conversationId,
   disabledReason,
+  replyTo,
+  onCancelReply,
   onSend,
   onSendMedia,
   cannedResponses = [],
@@ -309,8 +321,9 @@ export function Composer({
 
     const trimmed = text.trim();
     if (!trimmed) return;
-    onSend(trimmed, mode);
+    onSend(trimmed, mode, replyTo?.id);
     setText('');
+    onCancelReply?.();
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -431,6 +444,31 @@ export function Composer({
       {blocked && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
           {disabledReason}
+        </div>
+      )}
+
+      {/* A citada aparece acima do que está sendo escrito, com a mesma barra
+          lateral do balão: é o mesmo objeto em dois lugares, e reconhecê-lo é
+          o que evita responder a mensagem errada sem perceber. */}
+      {replyTo && (
+        <div className="flex items-start justify-between gap-2 rounded-lg border-l-2 border-l-brand bg-surface-2 px-3 py-2">
+          <div className="flex min-w-0 items-start gap-2">
+            <CornerUpLeft className="mt-0.5 size-3.5 shrink-0 text-brand" />
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-ink">
+                Respondendo {replyTo.author}
+              </p>
+              <p className="line-clamp-2 text-xs text-muted">{replyTo.preview}</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onCancelReply}
+            aria-label="Cancelar resposta"
+            className="flex size-5 shrink-0 items-center justify-center rounded text-muted hover:text-red-500"
+          >
+            <X className="size-3.5" />
+          </button>
         </div>
       )}
 

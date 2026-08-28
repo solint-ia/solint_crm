@@ -47,6 +47,7 @@ import {
   type MediaRef,
 } from './wa-message-content';
 import { mediaStore, mediaUrlFor } from './wa-media-store';
+import { deletionKey, quotedStub } from './wa-quote';
 import { waVersion } from './wa-version';
 
 import {
@@ -972,6 +973,7 @@ export class WhatsAppService {
   async sendTextMessage(
     target: { readonly channelThreadId?: string; readonly phone?: string },
     text: string,
+    quote?: { readonly externalId: string; readonly fromMe: boolean; readonly text: string },
   ): Promise<{ ok: boolean; externalId?: string; error?: string }> {
     const socket = this.socket;
     if (!socket || this.currentStatus.status !== 'conectado') {
@@ -984,7 +986,11 @@ export class WhatsAppService {
     }
 
     try {
-      const sent = await socket.sendMessage(jid, { text });
+      const sent = await socket.sendMessage(
+        jid,
+        { text },
+        quote ? { quoted: quotedStub(jid, quote) } : {},
+      );
       const externalId = sent?.key.id ?? undefined;
       if (externalId) this.trackSentId(externalId);
       return { ok: true, externalId };
@@ -993,6 +999,39 @@ export class WhatsAppService {
       return {
         ok: false,
         error: error instanceof Error ? error.message : 'Falha ao enviar mensagem',
+      };
+    }
+  }
+
+  /**
+   * Apaga a mensagem para todos.
+   *
+   * `{ delete: chave }` é o protocolo do WhatsApp para "apagar para todos": a
+   * mensagem some do aparelho do contato e vira o aviso cinza. Sem isto, apagar
+   * no CRM seria só esconder de nós mesmos.
+   */
+  async deleteMessage(
+    target: { readonly channelThreadId?: string; readonly phone?: string },
+    externalId: string,
+  ): Promise<{ ok: boolean; externalId?: string; error?: string }> {
+    const socket = this.socket;
+    if (!socket || this.currentStatus.status !== 'conectado') {
+      return { ok: false, error: 'WhatsApp não está conectado' };
+    }
+
+    const jid = target.channelThreadId ?? (target.phone ? jidFromPhone(target.phone) : undefined);
+    if (!jid) {
+      return { ok: false, error: 'Conversa sem destino de WhatsApp definido' };
+    }
+
+    try {
+      await socket.sendMessage(jid, { delete: deletionKey(jid, externalId) });
+      return { ok: true };
+    } catch (error) {
+      console.error('[WhatsAppService] Erro ao apagar mensagem:', error);
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Falha ao apagar a mensagem',
       };
     }
   }

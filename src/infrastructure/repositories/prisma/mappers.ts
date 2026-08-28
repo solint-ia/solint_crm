@@ -27,7 +27,11 @@ import type { Message, MessageContent, TimelineItem } from '@/core/domain/messag
 import type { AppNotification, NotificationKind } from '@/core/domain/notification';
 import type { Deal, Pipeline } from '@/core/domain/pipeline';
 import type { ChannelConnection } from '@/core/domain/settings';
-import type { User } from '@/core/domain/user';
+import {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  type NotificationPreferences,
+  type User,
+} from '@/core/domain/user';
 import { readJson } from '@/infrastructure/db/prisma';
 import { dataCurtaLabel, inicioDoDia } from '@/lib/datetime';
 import type {
@@ -112,6 +116,7 @@ export const messageRow = (row: DbMessage): Message => ({
     ? { deliveryStatus: row.deliveryStatus as Message['deliveryStatus'] }
     : {}),
   ...(row.replyToId ? { replyToId: row.replyToId } : {}),
+  ...(row.deletedAt ? { deletedAt: row.deletedAt.toISOString() } : {}),
   ...(row.externalId ? { externalId: row.externalId } : {}),
   ...(row.origin ? { origin: row.origin as Message['origin'] } : {}),
 });
@@ -251,6 +256,14 @@ export const userRow = (
   avatarTone: row.avatarTone,
   availability: membership.availability as User['availability'],
   teams,
+  signatureEnabled: row.signatureEnabled,
+  // A coluna é nula para quem existia antes dela, e um campo novo acrescentado
+  // aqui não pode chegar como `undefined` na tela. O padrão preenche as duas
+  // lacunas de uma vez.
+  notifications: {
+    ...DEFAULT_NOTIFICATION_PREFERENCES,
+    ...readJson<Partial<NotificationPreferences>>(row.notificationPrefs, {}),
+  },
   twoFactorEnabled: row.twoFactorEnabled,
   ...(row.signature ? { signature: row.signature } : {}),
   ...(row.lastActiveAt ? { lastActiveAt: row.lastActiveAt } : {}),
