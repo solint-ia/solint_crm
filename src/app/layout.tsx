@@ -32,6 +32,11 @@ export const metadata: Metadata = {
   description:
     'CRM omnichannel com foco em WhatsApp: conversas, funil de vendas, agentes de IA e campanhas.',
   robots: { index: false, follow: false },
+  icons: {
+    icon: [{ url: '/favicon.png', type: 'image/png' }],
+    shortcut: '/favicon.png',
+    apple: '/favicon.png',
+  },
 };
 
 export const viewport: Viewport = {

@@ -272,11 +272,16 @@ export function Composer({
     setMode('publica');
     setAttachment(undefined);
     setRecording(undefined);
-    setMediaError(undefined);
-    setIsRecording(false);
-    setElapsed(0);
     if (fileInputRef.current) fileInputRef.current.value = '';
-  }, [conversationId]);
+
+    // Auto-foca imediatamente no campo de texto ao clicar/trocar de conversa
+    if (!blocked) {
+      const timer = setTimeout(() => {
+        textareaRef.current?.focus();
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [conversationId, blocked]);
 
   /**
    * Sobe um anexo e limpa o compositor no sucesso.
@@ -367,6 +372,9 @@ export function Composer({
     onSend(trimmed, mode, replyTo?.id);
     setText('');
     onCancelReply?.();
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
