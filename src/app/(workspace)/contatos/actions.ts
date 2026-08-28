@@ -278,30 +278,21 @@ export async function syncWhatsAppContactsAction(): Promise<ActionResult<{ synce
       include: { contact: true },
     });
 
-    let syncedCount = 0;
-    let updatedCount = 0;
-
-    // 1. Sincroniza e normaliza contatos com conversas 1:1 diretas existentes
+    // 1. Normaliza contatos com conversas 1:1 diretas existentes se necessário
     for (const conv of conversations) {
       const contact = conv.contact;
-      if (!contact || contact.kind === 'grupo') continue;
+      if (!contact || contact.kind === 'grupo' || !contact.phone) continue;
 
-      syncedCount += 1;
-
-      // Normaliza telefone se necessário
-      if (contact.phone) {
-        let digits = contact.phone.replace(/\D/g, '');
-        if (digits.length === 10 || digits.length === 11) {
-          digits = `55${digits}`;
-        }
-        const normalized = `+${digits}`;
-        if (/^\+[1-9]\d{7,14}$/.test(normalized) && normalized !== contact.phone) {
-          await prisma.contact.update({
-            where: { id: contact.id, accountId },
-            data: { phone: normalized },
-          });
-          updatedCount += 1;
-        }
+      let digits = contact.phone.replace(/\D/g, '');
+      if (digits.length === 10 || digits.length === 11) {
+        digits = `55${digits}`;
+      }
+      const normalized = `+${digits}`;
+      if (/^\+[1-9]\d{7,14}$/.test(normalized) && normalized !== contact.phone) {
+        await prisma.contact.update({
+          where: { id: contact.id, accountId },
+          data: { phone: normalized },
+        });
       }
     }
 
