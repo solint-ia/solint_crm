@@ -2,6 +2,7 @@ import {
   Browsers,
   DisconnectReason,
   downloadMediaMessage,
+  isJidGroup,
   jidNormalizedUser,
   makeCacheableSignalKeyStore,
   makeWASocket,
@@ -558,6 +559,7 @@ export class WhatsAppSession {
 
         console.log(`[WhatsAppSession ${this.inboxId}] Conectado com sucesso como ${ownerName}`);
         void this.socket?.sendPresenceUpdate('available');
+        void this.subscribeRecentPresences();
       }
       }),
     );
@@ -632,14 +634,37 @@ export class WhatsAppSession {
     this.socket.ev.on(
       'presence.update',
       this.guarded('presence.update', async ({ id, presences }) => {
-        const conversationId = this.presenceByJid.get(id);
-        // Presença de chat que esta sessão não acompanha — grupo, status, ou um
-        // chat que ainda não trouxe mensagem nenhuma. Sem conversa a que
-        // pertencer, o evento não tem para onde ir.
-        if (!conversationId || !presences) return;
+        if (!id || !presences || isJidGroup(id) || id.endsWith('@g.us')) return;
 
-        // `recording` é o áudio sendo gravado. Para quem espera do outro lado é
-        // a mesma informação de `composing`: o contato está respondendo agora.
+        let conversationId =
+          this.presenceByJid.get(id) ?? this.presenceByJid.get(jidNormalizedUser(id));
+
+        if (!conversationId) {
+          const userDigits = userOf(id);
+          const conv = await prisma.conversation.findFirst({
+            where: {
+              accountId: this.accountId,
+              inboxId: this.inboxId,
+              channel: 'whatsapp',
+              OR: [
+                { channelThreadId: id },
+                { channelThreadId: jidNormalizedUser(id) },
+                ...(userDigits ? [{ channelThreadId: `${userDigits}@s.whatsapp.net` }] : []),
+                ...(userDigits ? [{ contact: { phone: `+${userDigits}` } }] : []),
+              ],
+            },
+            select: { id: true },
+          });
+
+          if (conv) {
+            conversationId = conv.id;
+            this.presenceByJid.set(id, conv.id);
+            this.presenceByJid.set(jidNormalizedUser(id), conv.id);
+          }
+        }
+
+        if (!conversationId) return;
+
         const typing = Object.values(presences).some(
           (presence) =>
             presence?.lastKnownPresence === 'composing' ||
@@ -746,6 +771,48 @@ export class WhatsAppSession {
     void this.socket?.presenceSubscribe(jid).catch((error) => {
       waLog.debug(`[sessão ${this.inboxId}] Presença de ${jid} não assinada:`, error);
     });
+  }
+
+  private async subscribeRecentPresences(): Promise<void> {
+    if (!this.socket) return;
+    try {
+      const recentConversations = await prisma.conversation.findMany({
+        where: {
+          accountId: this.accountId,
+          inboxId: this.inboxId,
+          channel: 'whatsapp',
+          channelThreadId: { not: { endsWith: '@g.us' } },
+        },
+        select: { id: true, channelThreadId: true },
+        take: 50,
+        orderBy: { lastActivityAt: 'desc' },
+      });
+
+      for (const conv of recentConversations) {
+        if (conv.channelThreadId && isSupportedChatJid(conv.channelThreadId)) {
+          this.watchPresence(conv.channelThreadId, conv.id);
+        }
+      }
+    } catch {
+      // Ignora erro suave de subscrição inicial
+    }
+  }
+
+  async sendPresence(
+    recipient: { phone?: string; jid?: string; channelThreadId?: string },
+    status: 'composing' | 'paused' | 'recording',
+  ): Promise<void> {
+    if (!this.socket) return;
+    const raw = recipient.channelThreadId ?? recipient.jid ?? recipient.phone;
+    const targetJid = raw ? (isSupportedChatJid(raw) ? raw : jidFromPhone(raw)) : undefined;
+    if (!targetJid) return;
+
+    try {
+      await this.socket.presenceSubscribe(targetJid);
+      await this.socket.sendPresenceUpdate(status, targetJid);
+    } catch (error) {
+      waLog.debug(`[sessão ${this.inboxId}] Falha ao emitir presença ${status} para ${targetJid}:`, error);
+    }
   }
 
   /**

@@ -122,6 +122,13 @@ export interface WhatsAppChannel {
 
   /** `inboxId` é o da conversa: confirmar leitura na sessão errada não confirma nada. */
   markRead(accountId: string, conversationId: string, inboxId?: string): Promise<void>;
+
+  /** Envia sinal de presença (digitando / gravando áudio / pausado) para o contato no WhatsApp */
+  sendPresence?(
+    context: { accountId: string; inboxId: string; conversationId: string },
+    target: DispatchTarget,
+    status: 'composing' | 'paused' | 'recording',
+  ): Promise<void>;
 }
 
 /**

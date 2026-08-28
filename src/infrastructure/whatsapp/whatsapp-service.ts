@@ -1203,6 +1203,21 @@ export class WhatsAppService {
     this.typingByConversation.clear();
   }
 
+  async sendPresence(
+    rawTarget: string,
+    status: 'composing' | 'paused' | 'recording',
+  ): Promise<void> {
+    if (!this.socket) return;
+    const targetJid = isSupportedChatJid(rawTarget) ? rawTarget : jidFromPhone(rawTarget);
+    if (!targetJid) return;
+    try {
+      await this.socket.presenceSubscribe(targetJid);
+      await this.socket.sendPresenceUpdate(status, targetJid);
+    } catch {
+      // Ignora falha suave de presença
+    }
+  }
+
   private cleanSessionFolder() {
     try {
       if (fs.existsSync(SESSIONS_DIR)) {

@@ -1097,3 +1097,46 @@ export async function moveConversationToInboxAction(input: unknown): Promise<Act
 
   return { ok: true };
 }
+
+/* ==========================================================================
+   Notificação de digitação do atendente para o contato (presença).
+   ========================================================================== */
+
+const setTypingSchema = z.object({
+  conversationId: z.string().min(1).max(64),
+  isTyping: z.boolean(),
+});
+
+export async function setOperatorTypingAction(input: unknown): Promise<ActionResult> {
+  const parsed = setTypingSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Dados inválidos.' };
+
+  const session = await container.session.getCurrentSession();
+  if (!session?.account?.id) return { ok: false, error: 'Sessão inválida.' };
+
+  const conversation = await container.conversations.findById(
+    session.account.id,
+    parsed.data.conversationId,
+    session.inboxAccess,
+  );
+  if (!conversation || conversation.channel !== 'whatsapp') return { ok: true };
+
+  const channel = await getWhatsAppChannel();
+  if (channel.sendPresence) {
+    await channel.sendPresence(
+      {
+        accountId: session.account.id,
+        inboxId: conversation.inboxId,
+        conversationId: conversation.id,
+      },
+      {
+        channelThreadId: conversation.channelThreadId,
+        phone: conversation.contact.phone,
+      },
+      parsed.data.isTyping ? 'composing' : 'paused',
+    );
+  }
+
+  return { ok: true };
+}
+

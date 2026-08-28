@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -55,6 +56,7 @@ interface ComposerProps {
   readonly onCancelReply?: () => void;
   readonly onSend: (text: string, mode: ComposerMode, replyToId?: string) => void;
   readonly onSendMedia?: (form: FormData) => Promise<MediaResult>;
+  readonly onTyping?: (isTyping: boolean) => void;
   readonly cannedResponses?: readonly CannedResponse[];
   readonly pending?: boolean;
 }
@@ -98,6 +100,7 @@ export function Composer({
   onCancelReply,
   onSend,
   onSendMedia,
+  onTyping,
   cannedResponses = [],
   pending,
 }: ComposerProps) {
@@ -116,6 +119,8 @@ export function Composer({
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const startedAtRef = useRef(0);
+  const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isTypingRef = useRef(false);
 
   const isNote = mode === 'nota';
   const blocked = Boolean(disabledReason) && !isNote;
@@ -145,6 +150,43 @@ export function Composer({
     return () => clearInterval(timer);
   }, [isRecording]);
 
+  const notifyTyping = useCallback(
+    (typing: boolean) => {
+      if (isNote) return;
+      if (isTypingRef.current !== typing) {
+        isTypingRef.current = typing;
+        onTyping?.(typing);
+      }
+    },
+    [isNote, onTyping],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      if (isTypingRef.current) {
+        isTypingRef.current = false;
+        onTyping?.(false);
+      }
+    };
+  }, [conversationId, onTyping]);
+
+  const handleTextChange = (value: string) => {
+    setText(value);
+    if (!onTyping || isNote || blocked || isRecording) return;
+
+    if (value.trim().length > 0) {
+      notifyTyping(true);
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = setTimeout(() => {
+        notifyTyping(false);
+      }, 3500);
+    } else {
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      notifyTyping(false);
+    }
+  };
+
   useEffect(
     () => () => {
       recorderRef.current?.stream.getTracks().forEach((track) => track.stop());
@@ -153,7 +195,7 @@ export function Composer({
   );
 
   const applyCanned = (response: CannedResponse) => {
-    setText(response.content);
+    handleTextChange(response.content);
     textareaRef.current?.focus();
   };
 
@@ -321,6 +363,7 @@ export function Composer({
 
     const trimmed = text.trim();
     if (!trimmed) return;
+    notifyTyping(false);
     onSend(trimmed, mode, replyTo?.id);
     setText('');
     onCancelReply?.();
@@ -548,7 +591,7 @@ export function Composer({
       <textarea
         ref={textareaRef}
         value={text}
-        onChange={(event) => setText(event.target.value)}
+        onChange={(event) => handleTextChange(event.target.value)}
         onKeyDown={onKeyDown}
         maxLength={MAX_MESSAGE_LENGTH}
         rows={2}

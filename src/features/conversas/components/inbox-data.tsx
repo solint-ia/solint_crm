@@ -14,6 +14,7 @@ import {
   sendTemplateAction,
   setContactLabelsAction,
   setConversationLabelsAction,
+  setOperatorTypingAction,
 } from '@/app/(workspace)/conversas/actions';
 import { InboxWorkspace } from './inbox-workspace';
 
@@ -84,6 +85,7 @@ export async function InboxData({
       setContactLabels={setContactLabelsAction}
       sendTemplate={sendTemplateAction}
       sendMedia={sendMediaAction}
+      setOperatorTyping={setOperatorTypingAction}
       {...(selectedId ? { initialSelectedId: selectedId } : {})}
       {...(initialInboxId ? { initialInboxId } : {})}
       {...(initialScope ? { initialScope } : {})}

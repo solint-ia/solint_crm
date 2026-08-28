@@ -50,6 +50,7 @@ interface ChatPanelProps {
   readonly onSend: (text: string, mode: ComposerMode, replyToId?: string) => void;
   readonly onDeleteMessage?: (messageId: string) => void;
   readonly onSendMedia: (form: FormData) => Promise<MediaResult>;
+  readonly onTyping?: (conversationId: string, isTyping: boolean) => void;
   readonly onSendTemplate: (templateId: string, values: readonly string[]) => void;
   readonly onChangeStatus: (status: ConversationStatus) => void;
   readonly onAssign: (assignee: { id: string; name: string } | null) => void;
@@ -71,6 +72,7 @@ export function ChatPanel({
   onSend,
   onDeleteMessage,
   onSendMedia,
+  onTyping,
   onSendTemplate,
   onChangeStatus,
   onAssign,
@@ -512,6 +514,7 @@ export function ChatPanel({
           onCancelReply={() => setReplyTo(undefined)}
           onSend={onSend}
           onSendMedia={onSendMedia}
+          onTyping={(isTyping) => onTyping?.(conversation.id, isTyping)}
           cannedResponses={cannedResponses}
           pending={pending}
         />

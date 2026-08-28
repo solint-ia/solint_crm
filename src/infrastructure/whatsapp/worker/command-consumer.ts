@@ -61,7 +61,7 @@ const LANES = {
   // entre mandar e apagar é a única que não pode se inverter.
   envio: new Set(['send', 'send_media', 'delete']),
   sessao: new Set(['connect', 'disconnect']),
-  leitura: new Set(['read']),
+  leitura: new Set(['read', 'presence']),
 } as const;
 
 type LaneName = keyof typeof LANES;
@@ -324,6 +324,16 @@ export class CommandConsumer {
         const session = this.sessionManager.get(inboxId);
         if (session && typeof payload['conversationId'] === 'string') {
           await session.markAsRead(payload['conversationId']);
+        }
+        break;
+      }
+
+      case 'presence': {
+        const session = this.sessionManager.get(inboxId);
+        if (session) {
+          const recipient = (payload['recipient'] ?? {}) as { phone?: string; jid?: string; channelThreadId?: string };
+          const status = (payload['status'] ?? 'composing') as 'composing' | 'paused' | 'recording';
+          await session.sendPresence(recipient, status);
         }
         break;
       }

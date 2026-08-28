@@ -86,4 +86,14 @@ export class InProcessWhatsAppChannel implements WhatsAppChannel {
   ): Promise<void> {
     await whatsappService.markConversationAsRead(conversationId);
   }
+
+  async sendPresence(
+    _context: { accountId: string; inboxId: string; conversationId: string },
+    target: DispatchTarget,
+    status: 'composing' | 'paused' | 'recording',
+  ): Promise<void> {
+    const raw = target.channelThreadId ?? target.phone;
+    if (!raw) return;
+    await whatsappService.sendPresence(raw, status);
+  }
 }

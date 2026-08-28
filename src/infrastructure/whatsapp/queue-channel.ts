@@ -262,4 +262,17 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     if (!inboxId || !(await this.workerOnline(inboxId))) return;
     await this.enqueue(inboxId, 'read', { conversationId });
   }
+
+  async sendPresence(
+    context: { accountId: string; inboxId: string; conversationId: string },
+    target: DispatchTarget,
+    status: 'composing' | 'paused' | 'recording',
+  ): Promise<void> {
+    if (!context.inboxId || !(await this.workerOnline(context.inboxId))) return;
+    await this.enqueue(context.inboxId, 'presence', {
+      recipient: target,
+      status,
+      conversationId: context.conversationId,
+    });
+  }
 }

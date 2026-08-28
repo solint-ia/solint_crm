@@ -70,6 +70,10 @@ interface InboxWorkspaceProps {
     contactId: string;
     labelIds: readonly string[];
   }) => Promise<{ ok: boolean; error?: string }>;
+  readonly setOperatorTyping?: (input: {
+    conversationId: string;
+    isTyping: boolean;
+  }) => Promise<{ ok: boolean; error?: string }>;
   /**
    * Caixas que a pessoa alcança.
    *
@@ -375,6 +379,7 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
               onSend={inbox.send}
               onDeleteMessage={inbox.deleteMessage}
               onSendMedia={inbox.sendMedia}
+              onTyping={(conversationId, isTyping) => props.setOperatorTyping?.({ conversationId, isTyping })}
               onSendTemplate={inbox.sendTemplate}
               onChangeStatus={inbox.changeStatus}
               onAssign={inbox.assign}
