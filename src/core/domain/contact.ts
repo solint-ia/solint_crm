@@ -51,6 +51,15 @@ export interface Contact {
 
 export const isGroupContact = (contact: Pick<Contact, 'kind'>): boolean => contact.kind === 'grupo';
 
+export const GROUP_ALLOWED_FIELD_LABEL = 'group_chat_enabled';
+
+export const isGroupAllowedInChat = (contact: Pick<Contact, 'kind' | 'customFields'>): boolean => {
+  if (contact.kind !== 'grupo') return true;
+  return contact.customFields?.some(
+    (field) => (field.label === GROUP_ALLOWED_FIELD_LABEL || field.label === 'Permitido no Chat') && field.value === 'true',
+  ) ?? false;
+};
+
 const E164 = /^\+[1-9]\d{7,14}$/;
 
 /**

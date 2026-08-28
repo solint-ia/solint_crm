@@ -324,3 +324,76 @@ export async function syncWhatsAppContactsAction(): Promise<ActionResult<{ synce
     return failureOf(error, 'Falha ao sincronizar contatos do WhatsApp.');
   }
 }
+
+const toggleGroupChatSchema = z.object({
+  contactId: z.string().min(1),
+  allowed: z.boolean(),
+});
+
+export async function toggleGroupChatAction(
+  input: unknown,
+): Promise<ActionResult<{ contactId: string; allowed: boolean }>> {
+  const parsed = toggleGroupChatSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Dados inválidos.' };
+
+  try {
+    const session = await assertCanWrite();
+    const accountId = session.account.id;
+    const { contactId, allowed } = parsed.data;
+
+    const contact = await prisma.contact.findFirst({
+      where: { id: contactId, accountId },
+    });
+    if (!contact) return { ok: false, error: 'Grupo não encontrado.' };
+
+    const currentFields = Array.isArray(contact.customFields)
+      ? (contact.customFields as { label: string; value: string }[])
+      : [];
+
+    const filtered = currentFields.filter(
+      (f) => f.label !== 'group_chat_enabled' && f.label !== 'Permitido no Chat',
+    );
+    filtered.push({ label: 'group_chat_enabled', value: allowed ? 'true' : 'false' });
+
+    await prisma.contact.update({
+      where: { id: contact.id, accountId },
+      data: {
+        customFields: asJson(filtered),
+      },
+    });
+
+    return { ok: true, data: { contactId, allowed } };
+  } catch (error) {
+    return failureOf(error, 'Erro ao atualizar permissão do grupo.');
+  }
+}
+
+export async function syncWhatsAppGroupsAction(): Promise<
+  ActionResult<{ syncedCount: number; newCount: number }>
+> {
+  try {
+    const session = await assertCanWrite();
+    const accountId = session.account.id;
+
+    let syncedCount = 0;
+    let newCount = 0;
+
+    try {
+      const res = await whatsappService.syncAllGroups(accountId);
+      syncedCount = res.synced;
+      newCount = res.created;
+    } catch {
+      // Ignora suavemente se a instância em memória não estiver ativa neste processo
+    }
+
+    return {
+      ok: true,
+      data: {
+        syncedCount,
+        newCount,
+      },
+    };
+  } catch (error) {
+    return failureOf(error, 'Falha ao sincronizar grupos do WhatsApp.');
+  }
+}

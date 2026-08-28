@@ -165,10 +165,10 @@ export const findStoredContact = async (
   return contact ? contactRow(contact) : undefined;
 };
 
-const upsertContact = async (
+export const ensureContact = async (
   accountId: string,
   contact: Contact,
-  isGroup: boolean,
+  isGroup: boolean = contact.kind === 'grupo',
 ): Promise<void> => {
   const data = {
     name: contact.name,
@@ -273,7 +273,7 @@ const findConversationState = (
 export const commitMessage = async (input: CommitInput): Promise<void> => {
   const { chat, contact } = input;
 
-  await upsertContact(input.accountId, contact, chat.isGroup);
+  await ensureContact(input.accountId, contact, chat.isGroup);
 
   const existing = await findConversationState(input.accountId, chat.conversationId);
   if (existing) {

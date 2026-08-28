@@ -14,12 +14,13 @@ import {
 import pino from 'pino';
 import type { Contact } from '@/core/domain/contact';
 import type { Message, MessageContent } from '@/core/domain/message';
-import { PhoneNumber } from '@/core/domain/contact';
+import { PhoneNumber, isGroupAllowedInChat } from '@/core/domain/contact';
 import { DB_POOL_SIZE, asJson, prisma } from '@/infrastructure/db/prisma';
 import { initPostgresAuthState, isPairedCreds } from '../auth/postgres-auth-state';
 import {
   applyDeliveryUpdate,
   commitMessage,
+  ensureContact,
   findSentMessage,
   findStoredContact,
   markMessageRevoked,
@@ -851,6 +852,54 @@ export class WhatsAppSession {
     return { synced, created };
   }
 
+  public async syncAllGroups(accountId: string): Promise<{ synced: number; created: number }> {
+    const socket = this.socket;
+    if (!socket) return { synced: 0, created: 0 };
+    try {
+      const groups = await socket.groupFetchAllParticipating();
+      let synced = 0;
+      let created = 0;
+      for (const [jid, group] of Object.entries(groups)) {
+        if (!jid.endsWith('@g.us')) continue;
+        synced += 1;
+        const key = `g-${userOf(jid)}`;
+        const contactId = `ct-wa-${accountId}-${key}`;
+        const existing = await prisma.contact.findFirst({
+          where: { accountId, id: contactId },
+        });
+        if (!existing) {
+          await prisma.contact.create({
+            data: {
+              id: contactId,
+              accountId,
+              name: group.subject || 'Grupo do WhatsApp',
+              phone: '',
+              channel: 'whatsapp',
+              avatarTone: 'blue',
+              kind: 'grupo',
+              participantCount: group.size ?? group.participants?.length ?? 0,
+              customFields: asJson([{ label: 'group_chat_enabled', value: 'false' }]),
+              timeline: asJson([]),
+            },
+          });
+          created += 1;
+        } else {
+          await prisma.contact.update({
+            where: { id: existing.id, accountId },
+            data: {
+              name: group.subject || existing.name,
+              participantCount: group.size ?? group.participants?.length ?? existing.participantCount,
+            },
+          });
+        }
+      }
+      return { synced, created };
+    } catch (err) {
+      console.warn('[WhatsAppSession] Falha ao sincronizar grupos:', err);
+      return { synced: 0, created: 0 };
+    }
+  }
+
   /**
    * Pede ao WhatsApp a presença deste chat.
    *
@@ -1045,6 +1094,16 @@ export class WhatsAppSession {
 
     const at = new Date(timestampOf(msg));
     const contact = await this.resolveContact(chat, msg, fromMe);
+
+    // Se for grupo, cadastra/atualiza o contato do grupo no banco
+    if (chat.isGroup) {
+      await ensureContact(this.accountId, contact, true);
+      // Se o grupo não estiver autorizado pelo administrador, descarta a mensagem
+      if (!isGroupAllowedInChat(contact)) {
+        return;
+      }
+    }
+
     const authorName = await this.resolveAuthorName(chat, msg, fromMe, contact.name);
 
     const content = decoded.media

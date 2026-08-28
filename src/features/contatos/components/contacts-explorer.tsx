@@ -24,7 +24,7 @@ import {
   X,
 } from 'lucide-react';
 import type { Contact } from '@/core/domain/contact';
-import { PhoneNumber } from '@/core/domain/contact';
+import { PhoneNumber, isGroupAllowedInChat } from '@/core/domain/contact';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { ConfirmModal } from '@/components/ui/confirm-modal';
@@ -37,9 +37,15 @@ import { EditContactModal } from './edit-contact-modal';
 import { StartConversationButton } from './start-conversation-button';
 import { SaveSegmentModal } from './save-segment-modal';
 import { ImportCsvModal } from './import-csv-modal';
-import { deleteContactAction, syncWhatsAppContactsAction } from '@/app/(workspace)/contatos/actions';
+import {
+  deleteContactAction,
+  syncWhatsAppContactsAction,
+  syncWhatsAppGroupsAction,
+  toggleGroupChatAction,
+} from '@/app/(workspace)/contatos/actions';
 import { cn } from '@/lib/cn';
 
+type ContactTab = 'todos' | 'pessoas' | 'grupos';
 type SortField = 'name' | 'phone' | 'company' | 'lastContactAt' | 'ownerName';
 type SortOrder = 'asc' | 'desc';
 
@@ -51,6 +57,9 @@ export function ContactsExplorer({ contacts }: ContactsExplorerProps) {
   const router = useRouter();
   const { show } = useToast();
   const [isPending, startTransition] = useTransition();
+
+  // Aba selecionada (Todos / Pessoas / Grupos)
+  const [tab, setTab] = useState<ContactTab>('todos');
 
   // Estados de Busca e Filtro
   const [search, setSearch] = useState('');
@@ -74,12 +83,30 @@ export function ContactsExplorer({ contacts }: ContactsExplorerProps) {
   // Menu de Ações por Linha (dropdown aberto)
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
 
+  // Estados de Operação com Grupos
+  const [togglingGroupId, setTogglingGroupId] = useState<string | null>(null);
+  const [isSyncingGroups, setIsSyncingGroups] = useState(false);
+
+  // Contadores por Aba
+  const tabCounts = useMemo(() => ({
+    todos: contacts.length,
+    pessoas: contacts.filter((c) => c.kind !== 'grupo').length,
+    grupos: contacts.filter((c) => c.kind === 'grupo').length,
+  }), [contacts]);
+
   // Filtro de Busca Multicampos (Nome, Telefone, E-mail, Empresa, Etiquetas)
   const filteredContacts = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    if (!term) return contacts;
+    let list = contacts;
+    if (tab === 'pessoas') {
+      list = contacts.filter((c) => c.kind !== 'grupo');
+    } else if (tab === 'grupos') {
+      list = contacts.filter((c) => c.kind === 'grupo');
+    }
 
-    return contacts.filter((contact) => {
+    const term = search.trim().toLowerCase();
+    if (!term) return list;
+
+    return list.filter((contact) => {
       const nameMatch = contact.name.toLowerCase().includes(term);
       const phoneMatch = contact.phone.toLowerCase().includes(term);
       const emailMatch = contact.email?.toLowerCase().includes(term) ?? false;
@@ -89,7 +116,7 @@ export function ContactsExplorer({ contacts }: ContactsExplorerProps) {
 
       return nameMatch || phoneMatch || emailMatch || companyMatch || labelsMatch || ownerMatch;
     });
-  }, [contacts, search]);
+  }, [contacts, tab, search]);
 
   // Ordenação Interativa
   const sortedContacts = useMemo(() => {
@@ -284,9 +311,167 @@ export function ContactsExplorer({ contacts }: ContactsExplorerProps) {
     }
   };
 
+  const handleToggleGroup = async (contact: Contact, currentAllowed: boolean) => {
+    setTogglingGroupId(contact.id);
+    try {
+      const nextAllowed = !currentAllowed;
+      const res = await toggleGroupChatAction({ contactId: contact.id, allowed: nextAllowed });
+      if (!res.ok) {
+        show({
+          tone: 'erro',
+          title: 'Erro ao alterar grupo',
+          description: res.error ?? 'Não foi possível alterar a autorização do grupo.',
+        });
+        return;
+      }
+      show({
+        tone: 'sucesso',
+        title: nextAllowed ? 'Grupo autorizado no chat' : 'Grupo desativado do chat',
+        description: nextAllowed
+          ? `O grupo "${contact.name}" agora receberá mensagens e aparecerá na tela de conversas.`
+          : `O grupo "${contact.name}" foi desativado e não gravará novas mensagens.`,
+      });
+      router.refresh();
+    } catch {
+      show({
+        tone: 'erro',
+        title: 'Erro inesperado',
+        description: 'Falha ao atualizar o status do grupo.',
+      });
+    } finally {
+      setTogglingGroupId(null);
+    }
+  };
+
+  const handleSyncGroups = async () => {
+    setIsSyncingGroups(true);
+    try {
+      const res = await syncWhatsAppGroupsAction();
+      if (!res.ok || !res.data) {
+        show({
+          tone: 'erro',
+          title: 'Erro ao sincronizar grupos',
+          description: res.error ?? 'Falha ao sincronizar grupos do WhatsApp.',
+        });
+        return;
+      }
+      show({
+        tone: 'sucesso',
+        title: 'Grupos sincronizados',
+        description: `${res.data.syncedCount} grupo(s) detectado(s), ${res.data.newCount} novo(s) adicionado(s) para sua revisão.`,
+      });
+      router.refresh();
+    } catch {
+      show({
+        tone: 'erro',
+        title: 'Erro inesperado',
+        description: 'Não foi possível completar a sincronização de grupos.',
+      });
+    } finally {
+      setIsSyncingGroups(false);
+    }
+  };
+
   return (
     <>
       <div className="flex flex-col gap-4 animate-in fade-in duration-150">
+        {/* ============================================================ */}
+        {/* ABAS SEGMENTADAS (Todos / Individuais / Grupos)               */}
+        {/* ============================================================ */}
+        <div className="flex items-center gap-1.5 border-b border-line pb-2">
+          <button
+            type="button"
+            onClick={() => setTab('todos')}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all',
+              tab === 'todos'
+                ? 'bg-brand/12 text-brand border border-brand/30 shadow-xs'
+                : 'text-muted hover:text-ink hover:bg-surface-2',
+            )}
+          >
+            <span>Todos os contatos</span>
+            <span className={cn(
+              'rounded-full px-1.5 py-0.2 text-[10px] font-bold',
+              tab === 'todos' ? 'bg-brand text-white' : 'bg-surface-2 text-dim border border-line-soft',
+            )}>
+              {tabCounts.todos}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setTab('pessoas')}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all',
+              tab === 'pessoas'
+                ? 'bg-brand/12 text-brand border border-brand/30 shadow-xs'
+                : 'text-muted hover:text-ink hover:bg-surface-2',
+            )}
+          >
+            <User className="size-3.5" />
+            <span>Contatos individuais</span>
+            <span className={cn(
+              'rounded-full px-1.5 py-0.2 text-[10px] font-bold',
+              tab === 'pessoas' ? 'bg-brand text-white' : 'bg-surface-2 text-dim border border-line-soft',
+            )}>
+              {tabCounts.pessoas}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setTab('grupos')}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all',
+              tab === 'grupos'
+                ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 shadow-xs'
+                : 'text-muted hover:text-ink hover:bg-surface-2',
+            )}
+          >
+            <Users className="size-3.5" />
+            <span>Grupos do WhatsApp</span>
+            <span className={cn(
+              'rounded-full px-1.5 py-0.2 text-[10px] font-bold',
+              tab === 'grupos' ? 'bg-emerald-600 text-white' : 'bg-surface-2 text-dim border border-line-soft',
+            )}>
+              {tabCounts.grupos}
+            </span>
+          </button>
+        </div>
+
+        {/* Banner Informativo da Aba de Grupos */}
+        {tab === 'grupos' && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 shadow-2xs">
+            <div className="flex items-start gap-3">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                <Users className="size-5" />
+              </div>
+              <div>
+                <h4 className="text-sm font-semibold text-ink">Gestão e Autorização de Grupos no Chat</h4>
+                <p className="text-xs text-muted mt-0.5">
+                  Selecione quais grupos têm permissão para interagir e gravar mensagens no chat do CRM. Grupos desativados são ignorados e não poluem o banco nem a caixa de entrada.
+                </p>
+              </div>
+            </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={
+                isSyncingGroups ? (
+                  <Loader2 className="size-3.5 animate-spin text-emerald-600 dark:text-emerald-400" />
+                ) : (
+                  <MessageSquare className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+                )
+              }
+              onClick={handleSyncGroups}
+              disabled={isSyncingGroups}
+              className="shrink-0 font-medium"
+            >
+              {isSyncingGroups ? 'Buscando grupos...' : 'Buscar grupos do WhatsApp'}
+            </Button>
+          </div>
+        )}
+
         {/* ============================================================ */}
         {/* BARRA DE FERRAMENTAS PRINCIPAL (Search + Actions)            */}
         {/* ============================================================ */}
@@ -461,25 +646,39 @@ export function ContactsExplorer({ contacts }: ContactsExplorerProps) {
             </div>
           </div>
         ) : sortedContacts.length === 0 ? (
-          /* Estado Vazio da Busca */
+          /* Estado Vazio da Busca / Filtro */
           <div className="flex flex-col items-center justify-center rounded-2xl border border-line bg-surface p-10 text-center shadow-xs">
             <div className="flex size-14 items-center justify-center rounded-2xl bg-surface-2 border border-line-soft text-dim">
-              <Search className="size-6" />
+              {tab === 'grupos' ? <Users className="size-6" /> : <Search className="size-6" />}
             </div>
             <h3 className="mt-3.5 font-display text-title font-bold text-ink">
-              Nenhum contato encontrado
+              {tab === 'grupos' ? 'Nenhum grupo do WhatsApp encontrado' : 'Nenhum contato encontrado'}
             </h3>
             <p className="mt-1 max-w-md text-body text-muted leading-relaxed">
-              Tente buscar por outro nome, telefone, e-mail ou empresa para localizar o cliente desejado.
+              {tab === 'grupos'
+                ? 'Clique em "Buscar grupos do WhatsApp" acima para carregar todos os grupos em que seu número conectado participa.'
+                : 'Tente buscar por outro nome, telefone, e-mail ou empresa para localizar o cliente desejado.'}
             </p>
-            <Button
-              variant="secondary"
-              size="sm"
-              className="mt-4"
-              onClick={() => setSearch('')}
-            >
-              Limpar busca
-            </Button>
+            {tab === 'grupos' ? (
+              <Button
+                variant="primary"
+                size="sm"
+                className="mt-4"
+                onClick={handleSyncGroups}
+                disabled={isSyncingGroups}
+              >
+                {isSyncingGroups ? 'Buscando grupos...' : 'Buscar grupos do WhatsApp'}
+              </Button>
+            ) : (
+              <Button
+                variant="secondary"
+                size="sm"
+                className="mt-4"
+                onClick={() => setSearch('')}
+              >
+                Limpar busca
+              </Button>
+            )}
           </div>
         ) : (
           /* Tabela com Contatos */
@@ -507,7 +706,7 @@ export function ContactsExplorer({ contacts }: ContactsExplorerProps) {
                       className="px-4 py-3 cursor-pointer hover:text-ink transition-colors"
                     >
                       <div className="flex items-center gap-1.5">
-                        <span>Nome</span>
+                        <span>Nome / Identificação</span>
                         {sortField === 'name' ? (
                           sortOrder === 'asc' ? (
                             <ArrowUp className="size-3.5 text-brand" />
@@ -526,7 +725,7 @@ export function ContactsExplorer({ contacts }: ContactsExplorerProps) {
                       className="px-4 py-3 cursor-pointer hover:text-ink transition-colors"
                     >
                       <div className="flex items-center gap-1.5">
-                        <span>Telefone</span>
+                        <span>{tab === 'grupos' ? 'Membros' : 'Telefone'}</span>
                         {sortField === 'phone' ? (
                           sortOrder === 'asc' ? (
                             <ArrowUp className="size-3.5 text-brand" />
@@ -545,7 +744,7 @@ export function ContactsExplorer({ contacts }: ContactsExplorerProps) {
                       className="px-4 py-3 cursor-pointer hover:text-ink transition-colors"
                     >
                       <div className="flex items-center gap-1.5">
-                        <span>Empresa</span>
+                        <span>{tab === 'grupos' ? 'Atendimento no Chat' : 'Empresa / Status'}</span>
                         {sortField === 'company' ? (
                           sortOrder === 'asc' ? (
                             <ArrowUp className="size-3.5 text-brand" />
@@ -568,7 +767,7 @@ export function ContactsExplorer({ contacts }: ContactsExplorerProps) {
                       className="px-4 py-3 cursor-pointer hover:text-ink transition-colors"
                     >
                       <div className="flex items-center gap-1.5">
-                        <span>Último Contato</span>
+                        <span>Última Atividade</span>
                         {sortField === 'lastContactAt' ? (
                           sortOrder === 'asc' ? (
                             <ArrowUp className="size-3.5 text-brand" />
@@ -611,6 +810,8 @@ export function ContactsExplorer({ contacts }: ContactsExplorerProps) {
                   {sortedContacts.map((contact) => {
                     const isChecked = selected.includes(contact.id);
                     const isMenuOpen = activeMenuId === contact.id;
+                    const isGroup = contact.kind === 'grupo';
+                    const isAllowed = isGroupAllowedInChat(contact);
 
                     return (
                       <tr
@@ -647,26 +848,78 @@ export function ContactsExplorer({ contacts }: ContactsExplorerProps) {
                               className="shrink-0 shadow-2xs"
                             />
                             <div className="min-w-0">
-                              <span className="block font-semibold text-ink leading-tight line-clamp-1">
-                                {contact.name}
-                              </span>
-                              {contact.email && (
+                              <div className="flex items-center gap-2">
+                                <span className="block font-semibold text-ink leading-tight line-clamp-1">
+                                  {contact.name}
+                                </span>
+                                {isGroup && (
+                                  <span className="inline-flex items-center gap-1 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[10px] font-semibold px-1.5 py-0.5 border border-indigo-500/20">
+                                    Grupo
+                                  </span>
+                                )}
+                              </div>
+                              {contact.email ? (
                                 <span className="block text-meta text-muted line-clamp-1 mt-0.5">
                                   {contact.email}
                                 </span>
-                              )}
+                              ) : isGroup ? (
+                                <span className="block text-[11px] text-muted line-clamp-1 mt-0.5">
+                                  WhatsApp Grupo · {contact.participantCount ?? 0} participantes
+                                </span>
+                              ) : null}
                             </div>
                           </button>
                         </th>
 
-                        {/* Telefone Formatado */}
+                        {/* Telefone Formatado / Membros do Grupo */}
                         <td className="px-4 py-3 font-mono tabular-nums text-ink text-meta font-medium">
-                          {PhoneNumber.format(contact.phone)}
+                          {isGroup ? (
+                            <span className="text-muted inline-flex items-center gap-1.5 font-sans">
+                              <Users className="size-3.5 text-dim" />
+                              <span>{contact.participantCount ?? 0} membros</span>
+                            </span>
+                          ) : (
+                            PhoneNumber.format(contact.phone)
+                          )}
                         </td>
 
-                        {/* Empresa */}
+                        {/* Empresa ou Switch de Atendimento no Chat */}
                         <td className="px-4 py-3 text-muted">
-                          {contact.company ? (
+                          {isGroup ? (
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                role="switch"
+                                aria-checked={isAllowed}
+                                disabled={togglingGroupId === contact.id}
+                                onClick={() => handleToggleGroup(contact, isAllowed)}
+                                title={isAllowed ? 'Desativar grupo do chat' : 'Autorizar grupo no chat'}
+                                className={cn(
+                                  'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2',
+                                  isAllowed ? 'bg-emerald-600' : 'bg-line-strong dark:bg-surface-2',
+                                  togglingGroupId === contact.id && 'opacity-50 cursor-wait',
+                                )}
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  className={cn(
+                                    'pointer-events-none inline-block size-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                                    isAllowed ? 'translate-x-4' : 'translate-x-0',
+                                  )}
+                                />
+                              </button>
+                              <span
+                                className={cn(
+                                  'text-[11px] font-semibold px-2 py-0.5 rounded-md border',
+                                  isAllowed
+                                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                                    : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
+                                )}
+                              >
+                                {isAllowed ? 'Permitido no Chat' : 'Pendente'}
+                              </span>
+                            </div>
+                          ) : contact.company ? (
                             <span className="text-ink font-medium">{contact.company}</span>
                           ) : (
                             <span className="text-dim">—</span>

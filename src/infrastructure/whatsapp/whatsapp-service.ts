@@ -18,11 +18,12 @@ import { initPostgresAuthState } from './auth/postgres-auth-state';
 
 import type { Contact } from '@/core/domain/contact';
 import type { Message, MessageContent } from '@/core/domain/message';
-import { PhoneNumber } from '@/core/domain/contact';
+import { PhoneNumber, isGroupAllowedInChat } from '@/core/domain/contact';
 import {
   applyDeliveryUpdate as persistDeliveryUpdate,
   commitMessage as persistMessage,
   conversationExists,
+  ensureContact as ensureStoredContact,
   findStoredContact as loadStoredContact,
   markMessageRevoked,
   patchContact,
@@ -741,6 +742,16 @@ export class WhatsAppService {
 
     const at = new Date(timestampOf(msg));
     const contact = await this.resolveContact(accountId, chat, msg, fromMe);
+
+    // Se for grupo, cadastra/atualiza o contato do grupo no banco
+    if (chat.isGroup) {
+      await ensureStoredContact(accountId, contact, true);
+      // Se o grupo não estiver autorizado pelo administrador, descarta a mensagem
+      if (!isGroupAllowedInChat(contact)) {
+        return;
+      }
+    }
+
     const authorName = await this.resolveAuthorName(chat, msg, fromMe, contact.name);
     // A midia do WhatsApp e criptografada: sem decifrar e gravar localmente,
     // o navegador não tem como exibir foto, figurinha, GIF ou áudio.
@@ -1067,6 +1078,54 @@ export class WhatsAppService {
     }
 
     return { synced, created };
+  }
+
+  public async syncAllGroups(accountId: string): Promise<{ synced: number; created: number }> {
+    const socket = this.socket;
+    if (!socket) return { synced: 0, created: 0 };
+    try {
+      const groups = await socket.groupFetchAllParticipating();
+      let synced = 0;
+      let created = 0;
+      for (const [jid, group] of Object.entries(groups)) {
+        if (!jid.endsWith('@g.us')) continue;
+        synced += 1;
+        const key = `g-${userOf(jid)}`;
+        const contactId = `ct-wa-${accountId}-${key}`;
+        const existing = await prisma.contact.findFirst({
+          where: { accountId, id: contactId },
+        });
+        if (!existing) {
+          await prisma.contact.create({
+            data: {
+              id: contactId,
+              accountId,
+              name: group.subject || 'Grupo do WhatsApp',
+              phone: '',
+              channel: 'whatsapp',
+              avatarTone: 'blue',
+              kind: 'grupo',
+              participantCount: group.size ?? group.participants?.length ?? 0,
+              customFields: asJson([{ label: 'group_chat_enabled', value: 'false' }]),
+              timeline: asJson([]),
+            },
+          });
+          created += 1;
+        } else {
+          await prisma.contact.update({
+            where: { id: existing.id, accountId },
+            data: {
+              name: group.subject || existing.name,
+              participantCount: group.size ?? group.participants?.length ?? existing.participantCount,
+            },
+          });
+        }
+      }
+      return { synced, created };
+    } catch (err) {
+      console.warn('[WhatsAppService] Falha ao sincronizar grupos:', err);
+      return { synced: 0, created: 0 };
+    }
   }
 
   private async renameGroupChat(jid: string, subject: string, size?: number) {

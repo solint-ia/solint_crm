@@ -31,13 +31,11 @@ export interface ChatIdentity {
   readonly conversationId: string;
 }
 
-/** Chats que viram atendimento: exclusivamente mensagens privadas 1x1. Ignora grupos, status, transmissões e canais. */
+/** Chats que viram atendimento: mensagens privadas 1x1, listas de transmissão e grupos do WhatsApp. Ignora status e canais. */
 export const isSupportedChatJid = (jid: string | undefined | null): jid is string => {
   if (!jid) return false;
-  if (isJidStatusBroadcast(jid)) return false;
-  if (isJidBroadcast(jid)) return false;
-  if (isJidNewsletter(jid)) return false;
-  if (isJidGroup(jid) || jid.endsWith('@g.us')) return false;
+  if (isJidStatusBroadcast(jid) || jid === 'status@broadcast') return false;
+  if (isJidNewsletter(jid) || jid.endsWith('@newsletter')) return false;
   return true;
 };
 
@@ -134,7 +132,7 @@ const identityFromKey = (
   };
 };
 
-/** Identidade do chat ao qual a mensagem pertence (o grupo, no caso de grupos). */
+/** Identidade do chat ao qual a mensagem pertence (ou contato individual em transmissões). */
 export const resolveChatIdentity = async (
   socket: WASocket,
   key: WAMessageKey,
@@ -147,7 +145,12 @@ export const resolveChatIdentity = async (
     return identityFromKey(scope, remoteJid, true, '');
   }
 
-  const pnJid = await resolvePhoneJid(socket, remoteJid, key.remoteJidAlt);
+  // Se a mensagem veio de uma lista de transmissão (@broadcast), quem escreveu foi o participant
+  const isBroadcast = isJidBroadcast(remoteJid) || remoteJid.endsWith('@broadcast');
+  const targetJid = isBroadcast ? (key.participant ?? remoteJid) : remoteJid;
+  const targetAlt = isBroadcast ? (key.participantAlt ?? key.remoteJidAlt) : key.remoteJidAlt;
+
+  const pnJid = await resolvePhoneJid(socket, targetJid, targetAlt);
   return identityFromKey(scope, pnJid, false, phoneFromJid(pnJid));
 };
 
