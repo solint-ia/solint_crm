@@ -3,7 +3,7 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
-import { PERMISSIONS } from '@/core/domain/user';
+import { SYSTEM_ROLES, systemRoleId } from '@/core/domain/system-roles';
 import { defaultBusinessHours } from '@/core/domain/business-hours';
 import { hashPassword, passwordProblem, verifyPassword } from '@/infrastructure/auth/password';
 import { createSession, destroyCurrentSession, touchUser } from '@/infrastructure/auth/session';
@@ -127,16 +127,19 @@ export async function signupAction(input: unknown): Promise<AuthActionResult> {
     await tx.account.create({
       data: { id: accountId, name: parsed.data.company, plan: 'starter' },
     });
-    await tx.role.create({
-      data: {
-        id: `role-admin-${accountId}`,
+    // Os dois papéis nascem com a conta. Antes só o de administrador era
+    // criado, e quem convidasse um colaborador só podia oferecer acesso total
+    // — não havia outro papel para escolher.
+    await tx.role.createMany({
+      data: SYSTEM_ROLES.map((role) => ({
+        id: systemRoleId(accountId, role.slug),
         accountId,
-        slug: 'administrador',
-        name: 'Administrador',
-        description: 'Acesso total, incluindo faturamento, integrações e segurança.',
-        permissions: asJson(PERMISSIONS),
+        slug: role.slug,
+        name: role.name,
+        description: role.description,
+        permissions: asJson(role.permissions),
         isSystem: true,
-      },
+      })),
     });
     await tx.user.create({
       data: {

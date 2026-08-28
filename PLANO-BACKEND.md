@@ -574,11 +574,19 @@ workspace de outro cliente. Na Fase 3 esse arquivo desaparece e a conta vem da `
 > exceção subia até o listener do Baileys, que não aguarda listener assíncrono, e a mensagem
 > sumia.
 >
-> **Corrigido sem migração.** Os ids passaram a ser escopados por conta
-> (`cv-wa-<conta>-<numero>`) para linha nova, e `resolveStoredIds` (`wa-store.ts`) traduz um chat
-> para os ids que a conta já usa antes de qualquer gravação — pela **chave natural**
+> **Corrigido sem migração, em dois passos.** Primeiro os ids foram escopados por conta
+> (`cv-wa-<conta>-<numero>`), e `resolveStoredIds` (`wa-store.ts`) passou a traduzir um chat para
+> os ids que a conta já usa antes de qualquer gravação — pela **chave natural**
 > `inboxId + channelThreadId`, que o schema já declara única e que cobre 100% das conversas de
 > WhatsApp existentes. As linhas no formato antigo continuam com os ids delas.
+>
+> Isso resolveu entre contas e expôs o mesmo defeito um nível abaixo: **duas caixas da mesma
+> conta derivavam o mesmo id**. Um cliente que escrevesse para os dois números da empresa tinha a
+> segunda mensagem anexada à conversa da primeira caixa — a caixa que recebeu ficava vazia, os
+> dois assuntos viravam uma timeline só, e a resposta saía pelo número errado, porque o envio usa
+> a caixa **da conversa**. A conversa passou a ser escopada pela caixa
+> (`cv-wa-<caixa>-<numero>`); o contato continua por conta, porque é a mesma pessoa. Trancado por
+> `scripts/test-caixas-mesmo-numero.ts`, que roda contra o banco real numa conta descartável.
 >
 > A Fase 3.8 continua valendo pelo resto: `@@unique([accountId, phone])` em `Contact` e chave
 > primária opaca — o que sobra hoje é um id derivado, não uma colisão.

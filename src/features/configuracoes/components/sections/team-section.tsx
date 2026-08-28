@@ -5,8 +5,11 @@ import { useRouter } from 'next/navigation';
 import {
   Check,
   CheckCircle2,
-  Copy,
+  Eye,
+  EyeOff,
+  KeyRound,
   Layers,
+  Pencil,
   Plus,
   Shield,
   Trash2,
@@ -23,9 +26,11 @@ import { Modal } from '@/components/ui/modal';
 import { ConfirmModal } from '@/components/ui/confirm-modal';
 import { cn } from '@/lib/cn';
 import {
+  createCollaboratorAction,
   createTeamAction,
   deleteTeamAction,
-  inviteMemberAction,
+  removeCollaboratorAction,
+  updateCollaboratorAction,
   updateTeamAction,
 } from '@/app/(workspace)/configuracoes/actions';
 
@@ -56,14 +61,24 @@ export function TeamSection({ members, roles, teams, inboxes }: TeamSectionProps
   const [teamMemberIds, setTeamMemberIds] = useState<readonly string[]>([]);
   const [teamError, setTeamError] = useState<string | null>(null);
 
-  // Convite
-  const [isInviteOpen, setIsInviteOpen] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState(roles[0]?.slug ?? 'agente');
-  const [inviteTeamIds, setInviteTeamIds] = useState<readonly string[]>([]);
-  const [inviteLink, setInviteLink] = useState<string | null>(null);
-  const [inviteError, setInviteError] = useState<string | null>(null);
-  const [copiado, setCopiado] = useState(false);
+  /**
+   * Painel de colaborador — criar e editar usam o mesmo formulário.
+   *
+   * `editando` é quem separa os dois: nulo cria, preenchido altera. Duplicar o
+   * formulário faria os dois divergirem no primeiro campo novo, e são
+   * exatamente os mesmos campos — com uma diferença, a senha, que na edição é
+   * opcional porque vazio significa "manter a atual".
+   */
+  const [colabAberto, setColabAberto] = useState(false);
+  const [editando, setEditando] = useState<User | null>(null);
+  const [colabNome, setColabNome] = useState('');
+  const [colabEmail, setColabEmail] = useState('');
+  const [colabSenha, setColabSenha] = useState('');
+  const [mostrarSenha, setMostrarSenha] = useState(false);
+  const [colabRole, setColabRole] = useState(roles[0]?.slug ?? 'agente');
+  const [colabTeamIds, setColabTeamIds] = useState<readonly string[]>([]);
+  const [colabError, setColabError] = useState<string | null>(null);
+  const [removendo, setRemovendo] = useState<User | null>(null);
 
   const toggle = (current: readonly string[], id: string, set: (next: readonly string[]) => void) =>
     set(current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
@@ -111,23 +126,71 @@ export function TeamSection({ members, roles, teams, inboxes }: TeamSectionProps
     });
   };
 
-  const handleInvite = (e: React.FormEvent) => {
+  const abrirNovoColaborador = () => {
+    setEditando(null);
+    setColabNome('');
+    setColabEmail('');
+    setColabSenha('');
+    setMostrarSenha(false);
+    // Agente é o padrão porque é o acesso menor: se alguém salvar sem olhar
+    // este campo, o erro é conceder de menos, não conceder a conta inteira.
+    setColabRole(roles.find((role) => role.slug === 'agente')?.slug ?? roles[0]?.slug ?? 'agente');
+    setColabTeamIds([]);
+    setColabError(null);
+    setColabAberto(true);
+  };
+
+  const abrirEdicaoColaborador = (member: User) => {
+    setEditando(member);
+    setColabNome(member.name);
+    setColabEmail(member.email);
+    // Nunca preenchida: a senha guardada é um hash, e mostrar um valor falso
+    // aqui faria parecer que ela pode ser lida de volta.
+    setColabSenha('');
+    setMostrarSenha(false);
+    setColabRole(member.roleSlug);
+    setColabTeamIds(
+      teams.filter((team) => (member.teams ?? []).includes(team.name)).map((team) => team.id),
+    );
+    setColabError(null);
+    setColabAberto(true);
+  };
+
+  const handleSalvarColaborador = (e: React.FormEvent) => {
     e.preventDefault();
-    setInviteError(null);
-    setInviteLink(null);
-    setCopiado(false);
+    setColabError(null);
+
     startTransition(async () => {
-      const res = await inviteMemberAction({
-        email: inviteEmail,
-        roleSlug: inviteRole,
-        teamIds: [...inviteTeamIds],
-      });
-      if (res.ok && res.link) {
-        setInviteLink(`${window.location.origin}${res.link}`);
+      const comum = {
+        name: colabNome.trim(),
+        email: colabEmail.trim(),
+        roleSlug: colabRole,
+        teamIds: [...colabTeamIds],
+      };
+
+      const res = editando
+        ? await updateCollaboratorAction({
+            ...comum,
+            userId: editando.id,
+            ...(colabSenha.trim() ? { password: colabSenha } : {}),
+          })
+        : await createCollaboratorAction({ ...comum, password: colabSenha });
+
+      if (res.ok) {
+        setColabAberto(false);
         router.refresh();
       } else {
-        setInviteError(res.error ?? 'Erro ao gerar o convite.');
+        setColabError(res.error ?? 'Erro ao salvar o colaborador.');
       }
+    });
+  };
+
+  const handleRemoverColaborador = () => {
+    if (!removendo) return;
+    startTransition(async () => {
+      const res = await removeCollaboratorAction({ userId: removendo.id });
+      setRemovendo(null);
+      if (res.ok) router.refresh();
     });
   };
 
@@ -179,16 +242,8 @@ export function TeamSection({ members, roles, teams, inboxes }: TeamSectionProps
               Nova equipe
             </Button>
           ) : (
-            <Button
-              size="md"
-              icon={<UserPlus className="size-4" />}
-              onClick={() => {
-                setInviteLink(null);
-                setInviteError(null);
-                setIsInviteOpen(true);
-              }}
-            >
-              Convidar membro
+            <Button size="md" icon={<UserPlus className="size-4" />} onClick={abrirNovoColaborador}>
+              Novo colaborador
             </Button>
           )}
         </div>
@@ -336,7 +391,8 @@ export function TeamSection({ members, roles, teams, inboxes }: TeamSectionProps
                     <th scope="col" className="px-4 py-3">E-mail</th>
                     <th scope="col" className="px-4 py-3">Função</th>
                     <th scope="col" className="px-4 py-3">Equipes atribuídas</th>
-                    <th scope="col" className="px-4 py-3">Segurança 2FA</th>
+                    <th scope="col" className="px-4 py-3">Acesso</th>
+                    <th scope="col" className="px-4 py-3 text-right">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line-soft">
@@ -405,6 +461,27 @@ export function TeamSection({ members, roles, teams, inboxes }: TeamSectionProps
                           <Check className="size-3" />
                           Ativo
                         </span>
+                      </td>
+
+                      <td className="px-4 py-3.5">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => abrirEdicaoColaborador(member)}
+                            title={`Editar acesso de ${member.name}`}
+                            className="rounded-control p-1.5 text-dim transition-colors hover:bg-surface-2 hover:text-ink"
+                          >
+                            <Pencil className="size-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setRemovendo(member)}
+                            title={`Remover ${member.name} da conta`}
+                            className="rounded-control p-1.5 text-dim transition-colors hover:bg-red-soft hover:text-red-text"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -628,115 +705,183 @@ export function TeamSection({ members, roles, teams, inboxes }: TeamSectionProps
         </form>
       </Modal>
 
-      {/* Modal Convidar Membro */}
+      {/*
+        Painel do colaborador.
+
+        Substituiu o modal de convite. O convite entregava um link e transferia
+        para o colaborador as duas decisões que são de quem contrata: qual
+        senha usar e quando entrar. E não havia volta — o gestor não conseguia
+        recuperar um acesso perdido, só emitir outro link e esperar de novo.
+      */}
       <Modal
-        open={isInviteOpen}
-        onClose={() => setIsInviteOpen(false)}
-        title="Convidar novo membro"
-        description="Envie um convite com link exclusivo para seu colaborador acessar o CRM."
+        open={colabAberto}
+        onClose={() => setColabAberto(false)}
+        title={editando ? `Editar acesso de ${editando.name}` : 'Novo colaborador'}
+        description={
+          editando
+            ? 'Altere os dados de acesso, o papel e as equipes deste colaborador.'
+            : 'Crie o acesso e entregue o e-mail e a senha ao colaborador.'
+        }
         className="max-w-md"
       >
-        <form onSubmit={handleInvite} className="flex flex-col gap-4 pt-1">
-          {inviteError ? (
+        <form onSubmit={handleSalvarColaborador} className="flex flex-col gap-4 pt-1">
+          {colabError ? (
             <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
-              {inviteError}
+              {colabError}
             </p>
           ) : null}
 
           <div>
-            <label htmlFor="invite-email" className="mb-1 block text-xs font-semibold text-ink">
-              E-mail do colaborador
+            <label htmlFor="colab-nome" className="mb-1 block text-xs font-semibold text-ink">
+              Nome completo
             </label>
             <input
-              id="invite-email"
-              type="email"
+              id="colab-nome"
+              type="text"
               required
-              placeholder="nome@empresa.com.br"
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
+              minLength={2}
+              placeholder="Ex: Camila Reis"
+              value={colabNome}
+              onChange={(e) => setColabNome(e.target.value)}
               className="h-10 w-full rounded-xl border border-line bg-surface px-3 text-xs text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 shadow-2xs"
             />
           </div>
 
           <div>
-            <label htmlFor="invite-role" className="mb-1 block text-xs font-semibold text-ink">
-              Papel / Permissões
+            <label htmlFor="colab-email" className="mb-1 block text-xs font-semibold text-ink">
+              E-mail de acesso
+            </label>
+            <input
+              id="colab-email"
+              type="email"
+              required
+              autoComplete="off"
+              placeholder="nome@empresa.com.br"
+              value={colabEmail}
+              onChange={(e) => setColabEmail(e.target.value)}
+              className="h-10 w-full rounded-xl border border-line bg-surface px-3 text-xs text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 shadow-2xs"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="colab-senha" className="mb-1 block text-xs font-semibold text-ink">
+              {editando ? 'Nova senha' : 'Senha'}
+            </label>
+            <div className="relative">
+              <KeyRound className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-dim" />
+              <input
+                id="colab-senha"
+                type={mostrarSenha ? 'text' : 'password'}
+                required={!editando}
+                autoComplete="new-password"
+                placeholder={editando ? 'Deixe em branco para manter a atual' : 'Mínimo 10 caracteres'}
+                value={colabSenha}
+                onChange={(e) => setColabSenha(e.target.value)}
+                className="h-10 w-full rounded-xl border border-line bg-surface pr-10 pl-9 text-xs text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 shadow-2xs"
+              />
+              {/*
+                Visível por padrão? Não — mas com um olho.
+
+                Quem cria a senha de outra pessoa precisa conferir o que
+                digitou para poder ditá-la depois. Sem o olho, o caminho é
+                colar num bloco de notas, e aí a senha vira um arquivo.
+              */}
+              <button
+                type="button"
+                onClick={() => setMostrarSenha((atual) => !atual)}
+                aria-label={mostrarSenha ? 'Ocultar senha' : 'Exibir senha'}
+                className="absolute inset-y-0 right-0 flex items-center pr-3 text-dim transition-colors hover:text-ink"
+              >
+                {mostrarSenha ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+              </button>
+            </div>
+            {editando ? (
+              <p className="mt-1 text-[11px] text-dim">
+                Trocar a senha encerra as sessões abertas deste colaborador.
+              </p>
+            ) : null}
+          </div>
+
+          <div>
+            <label htmlFor="colab-role" className="mb-1 block text-xs font-semibold text-ink">
+              Nível de acesso
             </label>
             <select
-              id="invite-role"
-              value={inviteRole}
-              onChange={(e) => setInviteRole(e.target.value)}
+              id="colab-role"
+              value={colabRole}
+              onChange={(e) => setColabRole(e.target.value)}
               className="h-10 w-full rounded-xl border border-line bg-surface px-3 text-xs text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 shadow-2xs"
             >
               {roles.map((role) => (
                 <option key={role.slug} value={role.slug}>
-                  {role.name} ({role.description})
+                  {role.name}
                 </option>
               ))}
             </select>
+            <p className="mt-1 text-[11px] leading-relaxed text-dim">
+              {roles.find((role) => role.slug === colabRole)?.description ??
+                'Escolha o que este colaborador poderá fazer.'}
+            </p>
           </div>
 
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-ink">
-              Equipes de atendimento
-            </label>
-            <div className="max-h-32 overflow-y-auto rounded-xl border border-line bg-surface p-2 flex flex-col gap-1">
-              {teams.map((t) => (
-                <label
-                  key={t.id}
-                  className="flex items-center gap-2.5 rounded-lg p-1.5 text-xs hover:bg-surface-2 cursor-pointer"
-                >
-                  <input
-                    type="checkbox"
-                    checked={inviteTeamIds.includes(t.id)}
-                    onChange={() => toggle(inviteTeamIds, t.id, setInviteTeamIds)}
-                    className="rounded accent-brand cursor-pointer"
-                  />
-                  <span className="font-medium text-ink">{t.name}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {inviteLink ? (
-            <div className="rounded-xl border border-line-soft bg-surface-2 p-3">
-              <span className="text-[11px] font-semibold text-dim uppercase">
-                Link de acesso gerado:
-              </span>
-              <div className="mt-1 flex items-center justify-between gap-2">
-                <input
-                  readOnly
-                  value={inviteLink}
-                  className="w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 font-mono text-xs text-ink select-all outline-none"
-                />
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  icon={copiado ? <Check className="size-3 text-green-500" /> : <Copy className="size-3" />}
-                  onClick={() => {
-                    void navigator.clipboard.writeText(inviteLink);
-                    setCopiado(true);
-                    setTimeout(() => setCopiado(false), 2000);
-                  }}
-                >
-                  {copiado ? 'Copiado!' : 'Copiar'}
-                </Button>
+          {teams.length > 0 ? (
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-ink">
+                Equipes de atendimento
+              </label>
+              <div className="flex max-h-32 flex-col gap-1 overflow-y-auto rounded-xl border border-line bg-surface p-2">
+                {teams.map((t) => (
+                  <label
+                    key={t.id}
+                    className="flex cursor-pointer items-center gap-2.5 rounded-lg p-1.5 text-xs hover:bg-surface-2"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={colabTeamIds.includes(t.id)}
+                      onChange={() => toggle(colabTeamIds, t.id, setColabTeamIds)}
+                      className="cursor-pointer rounded accent-brand"
+                    />
+                    <span className="font-medium text-ink">{t.name}</span>
+                  </label>
+                ))}
               </div>
+              <p className="mt-1 text-[11px] text-dim">
+                As equipes decidem quais caixas ele alcança. Sem nenhuma, ele vê as caixas que o
+                papel permitir.
+              </p>
             </div>
           ) : null}
 
           <div className="flex justify-end gap-2 border-t border-line pt-4">
-            <Button variant="secondary" type="button" onClick={() => setIsInviteOpen(false)}>
-              {inviteLink ? 'Concluir' : 'Cancelar'}
+            <Button variant="secondary" type="button" onClick={() => setColabAberto(false)}>
+              Cancelar
             </Button>
-            {!inviteLink ? (
-              <Button type="submit" disabled={isPending || !inviteEmail.trim()}>
-                {isPending ? 'Gerando…' : 'Gerar convite'}
-              </Button>
-            ) : null}
+            <Button
+              type="submit"
+              disabled={isPending || !colabNome.trim() || !colabEmail.trim()}
+            >
+              {isPending ? 'Salvando…' : editando ? 'Salvar alterações' : 'Criar acesso'}
+            </Button>
           </div>
         </form>
       </Modal>
+
+      {/* Confirmação de Remoção de Colaborador */}
+      <ConfirmModal
+        open={removendo !== null}
+        title="Remover colaborador"
+        description={
+          <span>
+            Remover <strong className="text-ink">{removendo?.name}</strong> desta conta? Ele perde o
+            acesso imediatamente. As conversas e os contatos que atendeu permanecem.
+          </span>
+        }
+        confirmLabel="Remover acesso"
+        variant="danger"
+        isLoading={isPending}
+        onConfirm={handleRemoverColaborador}
+        onClose={() => setRemovendo(null)}
+      />
 
       {/* Confirmação de Exclusão de Equipe */}
       <ConfirmModal

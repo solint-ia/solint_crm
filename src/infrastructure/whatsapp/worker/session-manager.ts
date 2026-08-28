@@ -182,9 +182,22 @@ export class WhatsAppSessionManager {
           '...',
       );
 
-      for (const conn of paired) {
-        await this.restoreOne(conn.inboxId, 0);
-      }
+      /**
+       * Em paralelo, e não uma de cada vez.
+       *
+       * Cada restauração busca a versão do Baileys na rede e carrega as
+       * credenciais do Postgres antes de abrir o socket. Em série, a segunda
+       * caixa só começava esse trabalho quando a primeira terminava o dela — e
+       * com quatro ou cinco caixas o atraso da última virava dezenas de
+       * segundos de silêncio, durante os quais mensagens que chegassem ficavam
+       * represadas no servidor do WhatsApp.
+       *
+       * Nada aqui depende da ordem: são sockets independentes, e cada uma tem
+       * a própria trava por caixa. `allSettled` porque uma caixa que falha não
+       * pode impedir as outras de subir — foi assim que uma sessão inválida
+       * derrubava a restauração inteira.
+       */
+      await Promise.allSettled(paired.map((conn) => this.restoreOne(conn.inboxId, 0)));
     } catch (err) {
       console.error('[WhatsAppSessionManager] Erro ao listar sessões salvas:', err);
     }

@@ -18,6 +18,8 @@ import type {
   Webhook,
 } from '@/core/domain/settings';
 import { ConflictError, NotFoundError, type Id } from '@/core/domain/shared';
+import { SYSTEM_ROLES, systemRoleId } from '@/core/domain/system-roles';
+import type { Role as PrismaRole } from '@/generated/prisma';
 import type { Permission, Role } from '@/core/domain/user';
 import { defaultBusinessHours } from '@/core/domain/business-hours';
 import type {
@@ -51,6 +53,43 @@ const EMPTY_BILLING: BillingInfo = {
   renewalLabel: '—',
   usage: [],
   invoices: [],
+};
+
+/**
+ * Garante que a conta tem os papéis de sistema, criando o que faltar.
+ *
+ * Contas criadas antes de o papel de agente existir só têm "administrador" —
+ * e sem este remendo o gestor abriria a tela de equipe e continuaria com uma
+ * opção só, para sempre. Uma migração de dados resolveria as de hoje e não as
+ * de amanhã; aqui a conta se completa sozinha na primeira vez que alguém abre
+ * as configurações.
+ *
+ * Não escreve nada quando não falta nada, que é o caso normal: a comparação é
+ * feita sobre os papéis que a consulta já trouxe, sem ida extra ao banco.
+ * `skipDuplicates` cobre duas abas abrindo a tela ao mesmo tempo.
+ */
+const ensureSystemRoles = async (
+  accountId: Id,
+  existentes: readonly PrismaRole[],
+): Promise<readonly PrismaRole[]> => {
+  const conhecidos = new Set(existentes.map((role) => role.slug));
+  const faltando = SYSTEM_ROLES.filter((role) => !conhecidos.has(role.slug));
+  if (faltando.length === 0) return existentes;
+
+  await prisma.role.createMany({
+    data: faltando.map((role) => ({
+      id: systemRoleId(accountId, role.slug),
+      accountId,
+      slug: role.slug,
+      name: role.name,
+      description: role.description,
+      permissions: asJson(role.permissions),
+      isSystem: true,
+    })),
+    skipDuplicates: true,
+  });
+
+  return prisma.role.findMany({ where: { accountId } });
 };
 
 export class PrismaSettingsRepository implements SettingsRepository {
@@ -113,6 +152,8 @@ export class PrismaSettingsRepository implements SettingsRepository {
       }),
     ]);
 
+    const papeis = await ensureSystemRoles(accountId, roles);
+
     return {
       automations: automations.map(automationRow),
       connections: connections.map(connectionRow),
@@ -127,7 +168,7 @@ export class PrismaSettingsRepository implements SettingsRepository {
             .map((link) => link.team.name),
         ),
       ),
-      roles: roles.map((row): Role => ({
+      roles: papeis.map((row): Role => ({
         id: row.id,
         accountId: row.accountId,
         slug: row.slug,

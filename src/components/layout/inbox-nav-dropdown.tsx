@@ -7,7 +7,6 @@ import {
   ChevronRight,
   Globe,
   Inbox,
-  Layers,
   Mail,
   MessageSquare,
   Settings,
@@ -174,40 +173,16 @@ export function InboxNavDropdown({
               </span>
             </div>
 
-            {/* Opção: Todas as Conversas */}
-            <div className="pt-2">
-              <Link
-                href="/conversas"
-                onClick={() => {
-                  setCurrentCaixa(null);
-                  setIsOpen(false);
-                }}
-                className={cn(
-                  'flex items-center justify-between gap-2.5 rounded-xl px-2.5 py-2 text-xs transition-all',
-                  active && !currentCaixa
-                    ? 'bg-brand/10 text-brand font-semibold border border-brand/20'
-                    : 'text-ink hover:bg-surface-2',
-                )}
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <span className="flex size-6 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand">
-                    <Layers className="size-3.5" />
-                  </span>
-                  <div className="truncate">
-                    <span className="block font-medium truncate">Todas as caixas</span>
-                    <span className="block text-[10px] text-dim truncate">
-                      Ver mensagens unificadas
-                    </span>
-                  </div>
-                </div>
+            {/*
+              O atalho "Todas as caixas" saiu daqui.
 
-                {totalUnreadCount > 0 && (
-                  <span className="flex min-w-4 h-4 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-bold text-white">
-                    {totalUnreadCount}
-                  </span>
-                )}
-              </Link>
-            </div>
+              Ele levava a `/conversas` sem caixa, e o resultado era uma lista
+              com os cinco números da conta embaralhados: uma cobrança ao lado
+              de um agendamento, sem nada dizendo de qual número cada conversa
+              veio. A caixa passou a ser o recorte da tela, e "todas as
+              conversas" agora significa todas as **daquela** caixa — a escolha
+              vive na coluna de canais, ao lado da lista.
+            */}
 
             {/* Separador de Seção */}
             <div className="my-1.5 border-t border-line-soft px-2 pt-1.5">

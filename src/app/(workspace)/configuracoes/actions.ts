@@ -13,7 +13,9 @@ import { TONES } from '@/core/domain/label';
 import type { AssignmentMethod, ChannelConnection } from '@/core/domain/settings';
 import { can } from '@/core/domain/user';
 import { WEEKDAYS } from '@/core/domain/business-hours';
-import { createInvite } from '@/infrastructure/auth/invites';
+import { randomUUID } from 'node:crypto';
+import { hashPassword, passwordProblem } from '@/infrastructure/auth/password';
+import { prisma } from '@/infrastructure/db/prisma';
 import { container } from '@/infrastructure/container';
 import type { InboxDeletionImpact } from '@/core/ports/settings-repository';
 import { PrismaSettingsRepository } from '@/infrastructure/repositories/prisma/settings-repository';
@@ -658,81 +660,292 @@ export async function deleteTeamAction(input: unknown): Promise<ActionResult> {
 }
 
 /* ==========================================================================
-   Convites — como uma empresa ganha gente além de quem criou a conta.
+   Colaboradores — como uma empresa ganha gente além de quem criou a conta.
+
+   Era por convite: o gestor gerava um link, mandava por fora e esperava a
+   pessoa aceitar, escolher a própria senha e aparecer na lista. Três passos
+   fora do controle de quem contratou, e nenhum jeito de recuperar o acesso
+   depois — se o colaborador esquecesse a senha, o gestor não podia fazer nada.
+
+   Agora o gestor cria a conta: nome, e-mail, senha e papel. Entrega as
+   credenciais como entrega um crachá, e troca as duas quando precisar. É o
+   modelo de qualquer sistema interno de empresa, e é o que se espera de quem
+   responde pelo acesso da própria equipe.
    ========================================================================== */
 
-const inviteSchema = z.object({
+const collaboratorBaseSchema = {
+  name: z.string().trim().min(2, 'O nome precisa de pelo menos 2 caracteres.').max(100),
   email: z.string().trim().toLowerCase().email('Informe um e-mail válido.'),
   roleSlug: z.string().min(1).max(64),
   teamIds: z.array(z.string().min(1).max(64)).max(50).optional(),
+};
+
+const createCollaboratorSchema = z.object({
+  ...collaboratorBaseSchema,
+  password: z.string().min(1, 'Defina uma senha para o colaborador.').max(200),
 });
 
-export interface InviteResult extends ActionResult {
-  /**
-   * Link de aceite.
-   *
-   * Devolvido **uma única vez**: o banco guarda só o hash do token. Se a pessoa
-   * perder o link, o caminho é emitir outro — não há como recuperar este.
-   */
-  readonly link?: string;
-  readonly expiresAt?: string;
-}
+/**
+ * Confere papel e equipes contra a conta de quem está pedindo.
+ *
+ * Os dois vêm do formulário, e um `<select>` é uma sugestão do servidor que o
+ * cliente pode ignorar. Sem esta conferência, um id de papel de outra empresa
+ * entraria no vínculo — e as permissões de lá passariam a valer aqui.
+ */
+const validarPapelEEquipes = async (
+  accountId: string,
+  roleSlug: string,
+  teamIds: readonly string[] | undefined,
+): Promise<{ readonly erro?: string; readonly teamIds: readonly string[] }> => {
+  const settings = await container.settings.get(accountId);
+  if (!settings.roles.some((role) => role.slug === roleSlug)) {
+    return { erro: 'Papel não encontrado nesta conta.', teamIds: [] };
+  }
+  return {
+    teamIds: (teamIds ?? []).filter((id) => settings.teams.some((team) => team.id === id)),
+  };
+};
 
 /**
- * Convida alguém para a conta.
+ * Cria a conta de acesso de um colaborador.
  *
- * Aqui é onde os dois eixos de acesso são decididos de uma vez: o **papel** diz
- * o que a pessoa pode fazer (`can`), e as **equipes** dizem quais caixas ela
- * alcança (`canSeeInbox`). São independentes — dois agentes com o mesmo papel
- * podem atender setores diferentes.
- *
- * Exige `equipe:gerenciar`, e não `configuracoes:escrever`: convidar gente é
- * poder de RH, e há quem edite horário de atendimento sem poder abrir a porta.
+ * Exige `equipe:gerenciar`, e não `configuracoes:escrever`: abrir a porta da
+ * empresa é poder de RH, e há quem edite horário de atendimento sem poder
+ * conceder acesso a conversas de clientes.
  */
-export async function inviteMemberAction(input: unknown): Promise<InviteResult> {
-  const parsed = inviteSchema.safeParse(input);
+export async function createCollaboratorAction(input: unknown): Promise<ActionResult> {
+  const parsed = createCollaboratorSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
+  }
+
+  const fraca = passwordProblem(parsed.data.password);
+  if (fraca) return { ok: false, error: fraca };
+
+  try {
+    const session = await container.session.getCurrentSession();
+    if (!can(session, 'equipe:gerenciar')) {
+      return { ok: false, error: 'Seu papel não permite criar acessos.' };
+    }
+
+    const { erro, teamIds } = await validarPapelEEquipes(
+      session.account.id,
+      parsed.data.roleSlug,
+      parsed.data.teamIds,
+    );
+    if (erro) return { ok: false, error: erro };
+
+    // O e-mail é a identidade global de login. Se já existe, esta pessoa já tem
+    // senha — e definir outra por aqui seria tomar a conta de alguém que pode
+    // pertencer a outra empresa.
+    const existente = await prisma.user.findUnique({
+      where: { email: parsed.data.email },
+      select: { id: true, memberships: { where: { accountId: session.account.id } } },
+    });
+    if (existente) {
+      return {
+        ok: false,
+        error:
+          existente.memberships.length > 0
+            ? 'Esta pessoa já faz parte da conta.'
+            : 'Já existe um acesso com este e-mail. Use outro endereço.',
+      };
+    }
+
+    const userId = `user-${randomUUID().slice(0, 12)}`;
+    const passwordHash = await hashPassword(parsed.data.password);
+
+    await prisma.$transaction(async (tx) => {
+      await tx.user.create({
+        data: {
+          id: userId,
+          name: parsed.data.name,
+          email: parsed.data.email,
+          passwordHash,
+          avatarTone: 'var(--color-brand)',
+        },
+      });
+      await tx.membership.create({
+        data: {
+          userId,
+          accountId: session.account.id,
+          roleSlug: parsed.data.roleSlug,
+          availability: 'disponivel',
+        },
+      });
+      if (teamIds.length > 0) {
+        await tx.teamMember.createMany({
+          data: teamIds.map((teamId) => ({ teamId, userId })),
+          skipDuplicates: true,
+        });
+      }
+    });
+
+    revalidatePath('/configuracoes');
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao criar o acesso do colaborador.');
+  }
+}
+
+const updateCollaboratorSchema = z.object({
+  ...collaboratorBaseSchema,
+  userId: z.string().min(1).max(64),
+  /** Vazio = manter a senha atual. Só troca quem digitou uma nova. */
+  password: z.string().max(200).optional(),
+});
+
+/**
+ * Altera nome, e-mail, senha, papel e equipes de um colaborador.
+ *
+ * Duas travas que não são detalhe:
+ *
+ *  - **A pessoa precisa ser desta conta.** Sem isso, um `userId` qualquer no
+ *    payload trocaria a senha de alguém de outra empresa.
+ *  - **A conta não pode ficar sem administrador.** Rebaixar o último é o
+ *    caminho mais curto para uma empresa trancada do lado de fora, sem ninguém
+ *    que possa desfazer — inclusive quando quem rebaixa é ele mesmo, por
+ *    engano.
+ */
+export async function updateCollaboratorAction(input: unknown): Promise<ActionResult> {
+  const parsed = updateCollaboratorSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
+  }
+
+  const novaSenha = parsed.data.password?.trim();
+  if (novaSenha) {
+    const fraca = passwordProblem(novaSenha);
+    if (fraca) return { ok: false, error: fraca };
   }
 
   try {
     const session = await container.session.getCurrentSession();
     if (!can(session, 'equipe:gerenciar')) {
-      return { ok: false, error: 'Seu papel não permite convidar pessoas.' };
+      return { ok: false, error: 'Seu papel não permite editar acessos.' };
     }
 
-    const settings = await container.settings.get(session.account.id);
+    const vinculo = await prisma.membership.findFirst({
+      where: { accountId: session.account.id, userId: parsed.data.userId },
+      select: { id: true, roleSlug: true },
+    });
+    if (!vinculo) return { ok: false, error: 'Colaborador não encontrado nesta conta.' };
 
-    // Papel e equipes vêm do formulário: conferir que pertencem a esta conta é
-    // o que impede alguém de forjar um convite com papel de outra empresa.
-    if (!settings.roles.some((role) => role.slug === parsed.data.roleSlug)) {
-      return { ok: false, error: 'Papel não encontrado nesta conta.' };
-    }
-    const teamIds = (parsed.data.teamIds ?? []).filter((id) =>
-      settings.teams.some((team) => team.id === id),
+    const { erro, teamIds } = await validarPapelEEquipes(
+      session.account.id,
+      parsed.data.roleSlug,
+      parsed.data.teamIds,
     );
+    if (erro) return { ok: false, error: erro };
 
-    // Já é da casa? O convite não teria efeito, e a mensagem honesta evita o
-    // gestor ficar esperando um aceite que nunca vem.
-    if (settings.members.some((member) => member.email.toLowerCase() === parsed.data.email)) {
-      return { ok: false, error: 'Esta pessoa já faz parte da conta.' };
+    if (vinculo.roleSlug === 'administrador' && parsed.data.roleSlug !== 'administrador') {
+      const admins = await prisma.membership.count({
+        where: { accountId: session.account.id, roleSlug: 'administrador' },
+      });
+      if (admins <= 1) {
+        return {
+          ok: false,
+          error: 'Esta é a única pessoa com acesso de administrador. Promova outra antes.',
+        };
+      }
     }
 
-    const invite = await createInvite({
-      accountId: session.account.id,
-      email: parsed.data.email,
-      roleSlug: parsed.data.roleSlug,
-      teamIds,
-      invitedByUserId: session.user.id,
+    const emailEmUso = await prisma.user.findFirst({
+      where: { email: parsed.data.email, id: { not: parsed.data.userId } },
+      select: { id: true },
+    });
+    if (emailEmUso) return { ok: false, error: 'Já existe um acesso com este e-mail.' };
+
+    const passwordHash = novaSenha ? await hashPassword(novaSenha) : undefined;
+
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: parsed.data.userId },
+        data: {
+          name: parsed.data.name,
+          email: parsed.data.email,
+          ...(passwordHash ? { passwordHash } : {}),
+        },
+      });
+      await tx.membership.update({
+        where: { id: vinculo.id },
+        data: { roleSlug: parsed.data.roleSlug },
+      });
+      // As equipes são substituídas, não somadas: a tela mostra o conjunto
+      // final, e tratar a lista como acréscimo faria "desmarcar" não desmarcar.
+      await tx.teamMember.deleteMany({
+        where: { userId: parsed.data.userId, team: { accountId: session.account.id } },
+      });
+      if (teamIds.length > 0) {
+        await tx.teamMember.createMany({
+          data: teamIds.map((teamId) => ({ teamId, userId: parsed.data.userId })),
+          skipDuplicates: true,
+        });
+      }
     });
 
-    return {
-      ok: true,
-      link: `/convite/${invite.token}`,
-      expiresAt: invite.expiresAt.toISOString(),
-    };
+    // A troca de senha derruba as sessões abertas daquela pessoa. É o que se
+    // espera de "troquei a senha dele": se o acesso está sendo revogado ou
+    // recuperado, deixar a sessão antiga viva anularia o motivo da troca.
+    if (passwordHash) {
+      await prisma.authSession.deleteMany({ where: { userId: parsed.data.userId } });
+    }
+
+    revalidatePath('/configuracoes');
+    return { ok: true };
   } catch (error) {
-    return failureOf(error, 'Erro ao gerar o convite.');
+    return failureOf(error, 'Erro ao salvar o colaborador.');
+  }
+}
+
+const removeCollaboratorSchema = z.object({ userId: z.string().min(1).max(64) });
+
+/**
+ * Tira o colaborador desta conta.
+ *
+ * Remove o **vínculo**, não a pessoa: o mesmo e-mail pode atender noutra
+ * empresa, e apagar o usuário levaria junto o acesso de lá.
+ */
+export async function removeCollaboratorAction(input: unknown): Promise<ActionResult> {
+  const parsed = removeCollaboratorSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Colaborador inválido.' };
+
+  try {
+    const session = await container.session.getCurrentSession();
+    if (!can(session, 'equipe:gerenciar')) {
+      return { ok: false, error: 'Seu papel não permite remover acessos.' };
+    }
+    if (parsed.data.userId === session.user.id) {
+      return { ok: false, error: 'Você não pode remover o próprio acesso.' };
+    }
+
+    const vinculo = await prisma.membership.findFirst({
+      where: { accountId: session.account.id, userId: parsed.data.userId },
+      select: { id: true, roleSlug: true },
+    });
+    if (!vinculo) return { ok: false, error: 'Colaborador não encontrado nesta conta.' };
+
+    if (vinculo.roleSlug === 'administrador') {
+      const admins = await prisma.membership.count({
+        where: { accountId: session.account.id, roleSlug: 'administrador' },
+      });
+      if (admins <= 1) {
+        return { ok: false, error: 'A conta ficaria sem administrador.' };
+      }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.teamMember.deleteMany({
+        where: { userId: parsed.data.userId, team: { accountId: session.account.id } },
+      });
+      await tx.membership.delete({ where: { id: vinculo.id } });
+      await tx.authSession.deleteMany({ where: { userId: parsed.data.userId } });
+    });
+
+    revalidatePath('/configuracoes');
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao remover o colaborador.');
   }
 }
 

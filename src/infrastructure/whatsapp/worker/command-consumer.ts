@@ -44,6 +44,17 @@ const CLEANUP_EVERY_N_SWEEPS = 240;
  * coisa: dois envios para o mesmo contato devem sair na ordem em que foram
  * escritos, e um `disconnect` depois de um `connect` deve encontrar a sessão de
  * pé. Entre raias não há ordem a preservar.
+ *
+ * **A raia é por caixa, não global.** Três correntes para o worker inteiro
+ * pareciam suficientes quando havia uma caixa; com duas, elas viraram o
+ * gargalo. Um `connect` da caixa B esperava o `connect` da caixa A terminar
+ * de buscar a versão do Baileys na rede e de carregar as credenciais do
+ * Postgres — era essa a demora a mais da segunda conexão. Pior: a corrente
+ * era global ao **processo**, então um envio lento da conta X atrasava o
+ * envio da conta Y, que não tem nada a ver com isso.
+ *
+ * Duas caixas são dois números de WhatsApp, dois sockets e duas sessões
+ * independentes. Nada no domínio pede que uma espere a outra.
  */
 const LANES = {
   envio: new Set(['send', 'send_media']),
@@ -76,12 +87,16 @@ export class CommandConsumer {
   private unsubscribe: (() => void) | null = null;
   private sweepCount = 0;
 
-  /** Uma corrente por raia. Serializa o que está dentro, libera o que está fora. */
-  private readonly lanes: Record<LaneName, Promise<void>> = {
-    envio: Promise.resolve(),
-    sessao: Promise.resolve(),
-    leitura: Promise.resolve(),
-  };
+  /**
+   * Uma corrente por caixa **e** raia. Serializa o que está dentro, libera o
+   * que está fora.
+   *
+   * O mapa é podado quando a corrente termina: sem isso ele guardaria uma
+   * entrada por caixa que já passou por aqui, para sempre. A comparação
+   * `=== corrente` antes de apagar é o que impede remover uma corrente que
+   * outro comando já emendou no intervalo.
+   */
+  private readonly lanes = new Map<string, Promise<void>>();
 
   /**
    * Comandos já entregues a uma raia.
@@ -143,13 +158,16 @@ export class CommandConsumer {
       if (this.inFlight.has(cmd.id)) continue;
       this.inFlight.add(cmd.id);
 
-      const lane = laneOf(cmd.kind);
-      this.lanes[lane] = this.lanes[lane]
+      const chave = `${cmd.inboxId}:${laneOf(cmd.kind)}`;
+      const anterior = this.lanes.get(chave) ?? Promise.resolve();
+      const corrente = anterior
         .then(() => this.runCommand(cmd))
         .catch(() => undefined)
         .finally(() => {
           this.inFlight.delete(cmd.id);
+          if (this.lanes.get(chave) === corrente) this.lanes.delete(chave);
         });
+      this.lanes.set(chave, corrente);
     }
   }
 

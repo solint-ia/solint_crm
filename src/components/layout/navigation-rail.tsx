@@ -11,7 +11,6 @@ import {
   LayoutDashboard,
   Megaphone,
   Menu,
-  QrCode,
   Settings,
   Users,
   X,
@@ -20,8 +19,6 @@ import type { NavIcon, NavItem } from '@/config/navigation';
 import type { AvailabilityStatus } from '@/core/domain/user';
 import { Avatar } from '@/components/ui/avatar';
 import { LogoutButton } from '@/features/auth/components/logout-button';
-import { WhatsAppModal } from '@/features/whatsapp/components/whatsapp-modal';
-import { useWhatsAppConnection } from '@/features/whatsapp/hooks/use-whatsapp-connection';
 import { cn } from '@/lib/cn';
 import { ThemeToggle } from './theme-toggle';
 import { InboxNavDropdown, type AccessibleInbox } from './inbox-nav-dropdown';
@@ -58,10 +55,8 @@ export function NavigationRail({
   roleName,
 }: NavigationRailProps) {
   const pathname = usePathname();
-  const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [mobileInboxesOpen, setMobileInboxesOpen] = useState(false);
-  const { isConnected: waConnected, statusData } = useWhatsAppConnection();
 
   useEffect(() => setDrawerOpen(false), [pathname]);
 
@@ -79,23 +74,8 @@ export function NavigationRail({
     pathname.startsWith(`${item.href}/`) ||
     (item.matches?.some((route) => pathname.startsWith(route)) ?? false);
 
-  const whatsappTitle = waConnected
-    ? `WhatsApp conectado${statusData.phone ? ` · ${statusData.phone}` : ''}`
-    : 'Conectar WhatsApp (QR Code)';
-
-  const whatsappDot = (
-    <span
-      className={cn(
-        'absolute top-1.5 right-1.5 size-2 rounded-full border border-surface',
-        waConnected ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50 animate-pulse' : 'bg-amber-500',
-      )}
-    />
-  );
-
   return (
     <>
-      <WhatsAppModal open={isWhatsAppModalOpen} onClose={() => setIsWhatsAppModalOpen(false)} />
-
       {/* ---------- Desktop: rail vertical ---------- */}
       <nav
         aria-label="Navegação principal"
@@ -150,19 +130,18 @@ export function NavigationRail({
           })}
         </div>
 
-        {/* Rodapé da Barra Lateral */}
-        <div className="flex flex-col items-center gap-2.5">
-          <button
-            type="button"
-            onClick={() => setIsWhatsAppModalOpen(true)}
-            title={whatsappTitle}
-            aria-label="Status do WhatsApp"
-            className="group relative flex size-9 items-center justify-center rounded-xl text-muted transition-all hover:bg-surface-2 hover:text-ink border border-transparent hover:border-line-soft"
-          >
-            <QrCode className="size-[18px] transition-transform group-hover:scale-105" />
-            {whatsappDot}
-          </button>
+        {/*
+          Rodapé da Barra Lateral.
 
+          O botão de QR que ficava aqui saiu. Ele conectava "o WhatsApp da
+          conta" — uma ideia que só existia quando havia um número por conta.
+          Com várias caixas ele precisava escolher uma sozinho, e escolhia pela
+          ordem do id: numa conta com Principal, Cobrança e Oral Plus, o atalho
+          apontava para alguma delas sem dizer qual, e reconectar a caixa certa
+          era coincidência. Parear agora é uma ação da caixa, onde a caixa tem
+          nome: Configurações › Caixas de entrada.
+        */}
+        <div className="flex flex-col items-center gap-2.5">
           <ThemeToggle />
           <LogoutButton />
           <Link
@@ -200,16 +179,6 @@ export function NavigationRail({
         </Link>
 
         <div className="ml-auto flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => setIsWhatsAppModalOpen(true)}
-            title={whatsappTitle}
-            aria-label="Status do WhatsApp"
-            className="relative flex size-9 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-ink"
-          >
-            <QrCode className="size-[18px]" />
-            {whatsappDot}
-          </button>
           <ThemeToggle />
           <Link href="/perfil" aria-label={`Perfil de ${userName}`} className="ml-0.5">
             <Avatar name={userName} tone={userTone} size="sm" availability={availability} />
@@ -288,19 +257,6 @@ export function NavigationRail({
 
                       {mobileInboxesOpen && (
                         <ul className="ml-5 mt-1 flex flex-col gap-1 border-l-2 border-line pl-3 py-1 animate-in fade-in duration-150">
-                          <li>
-                            <Link
-                              href="/conversas"
-                              className="flex items-center justify-between rounded-lg px-2.5 py-1.5 text-xs text-muted hover:bg-surface-2 hover:text-ink"
-                            >
-                              <span>Todas as caixas</span>
-                              {unreadCount > 0 && (
-                                <span className="rounded-full bg-blue-600 px-1.5 text-[10px] font-bold text-white">
-                                  {unreadCount}
-                                </span>
-                              )}
-                            </Link>
-                          </li>
                           {accessibleInboxes.map((inbox) => (
                             <li key={inbox.id}>
                               <Link

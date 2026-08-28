@@ -684,9 +684,34 @@ type MediaKind = (typeof MEDIA_KINDS)[number];
  * em vez de ser renderizada. `document` aceita o resto por eliminação.
  */
 const ALLOWED_MIME: Readonly<Record<MediaKind, readonly string[]>> = {
-  image: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
-  video: ['video/mp4', 'video/webm', 'video/quicktime', 'video/3gpp'],
-  audio: ['audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/aac', 'audio/webm', 'audio/wav'],
+  // `heic`/`heif` são o padrão da câmera do iPhone: sem eles, mandar uma foto
+  // do celular — o caso mais comum de todos — era recusado.
+  image: [
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/gif',
+    'image/heic',
+    'image/heif',
+    'image/bmp',
+    'image/tiff',
+  ],
+  video: ['video/mp4', 'video/webm', 'video/quicktime', 'video/3gpp', 'video/x-matroska'],
+  // `audio/x-m4a` e `audio/opus` aparecem conforme o navegador e o sistema:
+  // o mesmo arquivo `.m4a` chega como `audio/mp4` no Chrome e `audio/x-m4a` no
+  // Safari, e recusar um dos dois é recusar metade dos usuários.
+  audio: [
+    'audio/ogg',
+    'audio/opus',
+    'audio/mpeg',
+    'audio/mp3',
+    'audio/mp4',
+    'audio/x-m4a',
+    'audio/aac',
+    'audio/webm',
+    'audio/wav',
+    'audio/x-wav',
+  ],
   document: [
     'application/pdf',
     'application/zip',
@@ -698,7 +723,24 @@ const ALLOWED_MIME: Readonly<Record<MediaKind, readonly string[]>> = {
     'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     'text/plain',
     'text/csv',
+    'application/rtf',
+    'application/x-rar-compressed',
+    'application/vnd.rar',
+    'application/x-7z-compressed',
+    // Alguns navegadores não reconhecem a extensão e mandam o arquivo sem tipo;
+    // `baseMimeOf` traduz isso para `application/octet-stream`. Recusar aí seria
+    // recusar o arquivo por causa do palpite do navegador, não do conteúdo — e
+    // documento é justamente a categoria que aceita qualquer coisa.
+    'application/octet-stream',
   ],
+};
+
+/** Nome da categoria em português, para a mensagem de erro não falar em código. */
+const KIND_LABEL: Readonly<Record<MediaKind, string>> = {
+  image: 'imagem',
+  video: 'vídeo',
+  audio: 'áudio',
+  document: 'documento',
 };
 
 /** O parâmetro `codecs=` faz parte do tipo, mas não da comparação. */
@@ -735,7 +777,13 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
     return { ok: false, error: 'Conversa inválida.' };
   }
   if (!MEDIA_KINDS.includes(kindRaw as MediaKind)) {
-    return { ok: false, error: 'Tipo de anexo inválido.' };
+    // A mensagem nomeia o que chegou porque o valor vem do formulário: quando
+    // ela apareceu em produção para **todo** anexo, o motivo era o campo vindo
+    // vazio, e um "tipo inválido" sem o valor não deixava isso visível.
+    return {
+      ok: false,
+      error: `Tipo de anexo inválido${kindRaw ? `: "${kindRaw}"` : ' (categoria não informada)'}.`,
+    };
   }
   if (!(file instanceof File) || file.size === 0) {
     return { ok: false, error: 'Nenhum arquivo recebido.' };
@@ -750,7 +798,10 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
   const kind = kindRaw as MediaKind;
   const mimeType = baseMimeOf(file.type) || 'application/octet-stream';
   if (!ALLOWED_MIME[kind].includes(mimeType)) {
-    return { ok: false, error: `Arquivos do tipo ${mimeType} não são aceitos como ${kind}.` };
+    return {
+      ok: false,
+      error: `Arquivos ${mimeType} não são aceitos como ${KIND_LABEL[kind]}.`,
+    };
   }
 
   const session = await container.session.getCurrentSession();

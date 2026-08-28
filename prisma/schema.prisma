@@ -861,6 +861,13 @@ model MessageTemplate {
   @@index([accountId])
 }
 
+/// Tabela sem uso desde que o acesso passou a ser criado pelo gestor.
+///
+/// O convite por link foi substituído: o gestor cria a conta do colaborador
+/// com e-mail e senha, e pode trocar as duas depois (ver
+/// `createCollaboratorAction`). O modelo continua aqui porque derrubá-lo é uma
+/// migração destrutiva sem nada a ganhar — a tabela está vazia e não custa
+/// nada. Se um fluxo de convite voltar, ele encontra o desenho pronto.
 model Invite {
   id              String    @id @default(cuid())
   accountId       String

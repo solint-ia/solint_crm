@@ -56,7 +56,15 @@ export async function InboxData({
       // propor uma ação que o servidor recusa.
       inboxes={settings.connections
         .filter((connection) => canSeeInbox(session, connection.id))
-        .map((connection) => ({ id: connection.id, name: connection.name }))}
+        .map((connection) => ({
+          id: connection.id,
+          name: connection.name,
+          // A coluna de canais desenha o ponto do canal e avisa quando o número
+          // está fora do ar — os dois vêm da caixa, não da conversa.
+          channel: connection.channel,
+          status: connection.status,
+        }))}
+      canManageInboxes={can(session, 'configuracoes:escrever')}
       moveInbox={moveConversationToInboxAction}
       catalog={{ members: settings.members, labels: settings.labels, templates }}
       cannedResponses={settings.cannedResponses}

@@ -2,7 +2,6 @@ import {
   Browsers,
   DisconnectReason,
   downloadMediaMessage,
-  fetchLatestBaileysVersion,
   jidNormalizedUser,
   makeCacheableSignalKeyStore,
   makeWASocket,
@@ -42,6 +41,7 @@ import {
 } from '../wa-message-content';
 import { mediaStore, mediaUrlFor } from '../wa-media-store';
 import { baileysLogLevel, waLog } from '../wa-log';
+import { waVersion } from '../wa-version';
 
 import { waEventBus, type WhatsAppStatusPayload } from '../whatsapp-events';
 import {
@@ -90,15 +90,6 @@ const MAX_QR_CYCLES = 5;
 const createLimiter = (max: number) => {
   let running = 0;
   const waiting: (() => void)[] = [];
-  const idleWaiters: (() => void)[] = [];
-
-  const release = () => {
-    running -= 1;
-    waiting.shift()?.();
-    if (running === 0 && waiting.length === 0) {
-      for (const resolve of idleWaiters.splice(0)) resolve();
-    }
-  };
 
   return {
     run: async <T>(task: () => Promise<T>): Promise<T> => {
@@ -109,25 +100,33 @@ const createLimiter = (max: number) => {
       try {
         return await task();
       } finally {
-        release();
+        running -= 1;
+        waiting.shift()?.();
       }
     },
-
-    /**
-     * Resolve quando nada mais estiver em andamento.
-     *
-     * Necessário para fechar a drenagem sem mentir: o aviso de fim do WhatsApp
-     * chega quando *ele* terminou de entregar, não quando *nós* terminamos de
-     * gravar. Anunciar nesse instante publicaria um estado em que as últimas
-     * mensagens ainda não estão no banco, e quem recarregasse a conversa a
-     * partir do evento a veria incompleta.
-     */
-    idle: (): Promise<void> =>
-      running === 0 && waiting.length === 0
-        ? Promise.resolve()
-        : new Promise<void>((resolve) => idleWaiters.push(resolve)),
   };
 };
+
+/**
+ * Teto de gravações simultâneas — **do worker, não de cada sessão**.
+ *
+ * O emissor do Baileys não aguarda um listener assíncrono, então uma fila
+ * represada dispara nossos handlers todos de uma vez, sem limite. Cada um faz
+ * várias idas ao Postgres, e o pool do worker tem dez conexões.
+ *
+ * O teto era por sessão, e essa era a conta errada: o pool é um só. Com uma
+ * caixa, cinco gravações e dez conexões davam folga; com três caixas o mesmo
+ * "cinco" virava quinze, o pool saturava e a fila de espera atingia justamente
+ * as leituras de chave de que o Baileys precisa para decifrar a mensagem
+ * seguinte — o sintoma aparecia como lentidão de mensagem, não de banco.
+ *
+ * `DB_POOL_SIZE` manda quando existe, porque é ele que define o denominador
+ * desta conta; a folga que sobra é para as consultas do próprio Baileys e para
+ * a fila de comandos, que dividem o mesmo pool.
+ */
+const limiteDeGravacao = createLimiter(
+  Math.max(2, Math.floor((Number(process.env.DB_POOL_SIZE) || 10) / 2)),
+);
 
 export class WhatsAppSession {
   readonly inboxId: string;
@@ -197,16 +196,14 @@ export class WhatsAppSession {
   } = { active: false, closing: false, count: 0, startedAt: 0, touched: new Set(), timer: null };
 
   /**
-   * Teto de mensagens processadas ao mesmo tempo.
+   * Quantas mensagens **desta** sessão ainda estão sendo gravadas.
    *
-   * O emissor do Baileys não aguarda um listener assíncrono, então uma fila
-   * represada dispara nossos handlers todos de uma vez, sem limite. Cada um faz
-   * várias idas ao Postgres e o pool tem dez conexões: sem teto, eles disputam
-   * entre si e ainda atrasam as leituras de chave de que o próprio Baileys
-   * precisa para decifrar a mensagem seguinte. Limitar aqui deixa o conjunto
-   * mais rápido, não mais lento.
+   * O teto de concorrência é do worker inteiro (`limiteDeGravacao`), mas a
+   * drenagem precisa saber quando *esta* caixa terminou — esperar as outras
+   * atrasaria o anúncio de uma caixa calma por causa de uma movimentada.
    */
-  private readonly limiter = createLimiter(5);
+  private emVoo = 0;
+  private readonly ociosos: (() => void)[] = [];
 
   constructor(inboxId: string, accountId: string) {
     this.inboxId = inboxId;
@@ -304,9 +301,7 @@ export class WhatsAppSession {
       // QR — ver a nota em `isPairedCreds`. Era por isso que uma sessão pareada
       // que caía ia parar no ramo do QR em vez de reconectar.
       this.isPaired = isPairedCreds(state.creds);
-      const { version } = await fetchLatestBaileysVersion().catch(() => ({
-        version: [2, 3000, 1043857760] as [number, number, number],
-      }));
+      const version = await waVersion();
 
       this.socket = makeWASocket({
         version,
@@ -571,7 +566,8 @@ export class WhatsAppSession {
         // mensagens seguintes por causa de uma. Cada mensagem responde só por
         // si.
         for (const msg of messages) {
-          await this.limiter.run(async () => {
+          await limiteDeGravacao.run(async () => {
+            this.emVoo += 1;
             try {
               await this.handleIncomingMessage(msg);
             } catch (error) {
@@ -580,6 +576,9 @@ export class WhatsAppSession {
                   `${msg.key.id ?? '(sem id)'} de ${msg.key.remoteJid ?? '(sem jid)'}:`,
                 error,
               );
+            } finally {
+              this.emVoo -= 1;
+              if (this.emVoo === 0) for (const pronto of this.ociosos.splice(0)) pronto();
             }
           });
         }
@@ -644,7 +643,7 @@ export class WhatsAppSession {
 
     // As gravações ainda em voo precisam terminar antes do anúncio — senão o
     // evento descreveria uma conversa que ainda não está inteira no banco.
-    await this.limiter.idle();
+    await this.aguardarGravacoes();
 
     const { count, startedAt, touched } = this.drain;
     if (this.drain.timer) clearTimeout(this.drain.timer);
@@ -676,6 +675,13 @@ export class WhatsAppSession {
     }
   }
 
+  /** Resolve quando as mensagens desta caixa terminarem de ser gravadas. */
+  private aguardarGravacoes(): Promise<void> {
+    return this.emVoo === 0
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => this.ociosos.push(resolve));
+  }
+
   private async handleIncomingMessage(msg: WAMessage): Promise<void> {
     const socket = this.socket;
     if (!socket || !msg.message || !isSupportedChatJid(msg.key.remoteJid)) return;
@@ -689,7 +695,10 @@ export class WhatsAppSession {
     const decoded = decodeWaMessage(msg);
     if (!decoded) return;
 
-    const identity = await resolveChatIdentity(socket, msg.key, this.accountId);
+    const identity = await resolveChatIdentity(socket, msg.key, {
+      accountId: this.accountId,
+      inboxId: this.inboxId,
+    });
     if (!identity) return;
 
     // Os ids que vieram da identidade sao sugestoes; os que valem sao os que

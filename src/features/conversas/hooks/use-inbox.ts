@@ -190,15 +190,34 @@ export function useInbox({
   });
 
 
+  /**
+   * As conversas da caixa selecionada — o universo de tudo nesta tela.
+   *
+   * A caixa deixou de ser mais um filtro entre outros e virou o recorte de
+   * onde a pessoa está. "Todas" passou a significar "todas **desta** caixa", e
+   * é daqui que as contagens das abas saem: antes elas somavam a conta inteira,
+   * então a aba dizia "Todas (174)" e a lista mostrava três — os outros 171
+   * eram de outras caixas, e nada na tela explicava a diferença.
+   *
+   * Sem caixa escolhida (conta com uma só, ou enquanto a primeira não foi
+   * selecionada) o universo é tudo o que a pessoa alcança, como sempre foi.
+   */
+  const naCaixa = useMemo(
+    () =>
+      filters.inboxId
+        ? conversations.filter((conversation) => conversation.inboxId === filters.inboxId)
+        : conversations,
+    [conversations, filters.inboxId],
+  );
+
   const visibleConversations = useMemo(() => {
     const term = search.trim().toLowerCase();
 
-    const filtered = conversations.filter((conversation) => {
+    const filtered = naCaixa.filter((conversation) => {
       if (!matchesScope(conversation, scope, currentUserId)) return false;
       if (statusTab !== 'todas' && conversation.status !== statusTab) return false;
 
       // Filtros combinam por E: cada um estreita o que o anterior deixou passar.
-      if (filters.inboxId && conversation.inboxId !== filters.inboxId) return false;
       if (filters.channel && conversation.channel !== filters.channel) return false;
       if (filters.priority && conversation.priority !== filters.priority) return false;
       if (filters.labelId && !conversation.labels.some((l) => l.id === filters.labelId)) {
@@ -225,7 +244,7 @@ export function useInbox({
       return [...filtered].sort((a, b) => activityTimeOf(a) - activityTimeOf(b));
     }
     return [...filtered].sort((a, b) => activityTimeOf(b) - activityTimeOf(a));
-  }, [conversations, scope, statusTab, search, sort, filters, currentUserId]);
+  }, [naCaixa, scope, statusTab, search, sort, filters, currentUserId]);
 
   const selected = useMemo(
     () =>
@@ -236,13 +255,29 @@ export function useInbox({
 
   const counts = useMemo(
     () => ({
-      minhas: conversations.filter((c) => matchesScope(c, 'minhas', currentUserId)).length,
-      nao_atribuidas: conversations.filter((c) => matchesScope(c, 'nao_atribuidas', currentUserId))
-        .length,
-      todas: conversations.length,
+      minhas: naCaixa.filter((c) => matchesScope(c, 'minhas', currentUserId)).length,
+      nao_atribuidas: naCaixa.filter((c) => matchesScope(c, 'nao_atribuidas', currentUserId)).length,
+      todas: naCaixa.length,
+      naoLidas: naCaixa.filter((c) => c.unreadCount > 0).length,
     }),
-    [conversations, currentUserId],
+    [naCaixa, currentUserId],
   );
+
+  /**
+   * Não lidas por caixa, para os selos da lista de canais.
+   *
+   * Sai de `conversations` e não de `naCaixa` de propósito: o selo de uma caixa
+   * precisa continuar visível enquanto a pessoa está noutra — é justamente o
+   * aviso de que há algo esperando do outro lado.
+   */
+  const unreadByInbox = useMemo(() => {
+    const mapa = new Map<string, number>();
+    for (const conversation of conversations) {
+      if (conversation.unreadCount === 0) continue;
+      mapa.set(conversation.inboxId, (mapa.get(conversation.inboxId) ?? 0) + 1);
+    }
+    return mapa;
+  }, [conversations]);
 
   // Abrir a conversa confirma a leitura — inclusive no celular pareado.
   const readSignalled = useRef(new Set<string>());
@@ -499,6 +534,7 @@ export function useInbox({
     conversations: visibleConversations,
     selected,
     counts,
+    unreadByInbox,
     scope,
     statusTab,
     sort,

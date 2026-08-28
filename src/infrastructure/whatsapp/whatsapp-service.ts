@@ -5,7 +5,6 @@ import makeWASocket, {
   DisconnectReason,
   makeCacheableSignalKeyStore,
   downloadMediaMessage,
-  fetchLatestBaileysVersion,
   Browsers,
   isJidGroup,
   jidNormalizedUser,
@@ -48,6 +47,7 @@ import {
   type MediaRef,
 } from './wa-message-content';
 import { mediaStore, mediaUrlFor } from './wa-media-store';
+import { waVersion } from './wa-version';
 
 import {
   AVATAR_TTL_MS,
@@ -302,9 +302,7 @@ export class WhatsAppService {
       // devolve credenciais novas quando não há material decifrável no banco.
       const { state, saveCreds } = await initPostgresAuthState(inboxId, { forceFresh });
 
-      const { version } = await fetchLatestBaileysVersion().catch(() => ({
-        version: [2, 3000, 1043857760] as [number, number, number],
-      }));
+      const version = await waVersion();
 
       const sock = makeWASocket({
         version,
@@ -573,7 +571,7 @@ export class WhatsAppService {
     const decoded = decodeWaMessage(msg);
     if (!decoded) return;
 
-    const identity = await resolveChatIdentity(socket, msg.key, accountId);
+    const identity = await resolveChatIdentity(socket, msg.key, { accountId, inboxId });
     if (!identity) return;
 
     // Ver `resolveStoredIds`: os ids da identidade valem para chat novo; os de

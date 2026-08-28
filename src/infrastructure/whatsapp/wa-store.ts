@@ -81,12 +81,41 @@ export const resolveStoredIds = async (
       })
     : null;
 
+  /**
+   * Desempate pelos ids antigos — **dentro desta caixa**.
+   *
+   * Existem três formatos vivos: `cv-wa-<numero>` (original),
+   * `cv-wa-<conta>-<numero>` e o atual `cv-wa-<caixa>-<numero>`. Os dois
+   * primeiros não dizem de qual caixa a conversa é, e era exatamente por aqui
+   * que a mensagem vazava: uma caixa procurava por id, encontrava a conversa
+   * que **outra** caixa da mesma conta tinha criado e gravava a mensagem lá.
+   *
+   * Filtrar por `inboxId` fecha isso. Uma conversa antiga que pertence a outra
+   * caixa deixa de ser encontrada aqui, e a mensagem abre a conversa que
+   * faltava — que é o comportamento certo: são dois atendimentos, por dois
+   * números.
+   *
+   * A consulta só roda quando a chave natural não achou nada, e cobre o caso
+   * de uma linha antiga sem `channelThreadId` gravado.
+   */
   const legacy =
     conversation ??
-    (await prisma.conversation.findFirst({
-      where: { accountId, id: { in: [chat.conversationId, `cv-wa-${chat.key}`] } },
-      select: { id: true, contactId: true },
-    }));
+    (inboxId
+      ? await prisma.conversation.findFirst({
+          where: {
+            accountId,
+            inboxId,
+            id: {
+              in: [
+                chat.conversationId,
+                `cv-wa-${accountId}-${chat.key}`,
+                `cv-wa-${chat.key}`,
+              ],
+            },
+          },
+          select: { id: true, contactId: true },
+        })
+      : null);
 
   if (legacy) {
     return { ...chat, conversationId: legacy.id, contactId: legacy.contactId };
@@ -490,7 +519,10 @@ export const openOutboundConversation = async (input: {
   if (existing) return { id: existing.id, created: false };
 
   const at = new Date();
-  const id = `cv-wa-${accountId}-${digits}`;
+  // Mesmo formato da entrada (ver `identityFromKey`): é o que faz a resposta do
+  // contato cair nesta conversa, e o que mantém dois números da empresa como
+  // dois atendimentos separados com a mesma pessoa.
+  const id = `cv-wa-${inboxId}-${digits}`;
 
   try {
     const created = await prisma.conversation.create({
@@ -672,8 +704,9 @@ const loadConversation = async (
 ): Promise<Conversation | null> => {
   // `findFirst` e nao `findUnique`: o id sozinho e unico, mas a conta e que
   // decide se esta conversa pode ser vista daqui. Os ids novos do WhatsApp ja
-  // carregam a conta (`cv-wa-<conta>-<numero>`), mas os antigos nao — e o
-  // escopo aqui e o que impede um id antigo de ser lido de fora da conta dele.
+  // carregam a caixa (`cv-wa-<caixa>-<numero>`, e a caixa e de uma conta so),
+  // mas os antigos nao — e o escopo aqui e o que impede um id antigo de ser
+  // lido de fora da conta dele.
   const row = await prisma.conversation.findFirst({
     where: { id: conversationId, accountId },
     include: CONVERSATION_INCLUDE,

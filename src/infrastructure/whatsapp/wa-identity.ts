@@ -71,24 +71,53 @@ export const resolvePhoneJid = async (
 };
 
 /**
- * Ids sugeridos para o chat — **escopados pela conta**.
+ * Onde a mensagem entrou. É o que escopa os ids derivados.
  *
- * Eram derivados so do telefone (`cv-wa-<numero>`), e como `Contact.id` e
- * `Conversation.id` sao chave primaria global, duas contas falando com o mesmo
- * numero disputavam a mesma linha. O efeito, quando a segunda conta apareceu:
- * `conversation.create` estourava `P2002` na propria chave primaria, o
- * `catch` relia a conversa escopado pela conta, nao achava nada (a linha era
- * da outra conta) e relancava — a excecao subia ate o listener do Baileys, que
- * nao aguarda listener assincrono, e **a mensagem sumia**. Uma conexao nova
- * conectava com sucesso e nao recebia nada.
+ * Os dois campos, e não um: eles respondem perguntas diferentes, e passá-los
+ * nomeados impede o erro que trocá-los de posição causaria — um id de caixa no
+ * lugar do de conta não daria erro nenhum, só grava a conversa no lugar errado.
+ */
+export interface ChatScope {
+  readonly accountId: string;
+  readonly inboxId: string;
+}
+
+/**
+ * Ids sugeridos para o chat.
  *
- * Sao "sugeridos" porque valem para linha nova. Quando a conversa ja existe,
- * quem manda e o id que ela tem — inclusive o formato antigo, sem conta. Ver
- * `resolveStoredIds` em `wa-store.ts`, que faz essa traducao pela chave
- * natural (`inboxId` + `channelThreadId`) antes de qualquer gravacao.
+ * **A conversa é da caixa; o contato é da conta.** Os dois escopos são
+ * diferentes de propósito, e cada um custou um defeito para chegar aqui:
+ *
+ *  - Sem conta nenhuma (`cv-wa-<numero>`, o formato original), duas contas
+ *    falando com o mesmo número disputavam a mesma linha de chave primária. A
+ *    segunda conta conectava com sucesso e não recebia mensagem nenhuma: o
+ *    `create` estourava `P2002`, o `catch` relia escopado pela conta, não
+ *    achava (a linha era da outra) e relançava — e a exceção subia até o
+ *    listener do Baileys, que não aguarda listener assíncrono.
+ *
+ *  - Escopando pela **conta** (`cv-wa-<conta>-<numero>`) aquilo se resolveu e
+ *    apareceu o problema seguinte, um nível abaixo: duas caixas da mesma conta
+ *    derivavam o mesmo id. Um cliente que escrevesse para os dois números da
+ *    empresa tinha a segunda mensagem anexada à conversa da primeira caixa. A
+ *    caixa que recebeu ficava vazia, os dois assuntos viravam uma timeline só
+ *    e — o pior — a resposta saía pelo número errado, porque o envio usa a
+ *    caixa **da conversa**. Nada falhava; a mensagem só sumia de onde entrou.
+ *
+ * O contato continua por conta porque é a mesma pessoa: dois números da mesma
+ * empresa falando com o mesmo cliente não são dois clientes. O que não pode
+ * ser compartilhado é a conversa — ela é um atendimento, e atendimento tem
+ * canal.
+ *
+ * `inboxId` já é único por conta, então escopar por ele preserva o isolamento
+ * entre contas em vez de trocar um problema pelo outro.
+ *
+ * São "sugeridos" porque valem para linha nova. Quando a conversa já existe,
+ * quem manda é o id que ela tem — inclusive nos formatos antigos. Ver
+ * `resolveStoredIds` em `wa-store.ts`, que traduz pela chave natural
+ * (`inboxId` + `channelThreadId`) antes de qualquer gravação.
  */
 const identityFromKey = (
-  accountId: string,
+  scope: ChatScope,
   jid: string,
   isGroup: boolean,
   phone: string,
@@ -99,8 +128,8 @@ const identityFromKey = (
     isGroup,
     phone,
     key,
-    contactId: `ct-wa-${accountId}-${key}`,
-    conversationId: `cv-wa-${accountId}-${key}`,
+    contactId: `ct-wa-${scope.accountId}-${key}`,
+    conversationId: `cv-wa-${scope.inboxId}-${key}`,
   };
 };
 
@@ -108,17 +137,17 @@ const identityFromKey = (
 export const resolveChatIdentity = async (
   socket: WASocket,
   key: WAMessageKey,
-  accountId: string,
+  scope: ChatScope,
 ): Promise<ChatIdentity | null> => {
   const remoteJid = key.remoteJid;
   if (!isSupportedChatJid(remoteJid)) return null;
 
   if (isJidGroup(remoteJid)) {
-    return identityFromKey(accountId, remoteJid, true, '');
+    return identityFromKey(scope, remoteJid, true, '');
   }
 
   const pnJid = await resolvePhoneJid(socket, remoteJid, key.remoteJidAlt);
-  return identityFromKey(accountId, pnJid, false, phoneFromJid(pnJid));
+  return identityFromKey(scope, pnJid, false, phoneFromJid(pnJid));
 };
 
 /** Identidade de quem escreveu — em grupos difere do chat. */
