@@ -5,6 +5,7 @@ export interface ContactFilter {
   readonly search?: string;
   readonly labelId?: Id;
   readonly ownerName?: string;
+  readonly kind?: 'pessoa' | 'empresa' | 'grupo';
 }
 
 export interface ContactReader {

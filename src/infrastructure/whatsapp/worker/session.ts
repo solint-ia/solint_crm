@@ -636,29 +636,36 @@ export class WhatsAppSession {
 
         if (!conversationId) {
           const userDigits = userOf(id);
-          const conv = await prisma.conversation.findFirst({
-            where: {
-              accountId: this.accountId,
-              inboxId: this.inboxId,
-              channel: 'whatsapp',
-              OR: [
-                { channelThreadId: id },
-                { channelThreadId: jidNormalizedUser(id) },
-                ...(userDigits ? [{ channelThreadId: `${userDigits}@s.whatsapp.net` }] : []),
-                ...(userDigits ? [{ contact: { phone: `+${userDigits}` } }] : []),
-              ],
-            },
-            select: { id: true },
-          });
+          try {
+            const conv = await prisma.conversation.findFirst({
+              where: {
+                accountId: this.accountId,
+                inboxId: this.inboxId,
+                channel: 'whatsapp',
+                OR: [
+                  { channelThreadId: id },
+                  { channelThreadId: jidNormalizedUser(id) },
+                  ...(userDigits ? [{ channelThreadId: `${userDigits}@s.whatsapp.net` }] : []),
+                  ...(userDigits ? [{ contact: { phone: `+${userDigits}` } }] : []),
+                ],
+              },
+              select: { id: true },
+            });
 
-          if (conv) {
-            conversationId = conv.id;
-            this.presenceByJid.set(id, conv.id);
-            this.presenceByJid.set(jidNormalizedUser(id), conv.id);
+            if (conv) {
+              conversationId = conv.id;
+              this.presenceByJid.set(id, conv.id);
+              this.presenceByJid.set(jidNormalizedUser(id), conv.id);
+            } else {
+              this.presenceByJid.set(id, 'none');
+              this.presenceByJid.set(jidNormalizedUser(id), 'none');
+            }
+          } catch {
+            return;
           }
         }
 
-        if (!conversationId) return;
+        if (!conversationId || conversationId === 'none') return;
 
         const typing = Object.values(presences).some(
           (presence) =>

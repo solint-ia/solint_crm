@@ -392,6 +392,53 @@ export async function initPostgresAuthState(
     await prisma.whatsAppKey.deleteMany({ where: { inboxId } }).catch(() => {});
   }
 
+function toBuffer(val: unknown): Buffer {
+  if (Buffer.isBuffer(val)) return val;
+  if (val instanceof Uint8Array) return Buffer.from(val);
+  if (typeof val === 'object' && val !== null) {
+    if ('type' in val && (val as { type: unknown }).type === 'Buffer' && 'data' in val) {
+      const data = (val as { data: unknown }).data;
+      if (typeof data === 'string') return Buffer.from(data, 'base64');
+      if (Array.isArray(data)) return Buffer.from(data);
+    }
+    if ('data' in val && typeof (val as { data: unknown }).data === 'string') {
+      return Buffer.from((val as { data: string }).data, 'base64');
+    }
+    if (Array.isArray(val)) {
+      return Buffer.from(val);
+    }
+  }
+  return Buffer.from(String(val ?? ''));
+}
+
+function fixSenderKeyBuffers(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return value;
+  const val = value as Record<string, unknown>;
+  if (Array.isArray(val['senderMessageKeys'])) {
+    for (const msgKey of val['senderMessageKeys'] as Record<string, unknown>[]) {
+      if (msgKey && msgKey['seed'] && !Buffer.isBuffer(msgKey['seed'])) {
+        msgKey['seed'] = toBuffer(msgKey['seed']);
+      }
+    }
+  }
+  if (val['senderSigningKey'] && typeof val['senderSigningKey'] === 'object') {
+    const signingKey = val['senderSigningKey'] as Record<string, unknown>;
+    if (signingKey['public'] && !Buffer.isBuffer(signingKey['public'])) {
+      signingKey['public'] = toBuffer(signingKey['public']);
+    }
+    if (signingKey['private'] && !Buffer.isBuffer(signingKey['private'])) {
+      signingKey['private'] = toBuffer(signingKey['private']);
+    }
+  }
+  if (val['senderChainKey'] && typeof val['senderChainKey'] === 'object') {
+    const chainKey = val['senderChainKey'] as Record<string, unknown>;
+    if (chainKey['seed'] && !Buffer.isBuffer(chainKey['seed'])) {
+      chainKey['seed'] = toBuffer(chainKey['seed']);
+    }
+  }
+  return value;
+}
+
   return {
     state: {
       creds,
@@ -409,11 +456,13 @@ export async function initPostgresAuthState(
             if (keyL1Cache.has(ck)) {
               const val = keyL1Cache.get(ck);
               if (val !== undefined && val !== null) {
-                out[id] = (
-                  type === 'app-state-sync-key'
-                    ? proto.Message.AppStateSyncKeyData.fromObject(val as object)
-                    : val
-                ) as SignalDataTypeMap[T];
+                let resolved: unknown = val;
+                if (type === 'app-state-sync-key') {
+                  resolved = proto.Message.AppStateSyncKeyData.fromObject(val as object);
+                } else if (type === 'sender-key') {
+                  resolved = fixSenderKeyBuffers(val);
+                }
+                out[id] = resolved as SignalDataTypeMap[T];
               }
             } else {
               missingIds.push(id);
@@ -446,13 +495,15 @@ export async function initPostgresAuthState(
               continue;
             }
 
+            if (type === 'app-state-sync-key') {
+              value = proto.Message.AppStateSyncKeyData.fromObject(value as object);
+            } else if (type === 'sender-key') {
+              value = fixSenderKeyBuffers(value);
+            }
+
             cacheSet(getCacheKey(inboxId, type, row.keyId), value);
 
-            out[row.keyId] = (
-              type === 'app-state-sync-key'
-                ? proto.Message.AppStateSyncKeyData.fromObject(value as object)
-                : value
-            ) as SignalDataTypeMap[T];
+            out[row.keyId] = value as SignalDataTypeMap[T];
           }
 
           return out;
