@@ -13,7 +13,7 @@ import makeWASocket, {
   type WAMessage,
   type WAMessageKey,
 } from '@whiskeysockets/baileys';
-import { prisma } from '../db/prisma';
+import { asJson, prisma } from '../db/prisma';
 import { initPostgresAuthState } from './auth/postgres-auth-state';
 
 import type { Contact } from '@/core/domain/contact';
@@ -106,8 +106,8 @@ export class WhatsAppService {
     string,
     { readonly accountId: string; readonly inboxId: string; readonly conversationId: string }
   >();
-  /** Último "digitando" anunciado por conversa, para não reemitir o mesmo estado. */
   private readonly typingByConversation = new Map<string, boolean>();
+  private readonly contactsStore = new Map<string, Partial<WAContact>>();
   private readonly logger = pino({ level: 'silent' });
 
   constructor() {
@@ -396,7 +396,7 @@ export class WhatsAppService {
       });
 
       sock.ev.on('presence.update', ({ id, presences }) => {
-        this.applyPresenceUpdate(id, presences);
+        void this.applyPresenceUpdate(id, presences);
       });
 
       return this.currentStatus;
@@ -491,6 +491,9 @@ export class WhatsAppService {
         const avatarUrl = await this.fetchAvatar(accountId, jidNormalizedUser(userJid));
         if (avatarUrl) this.updateStatus({ avatarUrl });
       }
+
+      void sock.sendPresenceUpdate('available');
+      void this.subscribeRecentPresences();
     }
 
     if (connection === 'close') {
@@ -582,6 +585,7 @@ export class WhatsAppService {
   ): void {
     const novo = !this.presenceByJid.has(jid);
     this.presenceByJid.set(jid, scope);
+    this.presenceByJid.set(jidNormalizedUser(jid), scope);
     if (!novo) return;
 
     void this.socket?.presenceSubscribe(jid).catch(() => {
@@ -589,12 +593,71 @@ export class WhatsAppService {
     });
   }
 
-  private applyPresenceUpdate(
+  private async subscribeRecentPresences(): Promise<void> {
+    if (!this.socket) return;
+    const accountId = this.accountId();
+    const inboxId = await this.activeInboxId();
+    if (!accountId || !inboxId) return;
+
+    try {
+      const recentConversations = await prisma.conversation.findMany({
+        where: {
+          accountId,
+          inboxId,
+          channel: 'whatsapp',
+          channelThreadId: { not: { endsWith: '@g.us' } },
+        },
+        select: { id: true, channelThreadId: true },
+        take: 50,
+        orderBy: { lastActivityAt: 'desc' },
+      });
+
+      for (const conv of recentConversations) {
+        if (conv.channelThreadId && isSupportedChatJid(conv.channelThreadId)) {
+          this.watchPresence(conv.channelThreadId, { accountId, inboxId, conversationId: conv.id });
+        }
+      }
+    } catch {
+      // Ignora erro suave
+    }
+  }
+
+  private async applyPresenceUpdate(
     jid: string,
     presences: Record<string, { lastKnownPresence?: string } | undefined> | undefined,
-  ): void {
-    const scope = this.presenceByJid.get(jid);
-    if (!scope || !presences) return;
+  ): Promise<void> {
+    if (!jid || !presences || isJidGroup(jid) || jid.endsWith('@g.us')) return;
+
+    let scope = this.presenceByJid.get(jid) ?? this.presenceByJid.get(jidNormalizedUser(jid));
+
+    const accountId = this.accountId();
+    const inboxId = await this.activeInboxId();
+
+    if (!scope && accountId && inboxId) {
+      const userDigits = userOf(jid);
+      const conv = await prisma.conversation.findFirst({
+        where: {
+          accountId,
+          inboxId,
+          channel: 'whatsapp',
+          OR: [
+            { channelThreadId: jid },
+            { channelThreadId: jidNormalizedUser(jid) },
+            ...(userDigits ? [{ channelThreadId: `${userDigits}@s.whatsapp.net` }] : []),
+            ...(userDigits ? [{ contact: { phone: `+${userDigits}` } }] : []),
+          ],
+        },
+        select: { id: true },
+      });
+
+      if (conv) {
+        scope = { accountId, inboxId, conversationId: conv.id };
+        this.presenceByJid.set(jid, scope);
+        this.presenceByJid.set(jidNormalizedUser(jid), scope);
+      }
+    }
+
+    if (!scope) return;
 
     // `recording` é o áudio sendo gravado — para quem espera, é a mesma
     // informação que `composing`: o contato está respondendo agora.
@@ -860,24 +923,148 @@ export class WhatsAppService {
 
   private async applyContactUpdate(update: Partial<WAContact>) {
     const jid = update.phoneNumber ?? update.id;
-    if (!jid || isJidGroup(jid)) return;
-
-    const name = update.name?.trim() || update.notify?.trim() || update.verifiedName?.trim();
-    const imgUrl =
-      typeof update.imgUrl === 'string' && update.imgUrl !== 'changed' ? update.imgUrl : undefined;
-    if (!name && !imgUrl) return;
+    if (!jid || isJidGroup(jid) || jid.endsWith('@g.us') || jid.includes('@broadcast') || jid.includes('@newsletter')) return;
 
     const normalized = jidNormalizedUser(jid);
+    const existingStored = this.contactsStore.get(normalized);
+    this.contactsStore.set(normalized, { ...existingStored, ...update });
+
+    const phoneDigits = userOf(normalized);
+    if (!phoneDigits) return;
+
+    const phone = PhoneNumber.normalize(`+${phoneDigits}`);
+    if (!PhoneNumber.isValid(phone)) return;
+
+    const addressBookName = update.name?.trim();
+    const pushName = update.notify?.trim() || update.verifiedName?.trim();
+    const resolvedName = addressBookName || pushName || PhoneNumber.format(phone) || phone;
+    const imgUrl =
+      typeof update.imgUrl === 'string' && update.imgUrl !== 'changed' ? update.imgUrl : undefined;
+
     if (imgUrl) this.avatarCache.set(normalized, { url: imgUrl, at: Date.now() });
 
     const accountId = this.accountId();
     const inboxId = await this.activeInboxId();
     if (!accountId || !inboxId) return;
 
+    try {
+      const existing = await prisma.contact.findFirst({
+        where: {
+          accountId,
+          kind: { not: 'grupo' },
+          OR: [
+            { phone },
+            { id: `ct-wa-${phoneDigits}` },
+            { id: `ct-wa-${accountId}-${phoneDigits}` },
+          ],
+        },
+      });
+
+      if (existing) {
+        const shouldUpdateName =
+          (addressBookName && existing.name !== addressBookName) ||
+          (pushName && (existing.name.startsWith('+') || existing.name === phone));
+
+        if (shouldUpdateName || (imgUrl && !existing.avatarUrl)) {
+          await prisma.contact.update({
+            where: { id: existing.id, accountId },
+            data: {
+              ...(shouldUpdateName ? { name: addressBookName || pushName } : {}),
+              ...(imgUrl && !existing.avatarUrl ? { avatarUrl: imgUrl } : {}),
+            },
+          });
+        }
+      } else if (addressBookName) {
+        // Contato com nome salvo na agenda do celular
+        const contactId = `ct-wa-${accountId}-${phoneDigits}`;
+        await prisma.contact.create({
+          data: {
+            id: contactId,
+            accountId,
+            name: resolvedName,
+            phone,
+            channel: 'whatsapp',
+            avatarTone: 'blue',
+            kind: 'pessoa',
+            avatarUrl: imgUrl ?? null,
+            customFields: asJson([]),
+            timeline: asJson([]),
+          },
+        });
+      }
+    } catch {
+      // Ignora colisões concorrentes
+    }
+
     await patchContactByThread(accountId, inboxId, normalized, {
-      ...(name ? { name } : {}),
+      ...(addressBookName || pushName ? { name: addressBookName || pushName } : {}),
       ...(imgUrl ? { avatarUrl: imgUrl } : {}),
     });
+  }
+
+  async syncAllStoredContacts(accountId: string): Promise<{ synced: number; created: number }> {
+    let synced = 0;
+    let created = 0;
+
+    for (const [rawJid, contact] of this.contactsStore.entries()) {
+      if (!rawJid || isJidGroup(rawJid) || rawJid.endsWith('@g.us') || rawJid.includes('@broadcast') || rawJid.includes('@newsletter')) continue;
+      if (this.socket?.user?.id && jidNormalizedUser(rawJid) === jidNormalizedUser(this.socket.user.id)) continue;
+
+      const phoneDigits = userOf(rawJid);
+      if (!phoneDigits) continue;
+      const phone = PhoneNumber.normalize(`+${phoneDigits}`);
+      if (!PhoneNumber.isValid(phone)) continue;
+
+      const addressBookName = contact.name?.trim();
+      const pushName = contact.notify?.trim() || contact.verifiedName?.trim();
+      const resolvedName = addressBookName || pushName || PhoneNumber.format(phone) || phone;
+      const avatarUrl = typeof contact.imgUrl === 'string' && contact.imgUrl !== 'changed' ? contact.imgUrl : undefined;
+
+      try {
+        const existing = await prisma.contact.findFirst({
+          where: {
+            accountId,
+            kind: { not: 'grupo' },
+            OR: [
+              { phone },
+              { id: `ct-wa-${phoneDigits}` },
+              { id: `ct-wa-${accountId}-${phoneDigits}` },
+            ],
+          },
+        });
+
+        synced += 1;
+        if (existing) {
+          if (addressBookName && existing.name !== addressBookName) {
+            await prisma.contact.update({
+              where: { id: existing.id, accountId },
+              data: { name: addressBookName, ...(avatarUrl && !existing.avatarUrl ? { avatarUrl } : {}) },
+            });
+          }
+        } else if (addressBookName || pushName) {
+          const contactId = `ct-wa-${accountId}-${phoneDigits}`;
+          await prisma.contact.create({
+            data: {
+              id: contactId,
+              accountId,
+              name: resolvedName,
+              phone,
+              channel: 'whatsapp',
+              avatarTone: 'blue',
+              kind: 'pessoa',
+              avatarUrl: avatarUrl ?? null,
+              customFields: asJson([]),
+              timeline: asJson([]),
+            },
+          });
+          created += 1;
+        }
+      } catch {
+        // Ignora
+      }
+    }
+
+    return { synced, created };
   }
 
   private async renameGroupChat(jid: string, subject: string, size?: number) {
@@ -1124,15 +1311,39 @@ export class WhatsAppService {
     }
   }
 
-  /** Espelha no celular a leitura feita no CRM. */
+  /** Espelha no celular a leitura feita no CRM e subscreve a presença do contato. */
   async markConversationAsRead(conversationId: string): Promise<void> {
+    if (!this.socket || this.currentStatus.status !== 'conectado') return;
+
     const key = this.lastInboundKey.get(conversationId);
-    if (!key || !this.socket || this.currentStatus.status !== 'conectado') return;
+    if (key) {
+      try {
+        await this.socket.readMessages([key]);
+        this.lastInboundKey.delete(conversationId);
+      } catch (error) {
+        console.warn('[WhatsAppService] Não foi possível confirmar leitura:', error);
+      }
+    }
+
+    const accountId = this.accountId();
+    const inboxId = await this.activeInboxId();
+    if (!accountId || !inboxId) return;
+
+    const conv = await prisma.conversation.findFirst({
+      where: { id: conversationId, accountId },
+      select: { channelThreadId: true, contact: { select: { phone: true } } },
+    });
+    if (!conv) return;
+
+    const raw = conv.channelThreadId ?? conv.contact?.phone;
+    const targetJid = raw ? (isSupportedChatJid(raw) ? raw : jidFromPhone(raw)) : undefined;
+    if (!targetJid) return;
+
     try {
-      await this.socket.readMessages([key]);
-      this.lastInboundKey.delete(conversationId);
-    } catch (error) {
-      console.warn('[WhatsAppService] Não foi possível confirmar leitura:', error);
+      await this.socket.presenceSubscribe(targetJid);
+      this.watchPresence(targetJid, { accountId, inboxId, conversationId });
+    } catch {
+      // Ignora falha suave
     }
   }
 

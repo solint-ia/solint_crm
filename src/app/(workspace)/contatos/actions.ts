@@ -5,6 +5,7 @@ import { CHANNELS } from '@/core/domain/channel';
 import { can } from '@/core/domain/user';
 import { container } from '@/infrastructure/container';
 import { prisma, asJson } from '@/infrastructure/db/prisma';
+import { whatsappService } from '@/infrastructure/whatsapp/whatsapp-service';
 
 export interface ActionResult<T = unknown> {
   readonly ok: boolean;
@@ -279,6 +280,7 @@ export async function syncWhatsAppContactsAction(): Promise<ActionResult<{ synce
     let syncedCount = 0;
     let updatedCount = 0;
 
+    // 1. Sincroniza e normaliza contatos com conversas 1:1 diretas existentes
     for (const conv of conversations) {
       const contact = conv.contact;
       if (!contact || contact.kind === 'grupo') continue;
@@ -300,6 +302,15 @@ export async function syncWhatsAppContactsAction(): Promise<ActionResult<{ synce
           updatedCount += 1;
         }
       }
+    }
+
+    // 2. Sincroniza todos os contatos da agenda do celular registrados na sessão do WhatsApp
+    try {
+      const storedResult = await whatsappService.syncAllStoredContacts(accountId);
+      syncedCount += storedResult.synced;
+      updatedCount += storedResult.created;
+    } catch {
+      // Ignora suavemente se a instância em memória não estiver ativa neste processo
     }
 
     return {

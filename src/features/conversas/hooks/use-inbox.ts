@@ -372,22 +372,27 @@ export function useInbox({
     return mapa;
   }, [conversations]);
 
-  // Abrir a conversa confirma a leitura — inclusive no celular pareado.
+  // Abrir a conversa confirma a leitura e subscreve a presença no WhatsApp
   const readSignalled = useRef(new Set<string>());
+  const subscribedConversations = useRef(new Set<string>());
   useEffect(() => {
-    if (!selected || selected.unreadCount === 0 || !markAsRead) return;
+    if (!selected || !markAsRead) return;
     const id = selected.id;
-    if (readSignalled.current.has(id)) return;
-    readSignalled.current.add(id);
 
-    setConversations((current) =>
-      current.map((conversation) =>
-        conversation.id === id ? { ...conversation, unreadCount: 0 } : conversation,
-      ),
-    );
-    void markAsRead({ conversationId: id }).finally(() => {
-      readSignalled.current.delete(id);
-    });
+    if (selected.unreadCount > 0 && !readSignalled.current.has(id)) {
+      readSignalled.current.add(id);
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.id === id ? { ...conversation, unreadCount: 0 } : conversation,
+        ),
+      );
+      void markAsRead({ conversationId: id }).finally(() => {
+        readSignalled.current.delete(id);
+      });
+    } else if (!subscribedConversations.current.has(id)) {
+      subscribedConversations.current.add(id);
+      void markAsRead({ conversationId: id });
+    }
   }, [selected, markAsRead]);
 
   const appendLocalMessage = useCallback(
