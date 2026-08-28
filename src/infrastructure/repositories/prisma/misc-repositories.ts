@@ -95,8 +95,8 @@ export class PrismaPipelineRepository implements PipelineRepository {
     if (!task) throw new NotFoundError('Tarefa', taskId);
 
     const completed = !task.completed;
-    await prisma.task.update({
-      where: { id: taskId },
+    await prisma.task.updateMany({
+      where: { id: taskId, accountId },
       // `completedAt` acompanha o estado em vez de só marcar a ida: desmarcar
       // uma tarefa que voltou a ser pendente precisa limpar a data, senão o
       // relatório contaria como concluída algo que está aberto.
