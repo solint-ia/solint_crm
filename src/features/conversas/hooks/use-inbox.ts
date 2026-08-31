@@ -148,8 +148,14 @@ export function useInbox({
   const [statusTab, setStatusTab] = useState<StatusTab>('todas');
   const [sort, setSort] = useState<SortKey>('recentes');
   const [search, setSearch] = useState('');
+  const initialConversation =
+    (initialSelectedId
+      ? initialConversations.find((c) => c.id === initialSelectedId)
+      : undefined) ?? initialConversations[0];
+  const resolvedInitialInboxId = initialInboxId ?? initialConversation?.inboxId;
+
   const [filters, setFilters] = useState<InboxFilters>(() => ({
-    ...(initialInboxId ? { inboxId: initialInboxId } : {}),
+    ...(resolvedInitialInboxId ? { inboxId: resolvedInitialInboxId } : {}),
     ...(initialUnread ? { unreadOnly: true } : {}),
   }));
   const [error, setError] = useState<string | undefined>();
@@ -165,8 +171,14 @@ export function useInbox({
    * preso na conversa em que a página abriu.
    */
   useEffect(() => {
-    if (initialSelectedId) setSelectedId(initialSelectedId);
-  }, [initialSelectedId]);
+    if (initialSelectedId) {
+      setSelectedId(initialSelectedId);
+      const alvo = conversations.find((c) => c.id === initialSelectedId);
+      if (alvo?.inboxId) {
+        setFilters((prev) => (prev.inboxId === alvo.inboxId ? prev : { ...prev, inboxId: alvo.inboxId }));
+      }
+    }
+  }, [initialSelectedId, conversations]);
 
   useEffect(() => {
     if (initialInboxId !== undefined) {
@@ -175,31 +187,20 @@ export function useInbox({
   }, [initialInboxId]);
 
   /**
-   * Abrir uma conversa de outra caixa desfaz o filtro de caixa.
+   * Abrir uma conversa de outra caixa sincroniza a caixa ativa para a caixa dessa conversa.
    *
-   * Com duas caixas conectadas e o filtro em "Caixa 2", uma conversa da
-   * principal simplesmente não estava na lista — e o `selected` caía na
-   * primeira visível, que era da Caixa 2. A notificação levava a uma conversa
-   * qualquer, de outro número, sem nenhum aviso de que o destino tinha sido
-   * trocado.
-   *
-   * Quem clicou numa notificação escolheu aquela conversa; o filtro é uma
-   * preferência de navegação, e entre os dois quem cede é o filtro. Só dispara
-   * quando a conversa selecionada muda, para não desfazer um filtro que a
-   * pessoa acabou de aplicar à mão.
+   * Com múltiplas caixas conectadas, clicar numa notificação de uma conversa da
+   * Caixa A faz a coluna da esquerda chavear para a Caixa A com os contatos
+   * e cabeçalho corretos da Caixa A.
    */
   useEffect(() => {
     if (!selectedId) return;
     const alvo = conversations.find((conversation) => conversation.id === selectedId);
-    if (!alvo) return;
+    if (!alvo?.inboxId) return;
     setFilters((prev) =>
-      prev.inboxId && prev.inboxId !== alvo.inboxId ? { ...prev, inboxId: undefined } : prev,
+      prev.inboxId !== alvo.inboxId ? { ...prev, inboxId: alvo.inboxId } : prev,
     );
-    // `conversations` de fora das dependências de propósito: o alvo só precisa
-    // ser reavaliado quando a escolha muda, não a cada mensagem que chega e
-    // reescreve a lista.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId]);
+  }, [selectedId, conversations]);
 
   useEffect(() => {
     if (initialScope !== undefined) {

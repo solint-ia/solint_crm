@@ -33,7 +33,7 @@ export default async function ConversaPage({
 
   return (
     <Suspense fallback={<InboxSkeleton />}>
-      <InboxData selectedId={conversation.id} />
+      <InboxData selectedId={conversation.id} initialInboxId={conversation.inboxId} />
     </Suspense>
   );
 }

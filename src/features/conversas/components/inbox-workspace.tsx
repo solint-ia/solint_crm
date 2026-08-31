@@ -176,7 +176,8 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
    * misturando os números da conta. A primeira da lista é um padrão
    * arbitrário, mas estável — e a pessoa troca num clique.
    */
-  const caixaAtual = inbox.filters.inboxId ?? props.inboxes[0]?.id;
+  const caixaAtual =
+    inbox.filters.inboxId ?? inbox.selected?.inboxId ?? props.inboxes[0]?.id;
   const caixaObj = props.inboxes.find((i) => i.id === caixaAtual);
 
   useEffect(() => {
