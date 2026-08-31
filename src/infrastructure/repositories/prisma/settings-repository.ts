@@ -393,8 +393,10 @@ export class PrismaSettingsRepository implements SettingsRepository {
           status: 'desconectado',
           provider,
           businessHours: asJson(defaultBusinessHours()),
-          awayMessage: asJson({ enabled: false, message: '' }),
-          greeting: asJson({ enabled: false, message: '' }),
+          awayMessage: asJson({ enabled: false, text: '' }),
+          greeting: asJson({ enabled: false, text: '' }),
+          closingMessage: asJson(draft.closingMessage ?? { enabled: false, text: '' }),
+          waitingMessage: asJson(draft.waitingMessage ?? { enabled: false, text: '' }),
         },
       });
 
@@ -431,6 +433,8 @@ export class PrismaSettingsRepository implements SettingsRepository {
           ...(patch.businessHours ? { businessHours: asJson(patch.businessHours) } : {}),
           ...(patch.awayMessage ? { awayMessage: asJson(patch.awayMessage) } : {}),
           ...(patch.greeting ? { greeting: asJson(patch.greeting) } : {}),
+          ...(patch.closingMessage ? { closingMessage: asJson(patch.closingMessage) } : {}),
+          ...(patch.waitingMessage ? { waitingMessage: asJson(patch.waitingMessage) } : {}),
           ...(patch.webhookUrl === undefined ? {} : { webhookUrl: patch.webhookUrl || null }),
         },
       }),

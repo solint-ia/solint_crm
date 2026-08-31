@@ -1,10 +1,12 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import {
   Ban,
   Building,
   Copy,
+  ExternalLink,
   Mail,
   MapPin,
   Merge,
@@ -78,9 +80,18 @@ export function ContextPanel({
         <Avatar name={contact.name} tone={contact.avatarTone} src={contact.avatarUrl} size="lg" />
 
         <div className="w-full min-w-0">
-          <h3 className="truncate font-display text-sm font-bold text-ink">
-            {contact.name}
-          </h3>
+          <div className="flex items-center justify-center gap-1.5">
+            <h3 className="truncate font-display text-sm font-bold text-ink">
+              {contact.name}
+            </h3>
+            <Link
+              href={`/contatos/${contact.id}`}
+              title="Ver perfil completo do contato"
+              className="rounded p-0.5 text-muted transition-colors hover:text-brand hover:bg-surface-2"
+            >
+              <ExternalLink className="size-3.5" />
+            </Link>
+          </div>
 
           {isGroup ? (
             <div className="mt-1 flex flex-col items-center gap-1">

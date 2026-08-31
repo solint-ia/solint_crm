@@ -71,6 +71,7 @@ export function InboxesSection({ connections }: InboxesSectionProps) {
       }
       return next;
     });
+    setSelectedId((current) => current || (connections[0]?.id ?? ''));
   }, [connections]);
 
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
@@ -657,14 +658,18 @@ function InboxDetail({
   const [hours, setHours] = useState<BusinessHours>(connection.businessHours);
   const [away, setAway] = useState(connection.awayMessage);
   const [greeting, setGreeting] = useState(connection.greeting);
-  const [closingMessage, setClosingMessage] = useState({
-    enabled: false,
-    text: 'Atendimento finalizado com sucesso! Se precisar de algo mais, é só chamar.',
-  });
-  const [waitingMessage, setWaitingMessage] = useState({
-    enabled: false,
-    text: 'Todos os nossos atendentes estão ocupados no momento. Seu tempo estimado de espera é de 5 minutos.',
-  });
+  const [closingMessage, setClosingMessage] = useState(
+    connection.closingMessage ?? {
+      enabled: false,
+      text: 'Atendimento finalizado com sucesso! Se precisar de algo mais, é só chamar.',
+    },
+  );
+  const [waitingMessage, setWaitingMessage] = useState(
+    connection.waitingMessage ?? {
+      enabled: false,
+      text: 'Todos os nossos atendentes estão ocupados no momento. Seu tempo estimado de espera é de 5 minutos.',
+    },
+  );
 
   const [webhookUrl, setWebhookUrl] = useState(connection.webhookUrl ?? '');
   const [saving, setSaving] = useState(false);
@@ -677,6 +682,20 @@ function InboxDetail({
     JSON.stringify(hours) !== JSON.stringify(connection.businessHours) ||
     JSON.stringify(away) !== JSON.stringify(connection.awayMessage) ||
     JSON.stringify(greeting) !== JSON.stringify(connection.greeting) ||
+    JSON.stringify(closingMessage) !==
+      JSON.stringify(
+        connection.closingMessage ?? {
+          enabled: false,
+          text: 'Atendimento finalizado com sucesso! Se precisar de algo mais, é só chamar.',
+        },
+      ) ||
+    JSON.stringify(waitingMessage) !==
+      JSON.stringify(
+        connection.waitingMessage ?? {
+          enabled: false,
+          text: 'Todos os nossos atendentes estão ocupados no momento. Seu tempo estimado de espera é de 5 minutos.',
+        },
+      ) ||
     webhookUrl !== (connection.webhookUrl ?? '');
 
   const summary = useMemo(() => summarizeBusinessHours(hours), [hours]);
@@ -694,6 +713,18 @@ function InboxDetail({
     setHours(connection.businessHours);
     setAway(connection.awayMessage);
     setGreeting(connection.greeting);
+    setClosingMessage(
+      connection.closingMessage ?? {
+        enabled: false,
+        text: 'Atendimento finalizado com sucesso! Se precisar de algo mais, é só chamar.',
+      },
+    );
+    setWaitingMessage(
+      connection.waitingMessage ?? {
+        enabled: false,
+        text: 'Todos os nossos atendentes estão ocupados no momento. Seu tempo estimado de espera é de 5 minutos.',
+      },
+    );
     setWebhookUrl(connection.webhookUrl ?? '');
     setError(undefined);
   };
@@ -706,6 +737,8 @@ function InboxDetail({
       businessHours: hours,
       awayMessage: away,
       greeting,
+      closingMessage,
+      waitingMessage,
       webhookUrl,
     });
     setSaving(false);
@@ -725,6 +758,8 @@ function InboxDetail({
       businessHours: hours,
       awayMessage: away,
       greeting,
+      closingMessage,
+      waitingMessage,
       webhookUrl: webhookUrl || undefined,
     });
 

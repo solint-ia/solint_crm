@@ -100,23 +100,32 @@ export const prismaAutomationEffects: AutomationEffects = {
   async sendMessage(accountId: Id, conversationId: Id, text: string) {
     const conversation = await prisma.conversation.findFirst({
       where: { id: conversationId, accountId },
-      select: { id: true },
+      select: {
+        id: true,
+        inboxId: true,
+        channel: true,
+        channelThreadId: true,
+        contact: { select: { phone: true } },
+      },
     });
     if (!conversation) throw new Error('Conversa não encontrada.');
 
-    return prisma.message.create({
-      data: {
-        id: `msg-auto-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-        conversationId,
-        author: 'system',
-        authorName: 'Automação',
-        contentType: 'texto',
-        content: { type: 'texto', text },
-        time: horaLabel(new Date()),
-        isPrivate: true,
-        origin: 'automacao',
+    const { dispatchAutoMessage } = await import('@/infrastructure/whatsapp/auto-reply');
+    const message = await dispatchAutoMessage({
+      accountId,
+      inboxId: conversation.inboxId,
+      conversationId,
+      recipient: {
+        channelThreadId: conversation.channelThreadId,
+        phone: conversation.contact?.phone ?? '',
       },
+      text,
+      origin: 'automacao',
+      authorName: 'Automação',
     });
+
+    if (!message) throw new Error('Mensagem vazia.');
+    return message;
   },
 
   async notify(accountId: Id, conversationId: Id, text: string) {

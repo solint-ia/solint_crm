@@ -488,6 +488,10 @@ model Inbox {
   awayMessage   Json
   /// JSON: AutoReply
   greeting      Json
+  /// JSON: AutoReply
+  closingMessage Json?
+  /// JSON: AutoReply
+  waitingMessage Json?
   webhookUrl    String?
 
   account       Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)

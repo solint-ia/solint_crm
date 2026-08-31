@@ -27,6 +27,7 @@ import { ASSIGNMENT_METHOD_LABELS } from '@/core/domain/settings';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmModal } from '@/components/ui/confirm-modal';
+import { Modal } from '@/components/ui/modal';
 import { Toggle } from '@/components/ui/toggle';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/cn';
@@ -70,6 +71,7 @@ export function AutomationsSection({
   const [builderOpen, setBuilderOpen] = useState(false);
   const [editing, setEditing] = useState<Automation | undefined>();
   const [deletingAutomation, setDeletingAutomation] = useState<Automation | null>(null);
+  const [selectedMacro, setSelectedMacro] = useState<Macro | null>(null);
 
   // Configurações complementares de atribuição
   const [onlyOnlineAgents, setOnlyOnlineAgents] = useState(true);
@@ -655,13 +657,7 @@ export function AutomationsSection({
                       <span>Faz {steps.length} tarefas de uma vez</span>
                       <button
                         type="button"
-                        onClick={() =>
-                          show({
-                            tone: 'info',
-                            title: macro.name,
-                            description: 'Macro pronta para ser acionada dentro das conversas.',
-                          })
-                        }
+                        onClick={() => setSelectedMacro(macro)}
                         className="font-semibold text-blue-600 dark:text-blue-400 hover:underline"
                       >
                         Ver detalhes
@@ -673,6 +669,45 @@ export function AutomationsSection({
             </div>
           )}
         </section>
+      ) : null}
+
+      {/* Modal de Detalhes da Macro */}
+      {selectedMacro ? (
+        <Modal
+          open={Boolean(selectedMacro)}
+          onClose={() => setSelectedMacro(null)}
+          title={selectedMacro.name}
+          description="Esta macro executa uma sequência de ações pré-definidas em 1 clique durante o atendimento."
+          className="max-w-md"
+        >
+          <div className="flex flex-col gap-4 pt-1">
+            <div className="rounded-xl border border-line bg-surface-2/50 p-3.5">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-dim block mb-2">
+                Sequência de Execução ({selectedMacro.steps.split(' · ').length} passos)
+              </span>
+              <ol className="flex flex-col gap-2">
+                {selectedMacro.steps.split(' · ').map((step, index) => (
+                  <li key={step} className="flex items-center gap-2.5 text-xs text-ink">
+                    <span className="flex size-5 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 font-mono text-[10px] font-bold">
+                      {index + 1}
+                    </span>
+                    <span className="font-medium">{step}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+
+            <p className="text-xs text-muted">
+              Você pode acionar esta macro diretamente na barra de ferramentas do chat durante qualquer conversa aberta.
+            </p>
+
+            <div className="flex justify-end pt-2 border-t border-line">
+              <Button size="sm" onClick={() => setSelectedMacro(null)}>
+                Fechar
+              </Button>
+            </div>
+          </div>
+        </Modal>
       ) : null}
 
       {/* Confirmação de Exclusão */}

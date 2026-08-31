@@ -54,6 +54,8 @@ export interface InboxDraft {
   readonly name: string;
   readonly channel?: 'whatsapp' | 'webchat' | 'instagram' | 'email';
   readonly provider?: string;
+  readonly closingMessage?: AutoReply;
+  readonly waitingMessage?: AutoReply;
 }
 
 /** Ajustes operacionais de uma caixa de entrada (§15). */
@@ -61,6 +63,8 @@ export interface InboxSettingsPatch {
   readonly businessHours?: BusinessHours;
   readonly awayMessage?: AutoReply;
   readonly greeting?: AutoReply;
+  readonly closingMessage?: AutoReply;
+  readonly waitingMessage?: AutoReply;
   readonly webhookUrl?: string;
 }
 

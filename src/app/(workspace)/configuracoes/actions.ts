@@ -227,6 +227,8 @@ const updateInboxSchema = z.object({
     .optional(),
   awayMessage: autoReplySchema.optional(),
   greeting: autoReplySchema.optional(),
+  closingMessage: autoReplySchema.optional(),
+  waitingMessage: autoReplySchema.optional(),
   // String vazia é intencional: significa "remover o webhook".
   webhookUrl: z.union([z.literal(''), z.string().url().max(300)]).optional(),
 });

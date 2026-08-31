@@ -49,6 +49,10 @@ export interface ChannelConnection {
   readonly awayMessage: AutoReply;
   /** Disparada na primeira mensagem de uma conversa nova. */
   readonly greeting: AutoReply;
+  /** Disparada quando o atendimento é finalizado/resolvido. */
+  readonly closingMessage?: AutoReply;
+  /** Disparada quando o cliente aguarda na fila. */
+  readonly waitingMessage?: AutoReply;
   /** Endpoint que recebe os eventos desta caixa. Vazio = sem webhook. */
   readonly webhookUrl?: string;
   /** Agentes que atendem esta caixa. */

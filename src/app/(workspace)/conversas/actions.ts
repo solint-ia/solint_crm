@@ -14,8 +14,9 @@ import { groupInboxIds, type Contact } from '@/core/domain/contact';
 import { stageLabelIds } from '@/core/domain/pipeline';
 import { can, canSeeInbox, withSignature } from '@/core/domain/user';
 import { canSendFreeText, MAX_MESSAGE_LENGTH } from '@/core/use-cases/send-message';
+import type { AutoReply } from '@/core/domain/business-hours';
 import { container } from '@/infrastructure/container';
-import { prisma } from '@/infrastructure/db/prisma';
+import { prisma, readJson } from '@/infrastructure/db/prisma';
 import { dispararAutomacoes } from '@/infrastructure/automations/dispatch';
 import type { DispatchResult } from '@/infrastructure/whatsapp/channel';
 import { getWhatsAppChannel } from '@/infrastructure/whatsapp/channel-provider';
@@ -305,6 +306,41 @@ export async function changeConversationStatusAction(input: unknown): Promise<Ac
   const session = await container.session.getCurrentSession();
   const result = await container.useCases.changeConversationStatus({ session, ...parsed.data });
   if (!result.ok) return { ok: false, error: result.error.message };
+
+  // Mensagem automática de encerramento da caixa
+  if (parsed.data.status === 'resolvida') {
+    try {
+      const conversation = await container.conversations.findById(
+        session.account.id,
+        parsed.data.conversationId,
+        session.inboxAccess,
+      );
+      if (conversation) {
+        const inbox = await prisma.inbox.findFirst({
+          where: { id: conversation.inboxId, accountId: session.account.id },
+          select: { closingMessage: true },
+        });
+        const closing = readJson<AutoReply>(inbox?.closingMessage, { enabled: false, text: '' });
+        if (closing?.enabled && closing?.text?.trim()) {
+          const { dispatchAutoMessage } = await import('@/infrastructure/whatsapp/auto-reply');
+          await dispatchAutoMessage({
+            accountId: session.account.id,
+            inboxId: conversation.inboxId,
+            conversationId: conversation.id,
+            recipient: {
+              channelThreadId: conversation.channelThreadId,
+              phone: conversation.contact.phone,
+            },
+            text: closing.text.trim(),
+            origin: 'encerramento',
+            authorName: 'Encerramento Automático',
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('[conversas] Falha ao despachar mensagem automática de encerramento:', err);
+    }
+  }
 
   // Só dois dos status têm gatilho; os demais não disparam nada.
   const gatilho =

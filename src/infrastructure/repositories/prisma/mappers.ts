@@ -403,6 +403,8 @@ export const connectionRow = (row: DbInbox): ChannelConnection => ({
   businessHours: normalizeBusinessHours(row.businessHours),
   awayMessage: readJson<AutoReply>(row.awayMessage, { enabled: false, text: '' }),
   greeting: readJson<AutoReply>(row.greeting, { enabled: false, text: '' }),
+  closingMessage: readJson<AutoReply>(row.closingMessage, { enabled: false, text: '' }),
+  waitingMessage: readJson<AutoReply>(row.waitingMessage, { enabled: false, text: '' }),
   ...(row.webhookUrl ? { webhookUrl: row.webhookUrl } : {}),
   ...(row.teamName ? { teamName: row.teamName } : {}),
 });
