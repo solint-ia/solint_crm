@@ -81,3 +81,97 @@ export const horaDaMensagem = (mensagem: {
   readonly createdAt?: string;
   readonly time: string;
 }): string => (mensagem.createdAt ? horaLabel(new Date(mensagem.createdAt)) : mensagem.time);
+
+/**
+ * Partes de um instante no fuso de exibição, para converter nos dois sentidos.
+ *
+ * `hourCycle: 'h23'` é obrigatório: sem ele o `Intl` devolve `24` para a
+ * meia-noite em algumas engines, e `Date.UTC(..., 24, ...)` cai no dia
+ * seguinte — um erro de um dia que só aparece à meia-noite.
+ */
+const PARTES_NO_FUSO = new Intl.DateTimeFormat('en-US', {
+  timeZone: APP_TIMEZONE,
+  hourCycle: 'h23',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
+
+const partesDe = (date: Date): Readonly<Record<string, number>> => {
+  const saida: Record<string, number> = {};
+  for (const parte of PARTES_NO_FUSO.formatToParts(date)) {
+    if (parte.type !== 'literal') saida[parte.type] = Number(parte.value);
+  }
+  return saida;
+};
+
+/** Deslocamento do fuso de exibição, em ms, naquele instante. */
+const deslocamentoDoFuso = (date: Date): number => {
+  const p = partesDe(date);
+  const comoUtc = Date.UTC(
+    p['year'] ?? 1970,
+    (p['month'] ?? 1) - 1,
+    p['day'] ?? 1,
+    p['hour'] ?? 0,
+    p['minute'] ?? 0,
+    p['second'] ?? 0,
+  );
+  return comoUtc - date.getTime();
+};
+
+/**
+ * Converte o valor de um `<input type="datetime-local">` para ISO, lendo-o no
+ * **fuso de exibição do produto** — não no do navegador.
+ *
+ * A distinção não é teórica: o CRM mostra todas as horas em `APP_TIMEZONE`
+ * (ver o topo deste arquivo), então quem digita "14:00" para agendar quer as
+ * 14:00 que ele vê na timeline. Deixar o navegador interpretar faria uma
+ * pessoa em Portugal agendar para as 10:00 de Brasília sem nada na tela
+ * explicar o desencontro.
+ *
+ * O deslocamento é calculado duas vezes de propósito: a primeira usa uma
+ * estimativa do instante, e nas viradas de horário de verão a estimativa pode
+ * cair do lado errado da mudança. A segunda rodada corrige.
+ */
+export const isoDeDataHoraLocal = (valor: string): string | null => {
+  const casou = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(valor);
+  if (!casou) return null;
+
+  const [, ano, mes, dia, hora, minuto] = casou;
+  const comoUtc = Date.UTC(Number(ano), Number(mes) - 1, Number(dia), Number(hora), Number(minuto));
+
+  let instante = comoUtc - deslocamentoDoFuso(new Date(comoUtc));
+  instante = comoUtc - deslocamentoDoFuso(new Date(instante));
+
+  const data = new Date(instante);
+  return Number.isNaN(data.getTime()) ? null : data.toISOString();
+};
+
+/** O caminho inverso: preenche um `<input type="datetime-local">` no fuso do produto. */
+export const dataHoraLocalDe = (date: Date): string => {
+  const p = partesDe(date);
+  const doisDigitos = (valor: number): string => String(valor).padStart(2, '0');
+  return (
+    `${p['year']}-${doisDigitos(p['month'] ?? 1)}-${doisDigitos(p['day'] ?? 1)}` +
+    `T${doisDigitos(p['hour'] ?? 0)}:${doisDigitos(p['minute'] ?? 0)}`
+  );
+};
+
+/**
+ * Rótulo de um agendamento: "hoje às 14:30", "amanhã às 09:00", "12 set. às 08:15".
+ *
+ * O dia relativo vem antes da data porque é o que responde a pergunta que
+ * alguém faz olhando a lista — *quando isso sai?* — sem precisar comparar com o
+ * calendário.
+ */
+export const agendamentoLabel = (date: Date): string => {
+  const dias = Math.round((inicioDoDia(date) - inicioDoDia(new Date())) / 86_400_000);
+  const hora = horaLabel(date);
+  if (dias === 0) return `hoje às ${hora}`;
+  if (dias === 1) return `amanhã às ${hora}`;
+  if (dias === -1) return `ontem às ${hora}`;
+  return `${dataCurtaLabel(date)} às ${hora}`;
+};

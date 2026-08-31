@@ -6,6 +6,7 @@ import { can } from '@/core/domain/user';
 import { container } from '@/infrastructure/container';
 import { prisma, asJson } from '@/infrastructure/db/prisma';
 import { postgresPubSub, CHANNELS as DB_CHANNELS } from '@/infrastructure/db/postgres-pubsub';
+import { WA_ENGINE } from '@/infrastructure/whatsapp/channel';
 
 export interface ActionResult<T = unknown> {
   readonly ok: boolean;
@@ -262,6 +263,34 @@ export async function importContactsCsvAction(input: unknown): Promise<ActionRes
   }
 }
 
+/**
+ * Espera o worker concluir o comando, dentro de um teto.
+ *
+ * O teto era de 2,5 segundos, e não dava. Sincronizar contatos agora repuxa a
+ * agenda inteira do WhatsApp (ver `pullAddressBook` em `worker/session.ts`) —
+ * uma ida ao servidor mais a gravação de centenas de linhas. A Server Action
+ * respondia antes de qualquer coisa chegar, o contador vinha igual ao anterior
+ * e a tela dizia "0 novos" enquanto o worker ainda estava trabalhando.
+ *
+ * Vinte segundos cobrem uma agenda grande sem transformar a espera numa tela
+ * travada. Estourado o teto a função devolve mesmo assim: o trabalho continua
+ * no worker, e a lista mostra o resultado no próximo carregamento.
+ */
+const ESPERA_MAX_MS = 20_000;
+
+const aguardarComando = async (commandId: string): Promise<'concluido' | 'em_andamento'> => {
+  const inicio = Date.now();
+  while (Date.now() - inicio < ESPERA_MAX_MS) {
+    await new Promise((r) => setTimeout(r, 400));
+    const atual = await prisma.whatsAppCommand.findUnique({
+      where: { id: commandId },
+      select: { status: true },
+    });
+    if (atual?.status === 'completed' || atual?.status === 'failed') return 'concluido';
+  }
+  return 'em_andamento';
+};
+
 export async function syncWhatsAppContactsAction(): Promise<ActionResult<{ syncedCount: number; newCount: number }>> {
   try {
     const session = await assertCanWrite();
@@ -312,32 +341,36 @@ export async function syncWhatsAppContactsAction(): Promise<ActionResult<{ synce
     const targetInbox = conectada ?? pareada ?? inboxes[0];
 
     if (targetInbox) {
-      const cmd = await prisma.whatsAppCommand.create({
-        data: {
+      if (WA_ENGINE === 'inprocess') {
+        /**
+         * Sem worker não há fila, e sem fila o comando ficaria pendente para
+         * sempre.
+         *
+         * O caminho abaixo enfileirava um `sync_contacts` **em qualquer
+         * motor** — mas quem consome essa fila é o worker. Com o motor
+         * in-process (o padrão de `npm run dev`), o botão sempre terminava
+         * dizendo "sincronizado" sem ter sincronizado nada: o comando ficava
+         * `pending` no banco e o contador voltava igual.
+         */
+        const { whatsappService } = await import('@/infrastructure/whatsapp/whatsapp-service');
+        await whatsappService.syncAllStoredContacts(accountId);
+      } else {
+        const cmd = await prisma.whatsAppCommand.create({
+          data: {
+            inboxId: targetInbox.id,
+            kind: 'sync_contacts',
+            payload: { accountId },
+            status: 'pending',
+          },
+        });
+
+        await postgresPubSub.publish(DB_CHANNELS.COMMANDS, {
           inboxId: targetInbox.id,
           kind: 'sync_contacts',
-          payload: { accountId },
-          status: 'pending',
-        },
-      });
-
-      await postgresPubSub.publish(DB_CHANNELS.COMMANDS, {
-        inboxId: targetInbox.id,
-        kind: 'sync_contacts',
-        id: cmd.id,
-      });
-
-      // Aguarda até 2.5s para o worker processar se estiver ativo
-      const start = Date.now();
-      while (Date.now() - start < 2500) {
-        await new Promise((r) => setTimeout(r, 250));
-        const updatedCmd = await prisma.whatsAppCommand.findUnique({
-          where: { id: cmd.id },
-          select: { status: true },
+          id: cmd.id,
         });
-        if (updatedCmd?.status === 'completed' || updatedCmd?.status === 'failed') {
-          break;
-        }
+
+        await aguardarComando(cmd.id);
       }
     }
 
@@ -428,6 +461,21 @@ export async function syncWhatsAppGroupsAction(): Promise<
       where: { accountId, kind: 'grupo' },
     });
 
+    // Mesma razão do lado dos contatos: sem worker, a fila não tem consumidor.
+    if (WA_ENGINE === 'inprocess') {
+      const { whatsappService } = await import('@/infrastructure/whatsapp/whatsapp-service');
+      await whatsappService.syncAllGroups(accountId);
+
+      const semWorker = await prisma.contact.count({ where: { accountId, kind: 'grupo' } });
+      return {
+        ok: true,
+        data: {
+          syncedCount: semWorker,
+          newCount: Math.max(0, semWorker - previousCount),
+        },
+      };
+    }
+
     // Despacha comando para o worker (Render / processo separado)
     const command = await prisma.whatsAppCommand.create({
       data: {
@@ -444,18 +492,7 @@ export async function syncWhatsAppGroupsAction(): Promise<
       id: command.id,
     });
 
-    // Aguarda até 2.5s para o worker processar se estiver ativo
-    const start = Date.now();
-    while (Date.now() - start < 2500) {
-      await new Promise((r) => setTimeout(r, 250));
-      const updatedCmd = await prisma.whatsAppCommand.findUnique({
-        where: { id: command.id },
-        select: { status: true },
-      });
-      if (updatedCmd?.status === 'completed' || updatedCmd?.status === 'failed') {
-        break;
-      }
-    }
+    await aguardarComando(command.id);
 
     const currentCount = await prisma.contact.count({
       where: { accountId, kind: 'grupo' },

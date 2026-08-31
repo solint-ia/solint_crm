@@ -76,6 +76,7 @@ model Account {
   invites          Invite[]
   tasks            Task[]
   mediaObjects     MediaObject[]
+  scheduledMessages ScheduledMessage[]
 }
 
 /// A pessoa. Nada aqui é específico de uma conta — o que é, mora em `Membership`.
@@ -267,6 +268,7 @@ model Conversation {
   assignee User?     @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
   labels   Label[]   @relation("ConversationLabels")
   messages Message[]
+  scheduledMessages ScheduledMessage[]
 
   @@unique([inboxId, channelThreadId])
   @@index([accountId, lastActivityAt])
@@ -298,6 +300,20 @@ model Message {
   deletedAt      DateTime?
   externalId     String?
   origin         String?
+  /// JSON: MessageReaction[] — as reações (emoji) que esta mensagem recebeu.
+  ///
+  /// Coluna JSON e não tabela própria porque a reação não tem vida sem a
+  /// mensagem: ela nasce, é substituída e morre junto, nunca é consultada
+  /// isoladamente e o WhatsApp permite **uma** por pessoa. Uma tabela custaria
+  /// um `join` em toda leitura de timeline para modelar um campo.
+  reactions      Json     @default("[]")
+  /// JID de quem escreveu, quando a mensagem veio de um grupo.
+  ///
+  /// Fora de grupo é redundante (o autor é o dono da conversa) e fica nulo. Em
+  /// grupo é indispensável para **reagir**: a chave que o WhatsApp exige para
+  /// apontar uma mensagem de terceiro carrega o participante, e sem ele o
+  /// servidor recusa a reação.
+  senderJid      String?
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
@@ -849,6 +865,49 @@ model Segment {
   campaigns Campaign[]
 
   @@index([accountId])
+}
+
+/// Mensagem escrita agora para sair depois.
+///
+/// Vive numa tabela própria — e não como uma `Message` com data futura — porque
+/// enquanto não sai ela **não é** uma mensagem: não aparece na timeline, não
+/// conta como não lida, não entra no resumo da conversa e pode ser cancelada
+/// sem deixar buraco. Gravá-la junto das outras obrigaria toda leitura de
+/// conversa a lembrar de filtrar o futuro, e a primeira que esquecesse mostraria
+/// ao operador uma mensagem que o cliente nunca recebeu.
+///
+/// Quem executa é o mesmo processo que fala com o WhatsApp (ver
+/// `scheduled-runner.ts`): o disparo precisa de um processo vivo com relógio, e
+/// no serverless não existe nenhum.
+model ScheduledMessage {
+  id             String    @id @default(cuid())
+  accountId      String
+  conversationId String
+  /// Caixa **da conversa** no momento do agendamento. O envio sai por ela.
+  inboxId        String
+  /// Quem agendou — é o autor que a mensagem terá quando sair.
+  userId         String
+  userName       String
+  text           String
+  isPrivate      Boolean   @default(false)
+  /// Mensagem citada, quando o agendamento nasceu de uma resposta.
+  replyToId      String?
+  scheduledFor   DateTime
+  /// pending | sent | canceled | failed
+  status         String    @default("pending")
+  error          String?
+  /// Id da `Message` criada quando o agendamento saiu.
+  messageId      String?
+  createdAt      DateTime  @default(now())
+  sentAt         DateTime?
+
+  account      Account      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  /// O varredor pergunta sempre a mesma coisa: o que está pendente e já venceu.
+  @@index([status, scheduledFor])
+  @@index([conversationId, status])
+  @@index([accountId, status])
 }
 
 model MessageTemplate {

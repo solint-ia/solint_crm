@@ -1,7 +1,25 @@
 import crypto from 'node:crypto';
 import pg from 'pg';
+import { prisma } from './prisma';
 
-const { Client, Pool } = pg;
+const { Client } = pg;
+
+/**
+ * Intervalo da batida na conexão de escuta.
+ *
+ * `LISTEN` não trafega nada enquanto ninguém publica, e uma conexão TCP que não
+ * trafega é a primeira que um NAT, um balanceador ou o próprio Supabase
+ * derrubam — sem FIN, sem erro, sem `end`. Do lado de cá o socket continua
+ * "aberto" e o `pg` não tem como perceber: as notificações simplesmente param
+ * de chegar, para sempre, e nada aparece no log.
+ *
+ * Era esta a causa do sininho que às vezes nunca tocava. A batida força tráfego
+ * e, quando ela falha, temos o gatilho para reconectar.
+ */
+const HEARTBEAT_INTERVAL_MS = 30_000;
+
+/** Teto de espera da batida. Passou disto, a conexão está morta, não lenta. */
+const HEARTBEAT_TIMEOUT_MS = 10_000;
 
 export const INSTANCE_ID = crypto.randomUUID();
 
@@ -23,20 +41,10 @@ export interface PubSubNotification<T = unknown> {
 
 class PostgresPubSubManager {
   private listenerClient: pg.Client | null = null;
-  /**
-   * Publicacao usa **pool**, nao um cliente unico.
-   *
-   * Um `pg.Client` atende uma consulta por vez. Com um so, duas publicacoes
-   * simultaneas — e elas sao simultaneas o tempo todo: batida do worker a cada
-   * 5s, evento de status, evento de conversa — disparavam
-   * `Calling client.query() when the client is already executing a query is
-   * deprecated`, e a segunda ficava esperando a primeira sem necessidade.
-   * O pool entrega uma conexao por chamada e o problema desaparece.
-   */
-  private publisherPool: pg.Pool | null = null;
   private isConnecting = false;
 
   private retryTimeout: NodeJS.Timeout | null = null;
+  private heartbeatTimer: NodeJS.Timeout | null = null;
   private listeners: Map<ChannelName, Set<(data: unknown) => void>> = new Map();
 
   /**
@@ -49,26 +57,6 @@ class PostgresPubSubManager {
   private listenerConnectionString(): string | undefined {
     return (
       process.env.DIRECT_URL ?? process.env.WORKER_DATABASE_URL ?? process.env.DATABASE_URL
-    );
-  }
-
-  /**
-   * Conexao de publicacao: prefere o pooler em modo transacao (porta 6543).
-   *
-   * Publicar e um `SELECT pg_notify(...)` — um comando isolado, sem estado a
-   * preservar entre chamadas, exatamente o que o modo transacao atende bem.
-   *
-   * Usar a porta de sessao aqui gastava uma vaga de um recurso escasso: o modo
-   * sessao do Supabase permite ~15 clientes, e cada processo que importa este
-   * modulo abre uma conexao de escuta **mais** uma de publicacao. Bastava o
-   * `next build` subir seus processos paralelos para estourar o limite com
-   * `max clients reached in session mode`. A escuta continua na porta de sessao
-   * porque nao tem escolha; a publicacao passa para o pooler, que e feito para
-   * isso.
-   */
-  private publisherConnectionString(): string | undefined {
-    return (
-      process.env.DATABASE_URL ?? process.env.DIRECT_URL ?? process.env.WORKER_DATABASE_URL
     );
   }
 
@@ -92,7 +80,13 @@ class PostgresPubSubManager {
     this.isConnecting = true;
 
     try {
-      const client = new Client({ connectionString });
+      // `keepAlive` não é detalhe de afinação aqui: é o que impede a conexão de
+      // escuta de ser silenciosamente descartada por ficar ociosa.
+      const client = new Client({
+        connectionString,
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 10_000,
+      });
       await client.connect();
 
       client.on('notification', (msg) => {
@@ -129,6 +123,10 @@ class PostgresPubSubManager {
         this.reconnect();
       });
 
+      // A conexão não pode ser só "aberta": ela tem de trafegar. O keepAlive do
+      // TCP cobre o caminho de rede; a batida de `startHeartbeat` cobre o resto
+      // — um pooler que encerra a sessão do outro lado sem avisar deixa o
+      // socket local válido e o `pg` sem nada a reportar.
       client.on('end', () => {
         console.warn('[PostgresPubSub] Conexão de escuta finalizada. Reconectando...');
         this.reconnect();
@@ -141,6 +139,7 @@ class PostgresPubSubManager {
 
       this.listenerClient = client;
       this.isConnecting = false;
+      this.startHeartbeat();
     } catch (err) {
       this.isConnecting = false;
       console.warn('[PostgresPubSub] Falha ao conectar listener Postgres. Nova tentativa em 5s:', err);
@@ -148,7 +147,43 @@ class PostgresPubSubManager {
     }
   }
 
+  /**
+   * Confere periodicamente se a escuta continua viva — e a refaz quando não.
+   *
+   * Um `SELECT 1` é o menor tráfego possível e é o suficiente: se a sessão do
+   * outro lado morreu, a consulta falha (ou nunca responde, daí o teto) e a
+   * reconexão acontece em segundos, não na próxima vez que alguém reiniciar o
+   * processo.
+   */
+  private startHeartbeat(): void {
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+
+    this.heartbeatTimer = setInterval(() => {
+      const client = this.listenerClient;
+      if (!client) return;
+
+      void Promise.race([
+        client.query('SELECT 1'),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('sem resposta')), HEARTBEAT_TIMEOUT_MS),
+        ),
+      ]).catch((err: unknown) => {
+        console.warn(
+          '[PostgresPubSub] Escuta sem resposta; reconectando:',
+          err instanceof Error ? err.message : err,
+        );
+        this.reconnect();
+      });
+    }, HEARTBEAT_INTERVAL_MS);
+
+    this.heartbeatTimer.unref?.();
+  }
+
   private reconnect(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
     if (this.listenerClient) {
       try {
         this.listenerClient.end();
@@ -191,9 +226,6 @@ class PostgresPubSubManager {
    */
   async publish<T>(channel: ChannelName, data: T): Promise<void> {
     if (process.env.NEXT_PHASE === 'phase-production-build') return;
-
-    const connectionString = this.publisherConnectionString();
-    if (!connectionString) return;
 
     try {
       const envelope: PubSubNotification<T> = {
@@ -251,23 +283,26 @@ class PostgresPubSubManager {
         return;
       }
 
-      if (!this.publisherPool) {
-        // `max` baixo de proposito: publicar e uma consulta curta e rara em
-        // volume. O pool esta aqui pela concorrencia, nao pela vazao.
-        const pool = new Pool({ connectionString, max: 3 });
-        pool.on('error', () => {
-          // Conexao ociosa derrubada pelo servidor: o pool se recupera sozinho
-          // na proxima aquisicao. Engolir o evento evita derrubar o processo.
-        });
-        this.publisherPool = pool;
-      }
-
-      await this.publisherPool.query('SELECT pg_notify($1, $2)', [channel, safePayload]);
+      /**
+       * Publicar reaproveita o pool do Prisma. **Nenhuma conexão nova.**
+       *
+       * Havia um `pg.Pool` só para isto, com `max: 3`. Parecia barato e não
+       * era: o modo sessão do Supabase entrega ~15 clientes para o projeto
+       * **inteiro**, e cada processo que importa este módulo abria uma conexão
+       * de escuta *mais* até três de publicação. Somando worker (três sessões
+       * de WhatsApp), site e a migração do build, o teto estourava — e quando
+       * estoura, estoura para tudo: no log de produção o mesmo
+       * `EMAXCONNSESSION` derrubava `prisma.message.findFirst` (o recibo de
+       * entrega) e o `pg_notify` (o aviso de mensagem nova) no mesmo minuto.
+       *
+       * `pg_notify` é um comando isolado, sem estado a preservar entre
+       * chamadas: cabe no pool que já existe, inclusive no modo transação. O
+       * pool do Prisma também resolve, de graça, o que motivava o pool
+       * dedicado — duas publicações simultâneas não disputam uma conexão só.
+       */
+      await prisma.$queryRaw`SELECT pg_notify(${channel}::text, ${safePayload}::text)`;
     } catch (err) {
       console.warn('[PostgresPubSub] Falha ao publicar evento no Postgres:', err);
-      // Pool inutilizavel: descarta para recriar na proxima publicacao.
-      void this.publisherPool?.end().catch(() => undefined);
-      this.publisherPool = null;
     }
   }
 }

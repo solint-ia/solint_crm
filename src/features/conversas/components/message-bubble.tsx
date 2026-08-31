@@ -1,9 +1,28 @@
 'use client';
 
 import { useState } from 'react';
-import { Ban, Download, FileText, Lock, Maximize2, Mic, Music, Reply, Smartphone, Trash2 } from 'lucide-react';
-import { previewOfMessage, type Message, type MessageContent } from '@/core/domain/message';
+import {
+  Ban,
+  Download,
+  FileText,
+  Lock,
+  Maximize2,
+  Mic,
+  Music,
+  Plus,
+  Reply,
+  Smartphone,
+  SmilePlus,
+  Trash2,
+} from 'lucide-react';
+import {
+  groupReactions,
+  previewOfMessage,
+  type Message,
+  type MessageContent,
+} from '@/core/domain/message';
 import { WaText } from '@/components/domain/wa-text';
+import { EmojiPicker, QUICK_REACTIONS } from '@/components/ui/emoji-picker';
 import { MediaLightbox, type LightboxMedia } from '@/components/ui/media-lightbox';
 import { cn } from '@/lib/cn';
 import { horaDaMensagem } from '@/lib/datetime';
@@ -19,6 +38,11 @@ interface MessageBubbleProps {
   readonly quoted?: Message;
   readonly onReply?: (message: Message) => void;
   readonly onDelete?: (message: Message) => void;
+  /**
+   * Reage à mensagem. `emoji` vazio retira a reação de quem está olhando — é a
+   * mesma chamada, porque é assim que o WhatsApp representa a remoção.
+   */
+  readonly onReact?: (message: Message, emoji: string) => void;
 }
 
 const isFrameless = (content: MessageContent): boolean =>
@@ -31,6 +55,7 @@ export function MessageBubble({
   quoted,
   onReply,
   onDelete,
+  onReact,
 }: MessageBubbleProps) {
   const [lightboxMedia, setLightboxMedia] = useState<LightboxMedia | null>(null);
 
@@ -96,6 +121,15 @@ export function MessageBubble({
 
   const canDelete = Boolean(onDelete) && !isInbound && !deleted;
   const canReply = Boolean(onReply) && !deleted;
+  const canReact = Boolean(onReact) && !deleted;
+
+  const reactions = groupReactions(message.reactions);
+  const minhaReacao = message.reactions?.find((item) => item.by === 'agent')?.emoji;
+
+  /** Clicar no selo alterna: o meu emoji sai, o dos outros vira o meu. */
+  const alternarReacao = (emoji: string) => {
+    onReact?.(message, minhaReacao === emoji ? '' : emoji);
+  };
 
   return (
     <>
@@ -105,81 +139,127 @@ export function MessageBubble({
           isInbound ? 'justify-start' : 'justify-end',
         )}
       >
-        {!isInbound && (canReply || canDelete) ? (
+        {!isInbound && (canReply || canDelete || canReact) ? (
           <MessageActions
             message={message}
+            inbound={isInbound}
             {...(canReply && onReply ? { onReply } : {})}
             {...(canDelete && onDelete ? { onDelete } : {})}
+            {...(canReact ? { onReact: alternarReacao, current: minhaReacao } : {})}
           />
         ) : null}
 
+        {/* A coluna existe para o selo de reações: ele fica **abaixo** do balão
+            e alinhado com ele, do lado de quem falou — que é onde o WhatsApp o
+            desenha e onde o olho já o procura. */}
         <div
           className={cn(
-            'max-w-[82%] sm:max-w-[72%] text-sm leading-relaxed transition-all',
-            frameless
-              ? 'flex flex-col gap-1'
-              : cn(
-                  'rounded-2xl px-4 py-2.5 shadow-xs',
-                  isInbound && 'rounded-tl-xs border border-line bg-surface text-ink',
-                  !isInbound &&
-                    !isAi &&
-                    'rounded-tr-xs bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-xs shadow-blue-600/15',
-                  isAi && 'rounded-tr-xs border border-cyan-500/30 bg-cyan-500/10 text-cyan-800 dark:text-cyan-200',
-                ),
-            !frameless && message.content.type === 'image' && 'p-1.5',
+            'flex min-w-0 max-w-[82%] flex-col sm:max-w-[72%]',
+            isInbound ? 'items-start' : 'items-end',
           )}
         >
-          {authorLabel && (
-            <p
-              className={cn(
-                'text-[11px] font-bold tracking-tight opacity-90',
-                message.content.type === 'image' ? 'px-2.5 pt-1.5' : 'mb-1 text-cyan-600 dark:text-cyan-400',
-              )}
-            >
-              {authorLabel}
-            </p>
-          )}
-
-          {quoted && !deleted ? <QuotedPreview message={quoted} inbound={isInbound} /> : null}
-
-          {deleted ? (
-            <p className="flex items-center gap-1.5 italic opacity-80">
-              <Ban className="size-3.5 shrink-0" />
-              {isInbound ? 'Esta mensagem foi apagada' : 'Você apagou esta mensagem'}
-            </p>
-          ) : (
-            <MediaContent content={message.content} onOpenLightbox={setLightboxMedia} />
-          )}
-
-          <footer
+          <div
             className={cn(
-              'flex items-center justify-end gap-1.5 text-[11px] font-medium opacity-80',
-              frameless ? 'mt-0' : 'mt-1.5',
-              message.content.type === 'image' && !frameless && 'px-2 pb-1',
+              'min-w-0 text-sm leading-relaxed transition-all',
+              frameless
+                ? 'flex flex-col gap-1'
+                : cn(
+                    'rounded-2xl px-4 py-2.5 shadow-xs',
+                    isInbound && 'rounded-tl-xs border border-line bg-surface text-ink',
+                    !isInbound &&
+                      !isAi &&
+                      'rounded-tr-xs bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-xs shadow-blue-600/15',
+                    isAi && 'rounded-tr-xs border border-cyan-500/30 bg-cyan-500/10 text-cyan-800 dark:text-cyan-200',
+                  ),
+              !frameless && message.content.type === 'image' && 'p-1.5',
             )}
           >
-            {sentFromPhone && (
-              <span title="Enviada direto pelo WhatsApp">
-                <Smartphone className="size-3 opacity-70" />
-              </span>
+            {authorLabel && (
+              <p
+                className={cn(
+                  'text-[11px] font-bold tracking-tight opacity-90',
+                  message.content.type === 'image' ? 'px-2.5 pt-1.5' : 'mb-1 text-cyan-600 dark:text-cyan-400',
+                )}
+              >
+                {authorLabel}
+              </p>
             )}
-            <span>{horaDaMensagem(message)}</span>
-            {!isInbound && message.deliveryStatus && (
-              <DeliveryTicks
-                status={message.deliveryStatus}
-                {...(message.deliveryStatus === 'falha' && onResend
-                  ? { onRetry: () => onResend(message.id) }
-                  : {})}
-              />
+
+            {quoted && !deleted ? <QuotedPreview message={quoted} inbound={isInbound} /> : null}
+
+            {deleted ? (
+              <p className="flex items-center gap-1.5 italic opacity-80">
+                <Ban className="size-3.5 shrink-0" />
+                {isInbound ? 'Esta mensagem foi apagada' : 'Você apagou esta mensagem'}
+              </p>
+            ) : (
+              <MediaContent content={message.content} onOpenLightbox={setLightboxMedia} />
             )}
-          </footer>
+
+            <footer
+              className={cn(
+                'flex items-center justify-end gap-1.5 text-[11px] font-medium opacity-80',
+                frameless ? 'mt-0' : 'mt-1.5',
+                message.content.type === 'image' && !frameless && 'px-2 pb-1',
+              )}
+            >
+              {sentFromPhone && (
+                <span title="Enviada direto pelo WhatsApp">
+                  <Smartphone className="size-3 opacity-70" />
+                </span>
+              )}
+              <span>{horaDaMensagem(message)}</span>
+              {!isInbound && message.deliveryStatus && (
+                <DeliveryTicks
+                  status={message.deliveryStatus}
+                  {...(message.deliveryStatus === 'falha' && onResend
+                    ? { onRetry: () => onResend(message.id) }
+                    : {})}
+                />
+              )}
+            </footer>
+          </div>
+
+          {reactions.length > 0 ? (
+            <div className="-mt-1.5 flex flex-wrap items-center gap-1">
+              {reactions.map((reaction) => (
+                <button
+                  key={reaction.emoji}
+                  type="button"
+                  disabled={!canReact}
+                  onClick={() => alternarReacao(reaction.emoji)}
+                  title={
+                    reaction.names.length > 0
+                      ? `${reaction.emoji} ${reaction.names.join(', ')}`
+                      : undefined
+                  }
+                  className={cn(
+                    'flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] leading-none shadow-xs transition-colors',
+                    reaction.mine
+                      ? 'border-brand/40 bg-brand/15 text-brand'
+                      : 'border-line bg-surface text-muted hover:bg-surface-2',
+                    !canReact && 'cursor-default',
+                  )}
+                >
+                  <span className="text-[13px]" aria-hidden="true">
+                    {reaction.emoji}
+                  </span>
+                  {reaction.count > 1 ? (
+                    <span className="font-semibold tabular-nums">{reaction.count}</span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
 
-        {isInbound && (canReply || canDelete) ? (
+        {isInbound && (canReply || canDelete || canReact) ? (
           <MessageActions
             message={message}
+            inbound={isInbound}
             {...(canReply && onReply ? { onReply } : {})}
             {...(canDelete && onDelete ? { onDelete } : {})}
+            {...(canReact ? { onReact: alternarReacao, current: minhaReacao } : {})}
           />
         ) : null}
       </article>
@@ -191,15 +271,113 @@ export function MessageBubble({
 
 function MessageActions({
   message,
+  inbound,
   onReply,
   onDelete,
+  onReact,
+  current,
 }: {
   readonly message: Message;
+  readonly inbound: boolean;
   readonly onReply?: (message: Message) => void;
   readonly onDelete?: (message: Message) => void;
+  readonly onReact?: (emoji: string) => void;
+  /** Emoji com que **eu** já reagi, para o botão mostrar o estado. */
+  readonly current?: string;
 }) {
+  const [barraAberta, setBarraAberta] = useState(false);
+  const [pickerAberto, setPickerAberto] = useState(false);
+
+  const reagir = (emoji: string) => {
+    onReact?.(emoji);
+    setBarraAberta(false);
+    setPickerAberto(false);
+  };
+
   return (
-    <div className="flex items-center gap-0.5 opacity-0 group-hover/mensagem:opacity-100 transition-opacity">
+    <div
+      className={cn(
+        'relative flex items-center gap-0.5 transition-opacity',
+        // A barra aberta segura a visibilidade: sem isto, tirar o mouse do
+        // balão para alcançar o emoji fecharia o que a pessoa foi clicar.
+        barraAberta || pickerAberto
+          ? 'opacity-100'
+          : 'opacity-0 group-hover/mensagem:opacity-100 focus-within:opacity-100',
+      )}
+    >
+      {onReact && (
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => {
+              setBarraAberta((valor) => !valor);
+              setPickerAberto(false);
+            }}
+            aria-expanded={barraAberta}
+            title="Reagir"
+            className={cn(
+              'rounded-lg p-1.5 transition-colors hover:bg-surface-2 hover:text-ink',
+              current ? 'text-brand' : 'text-muted',
+            )}
+          >
+            <SmilePlus className="size-3.5" />
+          </button>
+
+          {barraAberta && !pickerAberto ? (
+            <>
+              <div
+                className="fixed inset-0 z-30"
+                onClick={() => setBarraAberta(false)}
+                aria-hidden="true"
+              />
+              <div
+                role="menu"
+                aria-label="Reagir à mensagem"
+                className={cn(
+                  'absolute bottom-full z-40 mb-1 flex items-center gap-0.5 rounded-full border border-line bg-surface px-1.5 py-1 shadow-xl',
+                  inbound ? 'left-0' : 'right-0',
+                )}
+              >
+                {QUICK_REACTIONS.map((emoji) => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    onClick={() => reagir(emoji)}
+                    title={current === emoji ? 'Retirar reação' : `Reagir com ${emoji}`}
+                    className={cn(
+                      'flex size-7 items-center justify-center rounded-full text-base leading-none transition-transform hover:scale-125',
+                      current === emoji && 'bg-brand/15',
+                    )}
+                  >
+                    <span aria-hidden="true">{emoji}</span>
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setPickerAberto(true)}
+                  title="Mais emojis"
+                  aria-label="Mais emojis"
+                  className="flex size-7 items-center justify-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+                >
+                  <Plus className="size-3.5" />
+                </button>
+              </div>
+            </>
+          ) : null}
+
+          {pickerAberto ? (
+            <EmojiPicker
+              align={inbound ? 'left' : 'right'}
+              onPick={reagir}
+              onClose={() => {
+                setPickerAberto(false);
+                setBarraAberta(false);
+              }}
+            />
+          ) : null}
+        </div>
+      )}
+
       {onReply && (
         <button
           type="button"

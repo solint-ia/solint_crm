@@ -26,40 +26,82 @@ const ConversationEventsContext = createContext<EventsApi | undefined>(undefined
  * aberto é caro no servidor — então quem transmite é um só, e quem escuta se
  * inscreve.
  */
+/**
+ * Silêncio tolerado antes de considerar a conexão morta.
+ *
+ * O servidor manda uma batida a cada 15s (ver a rota `/api/conversas/events`).
+ * Três intervalos de folga cobrem uma batida perdida e uma rede lenta sem
+ * derrubar uma conexão que está apenas quieta.
+ */
+const SILENCIO_MAXIMO_MS = 50_000;
+
 export function ConversationEventsProvider({ children }: { readonly children: ReactNode }) {
   const handlers = useRef(new Set<Handler>());
 
   useEffect(() => {
     let source: EventSource | null = null;
     let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+    let watchdog: ReturnType<typeof setTimeout> | null = null;
     let isMounted = true;
+
+    const reconnect = (delay: number) => {
+      if (source) {
+        source.close();
+        source = null;
+      }
+      if (watchdog) {
+        clearTimeout(watchdog);
+        watchdog = null;
+      }
+      if (isMounted && !reconnectTimeout) {
+        reconnectTimeout = setTimeout(() => {
+          reconnectTimeout = null;
+          connect();
+        }, delay);
+      }
+    };
+
+    /**
+     * Vigia do silêncio.
+     *
+     * Um `EventSource` não avisa quando o outro lado morre sem fechar a
+     * conexão — e é assim que ela morre na prática: o processo do servidor
+     * reinicia, um intermediário corta o fluxo, e o `onerror` nunca dispara. A
+     * aba ficava com um cano aberto para lugar nenhum, sem receber mais nada e
+     * sem tentar de novo. Era metade do "o sininho às vezes nem toca": a outra
+     * metade estava na janela de drenagem do worker.
+     */
+    const rearmarVigia = () => {
+      if (watchdog) clearTimeout(watchdog);
+      watchdog = setTimeout(() => {
+        watchdog = null;
+        reconnect(500);
+      }, SILENCIO_MAXIMO_MS);
+    };
 
     const connect = () => {
       if (!isMounted) return;
       source = new EventSource('/api/conversas/events');
+      rearmarVigia();
+
+      source.onopen = () => rearmarVigia();
 
       source.onmessage = (event) => {
+        // Qualquer coisa que chegue prova que o canal está de pé — inclusive a
+        // batida, que é justamente o que chega quando não há novidade.
+        rearmarVigia();
+
         let payload: ConversationEventPayload;
         try {
           payload = JSON.parse(event.data) as ConversationEventPayload;
         } catch {
-          return; // Heartbeat ou evento não-JSON.
+          return; // Evento não-JSON.
         }
+        if ((payload as { type?: string }).type === 'heartbeat') return;
         for (const handler of [...handlers.current]) handler(payload);
       };
 
-      source.onerror = () => {
-        if (source) {
-          source.close();
-          source = null;
-        }
-        if (isMounted && !reconnectTimeout) {
-          reconnectTimeout = setTimeout(() => {
-            reconnectTimeout = null;
-            connect();
-          }, 2500);
-        }
-      };
+      source.onerror = () => reconnect(2500);
     };
 
     connect();
@@ -67,6 +109,7 @@ export function ConversationEventsProvider({ children }: { readonly children: Re
     return () => {
       isMounted = false;
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (watchdog) clearTimeout(watchdog);
       if (source) source.close();
     };
   }, []);

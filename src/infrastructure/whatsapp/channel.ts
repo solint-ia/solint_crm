@@ -120,6 +120,23 @@ export interface WhatsAppChannel {
     externalId: string,
   ): Promise<DispatchResult>;
 
+  /**
+   * Reage a uma mensagem do chat — ou retira a reação.
+   *
+   * `emoji` vazio é a remoção: o protocolo do WhatsApp não tem um comando
+   * separado para tirar a reação, ele manda a mesma coisa com texto vazio.
+   *
+   * `message.participant` só importa em grupo, e ali é indispensável: a chave
+   * que aponta a mensagem reagida precisa dizer **quem a escreveu**, porque o
+   * par (chat, id) não é único quando há vários remetentes.
+   */
+  sendReaction(
+    context: DispatchContext,
+    target: DispatchTarget,
+    message: { readonly externalId: string; readonly fromMe: boolean; readonly participant?: string },
+    emoji: string,
+  ): Promise<DispatchResult>;
+
   /** `inboxId` é o da conversa: confirmar leitura na sessão errada não confirma nada. */
   markRead(accountId: string, conversationId: string, inboxId?: string): Promise<void>;
 

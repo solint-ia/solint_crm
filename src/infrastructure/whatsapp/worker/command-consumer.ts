@@ -59,7 +59,7 @@ const CLEANUP_EVERY_N_SWEEPS = 240;
 const LANES = {
   // `delete` entra na raia de envio porque é escrita no mesmo chat: a ordem
   // entre mandar e apagar é a única que não pode se inverter.
-  envio: new Set(['send', 'send_media', 'delete']),
+  envio: new Set(['send', 'send_media', 'delete', 'react']),
   sessao: new Set(['connect', 'disconnect']),
   leitura: new Set(['read', 'presence']),
 } as const;
@@ -276,6 +276,29 @@ export class CommandConsumer {
         await session.deleteMessage(
           (payload['recipient'] ?? {}) as { phone?: string; jid?: string; channelThreadId?: string },
           externalId,
+        );
+        break;
+      }
+
+      case 'react': {
+        const session =
+          this.sessionManager.get(inboxId) ?? (await this.sessionManager.start(inboxId));
+        const alvo = (payload['message'] ?? {}) as {
+          externalId?: string;
+          fromMe?: boolean;
+          participant?: string;
+        };
+        if (!alvo.externalId) {
+          throw new Error('Comando de reação sem o id da mensagem no canal.');
+        }
+        await session.sendReaction(
+          (payload['recipient'] ?? {}) as { phone?: string; jid?: string; channelThreadId?: string },
+          {
+            externalId: alvo.externalId,
+            fromMe: Boolean(alvo.fromMe),
+            ...(alvo.participant ? { participant: alvo.participant } : {}),
+          },
+          typeof payload['emoji'] === 'string' ? payload['emoji'] : '',
         );
         break;
       }

@@ -192,7 +192,7 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
 
   private async dispatch(
     context: DispatchContext,
-    kind: 'send' | 'send_media' | 'delete',
+    kind: 'send' | 'send_media' | 'delete' | 'react',
     body: object,
   ): Promise<DispatchResult> {
     // A caixa vem da conversa, não de `inboxOf`: aquele método escolhe pela
@@ -209,11 +209,11 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
         ...body,
         accountId: context.accountId,
         conversationId: context.conversationId,
-        // Exclusão não carrega `messageId`: quando um comando falha, o worker
-        // usa esse campo para marcar a bolha como não entregue — e uma exclusão
-        // recusada carimbaria "falha" numa mensagem que foi entregue com
-        // sucesso, dizendo o contrário da verdade sobre ela.
-        ...(kind === 'delete' ? {} : { messageId: context.messageId }),
+        // Exclusão e reação não carregam `messageId`: quando um comando falha, o
+        // worker usa esse campo para marcar a bolha como não entregue — e uma
+        // exclusão (ou uma reação) recusada carimbaria "falha" numa mensagem que
+        // foi entregue com sucesso, dizendo o contrário da verdade sobre ela.
+        ...(kind === 'delete' || kind === 'react' ? {} : { messageId: context.messageId }),
       });
       return { ok: true, queued: true };
     } catch (error) {
@@ -245,6 +245,17 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     // Raia de envio de propósito: apagar é uma escrita no mesmo chat, e a ordem
     // entre "mandei" e "apaguei" é a única coisa que não pode se inverter.
     return this.dispatch(context, 'delete', { recipient: target, externalId });
+  }
+
+  async sendReaction(
+    context: DispatchContext,
+    target: DispatchTarget,
+    message: { readonly externalId: string; readonly fromMe: boolean; readonly participant?: string },
+    emoji: string,
+  ): Promise<DispatchResult> {
+    // Raia de envio: reagir é uma escrita no mesmo chat, e sair antes da
+    // mensagem que ela comenta seria uma reação a nada.
+    return this.dispatch(context, 'react', { recipient: target, message, emoji });
   }
 
   async sendMedia(

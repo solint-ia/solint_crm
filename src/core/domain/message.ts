@@ -42,6 +42,62 @@ export type MessageContent =
   | { readonly type: 'template'; readonly templateName: string; readonly text: string }
   | { readonly type: 'system'; readonly text: string };
 
+/**
+ * Uma reação (emoji) posta sobre uma mensagem.
+ *
+ * O WhatsApp permite **uma por pessoa**: reagir de novo troca o emoji, e reagir
+ * com vazio remove. Por isso a identidade de quem reagiu (`actorId`) é o que
+ * torna a lista consistente — não o emoji. Sem ela, a mesma pessoa trocando de
+ * 👍 para ❤️ deixaria os dois na bolha, e a contagem passaria a medir cliques
+ * em vez de pessoas.
+ */
+export interface MessageReaction {
+  /** O emoji em si. Nunca vazio: reação vazia é remoção, e some da lista. */
+  readonly emoji: string;
+  /** Quem reagiu, do ponto de vista do atendimento. */
+  readonly by: 'contact' | 'agent';
+  /** Nome de exibição de quem reagiu, quando conhecido. */
+  readonly authorName?: string;
+  /**
+   * Identidade estável de quem reagiu — telefone, JID, ou `me` para este
+   * número. É a chave de substituição: uma reação nova do mesmo `actorId`
+   * substitui a anterior em vez de somar.
+   */
+  readonly actorId: string;
+  readonly at: IsoDateTime;
+}
+
+/** Agrupa as reações por emoji, na ordem em que cada emoji apareceu. */
+export const groupReactions = (
+  reactions: readonly MessageReaction[] | undefined,
+): readonly { readonly emoji: string; readonly count: number; readonly mine: boolean; readonly names: readonly string[] }[] => {
+  if (!reactions || reactions.length === 0) return [];
+  const ordem: string[] = [];
+  const mapa = new Map<string, { count: number; mine: boolean; names: string[] }>();
+
+  for (const reaction of reactions) {
+    let entrada = mapa.get(reaction.emoji);
+    if (!entrada) {
+      entrada = { count: 0, mine: false, names: [] };
+      mapa.set(reaction.emoji, entrada);
+      ordem.push(reaction.emoji);
+    }
+    entrada.count += 1;
+    if (reaction.by === 'agent') entrada.mine = true;
+    if (reaction.authorName) entrada.names.push(reaction.authorName);
+  }
+
+  return ordem.map((emoji) => {
+    const entrada = mapa.get(emoji);
+    return {
+      emoji,
+      count: entrada?.count ?? 0,
+      mine: entrada?.mine ?? false,
+      names: entrada?.names ?? [],
+    };
+  });
+};
+
 export interface Message {
   readonly id: Id;
   readonly conversationId: Id;
@@ -74,6 +130,15 @@ export interface Message {
   /** Identificador da mensagem no provedor externo (ex.: id da mensagem no WhatsApp). */
   readonly externalId?: string;
   readonly origin?: MessageOrigin;
+  /** Reações recebidas. Ausente quando nenhuma foi posta. */
+  readonly reactions?: readonly MessageReaction[];
+  /**
+   * JID de quem escreveu, quando a mensagem veio de um grupo.
+   *
+   * Fica no domínio porque é o que permite **responder com uma reação** a
+   * mensagem de terceiro: a chave que o canal exige carrega o participante.
+   */
+  readonly senderJid?: string;
 }
 
 /** Uma mensagem apagada não mostra conteúdo, só o rastro de que existiu. */

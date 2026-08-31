@@ -5,15 +5,22 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { CONVERSATION_STATUSES, PRIORITIES } from '@/core/domain/conversation';
 import { previewOfMessage, type Message, type MessageContent } from '@/core/domain/message';
+import {
+  MAX_SCHEDULE_AHEAD_MS,
+  MIN_SCHEDULE_LEAD_MS,
+  type ScheduledMessage,
+} from '@/core/domain/scheduled-message';
 import { stageLabelIds } from '@/core/domain/pipeline';
 import { can, canSeeInbox, withSignature } from '@/core/domain/user';
 import { canSendFreeText, MAX_MESSAGE_LENGTH } from '@/core/use-cases/send-message';
 import { container } from '@/infrastructure/container';
+import { prisma } from '@/infrastructure/db/prisma';
 import { dispararAutomacoes } from '@/infrastructure/automations/dispatch';
 import type { DispatchResult } from '@/infrastructure/whatsapp/channel';
 import { getWhatsAppChannel } from '@/infrastructure/whatsapp/channel-provider';
 import { mediaStore } from '@/infrastructure/whatsapp/wa-media-store';
 import {
+  applyReaction,
   findContactConversation,
   openOutboundConversation,
 } from '@/infrastructure/whatsapp/wa-store';
@@ -1140,3 +1147,285 @@ export async function setOperatorTypingAction(input: unknown): Promise<ActionRes
   return { ok: true };
 }
 
+/* ==========================================================================
+   Reações
+   ========================================================================== */
+
+const reactSchema = z.object({
+  conversationId: z.string().min(1).max(64),
+  messageId: z.string().min(1).max(128),
+  /**
+   * Vazio **retira** a reação.
+   *
+   * Não é um caso de borda inventado aqui: é como o WhatsApp representa a
+   * remoção — a mesma mensagem de reação, com texto vazio. Um endpoint separado
+   * para tirar seria um segundo caminho para a mesma coisa.
+   */
+  emoji: z.string().max(24),
+});
+
+export async function reactToMessageAction(input: unknown): Promise<ActionResult> {
+  const parsed = reactSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Reação inválida.' };
+
+  const session = await container.session.getCurrentSession();
+  if (!can(session, 'conversas:responder')) {
+    return { ok: false, error: 'Sem permissão para reagir a mensagens.' };
+  }
+
+  const conversation = await container.conversations.findById(
+    session.account.id,
+    parsed.data.conversationId,
+    session.inboxAccess,
+  );
+  if (!conversation) return { ok: false, error: 'Conversa não encontrada.' };
+
+  const message = await container.conversations.findMessage(
+    session.account.id,
+    conversation.id,
+    parsed.data.messageId,
+  );
+  if (!message) return { ok: false, error: 'Mensagem não encontrada.' };
+  if (message.deletedAt) return { ok: false, error: 'Esta mensagem foi apagada.' };
+  if (message.isPrivate) {
+    return { ok: false, error: 'Notas internas não recebem reação.' };
+  }
+
+  const emoji = parsed.data.emoji.trim();
+
+  // Só sai para o canal o que existe **no canal**. Uma mensagem que nunca foi
+  // entregue não tem chave lá fora, e reagir a ela é um gesto interno.
+  if (message.externalId && conversation.channel === 'whatsapp') {
+    const channel = await getWhatsAppChannel();
+    const channelStatus = await channel.getStatus(session.account.id, conversation.inboxId);
+
+    if (channelStatus.status !== 'conectado') {
+      return {
+        ok: false,
+        error: 'WhatsApp desconectado: reconecte para reagir à mensagem.',
+      };
+    }
+
+    const sent = await channel.sendReaction(
+      {
+        accountId: session.account.id,
+        conversationId: conversation.id,
+        messageId: message.id,
+        inboxId: conversation.inboxId,
+      },
+      { channelThreadId: conversation.channelThreadId, phone: conversation.contact.phone },
+      {
+        externalId: message.externalId,
+        fromMe: message.author !== 'contact',
+        // Em grupo, a chave precisa dizer quem escreveu a mensagem reagida.
+        ...(message.senderJid ? { participant: message.senderJid } : {}),
+      },
+      emoji,
+    );
+
+    if (!sent.ok) {
+      return { ok: false, error: sent.error ?? 'O WhatsApp recusou a reação.' };
+    }
+  }
+
+  /**
+   * A gravação local acontece **sempre**, inclusive quando o motor worker só
+   * enfileirou o envio.
+   *
+   * O eco do WhatsApp devolve a mesma reação em seguida, e `applyReaction` é
+   * idempotente: aplicar duas vezes o mesmo emoji do mesmo autor não muda nada
+   * e não republica evento. O que se ganha é a reação aparecendo na tela no
+   * instante do clique, em vez de depois da ida e volta ao servidor do
+   * WhatsApp.
+   */
+  await applyReaction(message.externalId ?? message.id, {
+    emoji,
+    actorId: 'me',
+    by: 'agent',
+    authorName: session.user.name,
+  });
+
+  return { ok: true };
+}
+
+/* ==========================================================================
+   Mensagens agendadas
+   ========================================================================== */
+
+const scheduleSchema = z.object({
+  conversationId: z.string().min(1).max(64),
+  text: z.string().trim().min(1).max(MAX_MESSAGE_LENGTH),
+  isPrivate: z.boolean(),
+  replyToId: z.string().min(1).max(128).optional(),
+  /** Instante do disparo em ISO — a tela converte do campo local para cá. */
+  scheduledFor: z.string().min(1).max(40),
+});
+
+export interface ScheduledMessagesResult extends ActionResult {
+  readonly items?: readonly ScheduledMessage[];
+}
+
+const scheduledRow = (row: {
+  id: string;
+  conversationId: string;
+  text: string;
+  isPrivate: boolean;
+  scheduledFor: Date;
+  status: string;
+  userName: string;
+  error: string | null;
+}): ScheduledMessage => ({
+  id: row.id,
+  conversationId: row.conversationId,
+  text: row.text,
+  isPrivate: row.isPrivate,
+  scheduledFor: row.scheduledFor.toISOString(),
+  status: row.status as ScheduledMessage['status'],
+  authorName: row.userName,
+  ...(row.error ? { error: row.error } : {}),
+});
+
+const SCHEDULED_SELECT = {
+  id: true,
+  conversationId: true,
+  text: true,
+  isPrivate: true,
+  scheduledFor: true,
+  status: true,
+  userName: true,
+  error: true,
+} as const;
+
+export async function scheduleMessageAction(input: unknown): Promise<ScheduledMessagesResult> {
+  const parsed = scheduleSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Dados inválidos para o agendamento.' };
+
+  const session = await container.session.getCurrentSession();
+  if (!can(session, 'conversas:responder')) {
+    return { ok: false, error: 'Sem permissão para agendar mensagens.' };
+  }
+
+  const quando = new Date(parsed.data.scheduledFor);
+  if (Number.isNaN(quando.getTime())) {
+    return { ok: false, error: 'Data e hora inválidas.' };
+  }
+
+  const daqui = quando.getTime() - Date.now();
+  if (daqui < MIN_SCHEDULE_LEAD_MS) {
+    return { ok: false, error: 'Escolha um horário pelo menos um minuto à frente.' };
+  }
+  if (daqui > MAX_SCHEDULE_AHEAD_MS) {
+    return { ok: false, error: 'O agendamento não pode passar de um ano.' };
+  }
+
+  const conversation = await container.conversations.findById(
+    session.account.id,
+    parsed.data.conversationId,
+    session.inboxAccess,
+  );
+  if (!conversation) return { ok: false, error: 'Conversa não encontrada.' };
+
+  /**
+   * A assinatura entra agora, não na hora de enviar.
+   *
+   * É a mesma razão de `sendMessageAction`: o texto guardado tem de ser o texto
+   * que o cliente vai receber. Se a pessoa desligar a assinatura amanhã, a
+   * mensagem que ela revisou hoje continua sendo a que sai.
+   */
+  const text = parsed.data.isPrivate
+    ? parsed.data.text
+    : withSignature(session.user, parsed.data.text);
+
+  await prisma.scheduledMessage.create({
+    data: {
+      accountId: session.account.id,
+      conversationId: conversation.id,
+      inboxId: conversation.inboxId,
+      userId: session.user.id,
+      userName: session.user.name,
+      text,
+      isPrivate: parsed.data.isPrivate,
+      replyToId: parsed.data.replyToId ?? null,
+      scheduledFor: quando,
+      status: 'pending',
+    },
+  });
+
+  return listScheduledMessagesAction({ conversationId: conversation.id });
+}
+
+export async function listScheduledMessagesAction(
+  input: unknown,
+): Promise<ScheduledMessagesResult> {
+  const parsed = conversationIdSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Conversa inválida.' };
+
+  const session = await container.session.getCurrentSession();
+  const conversation = await container.conversations.findById(
+    session.account.id,
+    parsed.data.conversationId,
+    session.inboxAccess,
+  );
+  if (!conversation) return { ok: false, error: 'Conversa não encontrada.' };
+
+  // Só o que ainda vai acontecer. O que já saiu virou mensagem na timeline, e
+  // repeti-lo aqui mostraria a mesma coisa duas vezes.
+  const rows = await prisma.scheduledMessage.findMany({
+    where: {
+      accountId: session.account.id,
+      conversationId: conversation.id,
+      status: { in: ['pending', 'sending'] },
+    },
+    orderBy: { scheduledFor: 'asc' },
+    select: SCHEDULED_SELECT,
+  });
+
+  return { ok: true, items: rows.map(scheduledRow) };
+}
+
+const cancelScheduleSchema = z.object({
+  conversationId: z.string().min(1).max(64),
+  scheduledMessageId: z.string().min(1).max(64),
+});
+
+export async function cancelScheduledMessageAction(
+  input: unknown,
+): Promise<ScheduledMessagesResult> {
+  const parsed = cancelScheduleSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Agendamento inválido.' };
+
+  const session = await container.session.getCurrentSession();
+  if (!can(session, 'conversas:responder')) {
+    return { ok: false, error: 'Sem permissão para cancelar agendamentos.' };
+  }
+
+  const conversation = await container.conversations.findById(
+    session.account.id,
+    parsed.data.conversationId,
+    session.inboxAccess,
+  );
+  if (!conversation) return { ok: false, error: 'Conversa não encontrada.' };
+
+  /**
+   * Só cancela o que ainda está `pending`.
+   *
+   * O `updateMany` condicional é a trava: entre a tela mostrar o botão e o
+   * clique chegar aqui, o varredor pode ter pegado a linha. Cancelar uma
+   * mensagem que já saiu seria apagar do CRM algo que o cliente recebeu.
+   */
+  const { count } = await prisma.scheduledMessage.updateMany({
+    where: {
+      id: parsed.data.scheduledMessageId,
+      accountId: session.account.id,
+      conversationId: conversation.id,
+      status: 'pending',
+    },
+    data: { status: 'canceled' },
+  });
+
+  const atual = await listScheduledMessagesAction({ conversationId: conversation.id });
+  if (count === 0) {
+    return { ...atual, ok: false, error: 'Este agendamento já saiu e não pode ser cancelado.' };
+  }
+  return atual;
+}

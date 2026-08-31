@@ -11,6 +11,7 @@ export * from './label';
 export * from './message';
 export * from './notification';
 export * from './pipeline';
+export * from './scheduled-message';
 export * from './settings';
 export * from './shared';
 export * from './user';

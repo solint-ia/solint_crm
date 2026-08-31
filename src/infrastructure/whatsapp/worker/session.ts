@@ -19,6 +19,7 @@ import { DB_POOL_SIZE, asJson, prisma } from '@/infrastructure/db/prisma';
 import { initPostgresAuthState, isPairedCreds } from '../auth/postgres-auth-state';
 import {
   applyDeliveryUpdate,
+  applyReaction,
   commitMessage,
   ensureContact,
   findSentMessage,
@@ -71,7 +72,18 @@ import {
  * seguintes pararem de aparecer em tempo real — um defeito pior que o que ela
  * conserta.
  */
-const DRAIN_MAX_MS = 90_000;
+const DRAIN_MAX_MS = 12_000;
+
+/**
+ * Silêncio máximo sem mensagem nova antes de fechar a janela.
+ *
+ * A drenagem existe para agrupar uma rajada, e uma rajada se reconhece por
+ * continuidade: enquanto chegam mensagens, ela está acontecendo; três segundos
+ * sem nenhuma e ela acabou. Fechar por ociosidade é o que impede uma mensagem
+ * solta — a que chega logo depois de conectar, sem rajada nenhuma atrás dela —
+ * de ficar retida até o teto da janela.
+ */
+const DRAIN_IDLE_MS = 3_000;
 
 /**
  * Teto de QR Codes emitidos numa tentativa de pareamento.
@@ -177,6 +189,15 @@ export class WhatsAppSession {
   private readonly typingByConversation = new Map<string, boolean>();
   private readonly contactsStore = new Map<string, Partial<WAContact>>();
   /**
+   * Nome já resolvido de cada participante de grupo.
+   *
+   * Um grupo ativo entrega dezenas de mensagens da mesma pessoa em sequência, e
+   * sem esta memória cada uma repetiria a consulta ao cadastro do CRM. Vive com
+   * o socket e é esvaziada com ele, porque é dele que vem o mapeamento LID→PN
+   * que produziu a chave.
+   */
+  private readonly groupSenderNames = new Map<string, string>();
+  /**
    * Silencioso por padrão, verboso sob demanda.
    *
    * Era `pino({ level: 'silent' })` fixo, e foi por isso que uma saturação do
@@ -208,7 +229,39 @@ export class WhatsAppSession {
     startedAt: number;
     touched: Set<string>;
     timer: NodeJS.Timeout | null;
-  } = { active: false, closing: false, count: 0, startedAt: 0, touched: new Set(), timer: null };
+    idle: NodeJS.Timeout | null;
+  } = {
+    active: false,
+    closing: false,
+    count: 0,
+    startedAt: 0,
+    touched: new Set(),
+    timer: null,
+    idle: null,
+  };
+
+  /**
+   * O servidor já avisou que terminou de entregar a fila represada?
+   *
+   * A pergunta parece redundante com a janela de drenagem, e não é — o aviso
+   * chega **antes** de `connection: 'open'`. O Baileys emite
+   * `receivedPendingNotifications` em `CB:ib,,offline`, que é onde ele descarrega
+   * o buffer de eventos acumulado; só depois disso a conexão é anunciada como
+   * aberta. Como `beginDrain` roda no `open`, a ordem real era: aviso de fim
+   * (ignorado, porque nenhuma janela estava aberta ainda) → janela aberta →
+   * ninguém para fechá-la.
+   *
+   * O resultado foi o defeito mais visível do produto: **toda** mensagem que
+   * chegasse nos 90 segundos seguintes à conexão era gravada calada e só
+   * aparecia na tela quando o tempo limite estourava. No log do Render isso
+   * aparece como `Fila represada drenada: 1 mensagem(ns) ... 89999ms (tempo
+   * limite da janela)` — uma mensagem só, retida um minuto e meio.
+   *
+   * Guardando o aviso, `beginDrain` sabe que não há nada a drenar e nem abre a
+   * janela. O campo é zerado junto com o socket, porque ele descreve aquela
+   * conexão e não a sessão.
+   */
+  private pendingNotificationsDone = false;
 
   /**
    * Quantas mensagens **desta** sessão ainda estão sendo gravadas.
@@ -523,6 +576,7 @@ export class WhatsAppSession {
       // estivemos fora. É o sinal para anunciar de uma vez o que foi gravado
       // calado durante a drenagem.
       if (update.receivedPendingNotifications) {
+        this.pendingNotificationsDone = true;
         void this.finishDrain('fim da fila represada');
       }
 
@@ -703,6 +757,103 @@ export class WhatsAppSession {
         }
       }),
     );
+
+    /**
+     * Reações.
+     *
+     * O Baileys as entrega por um evento próprio — e **não** por
+     * `messages.upsert` com conteúdo útil: a mensagem de reação chega lá
+     * também, mas `decodeWaMessage` a descarta (é um `reactionMessage`, não
+     * conteúdo de conversa). Sem este listener, reagir no celular não produzia
+     * nada no CRM.
+     */
+    this.socket.ev.on(
+      'messages.reaction',
+      this.guarded('messages.reaction', async (reactions) => {
+        for (const item of reactions) {
+          await this.handleReaction(item);
+        }
+      }),
+    );
+  }
+
+  /**
+   * Traduz a reação do canal para a intenção de domínio.
+   *
+   * `item.key` é a chave da mensagem **reagida**; `item.reaction.key` é a da
+   * mensagem de reação, e é dela que sai quem reagiu. Trocar os dois é o erro
+   * fácil aqui — e ele não daria exceção nenhuma, só carimbaria a reação na
+   * mensagem errada.
+   */
+  private async handleReaction(item: {
+    key: WAMessageKey;
+    reaction: { text?: string | null; key?: WAMessageKey | null };
+  }): Promise<void> {
+    const alvo = item.key?.id;
+    if (!alvo) return;
+
+    const autorKey = item.reaction?.key ?? undefined;
+    const fromMe = Boolean(autorKey?.fromMe);
+    const emoji = (item.reaction?.text ?? '').trim();
+
+    if (fromMe) {
+      await applyReaction(alvo, { emoji, actorId: 'me', by: 'agent' });
+      return;
+    }
+
+    const sender =
+      this.socket && autorKey ? await resolveSenderIdentity(this.socket, autorKey) : null;
+    const actorId =
+      sender?.phone || sender?.jid || autorKey?.participant || autorKey?.remoteJid || 'contato';
+
+    const jid = sender?.jid ? jidNormalizedUser(sender.jid) : undefined;
+    const nome =
+      (jid ? this.groupSenderNames.get(jid) : undefined) ??
+      (jid ? this.contactsStore.get(jid)?.name?.trim() : undefined) ??
+      (sender?.phone ? PhoneNumber.format(sender.phone) || sender.phone : undefined);
+
+    await applyReaction(alvo, {
+      emoji,
+      actorId,
+      by: 'contact',
+      ...(nome ? { authorName: nome } : {}),
+    });
+  }
+
+  /**
+   * Envia (ou retira) uma reação nossa sobre uma mensagem do chat.
+   *
+   * `emoji` vazio é a forma que o protocolo tem de dizer "retirei a minha" —
+   * não existe um comando separado de remoção. Em grupo a chave precisa do
+   * `participant`: sem ele o servidor não sabe de qual mensagem se trata,
+   * porque o par (chat, id) não é suficiente quando há vários remetentes.
+   */
+  async sendReaction(
+    recipient: { phone?: string; jid?: string; channelThreadId?: string },
+    target: { externalId: string; fromMe: boolean; participant?: string },
+    emoji: string,
+  ): Promise<void> {
+    if (!this.socket || !this.isAuthenticated) {
+      throw new Error(`Sessão WhatsApp ${this.inboxId} não está conectada.`);
+    }
+
+    const raw = recipient.channelThreadId ?? recipient.jid ?? recipient.phone;
+    const targetJid = normalizeTargetJid(raw);
+    if (!targetJid) {
+      throw new Error('Destinatário inválido: forneça telefone ou JID.');
+    }
+
+    await this.socket.sendMessage(targetJid, {
+      react: {
+        text: emoji,
+        key: {
+          remoteJid: targetJid,
+          id: target.externalId,
+          fromMe: target.fromMe,
+          ...(target.participant && !target.fromMe ? { participant: target.participant } : {}),
+        },
+      },
+    });
   }
 
   private async handleContactSync(contact: Partial<WAContact>): Promise<void> {
@@ -794,7 +945,58 @@ export class WhatsAppSession {
     }
   }
 
+  /**
+   * Puxa a agenda inteira do WhatsApp de volta para a memória.
+   *
+   * **Por que "sincronizar grupos" trazia todos os grupos e "sincronizar
+   * contatos" não trazia todos os contatos.** Grupo tem consulta direta:
+   * `groupFetchAllParticipating()` pergunta ao servidor e ele responde a lista
+   * completa. Contato não tem equivalente — a agenda chega uma única vez, pelo
+   * *app state sync*, e o Baileys só o executa quando recebe um histórico
+   * inicial (ver `doAppStateSync` em `Socket/chats.js`). Ou seja: ela chegava no
+   * pareamento e nunca mais. Em toda reconexão o `contactsStore` nascia vazio, e
+   * "sincronizar contatos" varria um mapa em branco — daí o botão terminar sem
+   * erro e sem trazer ninguém.
+   *
+   * `resyncAppState` é o pedido equivalente ao dos grupos. Mas ele é
+   * *incremental*: o servidor só devolve o que mudou desde a versão que temos
+   * guardada, e para uma agenda que não mudou isso é nada. Zerar a versão das
+   * coleções antes força o `return_snapshot`, e o servidor manda a agenda
+   * inteira — que é exatamente o que reinstalar o WhatsApp Web faz.
+   *
+   * Apagar a versão é seguro: ela é um marcador de sincronização, não um
+   * segredo. O pior caso é reprocessar mutações que já conhecíamos, e
+   * `handleContactSync` é idempotente.
+   */
+  private async pullAddressBook(): Promise<void> {
+    const socket = this.socket;
+    if (!socket || !this.isAuthenticated) return;
+
+    const colecoes = ['critical_unblock_low', 'regular_high', 'regular_low', 'regular'] as const;
+
+    try {
+      await socket.authState.keys.set({
+        'app-state-sync-version': Object.fromEntries(colecoes.map((nome) => [nome, null])),
+      } as never);
+    } catch (error) {
+      waLog.warn(`[sessão ${this.inboxId}] Não foi possível zerar a versão do app state:`, error);
+    }
+
+    try {
+      await socket.resyncAppState(colecoes, true);
+    } catch (error) {
+      console.warn(
+        `[WhatsAppSession ${this.inboxId}] Falha ao repuxar a agenda do WhatsApp:`,
+        error,
+      );
+    }
+  }
+
   async syncAllStoredContacts(): Promise<{ synced: number; created: number }> {
+    // A agenda vem antes da varredura: sem isto o mapa varrido é o que sobrou
+    // da sessão, não o que existe no telefone.
+    await this.pullAddressBook();
+
     let synced = 0;
     let created = 0;
 
@@ -833,7 +1035,15 @@ export class WhatsAppSession {
               data: { name: addressBookName, ...(avatarUrl && !existing.avatarUrl ? { avatarUrl } : {}) },
             });
           }
-        } else if (addressBookName || pushName) {
+        } else {
+          // Sem exigir nome.
+          //
+          // A condição era `addressBookName || pushName`, e ela descartava em
+          // silêncio justamente os contatos que a tela de "nova conversa" do
+          // WhatsApp mostra sem nome — número salvo sem etiqueta, contato vindo
+          // de grupo. Quem pediu "sincronizar contatos" quer a agenda como ela
+          // é; um contato identificado pelo número é um contato, e ganhar um
+          // nome depois é só uma atualização.
           const contactId = `ct-wa-${this.accountId}-${phoneDigits}`;
           await prisma.contact.create({
             data: {
@@ -981,10 +1191,19 @@ export class WhatsAppSession {
    */
   private beginDrain(): void {
     if (this.drain.timer) clearTimeout(this.drain.timer);
+    if (this.drain.idle) clearTimeout(this.drain.idle);
+
+    // O servidor já disse que não há fila represada — ver
+    // `pendingNotificationsDone`. Abrir a janela aqui seria calar, sem motivo,
+    // tudo o que chegasse a seguir.
+    if (this.pendingNotificationsDone) {
+      waLog.debug(`[sessão ${this.inboxId}] Sem fila represada: janela de silêncio não aberta.`);
+      return;
+    }
 
     // Rede de segurança: se o aviso de fim não vier — servidor que não o envia,
     // conexão que cai no meio —, a janela não pode ficar aberta para sempre,
-    // ou as mensagens seguintes deixariam de aparecer na tela em tempo real.
+    // ou as mensagens seguintes deixariam de aparecer em tempo real.
     const timer = setTimeout(() => void this.finishDrain('tempo limite da janela'), DRAIN_MAX_MS);
     timer.unref?.();
 
@@ -995,7 +1214,26 @@ export class WhatsAppSession {
       startedAt: Date.now(),
       touched: new Set(),
       timer,
+      idle: null,
     };
+
+    this.armDrainIdle();
+  }
+
+  /**
+   * (Re)arma o relógio de ociosidade da drenagem.
+   *
+   * Chamado a cada mensagem gravada calada: enquanto a rajada continua, o
+   * relógio é adiado; quando ela para, ele fecha a janela. Sem isto, o único
+   * jeito de fechar era o aviso do servidor (que já veio) ou o tempo limite —
+   * e o tempo limite é justamente a espera que não pode acontecer.
+   */
+  private armDrainIdle(): void {
+    if (!this.drain.active) return;
+    if (this.drain.idle) clearTimeout(this.drain.idle);
+    const idle = setTimeout(() => void this.finishDrain('fila ociosa'), DRAIN_IDLE_MS);
+    idle.unref?.();
+    this.drain.idle = idle;
   }
 
   /**
@@ -1019,6 +1257,7 @@ export class WhatsAppSession {
 
     const { count, startedAt, touched } = this.drain;
     if (this.drain.timer) clearTimeout(this.drain.timer);
+    if (this.drain.idle) clearTimeout(this.drain.idle);
     this.drain = {
       active: false,
       closing: false,
@@ -1026,6 +1265,7 @@ export class WhatsAppSession {
       startedAt: 0,
       touched: new Set(),
       timer: null,
+      idle: null,
     };
 
     if (count > 0) {
@@ -1125,7 +1365,20 @@ export class WhatsAppSession {
       }
     }
 
-    const authorName = await this.resolveAuthorName(chat, msg, fromMe, contact.name);
+    /**
+     * Quem escreveu, dentro do grupo.
+     *
+     * Resolvido **uma vez** e reaproveitado em dois lugares: o nome que aparece
+     * acima da bolha e o `senderJid` que fica gravado na linha. Resolver duas
+     * vezes custaria uma consulta de mapeamento LID→telefone por mensagem de
+     * grupo, no mesmo socket que entrega as mensagens.
+     */
+    const sender =
+      chat.isGroup && !fromMe && this.socket
+        ? await resolveSenderIdentity(this.socket, msg.key)
+        : null;
+
+    const authorName = await this.resolveAuthorName(chat, msg, fromMe, contact.name, sender);
 
     const content = decoded.media
       ? await this.materializeMedia(msg, messageId, decoded.media, decoded.content)
@@ -1142,6 +1395,7 @@ export class WhatsAppSession {
       time: timeLabel(at),
       deliveryStatus: fromMe ? (deliveryStatusFrom(msg.status) ?? 'enviado') : undefined,
       isPrivate: false,
+      ...(sender?.jid ? { senderJid: sender.jid } : {}),
     };
 
     if (!fromMe) {
@@ -1155,6 +1409,7 @@ export class WhatsAppSession {
     if (draining) {
       this.drain.count += 1;
       this.drain.touched.add(chat.conversationId);
+      this.armDrainIdle();
     }
 
     const medir = waLog.timer(`[sessão ${this.inboxId}] commitMessage`);
@@ -1237,11 +1492,26 @@ export class WhatsAppSession {
     };
   }
 
+  /**
+   * O nome que aparece acima da bolha.
+   *
+   * Em grupo isto era, literalmente, o número de telefone formatado — e só ele.
+   * O `pushName`, que é o nome que a própria pessoa publica no WhatsApp e vem
+   * **dentro de cada mensagem**, era ignorado; a agenda sincronizada e o
+   * cadastro do CRM, idem. O resultado era uma conversa de grupo em que toda
+   * fala vinha assinada por `+55 79 9…`, exatamente o que o WhatsApp nunca
+   * mostra.
+   *
+   * A ordem abaixo é a do próprio aplicativo: o nome que **eu** salvei na
+   * agenda vence o que a pessoa publica, e o número é o último recurso — o que
+   * se usa quando não há nome nenhum em lugar algum.
+   */
   private async resolveAuthorName(
     chat: ChatIdentity,
     msg: WAMessage,
     fromMe: boolean,
     contactName: string,
+    sender: { readonly jid: string; readonly phone: string } | null,
   ): Promise<string | undefined> {
     if (fromMe) {
       return this.currentStatus.name ?? 'Atendente';
@@ -1249,10 +1519,49 @@ export class WhatsAppSession {
     if (!chat.isGroup) {
       return contactName;
     }
-    if (this.socket) {
-      const sender = await resolveSenderIdentity(this.socket, msg.key);
-      return sender?.phone ? PhoneNumber.format(sender.phone) : 'Participante';
+
+    const jid = sender?.jid ? jidNormalizedUser(sender.jid) : undefined;
+
+    // Cache por participante: num grupo movimentado a mesma pessoa escreve
+    // dezenas de vezes seguidas, e nenhuma delas justifica reconsultar o banco.
+    if (jid) {
+      const memorizado = this.groupSenderNames.get(jid);
+      if (memorizado) return memorizado;
     }
+
+    const guardar = (nome: string): string => {
+      if (jid) this.groupSenderNames.set(jid, nome);
+      return nome;
+    };
+
+    // 1. Agenda sincronizada deste número (o `name` do `contacts.upsert`).
+    const armazenado = jid ? this.contactsStore.get(jid) : undefined;
+    const daAgenda = armazenado?.name?.trim();
+    if (daAgenda) return guardar(daAgenda);
+
+    // 2. Cadastro do CRM, quando o participante já é contato desta conta.
+    if (sender?.phone) {
+      try {
+        const conhecido = await prisma.contact.findFirst({
+          where: { accountId: this.accountId, kind: { not: 'grupo' }, phone: sender.phone },
+          select: { name: true },
+        });
+        const nome = conhecido?.name?.trim();
+        // Um cadastro cujo nome é o próprio número não acrescenta nada — e
+        // aceitá-lo aqui bloquearia o `pushName`, que é melhor que ele.
+        if (nome && !nome.startsWith('+') && nome !== sender.phone) return guardar(nome);
+      } catch (error) {
+        waLog.debug(`[sessão ${this.inboxId}] Nome do participante não consultado:`, error);
+      }
+    }
+
+    // 3. O nome que a própria pessoa publica, que vem dentro da mensagem.
+    const pushName = msg.pushName?.trim() || msg.verifiedBizName?.trim();
+    if (pushName) return guardar(pushName);
+
+    // 4. Último recurso: o número. Sem cache — assim que um nome aparecer numa
+    // mensagem seguinte, ele passa a valer.
+    if (sender?.phone) return PhoneNumber.format(sender.phone) || sender.phone;
     return 'Participante';
   }
 
@@ -1512,6 +1821,9 @@ export class WhatsAppSession {
       this.socket.ev.removeAllListeners('messages.upsert');
       this.socket.ev.removeAllListeners('messages.update');
       this.socket.ev.removeAllListeners('messaging-history.set');
+      this.socket.ev.removeAllListeners('messages.reaction');
+      this.socket.ev.removeAllListeners('contacts.upsert');
+      this.socket.ev.removeAllListeners('contacts.update');
       this.socket.ev.removeAllListeners('presence.update');
       this.socket.end(undefined);
     } catch {
@@ -1523,6 +1835,10 @@ export class WhatsAppSession {
     // simplesmente pararia de chegar depois da primeira reconexão.
     this.presenceByJid.clear();
     this.typingByConversation.clear();
+    this.groupSenderNames.clear();
+    // O aviso de "fila represada entregue" vale para a conexão que acabou de
+    // morrer. A próxima precisa esperar o seu.
+    this.pendingNotificationsDone = false;
   }
 
   async stop(): Promise<void> {

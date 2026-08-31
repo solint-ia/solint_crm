@@ -1,6 +1,6 @@
 import type { Contact } from '@/core/domain/contact';
 import type { Conversation } from '@/core/domain/conversation';
-import type { Message } from '@/core/domain/message';
+import type { Message, MessageReaction } from '@/core/domain/message';
 import { Prisma } from '@/generated/prisma';
 import { prisma, asJson } from '@/infrastructure/db/prisma';
 import {
@@ -376,6 +376,7 @@ const createConversationWith = async (input: CommitInput): Promise<void> => {
             isPrivate: message.isPrivate,
             externalId: message.externalId ?? null,
             origin: message.origin ?? null,
+            senderJid: message.senderJid ?? null,
           },
         },
       },
@@ -464,10 +465,12 @@ const attachToConversation = async (
             isPrivate: message.isPrivate,
             externalId: message.externalId ?? null,
             origin: message.origin ?? null,
+            senderJid: message.senderJid ?? null,
           },
           update: {
             deliveryStatus: message.deliveryStatus ?? undefined,
             authorName: message.authorName ?? undefined,
+            senderJid: message.senderJid ?? undefined,
           },
         }),
         prisma.conversation.update({
@@ -646,6 +649,87 @@ export const applyDeliveryUpdate = async (
     type: 'message_updated',
     accountId: row.conversation.accountId,
     conversationId: row.conversationId,
+    messageId: row.id,
+    message: message?.kind === 'message' ? message.message : undefined,
+    ...(updated ? { conversation: updated } : {}),
+  });
+};
+
+/**
+ * Uma reação chegou (ou foi retirada) sobre uma mensagem.
+ *
+ * O identificador que chega do canal é o da mensagem **no canal**, e a busca
+ * aceita os dois (`externalId` ou `id`) porque o eco do aparelho pareado usa o
+ * outro. A regra de substituição é a do próprio WhatsApp: uma reação por
+ * pessoa. `emoji` vazio significa "retirei a minha" — é assim que o protocolo
+ * representa a remoção, e é por isso que esta função faz as duas coisas.
+ *
+ * Idempotente de propósito: o WhatsApp reentrega eventos, e uma reação aplicada
+ * duas vezes precisa dar no mesmo — sem isto, o mesmo 👍 apareceria duplicado
+ * na bolha e a contagem passaria a medir reentregas.
+ */
+export const applyReaction = async (
+  externalId: string,
+  reaction: {
+    readonly emoji: string;
+    readonly actorId: string;
+    readonly by: MessageReaction['by'];
+    readonly authorName?: string;
+  },
+): Promise<void> => {
+  const row = await prisma.message.findFirst({
+    where: { OR: [{ externalId }, { id: externalId }] },
+    select: {
+      id: true,
+      conversationId: true,
+      reactions: true,
+      conversation: { select: { accountId: true, inboxId: true } },
+    },
+  });
+  if (!row) return;
+
+  const atuais = Array.isArray(row.reactions) ? (row.reactions as unknown as MessageReaction[]) : [];
+  const semAnterior = atuais.filter(
+    (item) => item && typeof item === 'object' && item.actorId !== reaction.actorId,
+  );
+
+  const emoji = reaction.emoji.trim();
+  const proximas: MessageReaction[] = emoji
+    ? [
+        ...semAnterior,
+        {
+          emoji,
+          by: reaction.by,
+          actorId: reaction.actorId,
+          at: new Date().toISOString(),
+          ...(reaction.authorName ? { authorName: reaction.authorName } : {}),
+        },
+      ]
+    : semAnterior;
+
+  // Nada mudou: reentrega do mesmo evento. Gravar e anunciar aqui faria a
+  // timeline piscar sem motivo em toda reconexão.
+  if (JSON.stringify(proximas) === JSON.stringify(atuais)) return;
+
+  await prisma.message.update({
+    where: { id: row.id },
+    data: { reactions: asJson(proximas) },
+  });
+
+  const accountId = row.conversation.accountId;
+  const updated = waEventBus.hasConversationListeners
+    ? await loadConversation(accountId, row.conversationId).catch(() => null)
+    : null;
+
+  const message = updated?.timeline.find(
+    (item) => item.kind === 'message' && item.message.id === row.id,
+  );
+
+  waEventBus.emitConversation({
+    type: 'message_updated',
+    accountId,
+    conversationId: row.conversationId,
+    inboxId: row.conversation.inboxId,
     messageId: row.id,
     message: message?.kind === 'message' ? message.message : undefined,
     ...(updated ? { conversation: updated } : {}),

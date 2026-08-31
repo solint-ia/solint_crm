@@ -23,6 +23,14 @@
 process.env.SOLINT_WORKER = '1';
 
 async function main() {
+  // Antes de qualquer coisa do WhatsApp: a `libsignal` despeja objetos de
+  // sessão inteiros — chave privada inclusive — em `console.info` a cada
+  // contato que troca de aparelho. Ver `wa-console-filter.ts`.
+  const { silenceNoisyLibsignalLogs } = await import(
+    './infrastructure/whatsapp/wa-console-filter'
+  );
+  silenceNoisyLibsignalLogs();
+
   const { CommandConsumer } = await import('./infrastructure/whatsapp/worker/command-consumer');
   const { WhatsAppSessionManager } = await import(
     './infrastructure/whatsapp/worker/session-manager'
@@ -40,6 +48,46 @@ async function main() {
 
   const commandConsumer = new CommandConsumer(sessionManager);
   commandConsumer.start();
+
+  /**
+   * Varredor das mensagens agendadas.
+   *
+   * Ele mora aqui porque disparar no horário exige um processo vivo com
+   * relógio, e o worker é o único que este sistema garante ter. O envio em si
+   * não é feito por ele: a mensagem entra na **mesma fila** de qualquer outro
+   * envio (`WhatsAppCommand` de tipo `send`), e daí em diante segue o caminho já
+   * existente — raia de envio, carimbo do id do canal, recibo de entrega. Um
+   * segundo caminho de envio seria um segundo lugar para os mesmos defeitos.
+   */
+  const { ScheduledMessageRunner } = await import('./infrastructure/scheduling/scheduled-runner');
+  const { CHANNELS, postgresPubSub } = await import('./infrastructure/db/postgres-pubsub');
+  const { prisma } = await import('./infrastructure/db/prisma');
+
+  const scheduledRunner = new ScheduledMessageRunner(async (envio) => {
+    const command = await prisma.whatsAppCommand.create({
+      data: {
+        inboxId: envio.inboxId,
+        kind: 'send',
+        payload: {
+          recipient: envio.recipient,
+          content: { text: envio.text },
+          accountId: envio.accountId,
+          conversationId: envio.conversationId,
+          messageId: envio.messageId,
+        },
+        status: 'pending',
+      },
+    });
+    await postgresPubSub.publish(CHANNELS.COMMANDS, {
+      inboxId: envio.inboxId,
+      kind: 'send',
+      id: command.id,
+    });
+    // Sem `externalId`: a fila aceitou, o envio ainda não aconteceu. Quem
+    // carimba o id do canal — e promove a bolha a "enviado" — é o consumidor.
+    return { ok: true };
+  });
+  scheduledRunner.start();
 
   /**
    * Batida de presença.
@@ -102,6 +150,7 @@ async function main() {
     console.log(`\n[Worker] Recebido sinal ${signal}. Encerrando sessões com segurança...`);
     clearInterval(beat);
     server.close();
+    scheduledRunner.stop();
     commandConsumer.stop();
     await sessionManager.shutdown();
     // As chaves de cache (`lid-mapping`, `tctoken`) são gravadas fora do mutex

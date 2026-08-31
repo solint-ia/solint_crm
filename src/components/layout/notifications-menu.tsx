@@ -16,6 +16,7 @@ import type { AppNotification, NotificationKind } from '@/core/domain/notificati
 import { useLiveNotifications } from '@/features/realtime/live-notifications';
 import {
   markAllNotificationsAsReadAction,
+  markConversationNotificationsAsReadAction,
   markNotificationAsReadAction,
 } from './notification-actions';
 import { cn } from '@/lib/cn';
@@ -76,11 +77,31 @@ export function NotificationsMenu({ notifications }: NotificationsMenuProps) {
     void markAllNotificationsAsReadAction();
   };
 
-  /** Abrir é ler: marcar individualmente evita zerar o que ainda não foi visto. */
-  const markAsRead = (id: string) => {
+  /**
+   * Abrir é ler: marcar individualmente evita zerar o que ainda não foi visto.
+   *
+   * Quando o aviso leva a uma conversa, apagam-se **todos** os avisos dela — e
+   * não só o clicado. Cinco mensagens do mesmo contato não são cinco coisas a
+   * ler: são uma conversa, e ela está sendo aberta agora. Marcar só um deixava
+   * o selo apontando para a tela em que a pessoa acabou de entrar.
+   */
+  const markAsRead = (id: string, href?: string) => {
+    const conversationId = href?.startsWith('/conversas/')
+      ? href.slice('/conversas/'.length).split(/[?#]/)[0]
+      : undefined;
+
     setItems((current) =>
-      current.map((item) => (item.id === id ? { ...item, read: true } : item)),
+      current.map((item) =>
+        item.id === id || (conversationId && item.href === href) ? { ...item, read: true } : item,
+      ),
     );
+
+    if (conversationId) {
+      live.markConversationRead(conversationId);
+      void markConversationNotificationsAsReadAction(conversationId);
+      return;
+    }
+
     live.markRead(id);
     if (!id.startsWith('live-')) {
       void markNotificationAsReadAction(id);
@@ -150,7 +171,7 @@ export function NotificationsMenu({ notifications }: NotificationsMenuProps) {
                       <Link
                         href={(item.href ?? '/dashboard') as Route}
                         onClick={() => {
-                          markAsRead(item.id);
+                          markAsRead(item.id, item.href);
                           setOpen(false);
                         }}
                         className={cn(
@@ -175,7 +196,7 @@ export function NotificationsMenu({ notifications }: NotificationsMenuProps) {
                       {!item.read ? (
                         <button
                           type="button"
-                          onClick={() => markAsRead(item.id)}
+                          onClick={() => markAsRead(item.id, item.href)}
                           aria-label={`Marcar como lida: ${item.text}`}
                           title="Marcar como lida"
                           className="flex shrink-0 items-center border-b border-line-soft px-3 text-dim transition-colors hover:bg-surface-2 hover:text-brand"

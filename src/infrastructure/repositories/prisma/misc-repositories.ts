@@ -481,4 +481,24 @@ export class PrismaNotificationRepository implements NotificationRepository {
       data: { read: true },
     });
   }
+
+  /**
+   * O vínculo entre aviso e conversa é o `href`.
+   *
+   * Não há coluna de conversa na tabela — o aviso é genérico e o destino é um
+   * caminho. Casar pelo prefixo `/conversas/<id>` cobre tanto o link puro
+   * quanto o que leva parâmetros atrás, e é exato o bastante: nenhum outro
+   * aviso da conta aponta para aquele id.
+   */
+  async markConversationAsRead(accountId: Id, userId: Id, conversationId: Id): Promise<void> {
+    await prisma.notification.updateMany({
+      where: {
+        accountId,
+        OR: [{ userId }, { userId: null }],
+        read: false,
+        href: { startsWith: `/conversas/${conversationId}` },
+      },
+      data: { read: true },
+    });
+  }
 }

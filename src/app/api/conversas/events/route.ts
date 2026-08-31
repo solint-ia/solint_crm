@@ -57,14 +57,27 @@ export async function GET(request: Request) {
 
       waEventBus.on('conversation', onConversationUpdate);
 
-      // Heartbeat a cada 20 segundos
+      /**
+       * Batida **como evento**, não como comentário.
+       *
+       * Era `: heartbeat`, que o protocolo SSE trata como comentário: serve para
+       * manter a conexão viva num proxy, mas o `EventSource` do navegador não o
+       * entrega a ninguém. Do lado do cliente, portanto, uma conexão viva e uma
+       * conexão morta em silêncio eram indistinguíveis — e a segunda acontece:
+       * o processo do outro lado reinicia, um balanceador corta o fluxo, e o
+       * `onerror` nem sempre dispara.
+       *
+       * Mandando a batida como dado, o cliente ganha o que lhe faltava: prova
+       * periódica de que o canal responde, e um vigia que reconecta quando ela
+       * para de chegar. Ver `conversation-events.tsx`.
+       */
       const interval = setInterval(() => {
         try {
-          controller.enqueue(encoder.encode(': heartbeat\n\n'));
+          controller.enqueue(encoder.encode('data: {"type":"heartbeat"}\n\n'));
         } catch {
           clearInterval(interval);
         }
-      }, 20000);
+      }, 15000);
 
       // Limpeza ao fechar conexão
       request.signal.addEventListener('abort', () => {

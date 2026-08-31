@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
+  CalendarClock,
   CheckCircle2,
   Clock,
   Eye,
@@ -17,10 +18,12 @@ import {
   Trash2,
   UserCheck,
   Users,
+  X,
 } from 'lucide-react';
 import type { Conversation, ConversationStatus, Priority } from '@/core/domain/conversation';
 import { isHsmWindowOpen } from '@/core/domain/conversation';
 import { previewOfMessage, type Message } from '@/core/domain/message';
+import type { ScheduledMessage } from '@/core/domain/scheduled-message';
 import { isGroupContact, PhoneNumber } from '@/core/domain/contact';
 import type { Label } from '@/core/domain/label';
 import type { CannedResponse } from '@/core/domain/settings';
@@ -40,6 +43,14 @@ import { MessageBubble } from './message-bubble';
 import { TemplatePicker } from './template-picker';
 import { TransferModal } from './transfer-modal';
 import { cn } from '@/lib/cn';
+import { agendamentoLabel } from '@/lib/datetime';
+
+/** O que as ações de agendamento devolvem: a lista já no estado novo. */
+export interface ScheduledResult {
+  readonly ok: boolean;
+  readonly error?: string;
+  readonly items?: readonly ScheduledMessage[];
+}
 
 interface ChatPanelProps {
   readonly conversation: Conversation;
@@ -49,6 +60,22 @@ interface ChatPanelProps {
   readonly cannedResponses: readonly CannedResponse[];
   readonly onSend: (text: string, mode: ComposerMode, replyToId?: string) => void;
   readonly onDeleteMessage?: (messageId: string) => void;
+  /** `emoji` vazio retira a reação de quem está atendendo. */
+  readonly onReactToMessage?: (messageId: string, emoji: string) => void;
+  readonly scheduleMessage?: (input: {
+    conversationId: string;
+    text: string;
+    isPrivate: boolean;
+    replyToId?: string;
+    scheduledFor: string;
+  }) => Promise<ScheduledResult>;
+  readonly listScheduledMessages?: (input: {
+    conversationId: string;
+  }) => Promise<ScheduledResult>;
+  readonly cancelScheduledMessage?: (input: {
+    conversationId: string;
+    scheduledMessageId: string;
+  }) => Promise<ScheduledResult>;
   readonly onSendMedia: (form: FormData) => Promise<MediaResult>;
   readonly onTyping?: (conversationId: string, isTyping: boolean) => void;
   readonly onSendTemplate: (templateId: string, values: readonly string[]) => void;
@@ -71,6 +98,10 @@ export function ChatPanel({
   cannedResponses,
   onSend,
   onDeleteMessage,
+  onReactToMessage,
+  scheduleMessage,
+  listScheduledMessages,
+  cancelScheduledMessage,
   onSendMedia,
   onTyping,
   onSendTemplate,
@@ -88,6 +119,8 @@ export function ChatPanel({
   const [templateOpen, setTemplateOpen] = useState(false);
   const [replyTo, setReplyTo] = useState<Message | undefined>();
   const [pendingDelete, setPendingDelete] = useState<Message | undefined>();
+  const [agendadas, setAgendadas] = useState<readonly ScheduledMessage[]>([]);
+  const [agendaErro, setAgendaErro] = useState<string | undefined>();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const prevConversationIdRef = useRef<string | null>(null);
@@ -127,6 +160,35 @@ export function ChatPanel({
     setReplyTo(undefined);
     setPendingDelete(undefined);
   }, [conversation.id]);
+
+  /**
+   * Os agendamentos desta conversa.
+   *
+   * Buscados à parte da conversa, e não junto com ela, porque não são parte
+   * dela: não estão na timeline, não contam como atividade e mudam por conta
+   * própria (o varredor dispara e a linha some daqui). Carregá-los com a
+   * conversa obrigaria a recarregar a conversa inteira para atualizar uma
+   * lista de duas linhas.
+   *
+   * `cancelado` protege da troca rápida de conversa: sem ele, a resposta da
+   * conversa anterior podia chegar depois e pintar os agendamentos dela na
+   * conversa que já está aberta.
+   */
+  useEffect(() => {
+    if (!listScheduledMessages) return;
+    let cancelado = false;
+    setAgendadas([]);
+    setAgendaErro(undefined);
+
+    void listScheduledMessages({ conversationId: conversation.id }).then((resultado) => {
+      if (cancelado) return;
+      if (resultado.ok && resultado.items) setAgendadas(resultado.items);
+    });
+
+    return () => {
+      cancelado = true;
+    };
+  }, [conversation.id, listScheduledMessages]);
 
   const identity = isGroup
     ? `${conversation.contact.participantCount ?? 0} participantes`
@@ -464,6 +526,9 @@ export function ChatPanel({
                 : {})}
               onReply={setReplyTo}
               {...(onDeleteMessage ? { onDelete: setPendingDelete } : {})}
+              {...(onReactToMessage
+                ? { onReact: (alvo: Message, emoji: string) => onReactToMessage(alvo.id, emoji) }
+                : {})}
             />
           ),
         )}
@@ -490,6 +555,58 @@ export function ChatPanel({
 
       {/* ---------- Compositor de Mensagens Fixo na Base ---------- */}
       <div className="shrink-0 border-t border-line bg-surface p-3 md:p-4">
+        {/* A fila de agendamentos vive **acima** do compositor, não na
+            timeline: ela descreve o que ainda não aconteceu, e misturá-la às
+            mensagens faria a conversa mostrar como dito algo que o cliente
+            ainda não recebeu. */}
+        {agendadas.length > 0 ? (
+          <ul className="mb-2 flex flex-col gap-1.5">
+            {agendadas.map((item) => (
+              <li
+                key={item.id}
+                className="flex items-start gap-2 rounded-xl border border-dashed border-line bg-surface-2 px-3 py-2"
+              >
+                <CalendarClock className="mt-0.5 size-3.5 shrink-0 text-brand" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11px] font-semibold text-ink">
+                    {item.isPrivate ? 'Nota interna agendada' : 'Envio agendado'} ·{' '}
+                    <span className="font-normal text-muted">
+                      {agendamentoLabel(new Date(item.scheduledFor))}
+                    </span>
+                  </p>
+                  <p className="line-clamp-2 text-xs text-muted">{item.text}</p>
+                </div>
+                {cancelScheduledMessage && item.status === 'pending' ? (
+                  <button
+                    type="button"
+                    aria-label="Cancelar agendamento"
+                    title="Cancelar agendamento"
+                    onClick={() => {
+                      setAgendaErro(undefined);
+                      void cancelScheduledMessage({
+                        conversationId: conversation.id,
+                        scheduledMessageId: item.id,
+                      }).then((resultado) => {
+                        if (resultado.items) setAgendadas(resultado.items);
+                        if (!resultado.ok) setAgendaErro(resultado.error);
+                      });
+                    }}
+                    className="flex size-6 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-red-500/15 hover:text-red-500"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        {agendaErro ? (
+          <p role="alert" className="mb-2 text-xs font-medium text-red-500">
+            {agendaErro}
+          </p>
+        ) : null}
+
         <Composer
           // O compositor guarda rascunho e anexo: sem saber de qual conversa
           // são, ele os levava para a próxima que fosse aberta.
@@ -517,6 +634,30 @@ export function ChatPanel({
           onTyping={(isTyping) => onTyping?.(conversation.id, isTyping)}
           cannedResponses={cannedResponses}
           pending={pending}
+          {...(scheduleMessage
+            ? {
+                onSchedule: async (entrada: {
+                  text: string;
+                  mode: ComposerMode;
+                  scheduledFor: string;
+                  replyToId?: string;
+                }) => {
+                  const resultado = await scheduleMessage({
+                    conversationId: conversation.id,
+                    text: entrada.text,
+                    isPrivate: entrada.mode === 'nota',
+                    scheduledFor: entrada.scheduledFor,
+                    ...(entrada.replyToId ? { replyToId: entrada.replyToId } : {}),
+                  });
+                  if (resultado.items) setAgendadas(resultado.items);
+                  if (resultado.ok) setReplyTo(undefined);
+                  return {
+                    ok: resultado.ok,
+                    ...(resultado.error ? { error: resultado.error } : {}),
+                  };
+                },
+              }
+            : {})}
         />
       </div>
 

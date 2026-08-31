@@ -79,6 +79,15 @@ export class InProcessWhatsAppChannel implements WhatsAppChannel {
     });
   }
 
+  async sendReaction(
+    _context: DispatchContext,
+    target: DispatchTarget,
+    message: { readonly externalId: string; readonly fromMe: boolean; readonly participant?: string },
+    emoji: string,
+  ): Promise<DispatchResult> {
+    return whatsappService.sendReaction(target, message, emoji);
+  }
+
   async markRead(
     _accountId: string,
     conversationId: string,

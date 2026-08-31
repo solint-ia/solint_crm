@@ -10,7 +10,7 @@ import type {
 import type { Channel } from '@/core/domain/channel';
 import { activityTimeOf, matchesScope, PRIORITY_WEIGHT } from '@/core/domain/conversation';
 import type { Label } from '@/core/domain/label';
-import type { Message } from '@/core/domain/message';
+import type { Message, MessageReaction } from '@/core/domain/message';
 import { previewOfMessage } from '@/core/domain/message';
 import { horaLabel } from '@/lib/datetime';
 import type { ComposerMode } from '../components/composer';
@@ -32,6 +32,12 @@ interface UseInboxParams {
   readonly deleteMessage?: (input: {
     conversationId: string;
     messageId: string;
+  }) => Promise<{ ok: boolean; error?: string }>;
+  /** `emoji` vazio retira a reação — é a mesma chamada, como no WhatsApp. */
+  readonly reactToMessage?: (input: {
+    conversationId: string;
+    messageId: string;
+    emoji: string;
   }) => Promise<{ ok: boolean; error?: string }>;
   readonly changeStatus: (input: {
     conversationId: string;
@@ -119,6 +125,7 @@ export function useInbox({
   currentUserName,
   sendMessage,
   deleteMessage,
+  reactToMessage,
   changeStatus,
   markAsRead,
   assign,
@@ -546,6 +553,64 @@ export function useInbox({
     [selected, deleteMessage],
   );
 
+  /**
+   * Reagir, com a reação já na tela.
+   *
+   * Ao contrário de apagar — que espera o WhatsApp confirmar, porque mostrar
+   * como removido algo que continua no aparelho do contato seria mentir —,
+   * reagir pode ser otimista: o pior caso é um emoji que aparece e some, e a
+   * espera de um ida-e-volta até o servidor do WhatsApp num gesto que se faz
+   * em sequência (o operador reage a três mensagens seguidas) é o que faria a
+   * função parecer quebrada.
+   *
+   * O evento de tempo real chega em seguida com o estado gravado e substitui
+   * este palpite — inclusive quando ele estava errado.
+   */
+  const handleReact = useCallback(
+    (messageId: string, emoji: string) => {
+      if (!selected || !reactToMessage) return;
+      setError(undefined);
+      const conversationId = selected.id;
+
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.id === conversationId
+            ? {
+                ...conversation,
+                timeline: conversation.timeline.map((item) => {
+                  if (item.kind !== 'message' || item.message.id !== messageId) return item;
+                  const outros = (item.message.reactions ?? []).filter(
+                    (reaction) => reaction.by !== 'agent',
+                  );
+                  const minha: MessageReaction[] = emoji
+                    ? [
+                        {
+                          emoji,
+                          by: 'agent',
+                          actorId: 'me',
+                          at: new Date().toISOString(),
+                          authorName: currentUserName,
+                        },
+                      ]
+                    : [];
+                  return {
+                    kind: 'message' as const,
+                    message: { ...item.message, reactions: [...outros, ...minha] },
+                  };
+                }),
+              }
+            : conversation,
+        ),
+      );
+
+      startTransition(async () => {
+        const result = await reactToMessage({ conversationId, messageId, emoji });
+        if (!result.ok) setError(result.error);
+      });
+    },
+    [selected, reactToMessage, currentUserName],
+  );
+
   const handleChangeStatus = useCallback(
     (status: ConversationStatus) => {
       if (!selected) return;
@@ -724,6 +789,7 @@ export function useInbox({
     select: setSelectedId,
     send: handleSend,
     deleteMessage: handleDeleteMessage,
+    reactToMessage: handleReact,
     changeStatus: handleChangeStatus,
     assign: handleAssign,
     changePriority: handleChangePriority,

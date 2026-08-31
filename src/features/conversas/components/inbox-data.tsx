@@ -4,11 +4,15 @@ import { AccessDenied } from '@/components/layout/access-denied';
 import { container } from '@/infrastructure/container';
 import {
   assignConversationAction,
+  cancelScheduledMessageAction,
   changeConversationPriorityAction,
   changeConversationStatusAction,
   deleteMessageAction,
+  listScheduledMessagesAction,
   markConversationReadAction,
   moveConversationToInboxAction,
+  reactToMessageAction,
+  scheduleMessageAction,
   sendMediaAction,
   sendMessageAction,
   sendTemplateAction,
@@ -77,6 +81,10 @@ export async function InboxData({
       cannedResponses={settings.cannedResponses}
       sendMessage={sendMessageAction}
       deleteMessage={deleteMessageAction}
+      reactToMessage={reactToMessageAction}
+      scheduleMessage={scheduleMessageAction}
+      listScheduledMessages={listScheduledMessagesAction}
+      cancelScheduledMessage={cancelScheduledMessageAction}
       changeStatus={changeConversationStatusAction}
       markAsRead={markConversationReadAction}
       assign={assignConversationAction}

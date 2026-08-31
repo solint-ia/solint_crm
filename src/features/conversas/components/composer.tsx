@@ -22,9 +22,11 @@ import {
   X,
 } from 'lucide-react';
 import type { CannedResponse } from '@/core/domain/settings';
+import { MIN_SCHEDULE_LEAD_MS } from '@/core/domain/scheduled-message';
 import { MAX_MESSAGE_LENGTH } from '@/core/use-cases/send-message';
-import { planned } from '@/components/ui/planned';
+import { EmojiPicker } from '@/components/ui/emoji-picker';
 import { cn } from '@/lib/cn';
+import { agendamentoLabel, dataHoraLocalDe, isoDeDataHoraLocal } from '@/lib/datetime';
 
 export type ComposerMode = 'publica' | 'nota';
 
@@ -59,6 +61,19 @@ interface ComposerProps {
   readonly onTyping?: (isTyping: boolean) => void;
   readonly cannedResponses?: readonly CannedResponse[];
   readonly pending?: boolean;
+  /**
+   * Agenda o texto escrito para sair depois.
+   *
+   * Recebe o instante já em ISO: a conversão da hora digitada para o fuso de
+   * exibição do produto acontece aqui dentro, uma vez, em vez de em cada
+   * chamador — ver `isoDeDataHoraLocal`.
+   */
+  readonly onSchedule?: (input: {
+    readonly text: string;
+    readonly mode: ComposerMode;
+    readonly scheduledFor: string;
+    readonly replyToId?: string;
+  }) => Promise<{ readonly ok: boolean; readonly error?: string }>;
 }
 
 /** Categoria do anexo a partir do tipo declarado pelo arquivo. */
@@ -103,6 +118,7 @@ export function Composer({
   onTyping,
   cannedResponses = [],
   pending,
+  onSchedule,
 }: ComposerProps) {
   const [mode, setMode] = useState<ComposerMode>('publica');
   const [text, setText] = useState('');
@@ -113,6 +129,11 @@ export function Composer({
   const [uploading, setUploading] = useState(false);
   const [mediaError, setMediaError] = useState<string | undefined>();
   const [cannedIndex, setCannedIndex] = useState(0);
+  const [emojiAberto, setEmojiAberto] = useState(false);
+  const [agendaAberta, setAgendaAberta] = useState(false);
+  const [agendaQuando, setAgendaQuando] = useState('');
+  const [agendaErro, setAgendaErro] = useState<string | undefined>();
+  const [agendando, setAgendando] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -199,6 +220,82 @@ export function Composer({
     textareaRef.current?.focus();
   };
 
+  /**
+   * Insere o emoji **onde o cursor está**, não no fim do texto.
+   *
+   * Quem escolhe um emoji no meio de uma frase o quer no meio da frase. Anexar
+   * ao fim parece um detalhe até a primeira vez que alguém volta o cursor para
+   * corrigir algo e o emoji some lá para o final.
+   */
+  const inserirEmoji = (emoji: string) => {
+    const campo = textareaRef.current;
+    const inicio = campo?.selectionStart ?? text.length;
+    const fim = campo?.selectionEnd ?? text.length;
+    const proximo = `${text.slice(0, inicio)}${emoji}${text.slice(fim)}`;
+
+    handleTextChange(proximo);
+    setEmojiAberto(false);
+
+    // O cursor precisa ir para depois do emoji, e só depois do React
+    // reescrever o valor do campo.
+    requestAnimationFrame(() => {
+      const alvo = inicio + emoji.length;
+      campo?.focus();
+      campo?.setSelectionRange(alvo, alvo);
+    });
+  };
+
+  /** Sugestão de horário: daqui a uma hora, arredondada para o minuto. */
+  const abrirAgenda = () => {
+    setAgendaErro(undefined);
+    setAgendaQuando((atual) => atual || dataHoraLocalDe(new Date(Date.now() + 60 * 60 * 1000)));
+    setAgendaAberta(true);
+    setEmojiAberto(false);
+  };
+
+  const agendar = async () => {
+    if (!onSchedule) return;
+    const conteudo = text.trim();
+    if (!conteudo) {
+      setAgendaErro('Escreva a mensagem antes de agendar.');
+      return;
+    }
+
+    const quando = isoDeDataHoraLocal(agendaQuando);
+    if (!quando) {
+      setAgendaErro('Escolha uma data e hora válidas.');
+      return;
+    }
+    if (new Date(quando).getTime() - Date.now() < MIN_SCHEDULE_LEAD_MS) {
+      setAgendaErro('Escolha um horário pelo menos um minuto à frente.');
+      return;
+    }
+
+    setAgendando(true);
+    setAgendaErro(undefined);
+    try {
+      const resultado = await onSchedule({
+        text: conteudo,
+        mode,
+        scheduledFor: quando,
+        ...(replyTo?.id ? { replyToId: replyTo.id } : {}),
+      });
+      if (!resultado.ok) {
+        setAgendaErro(resultado.error ?? 'Não foi possível agendar a mensagem.');
+        return;
+      }
+      setAgendaAberta(false);
+      setAgendaQuando('');
+      setText('');
+      onCancelReply?.();
+    } catch (error) {
+      console.error('[Composer] Falha ao agendar:', error);
+      setAgendaErro('Não foi possível agendar a mensagem.');
+    } finally {
+      setAgendando(false);
+    }
+  };
+
   const startRecording = async () => {
     setMediaError(undefined);
     const mimeType = pickRecordingType();
@@ -272,6 +369,10 @@ export function Composer({
     setMode('publica');
     setAttachment(undefined);
     setRecording(undefined);
+    setEmojiAberto(false);
+    setAgendaAberta(false);
+    setAgendaQuando('');
+    setAgendaErro(undefined);
     if (fileInputRef.current) fileInputRef.current.value = '';
 
     // Auto-foca imediatamente no campo de texto ao clicar/trocar de conversa
@@ -649,12 +750,23 @@ export function Composer({
             <Paperclip className="size-4" />
           </ToolbarButton>
 
-          <ToolbarButton
-            label="Inserir emoji"
-            {...planned('Seleção de emojis')}
-          >
-            <Smile className="size-4" />
-          </ToolbarButton>
+          <div className="relative">
+            <ToolbarButton
+              label="Inserir emoji"
+              disabled={blocked || isRecording}
+              active={emojiAberto}
+              onClick={() => {
+                setAgendaAberta(false);
+                setEmojiAberto((valor) => !valor);
+              }}
+            >
+              <Smile className="size-4" />
+            </ToolbarButton>
+
+            {emojiAberto ? (
+              <EmojiPicker onPick={inserirEmoji} onClose={() => setEmojiAberto(false)} />
+            ) : null}
+          </div>
 
           <ToolbarButton
             label={isRecording ? 'Parar gravação' : 'Gravar áudio'}
@@ -665,12 +777,91 @@ export function Composer({
             <Mic className="size-4" />
           </ToolbarButton>
 
-          <ToolbarButton
-            label="Agendar mensagem"
-            {...planned('Agendamento de mensagem')}
-          >
-            <CalendarClock className="size-4" />
-          </ToolbarButton>
+          <div className="relative">
+            <ToolbarButton
+              label="Agendar mensagem"
+              disabled={blocked || isRecording || !onSchedule || hasMedia}
+              active={agendaAberta}
+              title={
+                hasMedia
+                  ? 'Anexos não podem ser agendados — envie agora ou remova o anexo.'
+                  : 'Agendar mensagem'
+              }
+              onClick={() => (agendaAberta ? setAgendaAberta(false) : abrirAgenda())}
+            >
+              <CalendarClock className="size-4" />
+            </ToolbarButton>
+
+            {agendaAberta ? (
+              <>
+                <div
+                  className="fixed inset-0 z-30"
+                  onClick={() => setAgendaAberta(false)}
+                  aria-hidden="true"
+                />
+                <div
+                  role="dialog"
+                  aria-label="Agendar mensagem"
+                  className="absolute bottom-full left-0 z-40 mb-2 w-[min(20rem,calc(100vw-2rem))] rounded-2xl border border-line bg-surface p-3 shadow-2xl"
+                >
+                  <h3 className="mb-2 font-display text-xs font-semibold text-ink">
+                    {isNote ? 'Agendar nota interna' : 'Agendar envio'}
+                  </h3>
+
+                  <label className="block text-[11px] font-medium text-muted" htmlFor="agenda-quando">
+                    Data e hora
+                  </label>
+                  <input
+                    id="agenda-quando"
+                    type="datetime-local"
+                    value={agendaQuando}
+                    onChange={(event) => {
+                      setAgendaQuando(event.target.value);
+                      setAgendaErro(undefined);
+                    }}
+                    className="mt-1 w-full rounded-lg border border-line bg-surface-2 px-2.5 py-1.5 text-xs text-ink outline-none focus:border-brand/50"
+                  />
+
+                  {/* O horário mostrado é sempre o do produto, não o do
+                      navegador: é o mesmo relógio da timeline, e é o que evita
+                      alguém em outro fuso agendar para uma hora que não é a que
+                      leu na tela. */}
+                  {agendaQuando && isoDeDataHoraLocal(agendaQuando) ? (
+                    <p className="mt-1.5 text-[11px] text-muted">
+                      Sai {agendamentoLabel(new Date(isoDeDataHoraLocal(agendaQuando) as string))}.
+                    </p>
+                  ) : null}
+
+                  {agendaErro ? (
+                    <p role="alert" className="mt-1.5 text-[11px] font-medium text-red-500">
+                      {agendaErro}
+                    </p>
+                  ) : null}
+
+                  <div className="mt-3 flex justify-end gap-2 border-t border-line-soft pt-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setAgendaAberta(false)}
+                      className="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-semibold text-ink transition-colors hover:bg-surface-2"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={agendando}
+                      onClick={() => void agendar()}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:opacity-90 disabled:opacity-50"
+                    >
+                      {agendando ? <Loader2 className="size-3.5 animate-spin" /> : (
+                        <CalendarClock className="size-3.5" />
+                      )}
+                      <span>Agendar</span>
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : null}
+          </div>
         </div>
 
         {/* Botão de Envio */}

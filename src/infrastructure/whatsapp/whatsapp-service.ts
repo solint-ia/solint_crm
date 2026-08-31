@@ -21,6 +21,7 @@ import type { Message, MessageContent } from '@/core/domain/message';
 import { PhoneNumber, isGroupAllowedInChat } from '@/core/domain/contact';
 import {
   applyDeliveryUpdate as persistDeliveryUpdate,
+  applyReaction,
   commitMessage as persistMessage,
   conversationExists,
   ensureContact as ensureStoredContact,
@@ -52,6 +53,7 @@ import {
 import { mediaStore, mediaUrlFor } from './wa-media-store';
 import { deletionKey, quotedStub } from './wa-quote';
 import { waVersion } from './wa-version';
+import { silenceNoisyLibsignalLogs } from './wa-console-filter';
 
 import {
   AVATAR_TTL_MS,
@@ -398,6 +400,14 @@ export class WhatsAppService {
 
       sock.ev.on('contacts.upsert', (contacts) => {
         for (const contact of contacts) void this.applyContactUpdate(contact);
+      });
+
+      // Reações chegam por evento próprio: a mensagem de reação também aparece
+      // em `messages.upsert`, mas `decodeWaMessage` a descarta por não ser
+      // conteúdo de conversa. Sem este listener, reagir no celular não produzia
+      // nada aqui.
+      sock.ev.on('messages.reaction', (reactions) => {
+        for (const item of reactions) void this.applyReactionEvent(item);
       });
 
       sock.ev.on('presence.update', ({ id, presences }) => {
@@ -771,6 +781,13 @@ export class WhatsAppService {
     }
 
     const authorName = await this.resolveAuthorName(chat, msg, fromMe, contact.name);
+    // Quem escreveu, dentro do grupo. É o que permite reagir depois: a chave
+    // que o WhatsApp exige para apontar mensagem de terceiro carrega o
+    // participante, e ele não se deduz do chat.
+    const sender =
+      chat.isGroup && !fromMe && this.socket
+        ? await resolveSenderIdentity(this.socket, msg.key)
+        : null;
     // A midia do WhatsApp e criptografada: sem decifrar e gravar localmente,
     // o navegador não tem como exibir foto, figurinha, GIF ou áudio.
     const content = decoded.media
@@ -788,6 +805,7 @@ export class WhatsAppService {
       time: timeLabel(at),
       deliveryStatus: fromMe ? (deliveryStatusFrom(msg.status) ?? 'enviado') : undefined,
       isPrivate: false,
+      ...(sender?.jid ? { senderJid: sender.jid } : {}),
     };
 
     if (!fromMe) {
@@ -1034,6 +1052,10 @@ export class WhatsAppService {
   }
 
   async syncAllStoredContacts(accountId: string): Promise<{ synced: number; created: number }> {
+    // A agenda vem antes da varredura: sem isto o mapa varrido é o que sobrou
+    // da sessão, não o que existe no telefone.
+    await this.pullAddressBook();
+
     let synced = 0;
     let created = 0;
 
@@ -1072,7 +1094,9 @@ export class WhatsAppService {
               data: { name: addressBookName, ...(avatarUrl && !existing.avatarUrl ? { avatarUrl } : {}) },
             });
           }
-        } else if (addressBookName || pushName) {
+        } else {
+          // Sem exigir nome: a agenda tem contatos salvos só pelo número, e são
+          // exatamente eles que a tela de "nova conversa" do WhatsApp mostra.
           const contactId = `ct-wa-${accountId}-${phoneDigits}`;
           await prisma.contact.create({
             data: {
@@ -1493,6 +1517,107 @@ export class WhatsAppService {
     this.typingByConversation.clear();
   }
 
+  /**
+   * Traduz a reação recebida do canal para a intenção de domínio.
+   *
+   * `item.key` é a chave da mensagem **reagida**; `item.reaction.key` é a da
+   * mensagem de reação, e é dela que sai quem reagiu.
+   */
+  private async applyReactionEvent(item: {
+    key: WAMessageKey;
+    reaction: { text?: string | null; key?: WAMessageKey | null };
+  }): Promise<void> {
+    const alvo = item.key?.id;
+    if (!alvo) return;
+
+    const autorKey = item.reaction?.key ?? undefined;
+    const emoji = (item.reaction?.text ?? '').trim();
+
+    if (autorKey?.fromMe) {
+      await applyReaction(alvo, { emoji, actorId: 'me', by: 'agent' });
+      return;
+    }
+
+    const sender =
+      this.socket && autorKey ? await resolveSenderIdentity(this.socket, autorKey) : null;
+    const actorId =
+      sender?.phone || sender?.jid || autorKey?.participant || autorKey?.remoteJid || 'contato';
+    const nome =
+      (sender?.jid ? this.contactsStore.get(jidNormalizedUser(sender.jid))?.name?.trim() : undefined) ??
+      (sender?.phone ? PhoneNumber.format(sender.phone) || sender.phone : undefined);
+
+    await applyReaction(alvo, {
+      emoji,
+      actorId,
+      by: 'contact',
+      ...(nome ? { authorName: nome } : {}),
+    });
+  }
+
+  /**
+   * Envia (ou retira) uma reação nossa sobre uma mensagem do chat.
+   *
+   * `emoji` vazio é a remoção — o protocolo não tem comando separado para ela.
+   */
+  async sendReaction(
+    target: { readonly channelThreadId?: string; readonly phone?: string },
+    message: { readonly externalId: string; readonly fromMe: boolean; readonly participant?: string },
+    emoji: string,
+  ): Promise<{ ok: boolean; externalId?: string; error?: string }> {
+    const socket = this.socket;
+    if (!socket || this.currentStatus.status !== 'conectado') {
+      return { ok: false, error: 'WhatsApp não está conectado' };
+    }
+
+    const jid = target.channelThreadId ?? (target.phone ? jidFromPhone(target.phone) : undefined);
+    if (!jid) {
+      return { ok: false, error: 'Conversa sem destino de WhatsApp definido' };
+    }
+
+    try {
+      await socket.sendMessage(jid, {
+        react: {
+          text: emoji,
+          key: {
+            remoteJid: jid,
+            id: message.externalId,
+            fromMe: message.fromMe,
+            ...(message.participant && !message.fromMe
+              ? { participant: message.participant }
+              : {}),
+          },
+        },
+      });
+      return { ok: true };
+    } catch (error) {
+      console.error('[WhatsAppService] Erro ao reagir à mensagem:', error);
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Falha ao reagir à mensagem',
+      };
+    }
+  }
+
+  /**
+   * Repuxa a agenda inteira do WhatsApp. Ver a nota longa da versão do worker
+   * em `worker/session.ts` — é o mesmo mecanismo, e o mesmo motivo.
+   */
+  private async pullAddressBook(): Promise<void> {
+    const socket = this.socket;
+    if (!socket || this.currentStatus.status !== 'conectado') return;
+
+    const colecoes = ['critical_unblock_low', 'regular_high', 'regular_low', 'regular'] as const;
+
+    try {
+      await socket.authState.keys.set({
+        'app-state-sync-version': Object.fromEntries(colecoes.map((nome) => [nome, null])),
+      } as never);
+      await socket.resyncAppState(colecoes, true);
+    } catch (error) {
+      console.warn('[WhatsAppService] Falha ao repuxar a agenda do WhatsApp:', error);
+    }
+  }
+
   async sendPresence(
     rawTarget: string,
     status: 'composing' | 'paused' | 'recording',
@@ -1518,6 +1643,11 @@ export class WhatsAppService {
     }
   }
 }
+
+// A `libsignal` despeja objetos de sessão inteiros — chave privada inclusive —
+// em `console.info` a cada contato que troca de aparelho. Ver
+// `wa-console-filter.ts`.
+silenceNoisyLibsignalLogs();
 
 const globalRef = globalThis as typeof globalThis & { __solintWhatsAppService?: WhatsAppService };
 

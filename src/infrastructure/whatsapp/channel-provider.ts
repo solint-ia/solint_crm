@@ -26,7 +26,37 @@ export const getWhatsAppChannel = (): Promise<WhatsAppChannel> => {
     }
 
     const { InProcessWhatsAppChannel } = await import('./in-process-channel');
-    return new InProcessWhatsAppChannel();
+    const canal = new InProcessWhatsAppChannel();
+
+    /**
+     * Sem worker, quem tem relógio é este processo.
+     *
+     * No motor `worker` o varredor de agendamentos vive lá (ver `worker.mts`) e
+     * ligar um segundo aqui faria a mesma mensagem disputar duas saídas. No
+     * motor in-process não há outro processo: o servidor Next é tudo o que
+     * existe, e sem isto uma mensagem agendada simplesmente nunca sairia.
+     */
+    const { ScheduledMessageRunner } = await import('../scheduling/scheduled-runner');
+    const runner = new ScheduledMessageRunner(async (envio) => {
+      const enviado = await canal.sendText(
+        {
+          accountId: envio.accountId,
+          conversationId: envio.conversationId,
+          messageId: envio.messageId,
+          inboxId: envio.inboxId,
+        },
+        envio.recipient,
+        envio.text,
+      );
+      return {
+        ok: enviado.ok,
+        ...(enviado.externalId ? { externalId: enviado.externalId } : {}),
+        ...(enviado.error ? { error: enviado.error } : {}),
+      };
+    });
+    runner.start();
+
+    return canal;
   })();
 
   return cached;

@@ -23,7 +23,12 @@ import type {
 } from '@/core/domain/conversation';
 import type { KnowledgeArticle, KnowledgeCategory } from '@/core/domain/knowledge';
 import type { Label, Tone } from '@/core/domain/label';
-import type { Message, MessageContent, TimelineItem } from '@/core/domain/message';
+import type {
+  Message,
+  MessageContent,
+  MessageReaction,
+  TimelineItem,
+} from '@/core/domain/message';
 import type { AppNotification, NotificationKind } from '@/core/domain/notification';
 import type { Deal, Pipeline } from '@/core/domain/pipeline';
 import type { ChannelConnection } from '@/core/domain/settings';
@@ -119,6 +124,13 @@ export const messageRow = (row: DbMessage): Message => ({
   ...(row.deletedAt ? { deletedAt: row.deletedAt.toISOString() } : {}),
   ...(row.externalId ? { externalId: row.externalId } : {}),
   ...(row.origin ? { origin: row.origin as Message['origin'] } : {}),
+  // Lista vazia não vira propriedade: `reactions: []` em toda mensagem
+  // engordaria o payload de uma timeline inteira para dizer "nenhuma".
+  ...(() => {
+    const reactions = readJson<readonly MessageReaction[]>(row.reactions, []);
+    return reactions.length > 0 ? { reactions } : {};
+  })(),
+  ...(row.senderJid ? { senderJid: row.senderJid } : {}),
 });
 
 const DAY_MS = 86_400_000;

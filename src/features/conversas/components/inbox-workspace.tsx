@@ -10,8 +10,10 @@ import {
 import type { Conversation, ConversationStatus, InboxScope, Priority } from '@/core/domain/conversation';
 import type { Message } from '@/core/domain/message';
 import type { CannedResponse } from '@/core/domain/settings';
+import { markConversationNotificationsAsReadAction } from '@/components/layout/notification-actions';
+import { useLiveNotifications } from '@/features/realtime/live-notifications';
 import { cn } from '@/lib/cn';
-import { ChatPanel } from './chat-panel';
+import { ChatPanel, type ScheduledResult } from './chat-panel';
 import type { InboxCatalog } from './conversation-toolbar';
 import { InboxFiltersMenu } from './inbox-filters';
 import { InboxSortMenu } from './inbox-sort-menu';
@@ -41,6 +43,26 @@ interface InboxWorkspaceProps {
     conversationId: string;
     messageId: string;
   }) => Promise<{ ok: boolean; error?: string }>;
+  /** `emoji` vazio retira a reação de quem está atendendo. */
+  readonly reactToMessage: (input: {
+    conversationId: string;
+    messageId: string;
+    emoji: string;
+  }) => Promise<{ ok: boolean; error?: string }>;
+  readonly scheduleMessage: (input: {
+    conversationId: string;
+    text: string;
+    isPrivate: boolean;
+    replyToId?: string;
+    scheduledFor: string;
+  }) => Promise<ScheduledResult>;
+  readonly listScheduledMessages: (input: {
+    conversationId: string;
+  }) => Promise<ScheduledResult>;
+  readonly cancelScheduledMessage: (input: {
+    conversationId: string;
+    scheduledMessageId: string;
+  }) => Promise<ScheduledResult>;
   readonly changeStatus: (input: {
     conversationId: string;
     status: ConversationStatus;
@@ -131,6 +153,7 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
     currentUserName: props.currentUserName,
     sendMessage: props.sendMessage,
     deleteMessage: props.deleteMessage,
+    reactToMessage: props.reactToMessage,
     changeStatus: props.changeStatus,
     markAsRead: props.markAsRead,
     assign: props.assign,
@@ -161,6 +184,31 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
       inbox.setFilters((atual) => ({ ...atual, inboxId: caixaAtual }));
     }
   }, [caixaAtual, inbox]);
+
+  /**
+   * Abrir a conversa apaga o aviso dela.
+   *
+   * Vale para os dois caminhos, e é por isso que o efeito mora aqui e não no
+   * clique do sininho: quem chega pela lista de conversas viu exatamente o que
+   * o aviso anunciava, e um selo que continua contando o que já foi lido deixa
+   * de significar "há algo esperando".
+   *
+   * `setActiveConversation` faz o outro lado do mesmo trabalho: enquanto esta
+   * conversa está na tela, mensagem nova dela não vira aviso nenhum.
+   */
+  const { markConversationRead, setActiveConversation } = useLiveNotifications();
+  const conversaAbertaId = inbox.selected?.id;
+
+  useEffect(() => {
+    setActiveConversation(conversaAbertaId);
+
+    if (conversaAbertaId) {
+      markConversationRead(conversaAbertaId);
+      void markConversationNotificationsAsReadAction(conversaAbertaId);
+    }
+
+    return () => setActiveConversation(undefined);
+  }, [conversaAbertaId, markConversationRead, setActiveConversation]);
 
   const filterCount = activeFilterCount(inbox.filters);
   const hasNarrowing =
@@ -380,6 +428,10 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
               cannedResponses={props.cannedResponses}
               onSend={inbox.send}
               onDeleteMessage={inbox.deleteMessage}
+              onReactToMessage={inbox.reactToMessage}
+              scheduleMessage={props.scheduleMessage}
+              listScheduledMessages={props.listScheduledMessages}
+              cancelScheduledMessage={props.cancelScheduledMessage}
               onSendMedia={inbox.sendMedia}
               onTyping={(conversationId, isTyping) => props.setOperatorTyping?.({ conversationId, isTyping })}
               onSendTemplate={inbox.sendTemplate}

@@ -38,6 +38,17 @@ interface LiveNotificationsApi {
   readonly items: readonly AppNotification[];
   readonly markRead: (id: string) => void;
   readonly markAllRead: () => void;
+  /** Abrir a conversa apaga os avisos dela. */
+  readonly markConversationRead: (conversationId: string) => void;
+  /**
+   * Diz qual conversa está aberta na tela.
+   *
+   * Não é enfeite: sem isto, cada mensagem da conversa que a pessoa está
+   * **lendo neste instante** virava um aviso não lido no sininho, e ela
+   * terminava o atendimento com um selo aceso apontando para a tela em que já
+   * estava. `undefined` quando nenhuma está aberta.
+   */
+  readonly setActiveConversation: (conversationId: string | undefined) => void;
 }
 
 const LiveNotificationsContext = createContext<LiveNotificationsApi | undefined>(undefined);
@@ -62,6 +73,12 @@ export function LiveNotificationsProvider({
   const somLigado = useRef(soundEnabled);
   somLigado.current = soundEnabled;
 
+  /**
+   * A conversa aberta agora, por `ref` pelo mesmo motivo do som: o handler do
+   * barramento é registrado uma vez e leria um valor congelado.
+   */
+  const conversaAberta = useRef<string | undefined>(undefined);
+
   useConversationEvents((payload) => {
     // "Digitando" e recibo de entrega não são novidade para ninguém.
     if (payload.type === 'typing' || payload.type === 'message_updated') return;
@@ -74,6 +91,21 @@ export function LiveNotificationsProvider({
 
     // O eco das nossas próprias mensagens não avisa nada a quem as escreveu.
     if (!message || message.author !== 'contact' || message.deletedAt) return;
+
+    /**
+     * Nada a anunciar sobre a conversa que está aberta na frente da pessoa.
+     *
+     * A mensagem já apareceu na timeline no mesmo instante; um aviso por cima
+     * disso não informa nada e deixa o sininho aceso apontando para onde ela
+     * já está. A aba escondida é a exceção — ali a timeline não está à vista, e
+     * o aviso é justamente o que chama de volta.
+     */
+    if (
+      conversaAberta.current === payload.conversationId &&
+      (typeof document === 'undefined' || document.visibilityState === 'visible')
+    ) {
+      return;
+    }
 
     const quem = conversation?.contact.name ?? message.authorName ?? 'Novo contato';
     const nova = payload.type === 'new_conversation';
@@ -114,9 +146,23 @@ export function LiveNotificationsProvider({
     setItems((current) => current.map((item) => ({ ...item, read: true })));
   }, []);
 
+  const markConversationRead = useCallback((conversationId: string) => {
+    const alvo = `/conversas/${conversationId}`;
+    setItems((current) => {
+      // Sem nada a mudar, devolve o mesmo array: um novo dispararia render em
+      // todo mundo que ouve o contexto, a cada troca de conversa.
+      if (!current.some((item) => item.href === alvo && !item.read)) return current;
+      return current.map((item) => (item.href === alvo ? { ...item, read: true } : item));
+    });
+  }, []);
+
+  const setActiveConversation = useCallback((conversationId: string | undefined) => {
+    conversaAberta.current = conversationId;
+  }, []);
+
   const api = useMemo<LiveNotificationsApi>(
-    () => ({ items, markRead, markAllRead }),
-    [items, markRead, markAllRead],
+    () => ({ items, markRead, markAllRead, markConversationRead, setActiveConversation }),
+    [items, markRead, markAllRead, markConversationRead, setActiveConversation],
   );
 
   return (
@@ -125,15 +171,25 @@ export function LiveNotificationsProvider({
 }
 
 /**
+ * O que se usa fora do provider.
+ *
+ * Constante, e não um objeto novo a cada chamada: os efeitos que dependem
+ * destas funções rodariam de novo a cada render se a identidade mudasse.
+ */
+const VAZIO: LiveNotificationsApi = {
+  items: [],
+  markRead: () => undefined,
+  markAllRead: () => undefined,
+  markConversationRead: () => undefined,
+  setActiveConversation: () => undefined,
+};
+
+/**
  * Fora do provider devolve uma lista vazia em vez de explodir: um sininho sem
  * avisos ao vivo é um defeito pequeno; uma tela em branco, um grande.
  */
 export function useLiveNotifications(): LiveNotificationsApi {
   return (
-    useContext(LiveNotificationsContext) ?? {
-      items: [],
-      markRead: () => undefined,
-      markAllRead: () => undefined,
-    }
+    useContext(LiveNotificationsContext) ?? VAZIO
   );
 }
