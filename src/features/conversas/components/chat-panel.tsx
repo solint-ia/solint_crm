@@ -28,6 +28,7 @@ import { isGroupContact, PhoneNumber } from '@/core/domain/contact';
 import type { Label } from '@/core/domain/label';
 import type { CannedResponse } from '@/core/domain/settings';
 import { Avatar } from '@/components/ui/avatar';
+import { ImageLightbox } from '@/components/ui/image-lightbox';
 import { Menu, MenuHeader, MenuItem } from '@/components/ui/menu';
 import { Modal } from '@/components/ui/modal';
 import { StatusBadge } from '@/components/domain/status-badge';
@@ -147,6 +148,7 @@ export function ChatPanel({
   const [pendingDelete, setPendingDelete] = useState<Message | undefined>();
   const [agendadas, setAgendadas] = useState<readonly ScheduledMessage[]>([]);
   const [agendaErro, setAgendaErro] = useState<string | undefined>();
+  const [fotoAberta, setFotoAberta] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const prevConversationIdRef = useRef<string | null>(null);
@@ -161,6 +163,13 @@ export function ChatPanel({
 
   const hsmOpen = isHsmWindowOpen(conversation);
   const isGroup = isGroupContact(conversation.contact);
+  const temFoto = Boolean(conversation.contact.avatarUrl);
+
+  // Trocar de conversa fecha a foto: a que estava ampliada era do contato
+  // anterior, e mantê-la aberta mostraria o rosto errado sobre a conversa nova.
+  useEffect(() => {
+    setFotoAberta(false);
+  }, [conversation.id]);
 
   /**
    * Os botões de status agora ligam e desligam.
@@ -307,21 +316,46 @@ export function ChatPanel({
             </button>
           )}
 
-          {/* Avatar e Nome Clicáveis para abrir detalhes */}
-          <button
-            type="button"
-            onClick={onToggleContext}
-            title={isContextOpen ? 'Recolher detalhes do contato' : 'Ver detalhes do contato'}
-            className="group flex items-center gap-2.5 text-left min-w-0 rounded-lg p-1 -m-1 transition-colors hover:bg-surface-2"
-          >
-            <div className="relative shrink-0">
+          {/* A foto e o nome são dois alvos, não um.
+              Eram um botão só, que abria os detalhes. Ampliar a foto não podia
+              virar um botão dentro dele — botão aninhado é HTML inválido e o
+              clique interno não chega ao leitor de tela como ação própria.
+              Separados, cada gesto tem o seu destino: a foto amplia, o nome
+              abre o painel. */}
+          {temFoto ? (
+            <button
+              type="button"
+              onClick={() => setFotoAberta(true)}
+              title="Ampliar foto"
+              aria-label={`Ampliar foto de ${conversation.contact.name}`}
+              className="shrink-0 rounded-full transition-opacity hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-brand"
+            >
               <Avatar
                 name={conversation.contact.name}
                 tone={conversation.contact.avatarTone}
                 src={conversation.contact.avatarUrl}
                 size="md"
               />
+            </button>
+          ) : (
+            // Sem foto o avatar são as iniciais, e ampliar iniciais não mostra
+            // nada que já não esteja à vista. Fica sem o gesto, em vez de abrir
+            // uma tela cheia com duas letras dentro.
+            <div className="shrink-0">
+              <Avatar
+                name={conversation.contact.name}
+                tone={conversation.contact.avatarTone}
+                size="md"
+              />
             </div>
+          )}
+
+          <button
+            type="button"
+            onClick={onToggleContext}
+            title={isContextOpen ? 'Recolher detalhes do contato' : 'Ver detalhes do contato'}
+            className="group flex items-center gap-2.5 text-left min-w-0 rounded-lg p-1 -m-1 transition-colors hover:bg-surface-2"
+          >
             <div className="min-w-0 flex flex-col justify-center">
               <div className="flex items-center gap-1.5 min-w-0">
                 <h2 className="truncate font-display text-xs sm:text-sm font-semibold text-ink group-hover:text-brand transition-colors">
@@ -796,6 +830,14 @@ export function ChatPanel({
           setTemplateOpen(false);
         }}
       />
+
+      {fotoAberta && conversation.contact.avatarUrl ? (
+        <ImageLightbox
+          src={conversation.contact.avatarUrl}
+          alt={`Foto de ${conversation.contact.name}`}
+          onClose={() => setFotoAberta(false)}
+        />
+      ) : null}
     </section>
   );
 }

@@ -155,11 +155,51 @@ export function useInbox({
   const [error, setError] = useState<string | undefined>();
   const [pending, startTransition] = useTransition();
 
+  /**
+   * A conversa pedida pela URL passa a valer também depois da montagem.
+   *
+   * `useState` lê o valor inicial uma vez e nunca mais. Enquanto a caixa de
+   * entrada continua montada — e ela continua, porque a navegação entre
+   * `/conversas/a` e `/conversas/b` não troca o segmento de rota — clicar numa
+   * notificação trocava a URL e não trocava nada na tela: `selectedId` ficava
+   * preso na conversa em que a página abriu.
+   */
+  useEffect(() => {
+    if (initialSelectedId) setSelectedId(initialSelectedId);
+  }, [initialSelectedId]);
+
   useEffect(() => {
     if (initialInboxId !== undefined) {
       setFilters((prev) => ({ ...prev, inboxId: initialInboxId || undefined }));
     }
   }, [initialInboxId]);
+
+  /**
+   * Abrir uma conversa de outra caixa desfaz o filtro de caixa.
+   *
+   * Com duas caixas conectadas e o filtro em "Caixa 2", uma conversa da
+   * principal simplesmente não estava na lista — e o `selected` caía na
+   * primeira visível, que era da Caixa 2. A notificação levava a uma conversa
+   * qualquer, de outro número, sem nenhum aviso de que o destino tinha sido
+   * trocado.
+   *
+   * Quem clicou numa notificação escolheu aquela conversa; o filtro é uma
+   * preferência de navegação, e entre os dois quem cede é o filtro. Só dispara
+   * quando a conversa selecionada muda, para não desfazer um filtro que a
+   * pessoa acabou de aplicar à mão.
+   */
+  useEffect(() => {
+    if (!selectedId) return;
+    const alvo = conversations.find((conversation) => conversation.id === selectedId);
+    if (!alvo) return;
+    setFilters((prev) =>
+      prev.inboxId && prev.inboxId !== alvo.inboxId ? { ...prev, inboxId: undefined } : prev,
+    );
+    // `conversations` de fora das dependências de propósito: o alvo só precisa
+    // ser reavaliado quando a escolha muda, não a cada mensagem que chega e
+    // reescreve a lista.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
 
   useEffect(() => {
     if (initialScope !== undefined) {
@@ -364,12 +404,29 @@ export function useInbox({
     return [...filtered].sort((a, b) => activityTimeOf(b) - activityTimeOf(a));
   }, [naCaixa, scope, statusTab, search, sort, filters, currentUserId]);
 
-  const selected = useMemo(
-    () =>
-      visibleConversations.find((conversation) => conversation.id === selectedId) ??
-      visibleConversations[0],
-    [visibleConversations, selectedId],
-  );
+  /**
+   * A conversa aberta.
+   *
+   * A queda para `visibleConversations[0]` existe para o caso legítimo de não
+   * haver escolha nenhuma — primeira carga, ou a conversa selecionada tendo
+   * sido fechada e sumido da aba. Mas ela era aplicada **também** quando havia
+   * escolha e ela apenas não passava pelo filtro, e aí trocava a conversa
+   * pedida por outra, de outro contato e outra caixa, sem dizer nada.
+   *
+   * A busca em `conversations` cobre a janela entre a troca de `selectedId` e o
+   * efeito acima soltar o filtro: por um render a conversa certa ainda não está
+   * na lista visível, e é justamente nesse render que a substituição acontecia.
+   */
+  const selected = useMemo(() => {
+    if (selectedId) {
+      const naLista = visibleConversations.find((conversation) => conversation.id === selectedId);
+      if (naLista) return naLista;
+
+      const foraDoFiltro = conversations.find((conversation) => conversation.id === selectedId);
+      if (foraDoFiltro) return foraDoFiltro;
+    }
+    return visibleConversations[0];
+  }, [visibleConversations, conversations, selectedId]);
 
   const counts = useMemo(
     () => ({
