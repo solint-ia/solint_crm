@@ -114,7 +114,7 @@ export function ConversationListItem({
               >
                 <span
                   className={cn(
-                    'size-1.5 rounded-full',
+                    'size-2.5 rounded-full',
                     TONE_DOT_CLASSES[PRIORITY_TONE[conversation.priority]],
                   )}
                 />

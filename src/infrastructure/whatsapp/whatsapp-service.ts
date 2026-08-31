@@ -5,7 +5,6 @@ import makeWASocket, {
   DisconnectReason,
   makeCacheableSignalKeyStore,
   downloadMediaMessage,
-  Browsers,
   isJidGroup,
   jidNormalizedUser,
   type Contact as WAContact,
@@ -334,7 +333,10 @@ export class WhatsAppService {
           creds: state.creds,
           keys: makeCacheableSignalKeyStore(state.keys, this.logger),
         },
-        browser: Browsers.macOS('Desktop'),
+        // Mesma razão da nota extensa em `worker/session.ts`: `browser[0]` é o
+        // nome que o aviso de segurança do celular exibe, e `browser[1] ===
+        // 'Desktop'` registrava a sessão como aplicativo nativo de desktop.
+        browser: ['Solint CRM', 'Chrome', '1.0.0'],
 
         syncFullHistory: false,
         generateHighQualityLinkPreview: true,
@@ -382,6 +384,16 @@ export class WhatsAppService {
             continue;
           }
           void this.applyDeliveryUpdate(update.key, update.update?.status);
+        }
+      });
+
+      // Recibos de grupo chegam por outro evento — ver a nota extensa em
+      // `worker/session.ts`. Sem isto, mensagem de grupo parava num tracinho.
+      sock.ev.on('message-receipt.update', (updates) => {
+        for (const { key, receipt } of updates) {
+          if (!key.id) continue;
+          if (receipt.receiptTimestamp) void persistDeliveryUpdate(key.id, 'entregue');
+          if (receipt.readTimestamp) void persistDeliveryUpdate(key.id, 'lido');
         }
       });
 
@@ -510,8 +522,10 @@ export class WhatsAppService {
         if (avatarUrl) this.updateStatus({ avatarUrl });
       }
 
-      // Sem `sendPresenceUpdate('available')` aqui: ele anulava o
-      // `markOnlineOnConnect: false` logo acima e o celular voltava a ficar mudo.
+      // Reafirma "offline" — ver a nota extensa em `worker/session.ts`: o
+      // Baileys manda um nó de presença sem tipo quando o `pushName` chega, e
+      // ele desfaz o `unavailable` da abertura.
+      void sock.sendPresenceUpdate('unavailable').catch(() => undefined);
       void this.subscribeRecentPresences();
     }
 
@@ -1060,6 +1074,21 @@ export class WhatsAppService {
     // da sessão, não o que existe no telefone.
     await this.pullAddressBook();
 
+    // Com quem já existe conversa direta — lido de uma vez, e não por contato.
+    // Ver a nota extensa no equivalente em `worker/session.ts`.
+    const conversasDiretas = new Set<string>();
+    for (const conversa of await prisma.conversation.findMany({
+      where: {
+        accountId,
+        channel: 'whatsapp',
+        channelThreadId: { not: { endsWith: '@g.us' } },
+      },
+      select: { channelThreadId: true },
+    })) {
+      const digitos = conversa.channelThreadId ? userOf(conversa.channelThreadId) : '';
+      if (digitos) conversasDiretas.add(digitos);
+    }
+
     let synced = 0;
     let created = 0;
 
@@ -1076,6 +1105,12 @@ export class WhatsAppService {
       const pushName = contact.notify?.trim() || contact.verifiedName?.trim();
       const resolvedName = addressBookName || pushName || PhoneNumber.format(phone) || phone;
       const avatarUrl = typeof contact.imgUrl === 'string' && contact.imgUrl !== 'changed' ? contact.imgUrl : undefined;
+
+      // Só a agenda de verdade. `name` é o nome salvo no aparelho; `notify` é o
+      // nome que a própria pessoa escolheu, e todo participante de grupo tem um.
+      // Ver a nota extensa no equivalente em `worker/session.ts`.
+      const daAgenda = Boolean(addressBookName) || conversasDiretas.has(phoneDigits);
+      if (!daAgenda) continue;
 
       try {
         const existing = await prisma.contact.findFirst({
@@ -1099,8 +1134,8 @@ export class WhatsAppService {
             });
           }
         } else {
-          // Sem exigir nome: a agenda tem contatos salvos só pelo número, e são
-          // exatamente eles que a tela de "nova conversa" do WhatsApp mostra.
+          // Chegar aqui já significa passar por `daAgenda`. O nome pode ser só
+          // o número formatado — contato salvo sem etiqueta continua contato.
           const contactId = `ct-wa-${accountId}-${phoneDigits}`;
           await prisma.contact.create({
             data: {
@@ -1495,6 +1530,7 @@ export class WhatsAppService {
       this.socket.ev.removeAllListeners('creds.update');
       this.socket.ev.removeAllListeners('messages.upsert');
       this.socket.ev.removeAllListeners('messages.update');
+      this.socket.ev.removeAllListeners('message-receipt.update');
       this.socket.ev.removeAllListeners('groups.update');
       this.socket.ev.removeAllListeners('contacts.update');
       this.socket.ev.removeAllListeners('contacts.upsert');

@@ -53,6 +53,31 @@ export const isGroupContact = (contact: Pick<Contact, 'kind'>): boolean => conta
 
 export const GROUP_ALLOWED_FIELD_LABEL = 'group_chat_enabled';
 
+/**
+ * As caixas cujo número participa deste grupo.
+ *
+ * **Por que precisa existir.** O contato de grupo é da *conta*
+ * (`ct-wa-<conta>-g-<id>`), mas participar de um grupo é do *número*. Sem este
+ * campo o CRM oferecia todas as caixas de WhatsApp para qualquer grupo — e
+ * escolher um número que não é membro fazia o WhatsApp recusar o envio com
+ * `not-authorized`, já com a mensagem gravada na conversa. Só a caixa que havia
+ * sincronizado os grupos funcionava, e não havia nada na tela explicando por quê.
+ *
+ * Guardado como lista separada por vírgula porque um grupo pode ter mais de um
+ * número da mesma conta entre os participantes.
+ */
+export const GROUP_INBOXES_FIELD_LABEL = 'group_inbox_ids';
+
+/** As caixas que participam do grupo. Vazio = desconhecido, não "nenhuma". */
+export const groupInboxIds = (
+  contact: Pick<Contact, 'customFields'>,
+): readonly string[] =>
+  contact.customFields
+    ?.find((field) => field.label === GROUP_INBOXES_FIELD_LABEL)
+    ?.value.split(',')
+    .map((id) => id.trim())
+    .filter(Boolean) ?? [];
+
 export const isGroupAllowedInChat = (contact: Pick<Contact, 'kind' | 'customFields'>): boolean => {
   if (contact.kind !== 'grupo') return true;
   return contact.customFields?.some(

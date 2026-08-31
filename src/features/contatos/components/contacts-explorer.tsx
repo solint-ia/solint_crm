@@ -28,6 +28,7 @@ import { PhoneNumber, isGroupAllowedInChat } from '@/core/domain/contact';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { ConfirmModal } from '@/components/ui/confirm-modal';
+import { FloatingDropdown } from '@/components/ui/floating-dropdown';
 import { LabelChips } from '@/components/domain/label-chip';
 import { useToast } from '@/components/ui/toast';
 
@@ -82,6 +83,8 @@ export function ContactsExplorer({ contacts }: ContactsExplorerProps) {
 
   // Menu de Ações por Linha (dropdown aberto)
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+  /** Onde o menu aberto deve se ancorar — o retângulo do botão que o abriu. */
+  const [menuAnchor, setMenuAnchor] = useState<DOMRect | null>(null);
 
   // Estados de Operação com Grupos
   const [togglingGroupId, setTogglingGroupId] = useState<string | null>(null);
@@ -975,22 +978,31 @@ export function ContactsExplorer({ contacts }: ContactsExplorerProps) {
                               <button
                                 type="button"
                                 aria-label={`Ações para ${contact.name}`}
-                                onClick={() =>
-                                  setActiveMenuId(isMenuOpen ? null : contact.id)
-                                }
+                                aria-haspopup="menu"
+                                aria-expanded={isMenuOpen}
+                                onClick={(evento) => {
+                                  if (isMenuOpen) {
+                                    setActiveMenuId(null);
+                                    return;
+                                  }
+                                  // O retângulo é lido no clique porque é aqui
+                                  // que o botão certamente existe e está na
+                                  // posição final — depois disso o menu vive
+                                  // fora desta árvore.
+                                  setMenuAnchor(evento.currentTarget.getBoundingClientRect());
+                                  setActiveMenuId(contact.id);
+                                }}
                                 className="rounded-control p-1 text-dim hover:text-ink hover:bg-surface-2 transition-colors"
                               >
                                 <MoreHorizontal className="size-4" />
                               </button>
 
                               {/* Dropdown Menu */}
-                              {isMenuOpen && (
-                                <>
-                                  <div
-                                    className="fixed inset-0 z-20"
-                                    onClick={() => setActiveMenuId(null)}
-                                  />
-                                  <div className="absolute right-0 top-full mt-1 z-30 w-48 rounded-xl border border-line bg-surface p-1 shadow-xl animate-in fade-in-50 zoom-in-95 duration-100">
+                              {isMenuOpen && menuAnchor && (
+                                <FloatingDropdown
+                                  anchor={menuAnchor}
+                                  onClose={() => setActiveMenuId(null)}
+                                >
                                     <button
                                       type="button"
                                       onClick={() => {
@@ -1044,8 +1056,7 @@ export function ContactsExplorer({ contacts }: ContactsExplorerProps) {
                                       <Trash2 className="size-3.5" />
                                       <span>Excluir contato</span>
                                     </button>
-                                  </div>
-                                </>
+                                </FloatingDropdown>
                               )}
                             </div>
                           </div>

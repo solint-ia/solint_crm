@@ -476,23 +476,40 @@ export async function syncWhatsAppGroupsAction(): Promise<
       };
     }
 
-    // Despacha comando para o worker (Render / processo separado)
-    const command = await prisma.whatsAppCommand.create({
-      data: {
-        inboxId: targetInbox.id,
+    /**
+     * Todas as caixas pareadas, não só a primeira.
+     *
+     * Participar de um grupo é do número. Sincronizando de uma caixa só, os
+     * grupos das outras nunca apareciam — e os que apareciam ficavam marcados
+     * como pertencentes apenas àquela, que é o que fazia o envio pelas demais
+     * ser recusado pelo WhatsApp com `not-authorized`.
+     *
+     * `groupFetchAllParticipating` devolve só os grupos do número que pergunta,
+     * então cada caixa contribui com os seus e se registra neles.
+     */
+    const pareadas = inboxes.filter((inbox) => Boolean(inbox.waConnection?.credsCipher));
+    const alvos = pareadas.length > 0 ? pareadas : [targetInbox];
+
+    for (const inbox of alvos) {
+      const command = await prisma.whatsAppCommand.create({
+        data: {
+          inboxId: inbox.id,
+          kind: 'sync_groups',
+          payload: { accountId },
+          status: 'pending',
+        },
+      });
+
+      await postgresPubSub.publish(DB_CHANNELS.COMMANDS, {
+        inboxId: inbox.id,
         kind: 'sync_groups',
-        payload: { accountId },
-        status: 'pending',
-      },
-    });
+        id: command.id,
+      });
 
-    await postgresPubSub.publish(DB_CHANNELS.COMMANDS, {
-      inboxId: targetInbox.id,
-      kind: 'sync_groups',
-      id: command.id,
-    });
-
-    await aguardarComando(command.id);
+      // Em série: cada caixa lê e reescreve `group_inbox_ids` do mesmo contato,
+      // e duas sincronizações simultâneas perderiam uma das escritas.
+      await aguardarComando(command.id);
+    }
 
     const currentCount = await prisma.contact.count({
       where: { accountId, kind: 'grupo' },

@@ -1,5 +1,4 @@
 import {
-  Browsers,
   DisconnectReason,
   downloadMediaMessage,
   isJidGroup,
@@ -14,7 +13,14 @@ import {
 import pino from 'pino';
 import type { Contact } from '@/core/domain/contact';
 import type { Message, MessageContent } from '@/core/domain/message';
-import { PhoneNumber, isGroupAllowedInChat } from '@/core/domain/contact';
+import {
+  PhoneNumber,
+  isGroupAllowedInChat,
+  groupInboxIds,
+  GROUP_ALLOWED_FIELD_LABEL,
+  GROUP_INBOXES_FIELD_LABEL,
+  type CustomField,
+} from '@/core/domain/contact';
 import { DB_POOL_SIZE, asJson, prisma } from '@/infrastructure/db/prisma';
 import { initPostgresAuthState, isPairedCreds } from '../auth/postgres-auth-state';
 import {
@@ -377,7 +383,29 @@ export class WhatsAppSession {
           creds: state.creds,
           keys: makeCacheableSignalKeyStore(state.keys, this.logger),
         },
-        browser: Browsers.macOS('Desktop'),
+        /**
+         * O aparelho vinculado se apresenta como o que é.
+         *
+         * A tupla é `[os, navegador, versão]`, e o WhatsApp usa cada posição:
+         *
+         *   - `browser[0]` vira `os` no registro (`Utils/validate-connection.js`),
+         *     e é o texto que aparece no aviso de segurança do celular. Com
+         *     `Browsers.macOS(...)` a notificação dizia "Você acessou o WhatsApp
+         *     Business em um macOS" — o dono não tem Mac nenhum, e não havia
+         *     como saber que aquilo era o próprio CRM.
+         *   - `browser[1] === 'Desktop'` combinado com um `os` conhecido faz o
+         *     Baileys preencher `webSubPlatform`, registrando a sessão como o
+         *     **aplicativo nativo de desktop**. Um app nativo é um cliente de
+         *     primeira classe para o WhatsApp; uma sessão de navegador, como a
+         *     do WhatsApp Web, não é. Como o celular continua notificando
+         *     normalmente quando só o WhatsApp Web está aberto, vale registrar
+         *     como navegador.
+         *
+         * `'Solint CRM'` não está no `PLATFORM_MAP`, então as duas coisas se
+         * resolvem de uma vez: o aviso passa a nomear o CRM e o registro deixa
+         * de se passar por app nativo.
+         */
+        browser: ['Solint CRM', 'Chrome', '1.0.0'],
 
         logger: this.logger,
         syncFullHistory: false,
@@ -628,13 +656,34 @@ export class WhatsAppSession {
         });
 
         console.log(`[WhatsAppSession ${this.inboxId}] Conectado com sucesso como ${ownerName}`);
-        // Aqui havia um `sendPresenceUpdate('available')`. Ele desfazia, uma
-        // linha depois, o que `markOnlineOnConnect: false` acabara de decidir:
-        // o Baileys mandava `unavailable` ao abrir e nós mandávamos
-        // `available` em seguida, deixando o celular sem notificação do mesmo
-        // jeito. O "digitando" continua sendo anunciado por conversa, em
-        // `sendTypingIndicator` — que é onde estar online quer dizer alguma
-        // coisa para quem está do outro lado.
+        /**
+         * Reafirma "offline" depois que a poeira da conexão baixa.
+         *
+         * `markOnlineOnConnect: false` já manda um `unavailable` ao abrir, mas
+         * ele não é necessariamente a última palavra. O Baileys tem um caminho
+         * próprio, em `Socket/socket.js`, que dispara sozinho quando o
+         * `pushName` chega ou muda:
+         *
+         * ```js
+         * ev.on('creds.update', update => {
+         *   if (creds.me?.name !== update.me?.name) {
+         *     sendNode({ tag: 'presence', attrs: { name } })
+         * ```
+         *
+         * É um nó de presença **sem `type`** — e presença sem tipo é presença
+         * disponível. Como o nome costuma chegar logo depois do `open`, ele cai
+         * atrás do nosso `unavailable` e desfaz o efeito sem passar por
+         * `sendPresenceUpdate`, ou seja, sem sequer atualizar
+         * `sendActiveReceipts` do lado do Baileys.
+         *
+         * Repetir aqui custa um nó e fecha essa janela. É idempotente: se nada
+         * tiver mexido na presença, o servidor recebe a mesma informação duas
+         * vezes.
+         */
+        void this.socket?.sendPresenceUpdate('unavailable').catch(() => {
+          // Presença é otimização de notificação, não requisito de operação:
+          // falhar aqui não pode derrubar uma conexão recém-aberta.
+        });
         void this.subscribeRecentPresences();
       }
       }),
@@ -703,6 +752,37 @@ export class WhatsAppSession {
               await applyDeliveryUpdate(update.key.id, status);
             }
           }
+        }
+      }),
+    );
+
+    /**
+     * Os recibos de grupo, que não passam por `messages.update`.
+     *
+     * O Baileys bifurca em `handleReceipt` (`Socket/messages-recv.js`): numa
+     * conversa de duas pessoas o recibo vira `messages.update` com `status`;
+     * num grupo vira `message-receipt.update`, com um recibo **por
+     * participante**, porque lá cada um entrega e lê no seu tempo. Sem este
+     * ouvinte, mensagem de grupo nunca passava de um tracinho — não porque não
+     * fosse entregue, mas porque o evento que dizia isso não tinha ninguém
+     * escutando.
+     *
+     * **Simplificação assumida:** o WhatsApp só pinta os dois tracinhos quando
+     * *todos* receberam, e de azul quando *todos* leram. Aqui basta um
+     * participante, porque saber que faltam os outros exigiria guardar a lista
+     * de quem já leu por mensagem — uma coluna nova e a lista de membros
+     * sempre atualizada. Num grupo grande o azul chega cedo demais; ainda
+     * assim é mais próximo da verdade do que o tracinho único que ficava para
+     * sempre.
+     */
+    this.socket.ev.on(
+      'message-receipt.update',
+      this.guarded('message-receipt.update', async (updates) => {
+        for (const { key, receipt } of updates) {
+          if (!key.id) continue;
+          // A ordem não importa: `applyDeliveryUpdate` nunca rebaixa um status.
+          if (receipt.receiptTimestamp) await applyDeliveryUpdate(key.id, 'entregue');
+          if (receipt.readTimestamp) await applyDeliveryUpdate(key.id, 'lido');
         }
       }),
     );
@@ -1024,6 +1104,27 @@ export class WhatsAppSession {
     // da sessão, não o que existe no telefone.
     await this.pullAddressBook();
 
+    /**
+     * Com quem já existe conversa direta nesta caixa.
+     *
+     * Lido de uma vez, antes do laço, e não uma consulta por contato: o
+     * `contactsStore` chega a milhares de entradas, e uma ida ao banco em cada
+     * uma transformaria "sincronizar" numa varredura de minutos.
+     */
+    const conversasDiretas = new Set<string>();
+    for (const conversa of await prisma.conversation.findMany({
+      where: {
+        accountId: this.accountId,
+        inboxId: this.inboxId,
+        channel: 'whatsapp',
+        channelThreadId: { not: { endsWith: '@g.us' } },
+      },
+      select: { channelThreadId: true },
+    })) {
+      const digitos = conversa.channelThreadId ? userOf(conversa.channelThreadId) : '';
+      if (digitos) conversasDiretas.add(digitos);
+    }
+
     let synced = 0;
     let created = 0;
 
@@ -1040,6 +1141,31 @@ export class WhatsAppSession {
       const pushName = contact.notify?.trim() || contact.verifiedName?.trim();
       const resolvedName = addressBookName || pushName || PhoneNumber.format(phone) || phone;
       const avatarUrl = typeof contact.imgUrl === 'string' && contact.imgUrl !== 'changed' ? contact.imgUrl : undefined;
+
+      /**
+       * O que separa a agenda de quem só passou pelo caminho.
+       *
+       * O `contactsStore` não é a agenda: é tudo que a sessão já viu. Todo
+       * participante de todo grupo cai ali, porque o WhatsApp manda um registro
+       * de contato para cada pessoa que aparece — foi assim que 500 contatos
+       * viraram 2000.
+       *
+       * O próprio Baileys documenta a distinção no tipo `Contact`:
+       *
+       *   name   → "name of the contact, you have saved on your WA"
+       *   notify → "name of the contact, the contact has set on their own"
+       *
+       * Ou seja, `name` só existe para quem está salvo no aparelho; `notify` é
+       * o nome que a pessoa escolheu para si e todo mundo tem, conhecido ou
+       * não. Testar `name` é exatamente o critério da tela de "nova conversa"
+       * do WhatsApp, que é a lista que se espera ver aqui.
+       *
+       * A conversa direta entra junto porque quem já foi atendido é contato
+       * por definição, tenha sido salvo na agenda ou não — é a mesma regra que
+       * `handleContactSync` aplica no caminho em tempo real.
+       */
+      const daAgenda = Boolean(addressBookName) || conversasDiretas.has(phoneDigits);
+      if (!daAgenda) continue;
 
       try {
         const existing = await prisma.contact.findFirst({
@@ -1063,14 +1189,9 @@ export class WhatsAppSession {
             });
           }
         } else {
-          // Sem exigir nome.
-          //
-          // A condição era `addressBookName || pushName`, e ela descartava em
-          // silêncio justamente os contatos que a tela de "nova conversa" do
-          // WhatsApp mostra sem nome — número salvo sem etiqueta, contato vindo
-          // de grupo. Quem pediu "sincronizar contatos" quer a agenda como ela
-          // é; um contato identificado pelo número é um contato, e ganhar um
-          // nome depois é só uma atualização.
+          // Chegar aqui já significa passar por `daAgenda`: é contato salvo no
+          // aparelho ou alguém com conversa aberta. O nome pode ser só o número
+          // formatado — um contato salvo sem etiqueta continua sendo contato.
           const contactId = `ct-wa-${this.accountId}-${phoneDigits}`;
           await prisma.contact.create({
             data: {
@@ -1122,17 +1243,42 @@ export class WhatsAppSession {
               avatarTone: 'blue',
               kind: 'grupo',
               participantCount: group.size ?? group.participants?.length ?? 0,
-              customFields: asJson([{ label: 'group_chat_enabled', value: 'false' }]),
+              customFields: asJson([
+                { label: GROUP_ALLOWED_FIELD_LABEL, value: 'false' },
+                // Quem está sincronizando é, por definição, participante: o
+                // `groupFetchAllParticipating` só devolve grupos deste número.
+                { label: GROUP_INBOXES_FIELD_LABEL, value: this.inboxId },
+              ]),
               timeline: asJson([]),
             },
           });
           created += 1;
         } else {
+          /**
+           * A caixa é somada, nunca trocada.
+           *
+           * Um grupo pode ter dois números da mesma conta entre os membros, e
+           * cada um sincroniza no seu momento. Sobrescrever faria a segunda
+           * sincronização apagar a primeira — e a caixa recém-removida da lista
+           * voltaria a ser recusada no envio.
+           */
+          const anteriores = Array.isArray(existing.customFields)
+            ? (existing.customFields as unknown as CustomField[])
+            : [];
+          const caixas = new Set(
+            groupInboxIds({ customFields: anteriores }).concat(this.inboxId),
+          );
+          const customFields = [
+            ...anteriores.filter((campo) => campo?.label !== GROUP_INBOXES_FIELD_LABEL),
+            { label: GROUP_INBOXES_FIELD_LABEL, value: [...caixas].join(',') },
+          ];
+
           await prisma.contact.update({
             where: { id: existing.id, accountId },
             data: {
               name: group.subject || existing.name,
               participantCount: group.size ?? group.participants?.length ?? existing.participantCount,
+              customFields: asJson(customFields),
             },
           });
         }
@@ -1847,6 +1993,7 @@ export class WhatsAppSession {
       this.socket.ev.removeAllListeners('creds.update');
       this.socket.ev.removeAllListeners('messages.upsert');
       this.socket.ev.removeAllListeners('messages.update');
+      this.socket.ev.removeAllListeners('message-receipt.update');
       this.socket.ev.removeAllListeners('messaging-history.set');
       this.socket.ev.removeAllListeners('messages.reaction');
       this.socket.ev.removeAllListeners('contacts.upsert');

@@ -10,6 +10,7 @@ import {
   MIN_SCHEDULE_LEAD_MS,
   type ScheduledMessage,
 } from '@/core/domain/scheduled-message';
+import { groupInboxIds, type Contact } from '@/core/domain/contact';
 import { stageLabelIds } from '@/core/domain/pipeline';
 import { can, canSeeInbox, withSignature } from '@/core/domain/user';
 import { canSendFreeText, MAX_MESSAGE_LENGTH } from '@/core/use-cases/send-message';
@@ -638,7 +639,7 @@ export async function findContactConversationAction(
     return { ok: false, error: 'Este contato não tem telefone cadastrado.' };
   }
 
-  return { ok: true, caixas: await caixasDeWhatsApp(session) };
+  return { ok: true, caixas: await caixasDeWhatsApp(session, contact) };
 }
 
 /**
@@ -651,12 +652,32 @@ export async function findContactConversationAction(
  */
 const caixasDeWhatsApp = async (
   session: Awaited<ReturnType<typeof container.session.getCurrentSession>>,
+  contact?: Pick<Contact, 'kind' | 'customFields'>,
 ): Promise<readonly CaixaDisponivel[]> => {
   const settings = await container.settings.get(session.account.id);
+
+  /**
+   * Num grupo, só entram as caixas cujo número é membro.
+   *
+   * Participar de um grupo é do número, não da conta — e o contato de grupo é
+   * da conta. Oferecer todas as caixas levava a escolher um número que não
+   * está no grupo: o WhatsApp recusava com `not-authorized` e a mensagem já
+   * estava gravada na conversa. Aparecia como "envio não autorizado" sem
+   * nenhuma pista de que o problema era o número escolhido.
+   *
+   * Lista vazia significa **desconhecido**, não "nenhuma": são os grupos
+   * sincronizados antes deste campo existir. Para eles nada é filtrado — o
+   * comportamento antigo continua até a próxima sincronização, que é quando a
+   * informação passa a existir.
+   */
+  const doGrupo = contact?.kind === 'grupo' ? groupInboxIds(contact) : [];
+
   return settings.connections
     .filter(
       (connection) =>
-        connection.channel === 'whatsapp' && canSeeInbox(session, connection.id),
+        connection.channel === 'whatsapp' &&
+        canSeeInbox(session, connection.id) &&
+        (doGrupo.length === 0 || doGrupo.includes(connection.id)),
     )
     .map((connection) => ({
       id: connection.id,

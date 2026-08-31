@@ -614,6 +614,31 @@ export const openOutboundConversation = async (input: {
   }
 };
 
+/**
+ * A escada do status de entrega, do mais fraco ao mais forte.
+ *
+ * Um recibo nunca desfaz outro mais adiantado. O WhatsApp manda um recibo por
+ * degrau (`SERVER_ACK`, depois `DELIVERY_ACK`, depois `READ`) e nada garante
+ * que eles cheguem nessa ordem: cada um vira uma gravação assíncrona no
+ * Postgres, e duas gravações em voo se ultrapassam.
+ *
+ * Era essa a origem dos tracinhos desiguais — duas mensagens seguidas, as duas
+ * entregues, só uma com dois tracinhos. O `entregue` chegava, era gravado, e o
+ * `enviado` da mesma mensagem chegava logo atrás e **rebaixava** a linha de
+ * volta para um tracinho. Quem perdia a corrida decidia o que a tela mostrava.
+ */
+const DEGRAU: Record<NonNullable<Message['deliveryStatus']>, number> = {
+  falha: 0,
+  enviando: 1,
+  enviado: 2,
+  entregue: 3,
+  lido: 4,
+};
+
+/** Os status que um novo status pode legitimamente substituir. */
+const substituiveisPor = (novo: NonNullable<Message['deliveryStatus']>): string[] =>
+  Object.keys(DEGRAU).filter((atual) => DEGRAU[atual as keyof typeof DEGRAU] < DEGRAU[novo]);
+
 /** Recibo de entrega/leitura do canal. */
 export const applyDeliveryUpdate = async (
   externalId: string,
@@ -630,7 +655,25 @@ export const applyDeliveryUpdate = async (
   });
   if (!row) return;
 
-  await prisma.message.update({ where: { id: row.id }, data: { deliveryStatus } });
+  /**
+   * A guarda é a própria condição do `UPDATE`, não uma leitura seguida de
+   * escrita: entre ler e gravar caberia exatamente a corrida que este trecho
+   * existe para fechar. Uma linha sem status ainda é candidata — é o primeiro
+   * recibo dela.
+   */
+  const { count } = deliveryStatus
+    ? await prisma.message.updateMany({
+        where: {
+          id: row.id,
+          OR: [{ deliveryStatus: null }, { deliveryStatus: { in: substituiveisPor(deliveryStatus) } }],
+        },
+        data: { deliveryStatus },
+      })
+    : { count: 0 };
+
+  // Recibo atrasado, que descrevia um degrau já superado. A linha continua
+  // como está e não há mudança nenhuma para anunciar à tela.
+  if (count === 0) return;
 
   // Um recibo por mensagem entregue e outro por mensagem lida — e cada um
   // carregava a conversa **inteira**, com timeline, contato e etiquetas. No

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Clock,
@@ -23,7 +23,6 @@ import {
   summarizeBusinessHours,
   WEEKDAY_LABELS,
   WEEKDAYS,
-  weeklyOpenHours,
 } from '@/core/domain/business-hours';
 import { describeChannel } from '@/core/domain/channel';
 import type { ChannelConnection } from '@/core/domain/settings';
@@ -48,7 +47,7 @@ import {
   inboxDeletionImpactAction,
   updateInboxAction,
 } from '@/app/(workspace)/configuracoes/actions';
-import { APP_TIMEZONE } from '@/lib/datetime';
+import { useWhatsAppConnection } from '@/features/whatsapp/hooks/use-whatsapp-connection';
 
 interface InboxesSectionProps {
   readonly connections: readonly ChannelConnection[];
@@ -79,6 +78,32 @@ export function InboxesSection({ connections }: InboxesSectionProps) {
 
   const selected =
     drafts[selectedId] ?? connectionList.find((c) => c.id === selectedId) ?? connectionList[0];
+
+  /**
+   * O status que chega pelo fluxo em tempo real vale mais que o do servidor.
+   *
+   * A página é renderizada no servidor e `connections` é uma fotografia do
+   * momento em que ela carregou. Conectar o WhatsApp acontece **depois**, e
+   * nada reavisava esta árvore — por isso o cartão continuava dizendo
+   * "desconectado" até alguém recarregar a página.
+   *
+   * A gravação entra nas duas listas de propósito: `connectionList` é o que a
+   * coluna da esquerda desenha, `drafts` é o que o painel da direita lê.
+   * Atualizar só uma faria os dois discordarem na mesma tela.
+   */
+  const handleLiveStatus = useCallback(
+    (connectionId: string, status: ChannelConnection['status']) => {
+      setConnectionList((prev) =>
+        prev.map((item) => (item.id === connectionId && item.status !== status ? { ...item, status } : item)),
+      );
+      setDrafts((prev) => {
+        const atual = prev[connectionId];
+        if (!atual || atual.status === status) return prev;
+        return { ...prev, [connectionId]: { ...atual, status } };
+      });
+    },
+    [],
+  );
 
   const handleCreated = (created: ChannelConnection) => {
     setConnectionList((prev) => [...prev, created]);
@@ -197,6 +222,7 @@ export function InboxesSection({ connections }: InboxesSectionProps) {
               onSaved={(updated) => setDrafts((current) => ({ ...current, [updated.id]: updated }))}
               onOpenQr={(conn) => setQrTarget(conn)}
               onDeleted={handleDeleted}
+              onLiveStatus={handleLiveStatus}
             />
           ) : null}
         </div>
@@ -548,17 +574,85 @@ function OpenNowDot({ hours }: { readonly hours: BusinessHours }) {
   );
 }
 
+/**
+ * Um intervalo em dias, horas e minutos.
+ *
+ * Só mostra a unidade que tem valor: "3 d 2 h" não vira "3 d 2 h 0 min", e
+ * abaixo de um minuto o texto é "agora mesmo" em vez de um zero solitário.
+ */
+const duracaoLabel = (desde: Date, agora: number): string => {
+  const total = Math.max(0, agora - desde.getTime());
+  const minutos = Math.floor(total / 60_000);
+  if (minutos < 1) return 'agora mesmo';
+
+  const dias = Math.floor(minutos / 1440);
+  const horas = Math.floor((minutos % 1440) / 60);
+  const restoMin = minutos % 60;
+
+  const partes: string[] = [];
+  if (dias > 0) partes.push(`${dias} d`);
+  if (horas > 0) partes.push(`${horas} h`);
+  // Os minutos somem quando já há dias na conta: num intervalo de dias eles
+  // são ruído, e a linha fica mais curta do que a coluna.
+  if (restoMin > 0 && dias === 0) partes.push(`${restoMin} min`);
+  return partes.join(' ');
+};
+
 function InboxDetail({
   connection,
   onSaved,
   onOpenQr,
   onDeleted,
+  onLiveStatus,
 }: {
   readonly connection: ChannelConnection;
   readonly onSaved: (connection: ChannelConnection) => void;
   readonly onOpenQr: (connection: ChannelConnection) => void;
   readonly onDeleted: (connectionId: string) => void;
+  readonly onLiveStatus: (connectionId: string, status: ChannelConnection['status']) => void;
 }) {
+  const isWhatsApp = connection.channel === 'whatsapp';
+  const { statusData } = useWhatsAppConnection(isWhatsApp, connection.id);
+
+  /**
+   * O status que a tela desenha: o do fluxo quando ele já falou, o do servidor
+   * enquanto não. `updatedAt` do zero é a marca do estado inicial do hook —
+   * usá-lo cedo demais faria o cartão piscar "desconectado" ao abrir a página.
+   */
+  const statusAoVivo: ChannelConnection['status'] | undefined =
+    isWhatsApp && statusData.updatedAt !== new Date(0).toISOString()
+      ? statusData.status === 'conectado'
+        ? 'conectado'
+        : statusData.status === 'desconectado'
+          ? 'desconectado'
+          : 'pareando'
+      : undefined;
+
+  const statusExibido = statusAoVivo ?? connection.status;
+
+  useEffect(() => {
+    if (statusAoVivo && statusAoVivo !== connection.status) {
+      onLiveStatus(connection.id, statusAoVivo);
+    }
+  }, [statusAoVivo, connection.status, connection.id, onLiveStatus]);
+
+  /**
+   * Um relógio de minuto em minuto só enquanto há conexão para contar.
+   *
+   * O tempo de conexão é derivado de um instante fixo; sem alguém pedindo o
+   * novo render, ele congelaria no valor de quando a página abriu.
+   */
+  const [agora, setAgora] = useState(() => Date.now());
+  const conectadoDesde = statusData.connectedAt ? new Date(statusData.connectedAt) : undefined;
+  const contando = statusExibido === 'conectado' && Boolean(conectadoDesde);
+
+  useEffect(() => {
+    if (!contando) return;
+    setAgora(Date.now());
+    const relogio = setInterval(() => setAgora(Date.now()), 60_000);
+    return () => clearInterval(relogio);
+  }, [contando]);
+
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [hours, setHours] = useState<BusinessHours>(connection.businessHours);
   const [away, setAway] = useState(connection.awayMessage);
@@ -586,7 +680,6 @@ function InboxDetail({
     webhookUrl !== (connection.webhookUrl ?? '');
 
   const summary = useMemo(() => summarizeBusinessHours(hours), [hours]);
-  const weekly = useMemo(() => weeklyOpenHours(hours), [hours]);
 
   const patchDay = (
     day: Weekday,
@@ -700,12 +793,12 @@ function InboxDetail({
         </div>
 
         {/* Indicadores de Conexão e Sincronização */}
-        <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3">
           <div className="flex flex-col">
             <span className="text-[11px] font-semibold uppercase text-dim">Status da Conexão</span>
             <div className="mt-1 flex items-center gap-1.5">
-              <Badge tone={CONNECTION_STATUS_TONE[connection.status]} withDot>
-                {CONNECTION_STATUS_LABEL[connection.status]}
+              <Badge tone={CONNECTION_STATUS_TONE[statusExibido]} withDot>
+                {CONNECTION_STATUS_LABEL[statusExibido]}
               </Badge>
             </div>
           </div>
@@ -715,23 +808,14 @@ function InboxDetail({
               <OpenNowDot hours={hours} />
             </div>
           </div>
+          {/* Aqui havia "Última sincronização" e "Carga semanal". A primeira
+              imprimia `new Date()` no render — ou seja, dizia "agora" toda vez,
+              independentemente de ter havido sincronização; a segunda repetia
+              uma conta que o cartão de horário logo abaixo já mostra por dia. */}
           <div className="flex flex-col">
-            <span className="text-[11px] font-semibold uppercase text-dim">
-              Última sincronização
-            </span>
-            <span className="mt-1 text-xs text-ink font-medium">
-              Hoje às{' '}
-              {new Date().toLocaleTimeString('pt-BR', {
-                timeZone: APP_TIMEZONE,
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
-            </span>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-[11px] font-semibold uppercase text-dim">Carga semanal</span>
+            <span className="text-[11px] font-semibold uppercase text-dim">Tempo de conexão</span>
             <span className="mt-1 text-xs text-ink font-semibold tabular-nums">
-              {weekly.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}h abertas
+              {contando && conectadoDesde ? duracaoLabel(conectadoDesde, agora) : '—'}
             </span>
           </div>
         </div>
