@@ -85,6 +85,8 @@ export interface SendMediaInput {
   readonly conversationId: Id;
   readonly content: MessageContent;
   readonly isPrivate: boolean;
+  /** Mensagem citada. Responder com uma foto é responder. */
+  readonly replyToId?: Id;
 }
 
 /**
@@ -101,6 +103,7 @@ export const createSendMedia =
       conversationId,
       content,
       isPrivate,
+      replyToId,
     }: SendMediaInput): Promise<Result<Message>> => {
       if (!can(session, 'conversas:responder')) {
         return fail(new DomainError('Sem permissão para responder conversas.', 'FORBIDDEN'));
@@ -118,6 +121,7 @@ export const createSendMedia =
         content,
         time: nowLabel(),
         isPrivate,
+        ...(replyToId ? { replyToId } : {}),
         deliveryStatus: isPrivate ? undefined : 'enviando',
       };
 

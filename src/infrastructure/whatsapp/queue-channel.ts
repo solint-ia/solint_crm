@@ -262,10 +262,16 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     context: DispatchContext,
     target: DispatchTarget,
     media: DispatchMedia,
+    quote?: DispatchQuote,
   ): Promise<DispatchResult> {
     // Só o identificador do anexo viaja na fila. Os bytes ficam no depósito: um
     // vídeo em base64 dentro de uma coluna JSON incharia a fila sem necessidade.
-    return this.dispatch(context, 'send_media', { recipient: target, media });
+    // A citação é leve e viaja junto — ver `DispatchQuote`.
+    return this.dispatch(context, 'send_media', {
+      recipient: target,
+      media,
+      ...(quote ? { quote } : {}),
+    });
   }
 
   async markRead(accountId: string, conversationId: string, scopedInboxId?: string): Promise<void> {

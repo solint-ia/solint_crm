@@ -134,6 +134,8 @@ export const SETTINGS: WorkspaceSettings = {
         enabled: true,
         text: 'Olá! Recebemos sua mensagem e um consultor vai te responder em instantes 🙂',
       },
+      waitingMessageDelayMinutes: 5,
+      csatEnabled: false,
       webhookUrl: 'https://erp.solint.com.br/hooks/whatsapp-comercial',
     },
     {
@@ -150,6 +152,8 @@ export const SETTINGS: WorkspaceSettings = {
         text: 'O suporte atende todos os dias das 8h às 22h. Sua mensagem entrou na fila e será respondida na abertura.',
       },
       greeting: { enabled: false, text: '' },
+      waitingMessageDelayMinutes: 5,
+      csatEnabled: false,
     },
     // As caixas de Instagram, Webchat, E-mail e Telegram saíram junto com os
     // canais: eram vitrine de conexão que nenhum motor atendia.

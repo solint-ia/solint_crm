@@ -55,9 +55,38 @@
   --pink-text: #9d174d;
   --indigo-soft: #e0e7ff;
   --indigo-text: #3730a3;
+
+  /* ------------------------------------------------------------------
+     Séries de gráfico — categóricas, na ordem fixa em que são atribuídas.
+
+     Não são as cores de marca nem as de status, e isso é deliberado: cor de
+     status é reservada (verde = bom, vermelho = ruim) e reaproveitá-la como
+     "série 4" faz o leitor atribuir juízo a uma categoria que não tem nenhum.
+
+     Os quatro passos foram escolhidos com o validador de paleta e passam nas
+     seis checagens no fundo claro: banda de luminosidade, piso de croma,
+     separação sob daltonismo (pior par ΔE 8.3 deutan) e piso de visão normal
+     (ΔE 18.6). Verde e âmbar ficam abaixo de 3:1 contra o branco — é por isso
+     que todo gráfico que os usa carrega legenda com texto e valores no tooltip,
+     nunca identidade só pela cor.
+     ------------------------------------------------------------------ */
+  --chart-1: #168cff;
+  --chart-2: #7c3aed;
+  --chart-3: #10b981;
+  --chart-4: #f59e0b;
+  --chart-grid: rgba(15, 23, 42, 0.07);
 }
 
 :root[data-theme='dark'] {
+  /* Séries de gráfico no escuro: passos próprios, não os claros clareados.
+     A banda de luminosidade do modo escuro é mais estreita (L 0.48–0.67), e as
+     quatro cores foram revalidadas contra `--surface` #0e1526. */
+  --chart-1: #2b8ae8;
+  --chart-2: #7c4ff0;
+  --chart-3: #17ab80;
+  --chart-4: #c98420;
+  --chart-grid: rgba(255, 255, 255, 0.08);
+
   /* modo escuro profissional — azul-ardósia profundo */
   --app-bg: #070b14;
   --chat-bg: #070b14;
@@ -126,6 +155,13 @@
   --color-status-pending: #f59e0b;
   --color-status-resolved: #64748b;
   --color-status-danger: #ef4444;
+
+  /* séries de gráfico */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-grid: var(--chart-grid);
 
   /* superfícies e texto */
   --color-app: var(--app-bg);

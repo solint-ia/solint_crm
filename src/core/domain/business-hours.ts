@@ -62,6 +62,32 @@ export const defaultBusinessHours = (timezone = 'America/Sao_Paulo'): BusinessHo
   })),
 });
 
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** Sem acento e em minúsculas — "Sábado" e "sab" precisam casar. */
+const foldDay = (value: string): string =>
+  value
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .slice(0, 3);
+
+/** "8:00", "08:00:00" e "0800" viram "08:00"; o que não for hora vira o padrão. */
+const normalizeTime = (value: unknown, fallback: string): string => {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  if (TIME_PATTERN.test(trimmed)) return trimmed;
+
+  const match = /^(\d{1,2})\D?(\d{2})/.exec(trimmed);
+  if (!match) return fallback;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return fallback;
+  if (hours > 23 || minutes > 59) return fallback;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+};
+
 /**
  * Devolve um expediente utilizável a partir de qualquer coisa lida do banco.
  *
@@ -71,16 +97,76 @@ export const defaultBusinessHours = (timezone = 'America/Sao_Paulo'): BusinessHo
  * tipo e explodia depois, longe daqui, ao usar `days`.
  */
 export const normalizeBusinessHours = (value: unknown): BusinessHours => {
-  const raw = (value ?? {}) as Partial<BusinessHours>;
-  const timezone = typeof raw.timezone === 'string' ? raw.timezone : 'America/Sao_Paulo';
-  if (!Array.isArray(raw.days) || raw.days.length === 0) return defaultBusinessHours(timezone);
-  return { timezone, days: raw.days };
+  const raw = (value ?? {}) as Record<string, unknown>;
+  const timezone =
+    typeof raw.timezone === 'string' && raw.timezone.trim()
+      ? raw.timezone.trim()
+      : 'America/Sao_Paulo';
+
+  // `schedule` é o nome que uma versão antiga do cadastro deu à mesma lista.
+  const source = Array.isArray(raw.days)
+    ? raw.days
+    : Array.isArray(raw.schedule)
+      ? raw.schedule
+      : [];
+
+  const padrao = defaultBusinessHours(timezone);
+  if (source.length === 0) return padrao;
+
+  const stored = new Map<Weekday, Record<string, unknown>>();
+  for (const entry of source) {
+    if (!entry || typeof entry !== 'object') continue;
+    const item = entry as Record<string, unknown>;
+    const key =
+      typeof item.day === 'string'
+        ? WEEKDAYS.find((day) => day === foldDay(item.day as string))
+        : typeof item.day === 'number'
+          ? WEEKDAYS[item.day]
+          : undefined;
+    if (key) stored.set(key, item);
+  }
+
+  // Sempre os sete dias, sempre na mesma ordem. A lista guardada podia trazer
+  // só os dias abertos, ou os sete fora de ordem, e as duas formas passavam
+  // daqui para dentro intactas -- a tela desenhava certo (ela procura por dia)
+  // e o **salvamento** era recusado, porque a validação exige os sete.
+  return {
+    timezone,
+    days: padrao.days.map((fallback) => {
+      const item = stored.get(fallback.day);
+      if (!item) return fallback;
+      return {
+        day: fallback.day,
+        enabled: typeof item.enabled === 'boolean' ? item.enabled : fallback.enabled,
+        opensAt: normalizeTime(item.opensAt, fallback.opensAt),
+        closesAt: normalizeTime(item.closesAt, fallback.closesAt),
+      };
+    }),
+  };
 };
 
 export interface AutoReply {
   readonly enabled: boolean;
   readonly text: string;
 }
+
+/**
+ * Devolve uma resposta automática utilizável a partir do que está gravado.
+ *
+ * A coluna é `jsonb` e guarda o que cada versão do código escreveu nela. O
+ * cadastro gravava `{ enabled, message }` -- mesma ideia, outro nome de campo --
+ * e o `readJson` devolvia esse objeto inteiro, por ser um objeto válido. O
+ * `text` chegava indefinido na tela, voltava ausente para o servidor, e a
+ * validação recusava o salvamento **inteiro** com "dados inválidos" -- mesmo
+ * quando a pessoa tinha mexido só na mensagem de encerramento.
+ */
+export const normalizeAutoReply = (value: unknown, fallbackText = ''): AutoReply => {
+  const raw = (value ?? {}) as Record<string, unknown>;
+  const text = [raw.text, raw.message, raw.content, raw.body].find(
+    (candidate): candidate is string => typeof candidate === 'string',
+  );
+  return { enabled: raw.enabled === true, text: text ?? fallbackText };
+};
 
 const minutesOf = (time: string): number => {
   const [hours, minutes] = time.split(':');

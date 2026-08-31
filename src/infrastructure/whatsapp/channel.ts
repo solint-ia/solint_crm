@@ -100,10 +100,17 @@ export interface WhatsAppChannel {
     quote?: DispatchQuote,
   ): Promise<DispatchResult>;
 
+  /**
+   * `quote` chega aqui pela mesma razão que chega em `sendText`: responder com
+   * uma foto é responder. O parâmetro existia só no envio de texto, e por isso
+   * escolher "Responder" e anexar uma imagem mandava a imagem solta — a citação
+   * aparecia no compositor e sumia no caminho, sem aviso nenhum.
+   */
   sendMedia(
     context: DispatchContext,
     target: DispatchTarget,
     media: DispatchMedia,
+    quote?: DispatchQuote,
   ): Promise<DispatchResult>;
 
   /**

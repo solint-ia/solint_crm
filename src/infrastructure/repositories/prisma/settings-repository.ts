@@ -435,6 +435,13 @@ export class PrismaSettingsRepository implements SettingsRepository {
           ...(patch.greeting ? { greeting: asJson(patch.greeting) } : {}),
           ...(patch.closingMessage ? { closingMessage: asJson(patch.closingMessage) } : {}),
           ...(patch.waitingMessage ? { waitingMessage: asJson(patch.waitingMessage) } : {}),
+          ...(patch.waitingMessageDelayMinutes === undefined
+            ? {}
+            : { waitingMessageDelayMinutes: patch.waitingMessageDelayMinutes }),
+          ...(patch.csatEnabled === undefined ? {} : { csatEnabled: patch.csatEnabled }),
+          ...(patch.csatQuestion === undefined
+            ? {}
+            : { csatQuestion: patch.csatQuestion || null }),
           ...(patch.webhookUrl === undefined ? {} : { webhookUrl: patch.webhookUrl || null }),
         },
       }),

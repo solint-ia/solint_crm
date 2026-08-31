@@ -1,6 +1,21 @@
 import { prisma } from '@/infrastructure/db/prisma';
 import { horaLabel } from '@/lib/datetime';
 
+/**
+ * De onde a mensagem automática veio.
+ *
+ * Fica gravado na coluna `origin` da mensagem, e não é só rótulo: é por ele que
+ * cada regra descobre que **já disparou** nesta conversa. Sem essa marca a
+ * mensagem de ausência responderia a cada mensagem da madrugada, uma por uma.
+ */
+export type AutoMessageOrigin =
+  | 'saudacao'
+  | 'ausencia'
+  | 'encerramento'
+  | 'espera'
+  | 'csat'
+  | 'automacao';
+
 export interface AutoMessageOptions {
   readonly accountId: string;
   readonly inboxId: string;
@@ -10,7 +25,7 @@ export interface AutoMessageOptions {
     readonly phone: string;
   };
   readonly text: string;
-  readonly origin?: 'saudacao' | 'ausencia' | 'encerramento' | 'automacao';
+  readonly origin?: AutoMessageOrigin;
   readonly authorName?: string;
 }
 

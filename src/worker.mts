@@ -90,6 +90,20 @@ async function main() {
   scheduledRunner.start();
 
   /**
+   * Varredor da mensagem de espera.
+   *
+   * Mesmo motivo do de cima: a condição dela ("o cliente está esperando há
+   * tantos minutos") só pode ser observada por alguém com relógio. O envio
+   * segue pelo `dispatchAutoMessage`, que dentro do worker enfileira um comando
+   * como qualquer outro.
+   */
+  const { WaitingMessageRunner } = await import(
+    './infrastructure/scheduling/waiting-message-runner'
+  );
+  const waitingRunner = new WaitingMessageRunner();
+  waitingRunner.start();
+
+  /**
    * Batida de presença.
    *
    * É como a aplicação sabe que existe um worker no ar. Sem ela, com o motor
@@ -177,6 +191,7 @@ async function main() {
     clearInterval(beat);
     server.close();
     scheduledRunner.stop();
+    waitingRunner.stop();
     commandConsumer.stop();
     await sessionManager.shutdown();
     // As chaves de cache (`lid-mapping`, `tctoken`) são gravadas fora do mutex

@@ -14,9 +14,8 @@ import { groupInboxIds, type Contact } from '@/core/domain/contact';
 import { stageLabelIds } from '@/core/domain/pipeline';
 import { can, canSeeInbox, withSignature } from '@/core/domain/user';
 import { canSendFreeText, MAX_MESSAGE_LENGTH } from '@/core/use-cases/send-message';
-import type { AutoReply } from '@/core/domain/business-hours';
 import { container } from '@/infrastructure/container';
-import { prisma, readJson } from '@/infrastructure/db/prisma';
+import { prisma } from '@/infrastructure/db/prisma';
 import { dispararAutomacoes } from '@/infrastructure/automations/dispatch';
 import type { DispatchResult } from '@/infrastructure/whatsapp/channel';
 import { getWhatsAppChannel } from '@/infrastructure/whatsapp/channel-provider';
@@ -307,36 +306,16 @@ export async function changeConversationStatusAction(input: unknown): Promise<Ac
   const result = await container.useCases.changeConversationStatus({ session, ...parsed.data });
   if (!result.ok) return { ok: false, error: result.error.message };
 
-  // Mensagem automática de encerramento da caixa
+  // Mensagem automática de encerramento (e pesquisa de satisfação, se ligada).
+  // A regra inteira mora em `inbox-auto-messages`, que é o mesmo caminho usado
+  // pela ação `resolver_conversa` das automações — antes só o botão da tela
+  // disparava o encerramento, e resolver por regra saía calado.
   if (parsed.data.status === 'resolvida') {
     try {
-      const conversation = await container.conversations.findById(
-        session.account.id,
-        parsed.data.conversationId,
-        session.inboxAccess,
+      const { runClosingAutoReply } = await import(
+        '@/infrastructure/whatsapp/inbox-auto-messages'
       );
-      if (conversation) {
-        const inbox = await prisma.inbox.findFirst({
-          where: { id: conversation.inboxId, accountId: session.account.id },
-          select: { closingMessage: true },
-        });
-        const closing = readJson<AutoReply>(inbox?.closingMessage, { enabled: false, text: '' });
-        if (closing?.enabled && closing?.text?.trim()) {
-          const { dispatchAutoMessage } = await import('@/infrastructure/whatsapp/auto-reply');
-          await dispatchAutoMessage({
-            accountId: session.account.id,
-            inboxId: conversation.inboxId,
-            conversationId: conversation.id,
-            recipient: {
-              channelThreadId: conversation.channelThreadId,
-              phone: conversation.contact.phone,
-            },
-            text: closing.text.trim(),
-            origin: 'encerramento',
-            authorName: 'Encerramento Automático',
-          });
-        }
-      }
+      await runClosingAutoReply(session.account.id, parsed.data.conversationId);
     } catch (err) {
       console.warn('[conversas] Falha ao despachar mensagem automática de encerramento:', err);
     }
@@ -975,6 +954,11 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
   const isPrivate = form.get('isPrivate') === 'true';
   const voice = form.get('voice') === 'true';
   const durationSeconds = Number(form.get('durationSeconds') ?? 0);
+  // Responder com anexo é responder. O compositor já mostrava a citação em cima
+  // do campo ao anexar uma imagem, e ela era descartada em silêncio no envio:
+  // este campo nunca era lido, e `sendMedia` nem o aceitava.
+  const replyToIdRaw = String(form.get('replyToId') ?? '').trim();
+  const replyToId = replyToIdRaw && replyToIdRaw.length <= 128 ? replyToIdRaw : undefined;
   const file = form.get('file');
 
   if (!conversationId || conversationId.length > 64) {
@@ -1062,6 +1046,7 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
     conversationId,
     content,
     isPrivate,
+    ...(replyToId ? { replyToId } : {}),
   });
   if (!result.ok) return { ok: false, error: result.error.message };
 
@@ -1074,6 +1059,16 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
     const channelStatus = await channel.getStatus(session.account.id, conversation.inboxId);
 
     if (channelStatus.status === 'conectado') {
+      // Mesma regra do envio de texto: a citação só viaja se a citada existir
+      // no canal (`externalId`) e não for nota interna — ver `sendMessageAction`.
+      const quotedMessage = replyToId
+        ? await container.conversations.findMessage(
+            session.account.id,
+            conversation.id,
+            replyToId,
+          )
+        : null;
+
       // Só o identificador viaja para o canal: os bytes já estão no depósito
       // (`mediaStore.save` acima), e é de lá que os dois motores os leem.
       const sent = await channel.sendMedia(
@@ -1092,6 +1087,13 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
           ...(caption ? { caption } : {}),
           ...(voice ? { voice: true } : {}),
         },
+        quotedMessage?.externalId && !quotedMessage.isPrivate
+          ? {
+              externalId: quotedMessage.externalId,
+              fromMe: quotedMessage.author !== 'contact',
+              text: previewOfMessage(quotedMessage),
+            }
+          : undefined,
       );
       const applied = await applyDispatch(session.account.id, conversation.id, message, sent);
       message = applied.message;

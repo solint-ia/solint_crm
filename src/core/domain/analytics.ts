@@ -73,11 +73,15 @@ export interface Kpi {
   readonly value: string;
   readonly delta: string;
   readonly deltaDirection: 'positivo' | 'negativo' | 'neutro';
-  readonly description?: string;
   /**
-   * Série do período, para o sparkline embutido no próprio indicador.
+   * O que o indicador mede, em uma frase.
+   *
+   * Não é opcional por comodidade: é o texto do balãozinho de interrogação do
+   * cartão, e um indicador sem explicação obriga quem lê a adivinhar a
+   * definição — que é como duas pessoas passam a discutir números diferentes
+   * achando que falam do mesmo.
    */
-  readonly series?: readonly number[];
+  readonly description: string;
 }
 
 export interface TimeSeriePoint {
@@ -155,7 +159,6 @@ export interface CsatComment {
 export interface DashboardOverview {
   readonly kpis: readonly Kpi[];
   readonly volume: readonly TimeSeriePoint[];
-  readonly channels: readonly ChannelShare[];
   readonly agents: readonly AgentPerformance[];
   readonly funnel: readonly FunnelStageSummary[];
   readonly pendings: readonly PendingConversation[];
@@ -171,4 +174,11 @@ export interface AnalyticsReport {
   readonly lossReasons: readonly LossReason[];
   readonly csatDistribution: readonly CsatBucket[];
   readonly csatComments: readonly CsatComment[];
+  /**
+   * Quantas notas sustentam a distribuição.
+   *
+   * Uma barra de "60%" construída sobre duas respostas não é a mesma coisa que
+   * uma sobre duzentas, e o gráfico sozinho não sabe dizer a diferença.
+   */
+  readonly csatResponseCount: number;
 }

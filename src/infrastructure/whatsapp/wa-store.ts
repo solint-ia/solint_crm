@@ -292,52 +292,35 @@ export const commitMessage = async (input: CommitInput): Promise<void> => {
   // Só mensagem recebida dispara. O eco do que **nós** enviamos chega por aqui
   // igual, e disparar nele faria a resposta automática responder a si mesma.
   if (!input.fromMe) {
-    // Respostas automáticas de caixa (saudação / fora do expediente)
+    // Respostas automáticas de caixa: saudação, ausência e leitura da nota da
+    // pesquisa de satisfação. As regras (inclusive as travas de repetição)
+    // moram em `inbox-auto-messages` — aqui só entra o que este ponto sabe: de
+    // qual caixa é a mensagem, e se a conversa nasceu com ela.
     if (!chat.isGroup) {
       try {
         const inboxId = input.inboxId ?? existing?.inboxId;
         if (inboxId) {
-          const inbox = await prisma.inbox.findFirst({
-            where: { id: inboxId, accountId: input.accountId },
-            select: { businessHours: true, awayMessage: true, greeting: true },
-          });
-          if (inbox) {
-            const { normalizeBusinessHours, isWithinBusinessHours } = await import('@/core/domain/business-hours');
-            const { readJson } = await import('@/infrastructure/db/prisma');
-            const hours = normalizeBusinessHours(inbox.businessHours);
-            const isInsideHours = isWithinBusinessHours(hours, new Date());
-            const away = readJson<{ enabled: boolean; text: string }>(inbox.awayMessage, { enabled: false, text: '' });
-            const greeting = readJson<{ enabled: boolean; text: string }>(inbox.greeting, { enabled: false, text: '' });
+          const { captureCsatAnswer, runInboundAutoReplies } = await import(
+            './inbox-auto-messages'
+          );
 
-            const { dispatchAutoMessage } = await import('./auto-reply');
+          // Uma resposta de pesquisa não é o começo de conversa nenhum: se ela
+          // for consumida como nota, nem saudação nem ausência têm o que dizer.
+          const virouNota = await captureCsatAnswer(
+            input.accountId,
+            chat.conversationId,
+            input.preview,
+          );
 
-            if (!isInsideHours && away?.enabled && away?.text?.trim()) {
-              await dispatchAutoMessage({
-                accountId: input.accountId,
-                inboxId,
-                conversationId: chat.conversationId,
-                recipient: {
-                  channelThreadId: chat.jid,
-                  phone: contact.phone,
-                },
-                text: away.text.trim(),
-                origin: 'ausencia',
-                authorName: 'Mensagem de Ausência',
-              });
-            } else if (!existing && greeting?.enabled && greeting?.text?.trim()) {
-              await dispatchAutoMessage({
-                accountId: input.accountId,
-                inboxId,
-                conversationId: chat.conversationId,
-                recipient: {
-                  channelThreadId: chat.jid,
-                  phone: contact.phone,
-                },
-                text: greeting.text.trim(),
-                origin: 'saudacao',
-                authorName: 'Mensagem de Saudação',
-              });
-            }
+          if (!virouNota) {
+            await runInboundAutoReplies({
+              accountId: input.accountId,
+              inboxId,
+              conversationId: chat.conversationId,
+              channelThreadId: chat.jid,
+              phone: contact.phone,
+              isNewConversation: !existing,
+            });
           }
         }
       } catch (err) {

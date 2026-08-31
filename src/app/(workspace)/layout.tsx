@@ -94,8 +94,13 @@ export default async function WorkspaceLayout({
               availability={session.user.availability}
               accessibleInboxes={accessibleInboxes}
               conversationCounts={conversationCounts}
+              // O rodapé do menu leva para `/configuracoes`, então quem não
+              // abre Configurações não pode vê-lo — `caixas:todas` diz quais
+              // caixas a pessoa enxerga, não que ela administra o sistema. Com
+              // o `||`, um papel com alcance amplo e sem acesso a ajustes via
+              // um atalho para uma tela que responderia "acesso negado".
               canManageInboxes={
-                can(session, 'configuracoes:escrever') || can(session, 'caixas:todas')
+                can(session, 'configuracoes:ler') && can(session, 'configuracoes:escrever')
               }
               roleName={role?.name ?? session.user.roleSlug}
             />

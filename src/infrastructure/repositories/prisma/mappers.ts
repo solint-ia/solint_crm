@@ -12,7 +12,7 @@ import type {
   AutomationConditionLogic,
 } from '@/core/domain/automation';
 import { AUTOMATION_CONDITION_LOGICS } from '@/core/domain/automation';
-import { normalizeBusinessHours, type AutoReply } from '@/core/domain/business-hours';
+import { normalizeAutoReply, normalizeBusinessHours } from '@/core/domain/business-hours';
 import type { Channel } from '@/core/domain/channel';
 import type { Contact, CustomField, TimelineEvent } from '@/core/domain/contact';
 import type {
@@ -401,10 +401,16 @@ export const connectionRow = (row: DbInbox): ChannelConnection => ({
   // do cadastro trazia `schedule` no lugar de `days`, passava pelo `readJson`
   // por ser um objeto válido, e derrubava a tela de Configurações inteira.
   businessHours: normalizeBusinessHours(row.businessHours),
-  awayMessage: readJson<AutoReply>(row.awayMessage, { enabled: false, text: '' }),
-  greeting: readJson<AutoReply>(row.greeting, { enabled: false, text: '' }),
-  closingMessage: readJson<AutoReply>(row.closingMessage, { enabled: false, text: '' }),
-  waitingMessage: readJson<AutoReply>(row.waitingMessage, { enabled: false, text: '' }),
+  // `readJson` devolvia o objeto guardado inteiro, e o cadastro gravava
+  // `{ enabled, message }`. A caixa chegava na tela sem `text` e o salvamento
+  // era recusado inteiro — ver `normalizeAutoReply`.
+  awayMessage: normalizeAutoReply(row.awayMessage),
+  greeting: normalizeAutoReply(row.greeting),
+  closingMessage: normalizeAutoReply(row.closingMessage),
+  waitingMessage: normalizeAutoReply(row.waitingMessage),
+  waitingMessageDelayMinutes: row.waitingMessageDelayMinutes || 5,
+  csatEnabled: row.csatEnabled,
+  ...(row.csatQuestion ? { csatQuestion: row.csatQuestion } : {}),
   ...(row.webhookUrl ? { webhookUrl: row.webhookUrl } : {}),
   ...(row.teamName ? { teamName: row.teamName } : {}),
 });

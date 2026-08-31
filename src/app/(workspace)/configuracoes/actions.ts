@@ -12,7 +12,11 @@ import { ARTICLE_STATUSES } from '@/core/domain/knowledge';
 import { TONES } from '@/core/domain/label';
 import type { AssignmentMethod, ChannelConnection } from '@/core/domain/settings';
 import { can } from '@/core/domain/user';
-import { WEEKDAYS } from '@/core/domain/business-hours';
+import {
+  WEEKDAYS,
+  normalizeAutoReply,
+  normalizeBusinessHours,
+} from '@/core/domain/business-hours';
 import { randomUUID } from 'node:crypto';
 import { hashPassword, passwordProblem } from '@/infrastructure/auth/password';
 import { prisma } from '@/infrastructure/db/prisma';
@@ -173,10 +177,22 @@ export async function moveAutomationAction(input: unknown): Promise<ActionResult
 
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-const autoReplySchema = z.object({
-  enabled: z.boolean(),
-  text: z.string().trim().max(1000),
-});
+/**
+ * A forma guardada passa pelo normalizador do domínio antes de ser validada.
+ *
+ * Sem isso, uma caixa gravada por versão antiga do cadastro (`{ enabled,
+ * message }`) fazia a tela devolver o objeto sem `text` e o salvamento inteiro
+ * era recusado -- inclusive as mensagens que a pessoa tinha acabado de editar.
+ * `undefined` continua passando direto: "não mandei este campo" e "mandei um
+ * campo vazio" são coisas diferentes para o `patch`.
+ */
+const autoReplySchema = z.preprocess(
+  (value) => (value === undefined ? undefined : normalizeAutoReply(value)),
+  z.object({
+    enabled: z.boolean(),
+    text: z.string().trim().max(1000, 'A mensagem automática passa de 1000 caracteres.'),
+  }),
+);
 
 const createInboxSchema = z.object({
   name: z.string().trim().min(2, 'O nome da caixa deve ter pelo menos 2 caracteres.').max(100),
@@ -210,37 +226,63 @@ export async function createInboxAction(
 
 const updateInboxSchema = z.object({
   connectionId: z.string().min(1).max(64),
+  // Idem: os sete dias saem do normalizador, não da boa vontade de quem chamou.
   businessHours: z
-    .object({
-      timezone: z.string().trim().min(1).max(64),
-      days: z
-        .array(
-          z.object({
-            day: z.enum(WEEKDAYS),
-            enabled: z.boolean(),
-            opensAt: z.string().regex(TIME, 'Horário inválido'),
-            closesAt: z.string().regex(TIME, 'Horário inválido'),
-          }),
-        )
-        .length(7),
-    })
+    .preprocess(
+      (value) => (value === undefined ? undefined : normalizeBusinessHours(value)),
+      z.object({
+        timezone: z.string().trim().min(1).max(64),
+        days: z
+          .array(
+            z.object({
+              day: z.enum(WEEKDAYS),
+              enabled: z.boolean(),
+              opensAt: z.string().regex(TIME, 'Horário inválido'),
+              closesAt: z.string().regex(TIME, 'Horário inválido'),
+            }),
+          )
+          .length(7),
+      }),
+    )
     .optional(),
   awayMessage: autoReplySchema.optional(),
   greeting: autoReplySchema.optional(),
   closingMessage: autoReplySchema.optional(),
   waitingMessage: autoReplySchema.optional(),
+  waitingMessageDelayMinutes: z.number().int().min(1).max(120).optional(),
+  csatEnabled: z.boolean().optional(),
+  csatQuestion: z.string().trim().max(300).optional(),
   // String vazia é intencional: significa "remover o webhook".
   webhookUrl: z.union([z.literal(''), z.string().url().max(300)]).optional(),
 });
+
+/** Nome legível do campo, para o erro dizer **onde** o problema está. */
+const INBOX_FIELD_LABELS: Readonly<Record<string, string>> = {
+  webhookUrl: 'a URL do webhook',
+  businessHours: 'o horário de atendimento',
+  awayMessage: 'a mensagem fora do expediente',
+  greeting: 'a mensagem de saudação',
+  closingMessage: 'a mensagem de encerramento',
+  waitingMessage: 'a mensagem de espera',
+  waitingMessageDelayMinutes: 'o tempo da mensagem de espera',
+  csatQuestion: 'a pergunta da pesquisa de satisfação',
+};
 
 export async function updateInboxAction(input: unknown): Promise<ActionResult> {
   const parsed = updateInboxSchema.safeParse(input);
   if (!parsed.success) {
     const first = parsed.error.issues[0];
+    if (first?.path.includes('webhookUrl')) {
+      return { ok: false, error: 'A URL do webhook precisa começar com http:// ou https://.' };
+    }
+    // "Dados inválidos" sozinho não dizia **qual** dos seis campos recusou, e a
+    // tela mostra os seis ao mesmo tempo: quem via o erro não tinha o que fazer
+    // com ele. O campo e o motivo agora vão junto.
+    const field = typeof first?.path[0] === 'string' ? INBOX_FIELD_LABELS[first.path[0]] : undefined;
     return {
       ok: false,
-      error: first?.path.includes('webhookUrl')
-        ? 'A URL do webhook precisa começar com http:// ou https://.'
+      error: field
+        ? `Não foi possível salvar ${field}: ${first?.message ?? 'valor inválido'}.`
         : 'Dados inválidos para a caixa de entrada.',
     };
   }

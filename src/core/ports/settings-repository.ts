@@ -65,6 +65,10 @@ export interface InboxSettingsPatch {
   readonly greeting?: AutoReply;
   readonly closingMessage?: AutoReply;
   readonly waitingMessage?: AutoReply;
+  /** Minutos na fila sem resposta antes de a mensagem de espera sair. */
+  readonly waitingMessageDelayMinutes?: number;
+  readonly csatEnabled?: boolean;
+  readonly csatQuestion?: string;
   readonly webhookUrl?: string;
 }
 

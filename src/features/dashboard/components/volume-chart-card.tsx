@@ -1,14 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
-
-import {
-  CheckCircle2,
-  Inbox,
-  MessageCircle,
-  XCircle,
-} from 'lucide-react';
-
+import { useMemo, useState } from 'react';
 import type { TimeSeriePoint } from '@/core/domain/analytics';
 import { cn } from '@/lib/cn';
 
@@ -17,215 +9,347 @@ interface VolumeChartCardProps {
   readonly periodLabel: string;
 }
 
-type VolumeMetric = 'recebidas' | 'respondidas' | 'resolvidas' | 'abandonadas';
+type SerieId = 'recebidas' | 'respondidas' | 'resolvidas' | 'sem_resposta';
 
-const METRIC_TABS: readonly {
-  id: VolumeMetric;
-  label: string;
-  icon: React.ElementType;
-  colorVar: string;
+/**
+ * As quatro séries, na ordem fixa em que recebem cor.
+ *
+ * Ordem fixa e nunca reciclada: esconder "Respondidas" na legenda não pode
+ * repintar "Resolvidas" com a cor que sobrou — a cor pertence à série, não à
+ * posição dela na lista do momento. O traço (`dash`) é a codificação
+ * secundária: no modo escuro o par azul/violeta fica no piso de separação sob
+ * daltonismo, e a forma da linha resolve o que a cor sozinha não resolve.
+ */
+const SERIES: readonly {
+  readonly id: SerieId;
+  readonly label: string;
+  readonly colorVar: string;
+  readonly dash?: string;
+  readonly read: (point: TimeSeriePoint) => number;
 }[] = [
-  { id: 'recebidas', label: 'Recebidas', icon: Inbox, colorVar: 'var(--color-brand)' },
-  { id: 'respondidas', label: 'Respondidas', icon: MessageCircle, colorVar: 'var(--color-blue-text)' },
-  { id: 'resolvidas', label: 'Resolvidas', icon: CheckCircle2, colorVar: 'var(--color-status-open)' },
-  { id: 'abandonadas', label: 'Abandonadas', icon: XCircle, colorVar: 'var(--color-status-danger)' },
+  {
+    id: 'recebidas',
+    label: 'Recebidas',
+    colorVar: 'var(--color-chart-1)',
+    read: (point) => point.value,
+  },
+  {
+    id: 'respondidas',
+    label: 'Respondidas',
+    colorVar: 'var(--color-chart-2)',
+    dash: '6 3',
+    read: (point) => point.answered ?? 0,
+  },
+  {
+    id: 'resolvidas',
+    label: 'Resolvidas',
+    colorVar: 'var(--color-chart-3)',
+    read: (point) => point.resolved ?? 0,
+  },
+  {
+    id: 'sem_resposta',
+    label: 'Sem resposta',
+    colorVar: 'var(--color-chart-4)',
+    dash: '2 3',
+    read: (point) => point.abandoned ?? 0,
+  },
 ];
 
+/** Área de desenho em unidades do viewBox. */
+const W = 720;
+const H = 220;
+const PAD = { top: 16, right: 12, bottom: 26, left: 40 } as const;
+const PLOT_W = W - PAD.left - PAD.right;
+const PLOT_H = H - PAD.top - PAD.bottom;
+
+/**
+ * Um teto de eixo que termina em número redondo.
+ *
+ * Um eixo que vai até 137 põe as linhas de grade em 34,25 — e ninguém lê um
+ * gráfico contra 34,25. Sobe para o próximo passo "bonito" (1, 2, 5 × 10ⁿ).
+ */
+const escalaDe = (max: number): number => {
+  if (max <= 4) return 4;
+  const magnitude = 10 ** Math.floor(Math.log10(max));
+  for (const passo of [1, 2, 2.5, 5, 10]) {
+    const teto = passo * magnitude;
+    if (teto >= max) return Math.ceil(teto);
+  }
+  return Math.ceil(max);
+};
+
 export function VolumeChartCard({ points, periodLabel }: VolumeChartCardProps) {
-  const [metric, setMetric] = useState<VolumeMetric>('recebidas');
-  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  // Todas visíveis é ruído; "recebidas × resolvidas" é a leitura que o painel
+  // existe para dar. As outras duas entram por clique na legenda.
+  const [visiveis, setVisiveis] = useState<readonly SerieId[]>(['recebidas', 'resolvidas']);
+  const [hover, setHover] = useState<number | null>(null);
 
-  const seriesData = useMemo(() => {
-    return points.map((p) => {
-      let val = p.value;
-      if (metric === 'respondidas') val = p.answered ?? Math.round(p.value * 0.92);
-      if (metric === 'resolvidas') val = p.resolved ?? Math.round(p.value * 0.85);
-      if (metric === 'abandonadas') val = p.abandoned ?? Math.max(0, Math.round(p.value * 0.04));
-      return { label: p.label, value: val };
-    });
-  }, [points, metric]);
+  const series = SERIES.filter((serie) => visiveis.includes(serie.id));
 
-  const totalVolume = useMemo(
-    () => seriesData.reduce((acc, curr) => acc + curr.value, 0),
-    [seriesData],
+  const escala = useMemo(() => {
+    const maior = Math.max(
+      1,
+      ...points.flatMap((point) => series.map((serie) => serie.read(point))),
+    );
+    return escalaDe(maior);
+  }, [points, series]);
+
+  const totais = useMemo(
+    () =>
+      SERIES.map((serie) => ({
+        ...serie,
+        total: points.reduce((soma, point) => soma + serie.read(point), 0),
+      })),
+    [points],
   );
 
-  const values = seriesData.map((d) => d.value);
-  const maxValue = Math.max(...values, 1);
-  const peakIndex = values.indexOf(Math.max(...values));
+  const x = (index: number): number =>
+    points.length <= 1 ? PAD.left + PLOT_W / 2 : PAD.left + (index / (points.length - 1)) * PLOT_W;
+  const y = (value: number): number => PAD.top + (1 - value / escala) * PLOT_H;
 
-  const height = 160;
-  const paddingY = 20;
+  const caminho = (serie: (typeof SERIES)[number]): string =>
+    points.map((point, i) => `${i === 0 ? 'M' : 'L'} ${x(i)} ${y(serie.read(point))}`).join(' ');
 
-  const getX = useCallback(
-    (index: number) => {
-      if (seriesData.length <= 1) return 50;
-      return (index / (seriesData.length - 1)) * 100;
-    },
-    [seriesData.length],
-  );
+  const area = (serie: (typeof SERIES)[number]): string =>
+    points.length < 2
+      ? ''
+      : `${caminho(serie)} L ${x(points.length - 1)} ${PAD.top + PLOT_H} L ${x(0)} ${PAD.top + PLOT_H} Z`;
 
-  const getY = useCallback(
-    (value: number) => {
-      return paddingY + (1 - value / maxValue) * (height - paddingY * 2);
-    },
-    [maxValue],
-  );
+  const linhasDeGrade = [0, 0.25, 0.5, 0.75, 1];
+  const total = totais.find((serie) => serie.id === 'recebidas')?.total ?? 0;
 
-  const pathD = useMemo(() => {
-    if (seriesData.length < 2) return '';
-    return seriesData
-      .map((pt, i) => `${i === 0 ? 'M' : 'L'} ${getX(i)} ${getY(pt.value)}`)
-      .join(' ');
-  }, [seriesData, getX, getY]);
+  // Um rótulo a cada N para o eixo não virar um borrão em 30 dias.
+  const passoRotulo = Math.max(1, Math.ceil(points.length / 8));
+  const pontoEmFoco = hover === null ? undefined : points[hover];
 
-  const areaD = useMemo(() => {
-    if (seriesData.length < 2) return '';
-    const firstX = getX(0);
-    const lastX = getX(seriesData.length - 1);
-    return `${pathD} L ${lastX} ${height} L ${firstX} ${height} Z`;
-  }, [pathD, seriesData.length, getX]);
-
-
-  const activeColor = METRIC_TABS.find((m) => m.id === metric)?.colorVar || 'var(--color-brand)';
+  const alternar = (id: SerieId) =>
+    setVisiveis((atual) =>
+      atual.includes(id)
+        ? // Nunca zero séries: um gráfico vazio não é um estado que alguém quis.
+          atual.length === 1
+          ? atual
+          : atual.filter((item) => item !== id)
+        : [...atual, id],
+    );
 
   return (
-    <div className="flex flex-col rounded-2xl border border-line bg-surface p-5 shadow-2xs">
-      {/* Cabeçalho com Tabs */}
-      <div className="flex flex-col gap-4 border-b border-line pb-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="font-display text-base font-bold text-ink">Volume de conversas</h2>
-            <span className="rounded-md bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-muted">
-              {periodLabel}
-            </span>
-          </div>
-          <p className="mt-0.5 text-xs text-muted">
-            Total acumulado no período: <strong className="font-bold text-ink tabular-nums">{totalVolume.toLocaleString('pt-BR')}</strong>
-          </p>
+    <div className="flex h-full flex-col rounded-2xl border border-line bg-surface p-5 shadow-2xs">
+      <div className="flex flex-col gap-1 border-b border-line pb-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="font-display text-base font-bold text-ink">Volume de conversas</h2>
+          <span className="rounded-md bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-muted">
+            {periodLabel}
+          </span>
         </div>
-
-        {/* Alternador de Métricas */}
-        <div className="flex flex-wrap items-center gap-1 rounded-xl bg-surface-2 p-1">
-          {METRIC_TABS.map((tab) => {
-            const Icon = tab.icon;
-            const active = metric === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setMetric(tab.id)}
-                className={cn(
-                  'flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-all',
-                  active
-                    ? 'bg-surface text-ink shadow-2xs font-bold'
-                    : 'text-muted hover:text-ink',
-                )}
-              >
-                <Icon className="size-3.5" style={{ color: active ? tab.colorVar : undefined }} />
-                {tab.label}
-              </button>
-            );
-          })}
-        </div>
+        <p className="text-xs text-muted">
+          {total === 0 ? (
+            'Nenhuma conversa aberta neste período.'
+          ) : (
+            <>
+              <strong className="font-bold text-ink tabular-nums">
+                {total.toLocaleString('pt-BR')}
+              </strong>{' '}
+              {total === 1 ? 'conversa recebida' : 'conversas recebidas'} no período
+            </>
+          )}
+        </p>
       </div>
 
-      {/* Gráfico Interativo */}
-      <div className="relative mt-5 h-44 w-full">
-        {/* Linhas de Grade */}
-        <div className="absolute inset-0 flex flex-col justify-between" aria-hidden="true">
-          <div className="border-b border-line-soft/80" />
-          <div className="border-b border-line-soft/80" />
-          <div className="border-b border-line-soft/80" />
-          <div className="border-b border-line-soft/80" />
-        </div>
+      {/* Legenda — também o filtro. É ela que dá identidade por texto, e não só
+          por cor, às séries de contraste mais baixo. */}
+      <div className="mt-3.5 flex flex-wrap gap-x-4 gap-y-2">
+        {totais.map((serie) => {
+          const ativa = visiveis.includes(serie.id);
+          return (
+            <button
+              key={serie.id}
+              type="button"
+              onClick={() => alternar(serie.id)}
+              aria-pressed={ativa}
+              className={cn(
+                'flex items-center gap-1.5 rounded-lg text-xs transition-opacity',
+                ativa ? 'opacity-100' : 'opacity-40 hover:opacity-70',
+              )}
+            >
+              <span
+                aria-hidden
+                className="h-0.5 w-4 shrink-0 rounded-full"
+                style={{
+                  backgroundColor: serie.colorVar,
+                  ...(serie.dash
+                    ? {
+                        backgroundImage: `repeating-linear-gradient(90deg, ${serie.colorVar} 0 4px, transparent 4px 7px)`,
+                        backgroundColor: 'transparent',
+                      }
+                    : {}),
+                }}
+              />
+              <span className="font-semibold text-muted">{serie.label}</span>
+              <span className="font-bold text-ink tabular-nums">
+                {serie.total.toLocaleString('pt-BR')}
+              </span>
+            </button>
+          );
+        })}
+      </div>
 
+      <div className="relative mt-2">
         <svg
-          viewBox={`0 0 100 ${height}`}
-          preserveAspectRatio="none"
-          className="relative h-full w-full overflow-visible"
+          viewBox={`0 0 ${W} ${H}`}
+          // `xMidYMid meet` e não `none`: com escala não uniforme os marcadores
+          // circulares viravam elipses achatadas e os rótulos dos eixos
+          // esticavam junto com a largura da janela. A altura sai do próprio
+          // `viewBox`, então o gráfico acompanha a largura do cartão sem
+          // distorcer nada.
+          preserveAspectRatio="xMidYMid meet"
+          role="img"
+          aria-label={`Volume de conversas por ${periodLabel.toLowerCase()}`}
+          className="h-auto w-full"
+          onMouseLeave={() => setHover(null)}
         >
+          {/* Grade e escala do eixo Y — o gráfico não tinha eixo nenhum antes,
+              então nenhuma altura na tela correspondia a um número. */}
+          {linhasDeGrade.map((fracao) => {
+            const valor = Math.round(escala * (1 - fracao));
+            const posY = PAD.top + fracao * PLOT_H;
+            return (
+              <g key={fracao}>
+                <line
+                  x1={PAD.left}
+                  x2={W - PAD.right}
+                  y1={posY}
+                  y2={posY}
+                  stroke="var(--color-chart-grid)"
+                  strokeWidth={1}
+                  vectorEffect="non-scaling-stroke"
+                />
+                <text
+                  x={PAD.left - 8}
+                  y={posY + 3}
+                  textAnchor="end"
+                  className="fill-dim text-[10px] tabular-nums"
+                  style={{ fontSize: 10 }}
+                >
+                  {valor}
+                </text>
+              </g>
+            );
+          })}
+
           <defs>
-            <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={activeColor} stopOpacity="0.25" />
-              <stop offset="100%" stopColor={activeColor} stopOpacity="0.0" />
+            <linearGradient id="areaRecebidas" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--color-chart-1)" stopOpacity="0.18" />
+              <stop offset="100%" stopColor="var(--color-chart-1)" stopOpacity="0" />
             </linearGradient>
           </defs>
 
-          {/* Área com gradiente */}
-          {areaD && <path d={areaD} fill="url(#chartGradient)" />}
+          {/* Só a série de base ganha preenchimento. Quatro áreas empilhadas
+              esconderiam umas às outras — as demais são linha. */}
+          {visiveis.includes('recebidas') && points.length > 1 ? (
+            <path d={area(SERIES[0]!)} fill="url(#areaRecebidas)" />
+          ) : null}
 
-          {/* Linha principal do gráfico */}
-          {pathD && (
+          {series.map((serie) => (
             <path
-              d={pathD}
+              key={serie.id}
+              d={caminho(serie)}
               fill="none"
-              stroke={activeColor}
-              strokeWidth="2.5"
+              stroke={serie.colorVar}
+              strokeWidth={2}
               strokeLinecap="round"
               strokeLinejoin="round"
+              {...(serie.dash ? { strokeDasharray: serie.dash } : {})}
               vectorEffect="non-scaling-stroke"
             />
-          )}
+          ))}
 
-          {/* Pontos de destaque no gráfico */}
-          {seriesData.map((pt, i) => {
-            const isHovered = hoverIndex === i;
-            const isPeak = i === peakIndex;
-            const isLast = i === seriesData.length - 1;
-
-            if (!isHovered && !isPeak && !isLast) return null;
-
-            return (
-              <circle
-                key={pt.label}
-                cx={getX(i)}
-                cy={getY(pt.value)}
-                r={isHovered ? 4.5 : 3}
-                fill="var(--color-surface)"
-                stroke={activeColor}
-                strokeWidth={isHovered ? 2.5 : 1.5}
+          {/* Fio-guia do ponto sob o cursor. */}
+          {hover !== null ? (
+            <>
+              <line
+                x1={x(hover)}
+                x2={x(hover)}
+                y1={PAD.top}
+                y2={PAD.top + PLOT_H}
+                stroke="var(--color-dim)"
+                strokeWidth={1}
+                strokeDasharray="3 3"
                 vectorEffect="non-scaling-stroke"
-                className="transition-all"
               />
-            );
-          })}
+              {series.map((serie) => (
+                <circle
+                  key={serie.id}
+                  cx={x(hover)}
+                  cy={y(serie.read(points[hover]!))}
+                  r={4}
+                  fill={serie.colorVar}
+                  // Anel da cor da superfície: onde duas séries se cruzam, é ele
+                  // que impede os marcadores de virarem uma mancha só.
+                  stroke="var(--color-surface)"
+                  strokeWidth={2}
+                  vectorEffect="non-scaling-stroke"
+                />
+              ))}
+            </>
+          ) : null}
+
+          {/* Faixas de captura do mouse, uma por ponto. */}
+          {points.map((point, index) => (
+            <rect
+              key={`${point.label}-${index}`}
+              x={index === 0 ? PAD.left : x(index) - PLOT_W / (points.length - 1 || 1) / 2}
+              y={PAD.top}
+              width={PLOT_W / (points.length - 1 || 1)}
+              height={PLOT_H}
+              fill="transparent"
+              onMouseEnter={() => setHover(index)}
+            />
+          ))}
+
+          {/* Eixo X */}
+          {points.map((point, index) =>
+            index % passoRotulo === 0 || index === points.length - 1 ? (
+              <text
+                key={`rot-${point.label}-${index}`}
+                x={x(index)}
+                y={H - 8}
+                textAnchor={index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle'}
+                className="fill-dim text-[10px]"
+                style={{ fontSize: 10 }}
+              >
+                {point.label}
+              </text>
+            ) : null,
+          )}
         </svg>
 
-        {/* Hover detection zones */}
-        <div className="absolute inset-0 flex justify-between">
-          {seriesData.map((pt, i) => (
-            <div
-              key={pt.label}
-              onMouseEnter={() => setHoverIndex(i)}
-              onMouseLeave={() => setHoverIndex(null)}
-              className="group relative h-full flex-1 cursor-pointer"
-            >
-              {hoverIndex === i && (
-                <div
-                  className="pointer-events-none absolute -top-8 left-1/2 z-20 -translate-x-1/2 rounded-lg border border-line bg-surface px-2 py-1 text-xs font-bold text-ink shadow-sm tabular-nums whitespace-nowrap"
-                  style={{ top: `${(getY(pt.value) / height) * 100 - 30}%` }}
-                >
-                  <span className="font-medium text-muted">{pt.label}: </span>
-                  {pt.value} {metric}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Rótulos do Eixo X */}
-      <div className="mt-2 flex justify-between border-t border-line-soft pt-2 text-[11px] font-medium text-muted">
-        {seriesData.map((pt, i) => {
-          const step = Math.ceil(seriesData.length / 8);
-          const show = i === 0 || i === seriesData.length - 1 || i % step === 0;
-          return (
-            <span key={pt.label} className={cn(i === seriesData.length - 1 && 'font-bold text-ink')}>
-              {show ? pt.label : ''}
-            </span>
-          );
-        })}
+        {pontoEmFoco ? (
+          <div
+            className="pointer-events-none absolute top-2 z-20 min-w-36 rounded-xl border border-line bg-surface p-2.5 shadow-lg"
+            style={{
+              left: `${(x(hover!) / W) * 100}%`,
+              transform:
+                (hover ?? 0) > points.length / 2 ? 'translateX(-105%)' : 'translateX(10px)',
+            }}
+          >
+            <p className="mb-1.5 text-[11px] font-bold text-ink">{pontoEmFoco.label}</p>
+            <ul className="flex flex-col gap-1">
+              {series.map((serie) => (
+                <li key={serie.id} className="flex items-center gap-2 text-[11px] whitespace-nowrap">
+                  <span
+                    aria-hidden
+                    className="size-1.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: serie.colorVar }}
+                  />
+                  <span className="flex-1 text-muted">{serie.label}</span>
+                  <span className="font-bold text-ink tabular-nums">
+                    {serie.read(pontoEmFoco).toLocaleString('pt-BR')}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
     </div>
   );

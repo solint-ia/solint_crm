@@ -92,8 +92,7 @@ export function AuthForm({ initialMode = 'login' }: AuthFormProps) {
     try {
       const res = await loginAction({ email: loginEmail, password: loginPassword });
       if (res.ok) {
-        const dest = next && next.startsWith('/') ? next : '/dashboard';
-        window.location.href = dest;
+        window.location.href = next?.startsWith('/') ? next : (res.destino ?? '/conversas');
       } else {
         setError(res.error ?? 'Email ou senha inválidos.');
         setLoading(false);

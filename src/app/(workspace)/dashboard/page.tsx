@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
+import { redirect } from 'next/navigation';
 import { Topbar } from '@/components/layout/topbar';
 import { PageShell } from '@/components/layout/page-shell';
-import { AccessDenied } from '@/components/layout/access-denied';
+import { landingRouteFor } from '@/config/navigation';
 import { PERIOD_LABELS } from '@/core/domain/analytics';
 import { can } from '@/core/domain/user';
 import { container } from '@/infrastructure/container';
@@ -12,7 +13,6 @@ import { KpiGrid } from '@/features/dashboard/components/kpi-grid';
 import { QuickShortcuts } from '@/features/dashboard/components/quick-shortcuts';
 import { AttentionPanel } from '@/features/dashboard/components/attention-panel';
 import { VolumeChartCard } from '@/features/dashboard/components/volume-chart-card';
-import { ChannelDistributionCard } from '@/features/dashboard/components/channel-distribution-card';
 import { AgentRankingCard } from '@/features/dashboard/components/agent-ranking-card';
 import { FunnelSummaryCard } from '@/features/dashboard/components/funnel-summary-card';
 
@@ -27,8 +27,18 @@ export default async function DashboardPage({
   const period = parsePeriod(params.periodo);
 
   const session = await container.session.getCurrentSession();
+  /**
+   * Sem relatório para ler, a pessoa vai para onde ela de fato trabalha.
+   *
+   * Aqui não cabe a tela de "acesso negado" que as outras páginas usam: o
+   * painel é o destino padrão do produto — o login mandava todo mundo para cá,
+   * e ainda é o que está no histórico e nos favoritos de quem já usou o
+   * sistema. Um agente batia nesta rota e encontrava um beco: nada para ver e
+   * nenhuma indicação de para onde ir. `landingRouteFor` decide o destino no
+   * mesmo lugar que o login usa, então os dois caminhos nunca divergem.
+   */
   if (!can(session, 'relatorios:ler')) {
-    return <AccessDenied permission="relatorios:ler" />;
+    redirect(landingRouteFor(session.permissions));
   }
 
   const [overview, notifications] = await Promise.all([
@@ -73,12 +83,12 @@ export default async function DashboardPage({
             </aside>
           </div>
 
-          {/* Linha 4: Indicadores de Desempenho e Distribuição */}
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-            <section aria-label="Canais de atendimento">
-              <ChannelDistributionCard channels={overview.channels} />
-            </section>
+          {/* Linha 4: Desempenho da equipe e funil comercial.
 
+              "Distribuição por canal" saiu daqui. Com um canal só ligado no
+              produto, o gráfico era sempre uma fatia de 100% escrita "WhatsApp"
+              — ocupava um terço da linha para não informar nada. */}
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <section aria-label="Ranking de atendentes">
               <AgentRankingCard agents={overview.agents} />
             </section>

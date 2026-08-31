@@ -61,6 +61,7 @@ export class InProcessWhatsAppChannel implements WhatsAppChannel {
     _context: DispatchContext,
     target: DispatchTarget,
     media: DispatchMedia,
+    quote?: DispatchQuote,
   ): Promise<DispatchResult> {
     // O anexo já foi gravado no depósito antes de chegar aqui, e é de lá que os
     // bytes saem — nos dois motores. Passar o Buffer por este método deixaria a
@@ -76,6 +77,7 @@ export class InProcessWhatsAppChannel implements WhatsAppChannel {
       ...(media.fileName ? { fileName: media.fileName } : {}),
       ...(media.caption ? { caption: media.caption } : {}),
       ...(media.voice ? { voice: true } : {}),
+      ...(quote ? { quote } : {}),
     });
   }
 

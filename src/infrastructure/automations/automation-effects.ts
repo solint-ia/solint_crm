@@ -82,11 +82,43 @@ export const prismaAutomationEffects: AutomationEffects = {
     });
   },
 
+  /**
+   * Resolve a conversa -- e faz o encerramento sair, como sairia pelo botão.
+   *
+   * A regra mudava o status direto no banco e parava aí. Para quem configurou
+   * a mensagem de encerramento, o resultado era uma automação que fechava o
+   * atendimento em silêncio: o texto estava ligado, aparecia na tela de
+   * Configurações, e o cliente nunca o recebia.
+   */
   async resolve(accountId: Id, conversationId: Id) {
-    return prisma.conversation.updateMany({
+    const agora = new Date();
+    const atual = await prisma.conversation.findFirst({
       where: { id: conversationId, accountId },
-      data: { status: 'resolvida', statusLabel: 'Resolvido' },
+      select: { createdAt: true, status: true },
     });
+
+    const resultado = await prisma.conversation.updateMany({
+      where: { id: conversationId, accountId },
+      data: {
+        status: 'resolvida',
+        statusLabel: 'Resolvido',
+        resolvedAt: agora,
+        resolutionSecs: atual
+          ? Math.max(0, Math.round((agora.getTime() - atual.createdAt.getTime()) / 1000))
+          : null,
+      },
+    });
+
+    if (atual?.status !== 'resolvida') {
+      const { runClosingAutoReply } = await import(
+        '@/infrastructure/whatsapp/inbox-auto-messages'
+      );
+      await runClosingAutoReply(accountId, conversationId).catch((error) => {
+        console.warn('[automacoes] Falha ao despachar o encerramento automático:', error);
+      });
+    }
+
+    return resultado;
   },
 
   /**

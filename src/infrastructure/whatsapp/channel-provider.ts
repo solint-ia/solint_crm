@@ -56,6 +56,10 @@ export const getWhatsAppChannel = (): Promise<WhatsAppChannel> => {
     });
     runner.start();
 
+    // A mensagem de espera precisa do mesmo relógio, e pela mesma razão.
+    const { WaitingMessageRunner } = await import('../scheduling/waiting-message-runner');
+    new WaitingMessageRunner().start();
+
     return canal;
   })();
 

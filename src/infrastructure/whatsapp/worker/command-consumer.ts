@@ -314,6 +314,9 @@ export class CommandConsumer {
           caption?: string;
           voice?: boolean;
         };
+        const mediaQuote = payload['quote'] as
+          | { externalId: string; fromMe: boolean; text: string }
+          | undefined;
 
         if (!media.mediaId || !media.kind) {
           throw new Error('Comando de anexo sem identificação da mídia.');
@@ -337,6 +340,7 @@ export class CommandConsumer {
             ...(media.fileName ? { fileName: media.fileName } : {}),
             ...(media.caption ? { caption: media.caption } : {}),
             ...(media.voice ? { voice: true } : {}),
+            ...(mediaQuote ? { quote: mediaQuote } : {}),
           },
         );
         await this.stampMessage(payload, externalId);

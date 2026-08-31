@@ -1,10 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Award, Clock, Star } from 'lucide-react';
-
-
-
+import { Award, Clock, MessageSquare, Star } from 'lucide-react';
 import type { AgentPerformance } from '@/core/domain/analytics';
 import { Avatar } from '@/components/ui/avatar';
 import { cn } from '@/lib/cn';
@@ -13,122 +10,211 @@ interface AgentRankingCardProps {
   readonly agents: readonly AgentPerformance[];
 }
 
-type RankingMetric = 'atendidas' | 'resolvidas' | 'tmr' | 'csat';
+type RankingMetric = 'atendidas' | 'resolvidas' | 'tpr' | 'csat';
 
+const METRICAS: readonly {
+  readonly id: RankingMetric;
+  readonly label: string;
+  readonly icon: React.ElementType;
+  /** Quanto maior melhor? Decide a ordem e o sentido da barra. */
+  readonly maiorEhMelhor: boolean;
+}[] = [
+  { id: 'atendidas', label: 'Atendidas', icon: MessageSquare, maiorEhMelhor: true },
+  { id: 'resolvidas', label: 'Resolvidas', icon: Award, maiorEhMelhor: true },
+  { id: 'tpr', label: '1ª resposta', icon: Clock, maiorEhMelhor: false },
+  { id: 'csat', label: 'CSAT', icon: Star, maiorEhMelhor: true },
+];
+
+/**
+ * "4,9" volta a ser 4.9; "—" vira `undefined`.
+ *
+ * O travessão é o que o servidor manda quando não há dado — e `parseFloat('—')`
+ * é `NaN`, que faz toda comparação de ordenação responder `false`. O ranking
+ * ficava numa ordem arbitrária assim que alguém da equipe não tinha nota.
+ */
+const numeroDe = (texto: string): number | undefined => {
+  const valor = Number.parseFloat(texto.replace(',', '.'));
+  return Number.isFinite(valor) ? valor : undefined;
+};
+
+/** "1m 20s" → 80. O rótulo já vem formatado; a ordenação precisa do número. */
+const segundosDe = (texto: string): number | undefined => {
+  if (!/\d/.test(texto)) return undefined;
+  const dias = /(\d+)\s*d/.exec(texto);
+  const horas = /(\d+)\s*h/.exec(texto);
+  const minutos = /(\d+)\s*m(?!s)/.exec(texto);
+  const segundos = /(\d+)\s*s/.exec(texto);
+  return (
+    Number(dias?.[1] ?? 0) * 86400 +
+    Number(horas?.[1] ?? 0) * 3600 +
+    Number(minutos?.[1] ?? 0) * 60 +
+    Number(segundos?.[1] ?? 0)
+  );
+};
+
+/**
+ * O ranking da equipe.
+ *
+ * **O que mudou.** A aba "TMR" mostrava `averageResponse` — que é tempo de
+ * **primeira resposta**, não de resolução — e, ao ser escolhida, ordenava por
+ * atendimentos mesmo assim: os três botões produziam duas ordens. A aba
+ * "Resolvidas" existia no tipo e não existia na tela. E o rodapé afirmava uma
+ * meta ("< 2 min e CSAT > 4,8") que o sistema não guarda em lugar nenhum e
+ * contra a qual nada era comparado.
+ *
+ * A barra ao lado de cada linha é a comparação que uma lista de números não dá:
+ * quem lê descobre num relance se o primeiro colocado está à frente por pouco
+ * ou pelo dobro.
+ */
 export function AgentRankingCard({ agents }: AgentRankingCardProps) {
   const [metric, setMetric] = useState<RankingMetric>('atendidas');
+  const ativa = METRICAS.find((item) => item.id === metric) ?? METRICAS[0]!;
 
-  const sortedAgents = useMemo(() => {
-    return [...agents].sort((a, b) => {
-      if (metric === 'atendidas') return b.handled - a.handled;
-      if (metric === 'resolvidas') return (b.resolved ?? b.handled) - (a.resolved ?? a.handled);
-      if (metric === 'csat') return parseFloat(b.csat.replace(',', '.')) - parseFloat(a.csat.replace(',', '.'));
-      return b.handled - a.handled;
-    });
-  }, [agents, metric]);
+  const linhas = useMemo(() => {
+    const valorDe = (agent: AgentPerformance): number | undefined => {
+      switch (metric) {
+        case 'atendidas':
+          return agent.handled;
+        case 'resolvidas':
+          return agent.resolved ?? 0;
+        case 'tpr':
+          return segundosDe(agent.averageResponse);
+        case 'csat':
+          return numeroDe(agent.csat);
+      }
+    };
+
+    const rotuloDe = (agent: AgentPerformance): string => {
+      switch (metric) {
+        case 'atendidas':
+          return String(agent.handled);
+        case 'resolvidas':
+          return String(agent.resolved ?? 0);
+        case 'tpr':
+          return agent.averageResponse;
+        case 'csat':
+          return agent.csat;
+      }
+    };
+
+    return agents
+      .map((agent) => ({ agent, valor: valorDe(agent), rotulo: rotuloDe(agent) }))
+      .toSorted((a, b) => {
+        // Quem não tem dado vai para o fim, sempre — em qualquer métrica.
+        if (a.valor === undefined) return b.valor === undefined ? 0 : 1;
+        if (b.valor === undefined) return -1;
+        return ativa.maiorEhMelhor ? b.valor - a.valor : a.valor - b.valor;
+      });
+  }, [agents, metric, ativa.maiorEhMelhor]);
+
+  const maior = Math.max(1, ...linhas.map((linha) => linha.valor ?? 0));
+  const semDados = linhas.every((linha) => linha.valor === undefined || linha.valor === 0);
 
   return (
-    <div className="flex h-full flex-col justify-between rounded-2xl border border-line bg-surface p-5 shadow-2xs">
-      <div>
-        <div className="flex flex-col gap-3 border-b border-line pb-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2">
-            <div className="flex size-7 items-center justify-center rounded-lg bg-violet-500/10 text-violet-600 dark:text-violet-400">
-              <Award className="size-4" />
-            </div>
-            <div>
-              <h2 className="font-display text-sm font-bold text-ink">Desempenho da equipe</h2>
-              <p className="text-[11px] text-muted">Acompanhamento e eficiência dos agentes</p>
-            </div>
+    <div className="flex h-full flex-col rounded-2xl border border-line bg-surface p-5 shadow-2xs">
+      <div className="flex flex-col gap-3 border-b border-line pb-3.5 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex items-center gap-2">
+          <div className="flex size-7 items-center justify-center rounded-lg bg-violet-500/10 text-violet-600 dark:text-violet-400">
+            <Award className="size-4" />
           </div>
-
-          {/* Seletor de Métrica */}
-          <div className="flex items-center gap-1 rounded-xl bg-surface-2 p-1 text-[11px]">
-            <button
-              type="button"
-              onClick={() => setMetric('atendidas')}
-              className={cn(
-                'rounded-lg px-2 py-0.5 font-semibold transition-all',
-                metric === 'atendidas' ? 'bg-surface text-ink shadow-2xs font-bold' : 'text-muted hover:text-ink',
-              )}
-            >
-              Atendidas
-            </button>
-            <button
-              type="button"
-              onClick={() => setMetric('tmr')}
-              className={cn(
-                'rounded-lg px-2 py-0.5 font-semibold transition-all',
-                metric === 'tmr' ? 'bg-surface text-ink shadow-2xs font-bold' : 'text-muted hover:text-ink',
-              )}
-            >
-              TMR
-            </button>
-            <button
-              type="button"
-              onClick={() => setMetric('csat')}
-              className={cn(
-                'rounded-lg px-2 py-0.5 font-semibold transition-all',
-                metric === 'csat' ? 'bg-surface text-ink shadow-2xs font-bold' : 'text-muted hover:text-ink',
-              )}
-            >
-              CSAT
-            </button>
+          <div>
+            <h2 className="font-display text-sm font-bold text-ink">Desempenho da equipe</h2>
+            <p className="text-[11px] text-muted">
+              {ativa.maiorEhMelhor ? 'Do maior para o menor' : 'Do mais rápido para o mais lento'}
+            </p>
           </div>
         </div>
 
-        {/* Lista de Atendentes */}
-        <ul className="mt-3.5 divide-y divide-line-soft">
-          {sortedAgents.map((agent, index) => {
-            const isLeader = index === 0;
+        <div className="flex flex-wrap items-center gap-0.5 rounded-xl bg-surface-2 p-1 text-[11px]">
+          {METRICAS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => setMetric(item.id)}
+              aria-pressed={metric === item.id}
+              className={cn(
+                'rounded-lg px-2 py-1 font-semibold transition-all',
+                metric === item.id
+                  ? 'bg-surface font-bold text-ink shadow-2xs'
+                  : 'text-muted hover:text-ink',
+              )}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {linhas.length === 0 ? (
+        <p className="py-8 text-center text-xs text-muted">
+          Nenhum atendente cadastrado nesta conta ainda.
+        </p>
+      ) : (
+        <ul className="mt-3.5 flex flex-1 flex-col gap-2.5">
+          {linhas.map((linha, index) => {
+            const lider = index === 0 && !semDados && linha.valor !== undefined;
+            // Na métrica de tempo, a barra mais longa é o **pior** — inverter
+            // faz a barra continuar significando "melhor" nas quatro abas.
+            const fracao =
+              linha.valor === undefined || maior === 0
+                ? 0
+                : ativa.maiorEhMelhor
+                  ? linha.valor / maior
+                  : 1 - (linha.valor / maior) * 0.85;
 
             return (
-              <li key={agent.id} className="flex items-center justify-between gap-3 py-2.5">
-                <div className="flex min-w-0 items-center gap-2.5">
-                  <span className={cn(
-                    'flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
-                    isLeader ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300' : 'text-muted',
-                  )}>
-                    {index + 1}
-                  </span>
-
-                  <Avatar name={agent.name} tone={agent.avatarTone} size="sm" />
-
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-bold text-ink">{agent.name}</p>
-                    <p className="truncate text-[11px] text-muted">{agent.team || 'Atendimento'}</p>
+              <li key={linha.agent.id} className="flex flex-col gap-1">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span
+                      className={cn(
+                        'flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold tabular-nums',
+                        lider ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300' : 'text-dim',
+                      )}
+                    >
+                      {index + 1}
+                    </span>
+                    <Avatar name={linha.agent.name} tone={linha.agent.avatarTone} size="sm" />
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-bold text-ink">{linha.agent.name}</p>
+                      <p className="truncate text-[11px] text-muted">
+                        {linha.agent.team || 'Atendimento'}
+                      </p>
+                    </div>
                   </div>
+
+                  <span
+                    className={cn(
+                      'shrink-0 font-display text-sm font-bold tabular-nums',
+                      linha.valor === undefined ? 'text-dim' : 'text-ink',
+                    )}
+                  >
+                    {linha.rotulo}
+                  </span>
                 </div>
 
-                <div className="flex shrink-0 items-center gap-2 text-right">
-                  {metric === 'atendidas' && (
-                    <span className="font-display text-sm font-bold text-ink tabular-nums">
-                      {agent.handled} <span className="text-[10px] font-normal text-muted">atendimentos</span>
-                    </span>
-                  )}
-
-                  {metric === 'tmr' && (
-                    <span className="flex items-center gap-1 font-display text-xs font-bold text-ink tabular-nums">
-                      <Clock className="size-3 text-muted" /> {agent.averageResponse}
-                    </span>
-                  )}
-
-                  {metric === 'csat' && (
-                    <span className="flex items-center gap-1 font-display text-xs font-bold text-amber-600 dark:text-amber-400 tabular-nums">
-                      <Star className="size-3 fill-amber-500 text-amber-500" /> {agent.csat}
-                    </span>
-                  )}
+                <div className="ml-[4.375rem] h-1.5 overflow-hidden rounded-full bg-surface-2">
+                  <div
+                    className="h-full rounded-full transition-all"
+                    style={{
+                      width: `${Math.max(linha.valor ? 4 : 0, fracao * 100)}%`,
+                      backgroundColor: lider ? 'var(--color-chart-1)' : 'var(--color-chart-2)',
+                    }}
+                  />
                 </div>
               </li>
             );
           })}
         </ul>
-      </div>
+      )}
 
-      <div className="mt-3 border-t border-line pt-2.5 text-center">
-        <span className="text-[11px] text-muted">
-          Meta da equipe: <strong>&lt; 2 min</strong> de 1ª resposta e CSAT <strong>&gt; 4,8</strong>
-        </span>
-      </div>
+      {semDados ? (
+        <p className="mt-3 border-t border-line pt-2.5 text-center text-[11px] text-dim">
+          {metric === 'csat'
+            ? 'Nenhuma avaliação recebida no período — ligue a pesquisa de satisfação nas configurações da caixa.'
+            : 'Sem atendimentos atribuídos no período selecionado.'}
+        </p>
+      ) : null}
     </div>
   );
 }

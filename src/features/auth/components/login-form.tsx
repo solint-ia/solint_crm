@@ -28,7 +28,10 @@ export function LoginForm() {
       const res = await loginAction({ email, password });
       if (res.ok) {
         router.refresh();
-        router.push((next && next.startsWith('/') ? next : '/dashboard') as Route);
+        // `proximo` é a página que a pessoa tentou abrir antes de logar; sem
+        // ela, o destino vem do servidor, que sabe o que este papel alcança.
+        const destino = next?.startsWith('/') ? next : (res.destino ?? '/conversas');
+        router.push(destino as Route);
       } else {
         setError(res.error ?? 'Email ou senha inválidos.');
         setLoading(false);

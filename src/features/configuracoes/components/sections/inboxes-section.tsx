@@ -12,7 +12,9 @@ import {
   QrCode,
   Radio,
   Send,
+  Star,
   Sun,
+  Timer,
   Trash2,
   TriangleAlert,
   Zap,
@@ -25,6 +27,7 @@ import {
   WEEKDAYS,
 } from '@/core/domain/business-hours';
 import { describeChannel } from '@/core/domain/channel';
+import { DEFAULT_CSAT_QUESTION } from '@/core/domain/csat';
 import type { ChannelConnection } from '@/core/domain/settings';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -671,6 +674,9 @@ function InboxDetail({
     },
   );
 
+  const [waitingDelay, setWaitingDelay] = useState(connection.waitingMessageDelayMinutes || 5);
+  const [csatEnabled, setCsatEnabled] = useState(connection.csatEnabled ?? false);
+  const [csatQuestion, setCsatQuestion] = useState(connection.csatQuestion ?? '');
   const [webhookUrl, setWebhookUrl] = useState(connection.webhookUrl ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -696,6 +702,9 @@ function InboxDetail({
           text: 'Todos os nossos atendentes estão ocupados no momento. Seu tempo estimado de espera é de 5 minutos.',
         },
       ) ||
+    waitingDelay !== (connection.waitingMessageDelayMinutes || 5) ||
+    csatEnabled !== (connection.csatEnabled ?? false) ||
+    csatQuestion !== (connection.csatQuestion ?? '') ||
     webhookUrl !== (connection.webhookUrl ?? '');
 
   const summary = useMemo(() => summarizeBusinessHours(hours), [hours]);
@@ -725,6 +734,9 @@ function InboxDetail({
         text: 'Todos os nossos atendentes estão ocupados no momento. Seu tempo estimado de espera é de 5 minutos.',
       },
     );
+    setWaitingDelay(connection.waitingMessageDelayMinutes || 5);
+    setCsatEnabled(connection.csatEnabled ?? false);
+    setCsatQuestion(connection.csatQuestion ?? '');
     setWebhookUrl(connection.webhookUrl ?? '');
     setError(undefined);
   };
@@ -739,6 +751,9 @@ function InboxDetail({
       greeting,
       closingMessage,
       waitingMessage,
+      waitingMessageDelayMinutes: waitingDelay,
+      csatEnabled,
+      csatQuestion,
       webhookUrl,
     });
     setSaving(false);
@@ -760,6 +775,9 @@ function InboxDetail({
       greeting,
       closingMessage,
       waitingMessage,
+      waitingMessageDelayMinutes: waitingDelay,
+      csatEnabled,
+      ...(csatQuestion ? { csatQuestion } : {}),
       webhookUrl: webhookUrl || undefined,
     });
 
@@ -984,12 +1002,74 @@ function InboxDetail({
           {/* Mensagem de Espera */}
           <MessageCard
             title="Mensagem de espera"
-            description="Enviada caso o cliente permaneça na fila por mais de alguns minutos sem resposta."
+            description="Enviada quando o cliente fica na fila sem resposta pelo tempo definido abaixo."
             value={waitingMessage}
             onChange={setWaitingMessage}
             placeholder="Todos os nossos atendentes estão em atendimento no momento. Você será atendido em breve!"
             id={`waiting-${connection.id}`}
+            extra={
+              <label className="flex flex-wrap items-center gap-2 text-xs text-muted">
+                <Timer className="size-3.5 shrink-0 text-dim" />
+                <span>Enviar depois de</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={120}
+                  value={waitingDelay}
+                  onChange={(event) =>
+                    setWaitingDelay(Math.min(120, Math.max(1, Number(event.target.value) || 1)))
+                  }
+                  aria-label="Minutos de espera antes do aviso"
+                  className="h-8 w-16 rounded-lg border border-line bg-surface px-2 text-center font-mono text-xs text-ink outline-none focus:border-brand shadow-2xs"
+                />
+                <span>minutos na fila</span>
+              </label>
+            }
           />
+        </div>
+
+        {/* ---------------------------------------------------------- */}
+        {/* PESQUISA DE SATISFAÇÃO (CSAT)                              */}
+        {/* ---------------------------------------------------------- */}
+        <div className="rounded-2xl border border-line bg-surface p-4.5 shadow-2xs">
+          <div className="flex items-start justify-between gap-3 border-b border-line-soft pb-3.5">
+            <div className="flex items-start gap-2.5">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-yellow-500/10 text-yellow-600 dark:text-yellow-400">
+                <Star className="size-4" />
+              </div>
+              <div className="min-w-0">
+                <h5 className="font-display text-sm font-bold text-ink">
+                  Pesquisa de satisfação (CSAT)
+                </h5>
+                <p className="mt-0.5 text-xs text-muted leading-relaxed">
+                  Ao encerrar o atendimento, pergunta a nota de 1 a 5. A resposta do cliente é lida
+                  automaticamente e vira o índice de CSAT do painel e dos relatórios.
+                </p>
+              </div>
+            </div>
+            <Toggle
+              checked={csatEnabled}
+              onChange={setCsatEnabled}
+              label="Ativar pesquisa de satisfação"
+            />
+          </div>
+
+          <div className="mt-3.5">
+            <TextArea
+              id={`csat-${connection.id}`}
+              rows={2}
+              maxLength={300}
+              value={csatQuestion}
+              placeholder={DEFAULT_CSAT_QUESTION}
+              onChange={(event) => setCsatQuestion(event.target.value)}
+              className="text-xs"
+              disabled={!csatEnabled}
+            />
+            <p className="mt-1.5 text-[11px] text-dim">
+              Deixe vazio para usar a pergunta padrão. O cliente responde com o número, com
+              &ldquo;nota 4&rdquo; ou com estrelas — todas as formas são aceitas.
+            </p>
+          </div>
         </div>
       </div>
 
@@ -1112,6 +1192,7 @@ function MessageCard({
   onChange,
   placeholder,
   id,
+  extra,
 }: {
   readonly title: string;
   readonly description: string;
@@ -1119,6 +1200,8 @@ function MessageCard({
   readonly onChange: (value: { readonly enabled: boolean; readonly text: string }) => void;
   readonly placeholder: string;
   readonly id: string;
+  /** Ajuste próprio da regra (o prazo da mensagem de espera, por exemplo). */
+  readonly extra?: React.ReactNode;
 }) {
   const [isEditing, setIsEditing] = useState(false);
 
@@ -1164,6 +1247,8 @@ function MessageCard({
             </p>
           )}
         </div>
+
+        {extra ? <div className="mt-3">{extra}</div> : null}
       </div>
 
       {!isEditing ? (

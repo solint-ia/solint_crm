@@ -53,6 +53,16 @@ export interface ChannelConnection {
   readonly closingMessage?: AutoReply;
   /** Disparada quando o cliente aguarda na fila. */
   readonly waitingMessage?: AutoReply;
+  /**
+   * Minutos de fila sem resposta antes de a mensagem de espera sair.
+   *
+   * O prazo é da caixa, não do produto: uma central de suporte que responde em
+   * um minuto e uma loja que responde em vinte não querem avisar na mesma hora.
+   */
+  readonly waitingMessageDelayMinutes: number;
+  /** Pergunta a nota de 1 a 5 ao cliente quando o atendimento é encerrado. */
+  readonly csatEnabled: boolean;
+  readonly csatQuestion?: string;
   /** Endpoint que recebe os eventos desta caixa. Vazio = sem webhook. */
   readonly webhookUrl?: string;
   /** Agentes que atendem esta caixa. */

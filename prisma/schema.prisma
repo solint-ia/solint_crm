@@ -241,6 +241,28 @@ model Conversation {
   queue              String
   status             String
   statusLabel        String
+  /// Quando a conversa nasceu. É o início de toda janela de período do
+  /// painel: sem ela, "últimos 7 dias" só conseguia contar a conversa pela
+  /// última atividade -- uma conversa de março respondida ontem entrava como
+  /// conversa de ontem.
+  createdAt          DateTime  @default(now())
+  /// Primeiro retorno de um atendente após a primeira mensagem do cliente.
+  firstResponseAt    DateTime?
+  /// O mesmo em segundos, já calculado. Guardado porque o painel agrega
+  /// milhares de conversas por período e refazer a conta a cada leitura
+  /// exigiria varrer a tabela de mensagens inteira.
+  firstResponseSecs  Int?
+  /// Quando passou a "resolvida" pela última vez.
+  resolvedAt         DateTime?
+  /// Da criação até a resolução, em segundos.
+  resolutionSecs     Int?
+  /// Nota de satisfação dada pelo cliente, de 1 a 5. Nulo = não avaliou.
+  csatScore          Int?
+  csatComment        String?
+  /// Quando a pergunta de satisfação saiu -- a resposta seguinte do cliente
+  /// é lida como nota enquanto esta marca estiver dentro da janela.
+  csatAskedAt        DateTime?
+  csatAnsweredAt     DateTime?
   priority           String    @default("baixa")
   assigneeId         String?
   assigneeName       String?
@@ -272,6 +294,10 @@ model Conversation {
 
   @@unique([inboxId, channelThreadId])
   @@index([accountId, lastActivityAt])
+  /// O painel recorta por janela de tempo, sempre a partir da criação.
+  @@index([accountId, createdAt])
+  /// A varredura da mensagem de espera procura por conversa parada em aberto.
+  @@index([status, lastInboundAt])
   @@index([contactId])
 }
 
@@ -492,6 +518,11 @@ model Inbox {
   closingMessage Json?
   /// JSON: AutoReply
   waitingMessage Json?
+  /// Minutos de fila sem resposta antes de a mensagem de espera sair.
+  waitingMessageDelayMinutes Int @default(5)
+  /// Pergunta a nota de 1 a 5 ao cliente quando o atendimento é encerrado.
+  csatEnabled   Boolean @default(false)
+  csatQuestion  String?
   webhookUrl    String?
 
   account       Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)

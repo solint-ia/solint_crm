@@ -6,6 +6,8 @@ import {
   useMemo,
   useRef,
   useState,
+  type ClipboardEvent,
+  type DragEvent,
   type FormEvent,
   type KeyboardEvent,
 } from 'react';
@@ -129,6 +131,33 @@ export function Composer({
   const [uploading, setUploading] = useState(false);
   const [mediaError, setMediaError] = useState<string | undefined>();
   const [cannedIndex, setCannedIndex] = useState(0);
+  /**
+   * Quantos "dragenter" estão abertos sem o "dragleave" correspondente.
+   *
+   * Um contador e não um booleano: arrastar por cima do compositor dispara
+   * `dragleave` toda vez que o ponteiro cruza a borda de um filho (o textarea,
+   * cada botão da barra), e com um booleano a moldura de "solte aqui" piscava
+   * durante todo o percurso até sumir antes de a pessoa soltar o arquivo.
+   */
+  const [dragDepth, setDragDepth] = useState(0);
+  /**
+   * URL temporária da miniatura do anexo de imagem.
+   *
+   * `URL.createObjectURL` reserva memória até alguém revogar; um efeito com
+   * limpeza é o que garante que trocar de anexo dez vezes não deixe dez
+   * imagens presas na aba.
+   */
+  const [previewUrl, setPreviewUrl] = useState<string | undefined>();
+
+  useEffect(() => {
+    if (!attachment || !attachment.type.startsWith('image/')) {
+      setPreviewUrl(undefined);
+      return;
+    }
+    const url = URL.createObjectURL(attachment);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [attachment]);
   const [emojiAberto, setEmojiAberto] = useState(false);
   const [agendaAberta, setAgendaAberta] = useState(false);
   const [agendaQuando, setAgendaQuando] = useState('');
@@ -351,6 +380,74 @@ export function Composer({
   };
 
   /**
+   * Aceita um arquivo, venha ele de onde vier.
+   *
+   * O compositor tinha três caminhos possíveis para receber um anexo e só um
+   * implementado: o seletor de arquivos. Colar (Ctrl+V) e arrastar para dentro
+   * — os dois gestos que qualquer um tenta primeiro com um print de tela — não
+   * faziam nada, sem mensagem nenhuma. As três entradas agora passam por aqui,
+   * então a checagem de tamanho e a limpeza de estado valem para todas.
+   */
+  const aceitarArquivo = useCallback(
+    (file: File | undefined | null): boolean => {
+      if (!file || !onSendMedia) return false;
+      if (blocked) {
+        setMediaError(disabledReason ?? 'Não é possível anexar nesta conversa agora.');
+        return false;
+      }
+      if (file.size > MAX_UPLOAD_BYTES) {
+        setAttachment(undefined);
+        setMediaError(
+          `${file.name || 'O arquivo'} tem ${humanSize(file.size)}. O limite é ${humanSize(MAX_UPLOAD_BYTES)}.`,
+        );
+        return false;
+      }
+
+      setRecording(undefined);
+      setMediaError(undefined);
+      setAttachment(file);
+      return true;
+    },
+    [blocked, disabledReason, onSendMedia],
+  );
+
+  /**
+   * Colar uma imagem no campo de texto.
+   *
+   * Um print colado chega em `clipboardData.files` sem nome de arquivo — o
+   * navegador entrega `image.png` ou string vazia. Renomear com a hora torna o
+   * anexo identificável na timeline e no depósito, em vez de uma fila de
+   * `image.png` indistinguíveis.
+   *
+   * O `preventDefault` só acontece quando há mesmo um arquivo: colar texto
+   * continua sendo colar texto.
+   */
+  const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(event.clipboardData?.files ?? []);
+    const file = files[0];
+    if (!file) return;
+
+    event.preventDefault();
+    const nomeado =
+      file.name && file.name !== 'image.png'
+        ? file
+        : new File([file], `colado-${Date.now()}.${file.type.split('/')[1] || 'png'}`, {
+            type: file.type,
+          });
+    aceitarArquivo(nomeado);
+  };
+
+  const handleDrop = (event: DragEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setDragDepth(0);
+    aceitarArquivo(event.dataTransfer?.files?.[0]);
+  };
+
+  /** Só reage a arrasto que traz arquivo — texto selecionado não conta. */
+  const arrastaArquivo = (event: DragEvent<HTMLFormElement>): boolean =>
+    Array.from(event.dataTransfer?.types ?? []).includes('Files');
+
+  /**
    * Trocar de conversa esvazia o compositor.
    *
    * O anexo é o caso visível — um vídeo escolhido para uma pessoa continuava
@@ -405,6 +502,10 @@ export function Composer({
       }
       clearMedia();
       setText('');
+      // O anexo saiu citando: a citação já cumpriu o papel dela e some junto,
+      // como some no envio de texto. Sem isto, ela ficava pendurada no
+      // compositor e grudava na mensagem seguinte.
+      onCancelReply?.();
     } catch (error) {
       console.error('[Composer] Falha ao enviar anexo:', error);
       setMediaError(
@@ -437,6 +538,9 @@ export function Composer({
         // anexo com "Tipo de anexo inválido", imagem inclusive.
         form.set('kind', kindOf(attachment.type));
         form.set('isPrivate', String(isNote));
+        // A citação vale para o anexo como vale para o texto. Ela era montada
+        // na tela, ficava visível acima do campo, e nunca entrava no formulário.
+        if (replyTo?.id && !isNote) form.set('replyToId', replyTo.id);
         if (text.trim()) form.set('caption', text.trim());
         return form;
       }, 'Não foi possível enviar o anexo.');
@@ -515,13 +619,38 @@ export function Composer({
   return (
     <form
       onSubmit={submit}
+      onDragEnter={(event) => {
+        if (!arrastaArquivo(event) || !onSendMedia) return;
+        event.preventDefault();
+        setDragDepth((atual) => atual + 1);
+      }}
+      onDragOver={(event) => {
+        // Sem `preventDefault` no `dragover` o navegador recusa o soltar e abre
+        // o arquivo numa aba nova, levando a pessoa para fora da conversa.
+        if (arrastaArquivo(event) && onSendMedia) event.preventDefault();
+      }}
+      onDragLeave={() => setDragDepth((atual) => Math.max(0, atual - 1))}
+      onDrop={handleDrop}
       className={cn(
         'relative flex flex-col gap-2 rounded-2xl border transition-all duration-200 p-2.5 sm:p-3 shadow-xs',
         isNote
           ? 'border-note-line bg-note'
           : 'border-line bg-surface focus-within:border-brand/50 focus-within:ring-2 focus-within:ring-brand/10',
+        dragDepth > 0 && 'border-brand ring-2 ring-brand/20',
       )}
     >
+      {/* Alvo de soltura. `pointer-events-none` é o que faz o `drop` chegar ao
+          formulário: uma camada por cima capturaria o evento e o arquivo cairia
+          num elemento que não sabe o que fazer com ele. */}
+      {dragDepth > 0 && onSendMedia ? (
+        <div className="pointer-events-none absolute inset-0 z-30 flex flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed border-brand bg-surface/95 backdrop-blur-xs">
+          <Paperclip className="size-5 text-brand" />
+          <span className="text-xs font-semibold text-ink">Solte para anexar</span>
+          <span className="text-[11px] text-muted">
+            Imagem, vídeo, áudio ou documento até {humanSize(MAX_UPLOAD_BYTES)}
+          </span>
+        </div>
+      ) : null}
       {/* Respostas rápidas popup */}
       {cannedMatches.length > 0 && (
         <ul
@@ -627,10 +756,22 @@ export function Composer({
       {/* Prévia de Anexo */}
       {attachment && (
         <div className="flex items-center justify-between rounded-lg border border-line-soft bg-surface-2 px-3 py-2 text-xs text-ink">
-          <div className="flex items-center gap-2 min-w-0">
-            <Paperclip className="size-4 shrink-0 text-brand" />
+          <div className="flex min-w-0 items-center gap-2">
+            {/* Uma imagem colada não tem nome que sirva de identificação — a
+                miniatura é a única forma de conferir que é o print certo antes
+                de mandá-lo para o cliente. */}
+            {previewUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={previewUrl}
+                alt={`Prévia de ${attachment.name}`}
+                className="size-9 shrink-0 rounded-md border border-line-soft object-cover"
+              />
+            ) : (
+              <Paperclip className="size-4 shrink-0 text-brand" />
+            )}
             <span className="truncate font-medium">{attachment.name}</span>
-            <span className="text-[10px] text-muted shrink-0">
+            <span className="shrink-0 text-[10px] text-muted">
               ({kindOf(attachment.type)} · {humanSize(attachment.size)})
             </span>
           </div>
@@ -702,6 +843,7 @@ export function Composer({
         value={text}
         onChange={(event) => handleTextChange(event.target.value)}
         onKeyDown={onKeyDown}
+        onPaste={handlePaste}
         maxLength={MAX_MESSAGE_LENGTH}
         rows={2}
         disabled={blocked || isRecording}
@@ -711,7 +853,7 @@ export function Composer({
             ? 'Legenda do anexo (opcional)...'
             : isNote
               ? 'Escreva uma nota interna visível apenas para a equipe...'
-              : 'Escreva sua mensagem... (Enter para enviar, Shift+Enter para nova linha)'
+              : 'Escreva sua mensagem... (Enter envia · cole ou arraste uma imagem para anexar)'
         }
         className="w-full resize-none bg-transparent px-1 py-1 text-sm text-ink placeholder:text-muted outline-none disabled:opacity-50 min-h-[44px] max-h-36 leading-relaxed"
       />
@@ -721,21 +863,10 @@ export function Composer({
         type="file"
         className="hidden"
         onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (!file) return;
-          setRecording(undefined);
-          // O aviso vem na hora de escolher, não depois da subida: um vídeo de
-          // 40 MB não tem por que ocupar a rede para ser recusado no fim.
-          if (file.size > MAX_UPLOAD_BYTES) {
-            setAttachment(undefined);
-            setMediaError(
-              `${file.name} tem ${humanSize(file.size)}. O limite é ${humanSize(MAX_UPLOAD_BYTES)}.`,
-            );
-            event.target.value = '';
-            return;
-          }
-          setMediaError(undefined);
-          setAttachment(file);
+          // O aviso de tamanho vem na hora de escolher, não depois da subida:
+          // um vídeo de 40 MB não tem por que ocupar a rede para ser recusado
+          // no fim. A regra vive em `aceitarArquivo`, junto com colar e soltar.
+          if (!aceitarArquivo(event.target.files?.[0])) event.target.value = '';
         }}
       />
 

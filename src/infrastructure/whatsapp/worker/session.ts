@@ -1928,6 +1928,7 @@ export class WhatsAppSession {
       fileName?: string;
       caption?: string;
       voice?: boolean;
+      quote?: { externalId: string; fromMe: boolean; text: string };
     },
   ): Promise<string> {
     if (!this.socket || !this.isAuthenticated) {
@@ -1957,7 +1958,11 @@ export class WhatsAppSession {
             };
 
     const medir = waLog.timer(`[sessão ${this.inboxId}] socket.sendMessage (anexo)`);
-    const result = await this.socket.sendMessage(targetJid, payload);
+    const result = await this.socket.sendMessage(
+      targetJid,
+      payload,
+      media.quote ? { quoted: quotedStub(targetJid, media.quote) } : {},
+    );
     medir(`${media.kind} de ${media.data.length} byte(s) para ${targetJid}`);
 
     const msgId = result?.key.id ?? `sent-${Date.now()}`;

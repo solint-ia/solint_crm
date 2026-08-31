@@ -131,6 +131,7 @@ export default async function RelatoriosPage({
           <CsatReport
             distribution={report.csatDistribution}
             comments={report.csatComments}
+            responseCount={report.csatResponseCount}
           />
         ) : null}
       </PageShell>

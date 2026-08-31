@@ -1401,6 +1401,7 @@ export class WhatsAppService {
       readonly fileName?: string;
       readonly caption?: string;
       readonly voice?: boolean;
+      readonly quote?: { readonly externalId: string; readonly fromMe: boolean; readonly text: string };
     },
   ): Promise<{ ok: boolean; externalId?: string; error?: string }> {
     const socket = this.socket;
@@ -1430,7 +1431,11 @@ export class WhatsAppService {
             };
 
     try {
-      const sent = await socket.sendMessage(jid, payload);
+      const sent = await socket.sendMessage(
+        jid,
+        payload,
+        media.quote ? { quoted: quotedStub(jid, media.quote) } : {},
+      );
       const externalId = sent?.key.id ?? undefined;
       if (externalId) this.trackSentId(externalId);
       return { ok: true, externalId };

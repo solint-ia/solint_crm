@@ -28,7 +28,17 @@ import { PERMISSIONS, type Permission, type RoleSlug } from './user';
  * isso. Aqui, o que não está escrito não é concedido.
  *
  * Notavelmente **fora**: `caixas:todas` (o agente vê as caixas das equipes
- * dele), `configuracoes:escrever`, `equipe:gerenciar` e `faturamento:gerenciar`.
+ * dele), `relatorios:ler`, `equipe:gerenciar`, `faturamento:gerenciar` e as
+ * duas de `configuracoes`.
+ *
+ * `configuracoes:ler` estava nesta lista, e era o que fazia a aba
+ * Configurações aparecer para quem atende — a permissão de leitura é a que a
+ * navegação exige. Só que Configurações não é uma tela de consulta: ali estão
+ * os canais, a equipe, o faturamento, a segurança e os tokens de API. Dar
+ * "somente leitura" sobre isso a todo agente expõe a estrutura inteira da conta
+ * para o cargo de menor privilégio, sem que nada no produto dependa disso —
+ * respostas rápidas e etiquetas, que o agente usa de fato, chegam pela tela de
+ * conversas, não por aqui.
  */
 export const AGENT_PERMISSIONS: readonly Permission[] = [
   'conversas:ler',
@@ -41,7 +51,6 @@ export const AGENT_PERMISSIONS: readonly Permission[] = [
   'kanban:escrever',
   'campanhas:ler',
   'agentes-ia:ler',
-  'configuracoes:ler',
 ];
 
 export interface SystemRoleTemplate {

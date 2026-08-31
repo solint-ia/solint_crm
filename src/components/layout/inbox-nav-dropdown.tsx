@@ -43,6 +43,15 @@ interface InboxNavDropdownProps {
   readonly canManageInboxes?: boolean;
   readonly roleName?: string;
   readonly active?: boolean;
+  /**
+   * A barra lateral está aberta e mostrando os nomes.
+   *
+   * Muda a forma do gatilho — de quadrado com ícone para linha com rótulo — e o
+   * lugar onde o menu abre, que precisa acompanhar a borda da barra.
+   */
+  readonly expanded?: boolean;
+  /** Largura atual da barra, em pixels. É de onde o menu sai. */
+  readonly railWidth?: number;
 }
 
 export function InboxNavDropdown({
@@ -52,6 +61,8 @@ export function InboxNavDropdown({
   canManageInboxes = false,
   roleName,
   active = false,
+  expanded = false,
+  railWidth = 64,
 }: InboxNavDropdownProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -128,7 +139,7 @@ export function InboxNavDropdown({
   };
 
   return (
-    <div className="relative">
+    <div className={cn('relative', expanded && 'w-full')}>
       {/* Botão de disparo na Barra Lateral */}
       <button
         ref={triggerRef}
@@ -139,28 +150,42 @@ export function InboxNavDropdown({
         title={`Caixas de entrada (${accessibleInboxes.length} disponíveis)`}
         aria-label="Caixas de entrada"
         className={cn(
-          'group relative flex size-10 items-center justify-center rounded-xl transition-all duration-150',
+          'group relative flex items-center rounded-xl transition-all duration-150',
+          expanded ? 'h-10 w-full gap-3 px-2.5' : 'size-10 justify-center',
           active || isOpen
             ? 'bg-brand/12 font-semibold text-brand border border-brand/25 shadow-xs'
             : 'text-muted hover:bg-surface-2 hover:text-ink border border-transparent',
         )}
       >
-        <Inbox className="size-[19px] transition-transform group-hover:scale-110" />
+        <Inbox className="size-[19px] shrink-0 transition-transform group-hover:scale-110" />
+
+        {expanded ? (
+          <span className="flex-1 truncate text-left text-xs font-semibold">
+            Caixas de entrada
+          </span>
+        ) : null}
 
         {/* Badge de Não Lidas Total */}
         {totalUnreadCount > 0 && (
-          <span className="absolute -top-1 -right-1 flex min-w-4.5 h-4.5 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-bold text-white shadow-sm shadow-blue-600/40">
+          <span
+            className={cn(
+              'flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-bold text-white shadow-sm shadow-blue-600/40',
+              expanded ? 'shrink-0' : 'absolute -top-1 -right-1',
+            )}
+          >
             {totalUnreadCount}
           </span>
         )}
 
         {/* Indicador sutil de dropdown disponível */}
-        <span
-          className={cn(
-            'absolute bottom-1 right-1 size-1 rounded-full transition-all',
-            isOpen ? 'bg-brand scale-125' : 'bg-muted/40 group-hover:bg-brand',
-          )}
-        />
+        {expanded ? null : (
+          <span
+            className={cn(
+              'absolute bottom-1 right-1 size-1 rounded-full transition-all',
+              isOpen ? 'bg-brand scale-125' : 'bg-muted/40 group-hover:bg-brand',
+            )}
+          />
+        )}
       </button>
 
       {/* Flyout Subcomponente Flutuante ao lado da Navbar */}
@@ -176,7 +201,10 @@ export function InboxNavDropdown({
             ref={menuRef}
             role="menu"
             aria-label="Caixas de entrada e conversas"
-            className="fixed left-16 top-10 z-50 ml-2.5 w-84 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-2xl border border-line bg-surface/95 backdrop-blur-xl p-2.5 shadow-2xl animate-in fade-in slide-in-from-left-2 duration-150"
+            // A barra mudou de largura; o menu tem de sair da borda dela, não
+            // de um `left-16` fixo que ficaria por baixo da barra aberta.
+            style={{ left: railWidth }}
+            className="fixed top-10 z-50 ml-2.5 w-84 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-2xl border border-line bg-surface/95 backdrop-blur-xl p-2.5 shadow-2xl animate-in fade-in slide-in-from-left-2 duration-150"
           >
             {/* Cabeçalho do Menu */}
             <div className="flex items-center justify-between border-b border-line pb-2.5 px-2 pt-1">

@@ -3,6 +3,8 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
+import { landingRouteFor } from '@/config/navigation';
+import type { Permission } from '@/core/domain/user';
 import { SYSTEM_ROLES, systemRoleId } from '@/core/domain/system-roles';
 import { defaultBusinessHours } from '@/core/domain/business-hours';
 import { hashPassword, passwordProblem, verifyPassword } from '@/infrastructure/auth/password';
@@ -12,6 +14,14 @@ import { prisma, asJson } from '@/infrastructure/db/prisma';
 export interface AuthActionResult {
   readonly ok: boolean;
   readonly error?: string;
+  /**
+   * Para onde ir depois de entrar.
+   *
+   * Decidido aqui, e não no formulário, porque só o servidor conhece as
+   * permissões do papel — o cliente teria de adivinhar, e adivinhava
+   * `/dashboard` para todo mundo.
+   */
+  readonly destino?: string;
 }
 
 /**
@@ -82,7 +92,15 @@ export async function loginAction(input: unknown): Promise<AuthActionResult> {
   await createSession(user.id, membership.accountId, meta);
   await touchUser(user.id);
 
-  return { ok: true };
+  const role = await prisma.role.findFirst({
+    where: { accountId: membership.accountId, slug: membership.roleSlug },
+    select: { permissions: true },
+  });
+  const permissions = (
+    Array.isArray(role?.permissions) ? role.permissions : []
+  ) as readonly Permission[];
+
+  return { ok: true, destino: landingRouteFor(permissions) };
 }
 
 export async function logoutAction(): Promise<never> {
@@ -186,8 +204,13 @@ export async function signupAction(input: unknown): Promise<AuthActionResult> {
         // — outra forma, de uma versão anterior — e toda conta criada pelo
         // cadastro nascia com a tela de Configurações quebrada.
         businessHours: asJson(defaultBusinessHours()),
-        awayMessage: asJson({ enabled: false, message: '' }),
-        greeting: asJson({ enabled: false, message: '' }),
+        // `text`, nunca `message`. O campo já se chamou `message` aqui e o
+        // domínio sempre leu `text`: a caixa nascia sem texto nenhum e a tela
+        // de Configurações recusava salvar qualquer alteração nela.
+        awayMessage: asJson({ enabled: false, text: '' }),
+        greeting: asJson({ enabled: false, text: '' }),
+        closingMessage: asJson({ enabled: false, text: '' }),
+        waitingMessage: asJson({ enabled: false, text: '' }),
       },
     });
     // Funil de vendas comercial padrão

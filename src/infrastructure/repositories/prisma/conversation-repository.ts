@@ -114,9 +114,60 @@ export class PrismaConversationRepository implements ConversationRepository {
   ): Promise<Message> {
     const exists = await prisma.conversation.findFirst({
       where: { id: conversationId, accountId },
-      select: { id: true, lastMessagePreview: true },
+      select: {
+        id: true,
+        lastMessagePreview: true,
+        createdAt: true,
+        firstResponseAt: true,
+      },
     });
     if (!exists) throw new NotFoundError('Conversa', conversationId);
+
+    const agora = new Date();
+
+    /**
+     * O tempo de primeira resposta se carimba aqui, no único ponto por onde
+     * toda resposta de atendente passa.
+     *
+     * Antes o painel imprimia `'1m 15s'` — uma constante escrita no código,
+     * igual para toda conta e todo período. Não havia de onde tirar o valor
+     * real: nada guardava **quando** a conversa foi respondida pela primeira
+     * vez.
+     *
+     * Duas exclusões, e as duas mudam o número de verdade. **Nota interna** não
+     * conta: o cliente não a recebe, e ele continua esperando. **Mensagem
+     * automática** também não — ela entra como `system`, sai em dois segundos, e
+     * uma saudação faria o indicador da equipe inteira marcar zero.
+     *
+     * A contagem começa na primeira mensagem **do contato**, não na criação da
+     * conversa. Uma conversa aberta por nós (campanha, retomada de contato)
+     * nasce com uma mensagem nossa: medida contra `createdAt`, ela registraria
+     * uma primeira resposta de zero segundo para um cliente que ainda nem
+     * tinha escrito. Sem mensagem do contato não há espera a medir, e o campo
+     * fica nulo — que é diferente de zero.
+     */
+    let primeiraResposta: {
+      firstResponseAt?: Date;
+      firstResponseSecs?: number;
+    } = {};
+
+    if (message.author === 'agent' && !message.isPrivate && !exists.firstResponseAt) {
+      const primeiraDoContato = await prisma.message.findFirst({
+        where: { conversationId, author: 'contact', isPrivate: false },
+        orderBy: { createdAt: 'asc' },
+        select: { createdAt: true },
+      });
+
+      if (primeiraDoContato) {
+        primeiraResposta = {
+          firstResponseAt: agora,
+          firstResponseSecs: Math.max(
+            0,
+            Math.round((agora.getTime() - primeiraDoContato.createdAt.getTime()) / 1000),
+          ),
+        };
+      }
+    }
 
     await prisma.$transaction([
       prisma.message.create({
@@ -128,6 +179,7 @@ export class PrismaConversationRepository implements ConversationRepository {
           contentType: message.content.type,
           content: asJson(message.content),
           time: message.time,
+          createdAt: agora,
           deliveryStatus: message.deliveryStatus ?? null,
           isPrivate: message.isPrivate,
           replyToId: message.replyToId ?? null,
@@ -142,7 +194,8 @@ export class PrismaConversationRepository implements ConversationRepository {
             ? exists.lastMessagePreview
             : previewOfMessage(message),
           lastMessageAt: message.time,
-          lastActivityAt: new Date(),
+          lastActivityAt: agora,
+          ...primeiraResposta,
         },
       }),
     ]);
@@ -165,14 +218,42 @@ export class PrismaConversationRepository implements ConversationRepository {
     });
   }
 
+  /**
+   * Muda o status e carimba o instante da resolução.
+   *
+   * `resolvedAt` é o que torna o "tempo de resolução" do painel um número em
+   * vez de uma constante: sem ele, só dá para saber que a conversa **está**
+   * resolvida, nunca há quanto tempo nem depois de quanto tempo. Reabrir limpa
+   * as duas marcas -- uma conversa aberta que carregasse o tempo da resolução
+   * anterior entraria na média duas vezes, com o valor errado nas duas.
+   */
   async changeStatus(
     accountId: Id,
     conversationId: Id,
     status: ConversationStatus,
   ): Promise<Conversation> {
+    const atual = await prisma.conversation.findFirst({
+      where: { id: conversationId, accountId },
+      select: { createdAt: true, status: true },
+    });
+
+    const agora = new Date();
+    const marcas =
+      status === 'resolvida'
+        ? {
+            resolvedAt: agora,
+            resolutionSecs: atual
+              ? Math.max(0, Math.round((agora.getTime() - atual.createdAt.getTime()) / 1000))
+              : null,
+          }
+        : atual?.status === 'resolvida'
+          ? { resolvedAt: null, resolutionSecs: null }
+          : {};
+
     return this.patch(accountId, conversationId, {
       status,
       statusLabel: STATUS_LABELS[status],
+      ...marcas,
     });
   }
 

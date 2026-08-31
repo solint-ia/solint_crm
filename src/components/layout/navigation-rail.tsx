@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
@@ -26,6 +26,25 @@ import {
   type AccessibleInbox,
   type ConversationCounts,
 } from './inbox-nav-dropdown';
+
+/* ==========================================================================
+   Largura da barra lateral — arrastável.
+   ========================================================================== */
+
+/** Só ícones. É a largura que a barra sempre teve. */
+const RAIL_MIN = 64;
+/** Onde os nomes cabem sem quebrar em duas linhas. */
+const RAIL_MAX = 248;
+/**
+ * A partir daqui os rótulos aparecem.
+ *
+ * Não é o mesmo valor de `RAIL_MIN`: entre 64 e 112 não há espaço para o texto
+ * ao lado do ícone, e revelar o rótulo antes disso o cortaria no meio.
+ */
+const RAIL_LABEL_FROM = 112;
+const RAIL_STORAGE_KEY = 'solint:rail-width';
+
+const clampRail = (valor: number): number => Math.min(RAIL_MAX, Math.max(RAIL_MIN, valor));
 
 const ICONS: Readonly<Record<NavIcon, typeof Inbox>> = {
   inbox: Inbox,
@@ -64,6 +83,94 @@ export function NavigationRail({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [mobileInboxesOpen, setMobileInboxesOpen] = useState(false);
 
+  /* ------------------------------------------------------------------ */
+  /* Largura arrastável da barra.                                        */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Começa fechada e só então lê a preferência salva.
+   *
+   * O servidor não tem `localStorage`, e ler no primeiro render do cliente faria
+   * a marcação divergir da que veio do servidor — o React descarta a árvore
+   * inteira quando isso acontece. Um efeito depois da montagem aplica a largura
+   * guardada; o custo é um quadro com a barra fechada, que a transição esconde.
+   */
+  const [railWidth, setRailWidth] = useState(RAIL_MIN);
+  const [dragging, setDragging] = useState(false);
+  const railRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    try {
+      const salvo = window.localStorage.getItem(RAIL_STORAGE_KEY);
+      if (salvo) setRailWidth(clampRail(Number(salvo) || RAIL_MIN));
+    } catch {
+      // Navegador com armazenamento bloqueado: a barra abre no padrão e o
+      // arrasto continua funcionando nesta sessão. Não é motivo para quebrar.
+    }
+  }, []);
+
+  const persistirLargura = useCallback((largura: number) => {
+    try {
+      window.localStorage.setItem(RAIL_STORAGE_KEY, String(largura));
+    } catch {
+      /* idem */
+    }
+  }, []);
+
+  /**
+   * O arrasto vive em `window`, não na alça.
+   *
+   * Quem arrasta rápido tira o ponteiro de uma alça de 8px muito antes de soltar
+   * o botão; ouvindo só na alça, a barra congelaria no meio do movimento e
+   * ficaria presa no modo de arrasto. `setPointerCapture` não serve aqui porque
+   * o alvo é reconstruído a cada render de largura.
+   */
+  useEffect(() => {
+    if (!dragging) return;
+
+    const aoMover = (event: PointerEvent) => {
+      const inicio = railRef.current?.getBoundingClientRect().left ?? 0;
+      setRailWidth(clampRail(event.clientX - inicio));
+    };
+    const aoSoltar = () => {
+      setDragging(false);
+      setRailWidth((atual) => {
+        // Solta perto do mínimo? Fecha de vez. Uma barra parada em 71px é uma
+        // barra que ninguém quis — é o arrasto que não chegou.
+        const final = atual < RAIL_LABEL_FROM - 24 ? RAIL_MIN : atual;
+        persistirLargura(final);
+        return final;
+      });
+    };
+
+    window.addEventListener('pointermove', aoMover);
+    window.addEventListener('pointerup', aoSoltar);
+    window.addEventListener('pointercancel', aoSoltar);
+    // Sem isto, arrastar seleciona o texto dos itens de menu no caminho.
+    const cursorAnterior = document.body.style.cursor;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    return () => {
+      window.removeEventListener('pointermove', aoMover);
+      window.removeEventListener('pointerup', aoSoltar);
+      window.removeEventListener('pointercancel', aoSoltar);
+      document.body.style.cursor = cursorAnterior;
+      document.body.style.userSelect = '';
+    };
+  }, [dragging, persistirLargura]);
+
+  const expanded = railWidth >= RAIL_LABEL_FROM;
+
+  /** Abre e fecha em um passo — o atalho de quem não quer arrastar. */
+  const alternarLargura = useCallback(() => {
+    setRailWidth((atual) => {
+      const destino = atual >= RAIL_LABEL_FROM ? RAIL_MIN : 200;
+      persistirLargura(destino);
+      return destino;
+    });
+  }, [persistirLargura]);
+
   useEffect(() => setDrawerOpen(false), [pathname]);
 
   useEffect(() => {
@@ -82,19 +189,33 @@ export function NavigationRail({
 
   return (
     <>
-      {/* ---------- Desktop: rail vertical ---------- */}
+      {/* ---------- Desktop: rail vertical, de largura arrastável ---------- */}
       <nav
+        ref={railRef}
         aria-label="Navegação principal"
-        className="hidden w-16 shrink-0 flex-col items-center justify-between border-r border-line bg-surface py-3.5 shadow-xs md:flex"
+        style={{ width: railWidth }}
+        className={cn(
+          'relative hidden shrink-0 flex-col justify-between border-r border-line bg-surface py-3.5 shadow-xs md:flex',
+          expanded ? 'items-stretch px-2.5' : 'items-center',
+          // Sem transição enquanto o ponteiro manda: a largura ficaria sempre um
+          // quadro atrás do cursor, e o arrasto pareceria travado.
+          dragging ? '' : 'transition-[width] duration-150',
+        )}
       >
-        <div className="flex w-full flex-col items-center gap-2">
+        <div
+          className={cn('flex w-full flex-col gap-2', expanded ? 'items-stretch' : 'items-center')}
+        >
           {/* Logo Solint */}
           <Link
             href="/dashboard"
             aria-label="Solint CRM"
-            className="mb-2 flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 font-display text-base font-bold text-white shadow-md shadow-blue-500/25 transition-transform hover:scale-105 active:scale-95"
+            className={cn(
+              'mb-2 flex h-10 items-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 font-display font-bold text-white shadow-md shadow-blue-500/25 transition-transform hover:scale-[1.03] active:scale-95',
+              expanded ? 'gap-2.5 px-3' : 'size-10 justify-center',
+            )}
           >
-            S
+            <span className="text-base">S</span>
+            {expanded ? <span className="truncate text-sm tracking-tight">Solint CRM</span> : null}
           </Link>
 
           {/* Itens de Navegação */}
@@ -113,6 +234,8 @@ export function NavigationRail({
                   canManageInboxes={canManageInboxes}
                   roleName={roleName}
                   active={active}
+                  expanded={expanded}
+                  railWidth={railWidth}
                 />
               );
             }
@@ -121,34 +244,113 @@ export function NavigationRail({
               <Link
                 key={item.id}
                 href={item.href}
-                title={item.label}
+                // O `title` só faz falta enquanto o nome não está na tela.
+                {...(expanded ? {} : { title: item.label })}
                 aria-label={item.label}
                 aria-current={active ? 'page' : undefined}
                 className={cn(
-                  'group relative flex size-10 items-center justify-center rounded-xl transition-all duration-150',
+                  'group relative flex items-center rounded-xl transition-all duration-150',
+                  expanded ? 'h-10 w-full gap-3 px-2.5' : 'size-10 justify-center',
                   active
-                    ? 'bg-brand/12 font-semibold text-brand border border-brand/25 shadow-xs'
-                    : 'text-muted hover:bg-surface-2 hover:text-ink border border-transparent',
+                    ? 'border border-brand/25 bg-brand/12 font-semibold text-brand shadow-xs'
+                    : 'border border-transparent text-muted hover:bg-surface-2 hover:text-ink',
                 )}
               >
-                <Icon className="size-[19px] transition-transform group-hover:scale-110" />
+                <Icon className="size-[19px] shrink-0 transition-transform group-hover:scale-110" />
+                {expanded ? (
+                  <span className="truncate text-xs font-semibold">{item.label}</span>
+                ) : null}
               </Link>
             );
           })}
         </div>
 
         {/* Rodapé da Barra Lateral */}
-        <div className="flex flex-col items-center gap-2.5">
-          <ThemeToggle />
-          <LogoutButton />
+        <div
+          className={cn(
+            'flex w-full flex-col gap-2.5',
+            expanded ? 'items-stretch' : 'items-center',
+          )}
+        >
+          <div
+            className={cn(
+              'flex gap-2',
+              expanded ? 'items-center' : 'flex-col items-center gap-2.5',
+            )}
+          >
+            <ThemeToggle />
+            <LogoutButton />
+          </div>
+
           <Link
             href="/perfil"
             aria-label={`Perfil de ${userName}`}
-            title={userName}
-            className="rounded-full ring-2 ring-transparent transition-all hover:ring-brand/40"
+            {...(expanded ? {} : { title: userName })}
+            className={cn(
+              'flex items-center transition-all',
+              expanded
+                ? 'gap-2.5 rounded-xl px-1.5 py-1.5 hover:bg-surface-2'
+                : 'justify-center rounded-full ring-2 ring-transparent hover:ring-brand/40',
+            )}
           >
             <Avatar name={userName} tone={userTone} size="sm" availability={availability} />
+            {expanded ? (
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-xs font-semibold text-ink">{userName}</span>
+                {roleName ? (
+                  <span className="block truncate text-[10px] text-muted">{roleName}</span>
+                ) : null}
+              </span>
+            ) : null}
           </Link>
+        </div>
+
+        {/*
+          Alça de redimensionamento.
+
+          É um `separator` com `aria-valuenow` de propósito: quem navega pelo
+          teclado também precisa conseguir abrir a barra, e as setas fazem o que
+          o arrasto faz com o ponteiro. O duplo clique alterna entre aberta e
+          fechada — é o gesto que a maioria tenta primeiro.
+        */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Largura da barra de navegação"
+          aria-valuemin={RAIL_MIN}
+          aria-valuemax={RAIL_MAX}
+          aria-valuenow={railWidth}
+          tabIndex={0}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            setDragging(true);
+          }}
+          onDoubleClick={alternarLargura}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+              event.preventDefault();
+              setRailWidth((atual) => {
+                const destino = clampRail(atual + (event.key === 'ArrowRight' ? 24 : -24));
+                persistirLargura(destino);
+                return destino;
+              });
+            }
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              alternarLargura();
+            }
+          }}
+          className="group absolute inset-y-0 -right-1 z-20 hidden w-2 cursor-col-resize items-center justify-center focus-visible:outline-none md:flex"
+        >
+          <span
+            aria-hidden
+            className={cn(
+              'h-full w-0.5 rounded-full transition-colors',
+              dragging
+                ? 'bg-brand'
+                : 'bg-transparent group-hover:bg-brand/40 group-focus-visible:bg-brand',
+            )}
+          />
         </div>
       </nav>
 
