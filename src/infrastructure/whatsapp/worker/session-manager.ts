@@ -23,6 +23,11 @@ export class WhatsAppSessionManager {
     this.workerId = `worker-${process.pid}-${randomBytes(4).toString('hex')}`;
   }
 
+  /** Quantas sessões este processo mantém — memória por conexão só faz sentido dividida por isto. */
+  get size(): number {
+    return this.sessions.size;
+  }
+
   async init(): Promise<void> {
     console.log(`[WhatsAppSessionManager] Inicializado com Worker ID: ${this.workerId}`);
     this.startHeartbeat();

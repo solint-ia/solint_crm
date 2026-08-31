@@ -124,12 +124,38 @@ async function main() {
         'Content-Type': 'application/json',
         'Cache-Control': 'no-store',
       });
+      /**
+       * Memória junto com o pulso.
+       *
+       * Sem isto, "quantas conexões cabem nesta instância?" só tinha resposta
+       * por estimativa — e estimativa de memória de processo Node erra por
+       * múltiplos, porque o que domina não é o que o código guarda, é o que o
+       * V8 reserva. Medir custa uma chamada e responde de uma vez.
+       *
+       * `rss` é o número que a hospedagem cobra e limita: memória realmente
+       * residente, incluindo o binário, o heap e o que estiver fora dele.
+       * `heapUsed` mostra quanto do heap está de fato ocupado — a diferença
+       * entre os dois é o que não adianta tentar reduzir mexendo em cache.
+       * `arrayBuffers` é onde as mídias aparecem: um download materializa um
+       * Buffer que não vive no heap do V8, e é ele que dá os picos.
+       */
+      const mem = process.memoryUsage();
+      const mb = (bytes: number) => Math.round((bytes / 1024 / 1024) * 10) / 10;
+
       res.end(
         JSON.stringify({
           status: 'ok',
           service: 'solint-whatsapp-worker',
           workerId: sessionManager.workerId,
           uptimeSeconds: Math.floor(process.uptime()),
+          sessions: sessionManager.size,
+          memoryMB: {
+            rss: mb(mem.rss),
+            heapTotal: mb(mem.heapTotal),
+            heapUsed: mb(mem.heapUsed),
+            external: mb(mem.external),
+            arrayBuffers: mb(mem.arrayBuffers),
+          },
           timestamp: new Date().toISOString(),
         }),
       );
