@@ -39,6 +39,45 @@ const externalizeGeneratedPrisma = {
   },
 };
 
+/**
+ * Troca `channel-provider.ts` por um coto que recusa rodar, só nesta build.
+ *
+ * `auto-reply.ts` importa `channel-provider` de dentro de um `if
+ * (SOLINT_WORKER !== '1')` — no worker esse ramo nunca executa. Mas o import é
+ * dinâmico e estaticamente resolvível, e o esbuild empacota o alvo de todo
+ * `import()` que consegue enxergar: o corpo do módulo fica dentro de um
+ * wrapper preguiçoso, e os `import` de topo dele — aqui, `import 'server-only'`
+ * — não. Esses são içados para o topo do arquivo final como imports reais de
+ * ESM, executados no carregamento do bundle, e `server-only` lança sempre que
+ * é importado fora do webpack do Next. Era assim que `node .worker/worker.mjs`
+ * morria no boot, antes de tocar em WhatsApp nenhum.
+ *
+ * `channel-provider.ts` decide entre os dois motores de envio do **servidor
+ * Next** — o worker tem o próprio caminho (`command-consumer.ts` +
+ * `session-manager.ts`) e não precisa dele em nenhum cenário real. O coto
+ * mantém essa garantia visível: se algum import novo o alcançar de verdade, ele
+ * falha com uma mensagem que aponta a causa, em vez de um `getWhatsAppChannel`
+ * fantasma que parece funcionar e nunca é chamado.
+ */
+const stubChannelProvider = {
+  name: 'stub-channel-provider-in-worker',
+  setup(pluginBuild) {
+    pluginBuild.onResolve({ filter: /channel-provider$/ }, () => ({
+      path: 'solint-worker-stub:channel-provider',
+      namespace: 'solint-worker-stub',
+    }));
+    pluginBuild.onLoad({ filter: /.*/, namespace: 'solint-worker-stub' }, () => ({
+      contents: `export const getWhatsAppChannel = () => {
+        throw new Error(
+          'getWhatsAppChannel() nao existe no worker — este import deveria ser inalcancavel ' +
+          'sob SOLINT_WORKER=1. Ver o plugin stub-channel-provider-in-worker em build-worker.mjs.',
+        );
+      };`,
+      loader: 'js',
+    }));
+  },
+};
+
 await build({
   entryPoints: ['src/worker.mts'],
   outfile: '.worker/worker.mjs',
@@ -49,7 +88,7 @@ await build({
   // Dependências continuam externas: empacotá-las não traria ganho e quebraria
   // os pacotes que carregam binário nativo (Prisma, pg, Baileys).
   packages: 'external',
-  plugins: [externalizeGeneratedPrisma],
+  plugins: [externalizeGeneratedPrisma, stubChannelProvider],
   sourcemap: 'inline',
   logLevel: 'warning',
 });
