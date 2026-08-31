@@ -237,14 +237,14 @@ export class WhatsAppSession {
     timer: NodeJS.Timeout | null;
     idle: NodeJS.Timeout | null;
   } = {
-    active: false,
-    closing: false,
-    count: 0,
-    startedAt: 0,
-    touched: new Set(),
-    timer: null,
-    idle: null,
-  };
+      active: false,
+      closing: false,
+      count: 0,
+      startedAt: 0,
+      touched: new Set(),
+      timer: null,
+      idle: null,
+    };
 
   /**
    * O servidor já avisou que terminou de entregar a fila represada?
@@ -503,189 +503,189 @@ export class WhatsAppSession {
     this.socket.ev.on(
       'connection.update',
       this.guarded('connection.update', async (update) => {
-      const { connection, lastDisconnect, qr } = update;
+        const { connection, lastDisconnect, qr } = update;
 
-      if (qr) {
-        this.isInitializing = false;
-        // Zerar `qrAttempts` aqui tornava o teto de 8 inalcançável: cada QR
-        // recebido devolvia o orçamento inteiro, e o par QR→428→QR girava sem
-        // fim. O contador pertence ao ciclo de reconexão, não ao QR.
-        this.qrCycles += 1;
+        if (qr) {
+          this.isInitializing = false;
+          // Zerar `qrAttempts` aqui tornava o teto de 8 inalcançável: cada QR
+          // recebido devolvia o orçamento inteiro, e o par QR→428→QR girava sem
+          // fim. O contador pertence ao ciclo de reconexão, não ao QR.
+          this.qrCycles += 1;
 
-        if (this.qrCycles > MAX_QR_CYCLES) {
-          console.log(
-            `[WhatsAppSession ${this.inboxId}] ${MAX_QR_CYCLES} QR Codes emitidos sem leitura. ` +
-              'Encerrando a tentativa de pareamento.',
-          );
-          this.teardownSocket();
-          this.qrCycles = 0;
-          await this.updateStatus({
-            status: 'desconectado',
-            qr: undefined,
-            error: 'O QR expirou sem ser lido. Clique em conectar para gerar outro.',
-          });
-          return;
-        }
-
-        console.log(
-          `[WhatsAppSession ${this.inboxId}] QR Code recebido (${this.qrCycles}/${MAX_QR_CYCLES}).`,
-        );
-        await this.updateStatus({
-          status: 'aguardando_leitura',
-          qr,
-          error: undefined,
-        });
-      }
-
-      if (connection === 'close') {
-        this.isInitializing = false;
-        this.isAuthenticated = false;
-
-        const statusCode = extractStatusCode(lastDisconnect?.error);
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-
-        console.log(`[WhatsAppSession ${this.inboxId}] Conexão fechada. Código: ${statusCode}`);
-
-        if (statusCode === DisconnectReason.restartRequired || statusCode === 515) {
-          console.log(`[WhatsAppSession ${this.inboxId}] Reinício pós-pareamento (515)...`);
-          setTimeout(() => void this.start(), 500);
-          return;
-        }
-
-        if (statusCode === DisconnectReason.connectionReplaced || statusCode === 440) {
-          await this.updateStatus({
-            status: 'desconectado',
-            error: 'Conexão substituída por outra sessão ativa.',
-            qr: undefined,
-          });
-          return;
-        }
-
-        if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
-          await prisma.whatsAppKey.deleteMany({ where: { inboxId: this.inboxId } });
-          await prisma.whatsAppConnection.updateMany({
-            where: { inboxId: this.inboxId },
-            data: { credsCipher: null, credsIv: null, credsTag: null, status: 'desconectado' },
-          });
-          await this.updateStatus({
-            status: 'desconectado',
-            error: 'Desconectado no aparelho do WhatsApp.',
-            qr: undefined,
-          });
-          return;
-        }
-
-        if (statusCode === DisconnectReason.badSession || statusCode === 500) {
-          await prisma.whatsAppKey.deleteMany({ where: { inboxId: this.inboxId } });
-        }
-
-        // Handshake transitório inicial do WebSocket WhatsApp para sessões não pareadas:
-        // O servidor WhatsApp rotineiramente encerra o primeiro socket (código 428/515)
-        // antes de despachar o QR. Reconectamos automaticamente para receber o código.
-        if (!this.isPaired && !this.isAuthenticated) {
-          if ((statusCode === 428 || statusCode === 515 || statusCode === DisconnectReason.restartRequired) && this.qrAttempts < 8) {
-            this.qrAttempts += 1;
+          if (this.qrCycles > MAX_QR_CYCLES) {
             console.log(
-              `[WhatsAppSession ${this.inboxId}] Handshake transitório (${statusCode}). Tentativa ${this.qrAttempts}/8 gerando QR...`,
+              `[WhatsAppSession ${this.inboxId}] ${MAX_QR_CYCLES} QR Codes emitidos sem leitura. ` +
+              'Encerrando a tentativa de pareamento.',
             );
-            await this.updateStatus({ status: 'gerando_qr' });
-            this.reconnectTimer = setTimeout(() => void this.start(), 1500);
+            this.teardownSocket();
+            this.qrCycles = 0;
+            await this.updateStatus({
+              status: 'desconectado',
+              qr: undefined,
+              error: 'O QR expirou sem ser lido. Clique em conectar para gerar outro.',
+            });
             return;
           }
 
-          // Os dois orçamentos voltam juntos: a mensagem acima manda clicar em
-          // conectar, e a tentativa seguinte precisa começar inteira.
+          console.log(
+            `[WhatsAppSession ${this.inboxId}] QR Code recebido (${this.qrCycles}/${MAX_QR_CYCLES}).`,
+          );
+          await this.updateStatus({
+            status: 'aguardando_leitura',
+            qr,
+            error: undefined,
+          });
+        }
+
+        if (connection === 'close') {
+          this.isInitializing = false;
+          this.isAuthenticated = false;
+
+          const statusCode = extractStatusCode(lastDisconnect?.error);
+          const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+
+          console.log(`[WhatsAppSession ${this.inboxId}] Conexão fechada. Código: ${statusCode}`);
+
+          if (statusCode === DisconnectReason.restartRequired || statusCode === 515) {
+            console.log(`[WhatsAppSession ${this.inboxId}] Reinício pós-pareamento (515)...`);
+            setTimeout(() => void this.start(), 500);
+            return;
+          }
+
+          if (statusCode === DisconnectReason.connectionReplaced || statusCode === 440) {
+            await this.updateStatus({
+              status: 'desconectado',
+              error: 'Conexão substituída por outra sessão ativa.',
+              qr: undefined,
+            });
+            return;
+          }
+
+          if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
+            await prisma.whatsAppKey.deleteMany({ where: { inboxId: this.inboxId } });
+            await prisma.whatsAppConnection.updateMany({
+              where: { inboxId: this.inboxId },
+              data: { credsCipher: null, credsIv: null, credsTag: null, status: 'desconectado' },
+            });
+            await this.updateStatus({
+              status: 'desconectado',
+              error: 'Desconectado no aparelho do WhatsApp.',
+              qr: undefined,
+            });
+            return;
+          }
+
+          if (statusCode === DisconnectReason.badSession || statusCode === 500) {
+            await prisma.whatsAppKey.deleteMany({ where: { inboxId: this.inboxId } });
+          }
+
+          // Handshake transitório inicial do WebSocket WhatsApp para sessões não pareadas:
+          // O servidor WhatsApp rotineiramente encerra o primeiro socket (código 428/515)
+          // antes de despachar o QR. Reconectamos automaticamente para receber o código.
+          if (!this.isPaired && !this.isAuthenticated) {
+            if ((statusCode === 428 || statusCode === 515 || statusCode === DisconnectReason.restartRequired) && this.qrAttempts < 8) {
+              this.qrAttempts += 1;
+              console.log(
+                `[WhatsAppSession ${this.inboxId}] Handshake transitório (${statusCode}). Tentativa ${this.qrAttempts}/8 gerando QR...`,
+              );
+              await this.updateStatus({ status: 'gerando_qr' });
+              this.reconnectTimer = setTimeout(() => void this.start(), 1500);
+              return;
+            }
+
+            // Os dois orçamentos voltam juntos: a mensagem acima manda clicar em
+            // conectar, e a tentativa seguinte precisa começar inteira.
+            this.qrAttempts = 0;
+            this.qrCycles = 0;
+            await this.updateStatus({
+              status: 'desconectado',
+              qr: undefined,
+              error: 'O QR expirou sem ser lido. Clique em conectar para gerar outro.',
+            });
+            return;
+          }
+
+          if (shouldReconnect) {
+            this.retryCount += 1;
+            const delays = [3000, 8000, 20000, 60000];
+            const delay = (delays[Math.min(this.retryCount - 1, delays.length - 1)] ?? 60000) + Math.random() * 1000;
+
+            await this.updateStatus({
+              status: 'conectando',
+              error: `Conexão perdida. Reconectando em ${Math.round(delay / 1000)}s...`,
+            });
+
+            this.reconnectTimer = setTimeout(() => void this.start(), delay);
+          } else {
+            await this.updateStatus({ status: 'desconectado', qr: undefined });
+          }
+        }
+
+        // O WhatsApp avisa quando terminou de entregar o que reteve enquanto
+        // estivemos fora. É o sinal para anunciar de uma vez o que foi gravado
+        // calado durante a drenagem.
+        if (update.receivedPendingNotifications) {
+          this.pendingNotificationsDone = true;
+          void this.finishDrain('fim da fila represada');
+        }
+
+        if (connection === 'open') {
+          this.isInitializing = false;
+          this.isAuthenticated = true;
           this.qrAttempts = 0;
           this.qrCycles = 0;
+          this.retryCount = 0;
+          this.beginDrain();
+
+          const userJid = this.socket?.user?.id ? jidNormalizedUser(this.socket.user.id) : undefined;
+
+          const ownerName = this.socket?.user?.name ?? (userJid ? PhoneNumber.format(userOf(userJid)) : 'WhatsApp');
+
           await this.updateStatus({
-            status: 'desconectado',
+            status: 'conectado',
             qr: undefined,
-            error: 'O QR expirou sem ser lido. Clique em conectar para gerar outro.',
-          });
-          return;
-        }
-
-        if (shouldReconnect) {
-          this.retryCount += 1;
-          const delays = [3000, 8000, 20000, 60000];
-          const delay = (delays[Math.min(this.retryCount - 1, delays.length - 1)] ?? 60000) + Math.random() * 1000;
-
-          await this.updateStatus({
-            status: 'conectando',
-            error: `Conexão perdida. Reconectando em ${Math.round(delay / 1000)}s...`,
+            error: undefined,
+            name: ownerName,
+            phone: userJid,
+            connectedAt: new Date().toISOString(),
+            owner: {
+              userId: 'worker',
+              userName: ownerName,
+              accountId: this.accountId,
+            },
           });
 
-          this.reconnectTimer = setTimeout(() => void this.start(), delay);
-        } else {
-          await this.updateStatus({ status: 'desconectado', qr: undefined });
+          console.log(`[WhatsAppSession ${this.inboxId}] Conectado com sucesso como ${ownerName}`);
+          /**
+           * Reafirma "offline" depois que a poeira da conexão baixa.
+           *
+           * `markOnlineOnConnect: false` já manda um `unavailable` ao abrir, mas
+           * ele não é necessariamente a última palavra. O Baileys tem um caminho
+           * próprio, em `Socket/socket.js`, que dispara sozinho quando o
+           * `pushName` chega ou muda:
+           *
+           * ```js
+           * ev.on('creds.update', update => {
+           *   if (creds.me?.name !== update.me?.name) {
+           *     sendNode({ tag: 'presence', attrs: { name } })
+           * ```
+           *
+           * É um nó de presença **sem `type`** — e presença sem tipo é presença
+           * disponível. Como o nome costuma chegar logo depois do `open`, ele cai
+           * atrás do nosso `unavailable` e desfaz o efeito sem passar por
+           * `sendPresenceUpdate`, ou seja, sem sequer atualizar
+           * `sendActiveReceipts` do lado do Baileys.
+           *
+           * Repetir aqui custa um nó e fecha essa janela. É idempotente: se nada
+           * tiver mexido na presença, o servidor recebe a mesma informação duas
+           * vezes.
+           */
+          void this.socket?.sendPresenceUpdate('unavailable').catch(() => {
+            // Presença é otimização de notificação, não requisito de operação:
+            // falhar aqui não pode derrubar uma conexão recém-aberta.
+          });
+          void this.subscribeRecentPresences();
         }
-      }
-
-      // O WhatsApp avisa quando terminou de entregar o que reteve enquanto
-      // estivemos fora. É o sinal para anunciar de uma vez o que foi gravado
-      // calado durante a drenagem.
-      if (update.receivedPendingNotifications) {
-        this.pendingNotificationsDone = true;
-        void this.finishDrain('fim da fila represada');
-      }
-
-      if (connection === 'open') {
-        this.isInitializing = false;
-        this.isAuthenticated = true;
-        this.qrAttempts = 0;
-        this.qrCycles = 0;
-        this.retryCount = 0;
-        this.beginDrain();
-
-        const userJid = this.socket?.user?.id ? jidNormalizedUser(this.socket.user.id) : undefined;
-
-        const ownerName = this.socket?.user?.name ?? (userJid ? PhoneNumber.format(userOf(userJid)) : 'WhatsApp');
-
-        await this.updateStatus({
-          status: 'conectado',
-          qr: undefined,
-          error: undefined,
-          name: ownerName,
-          phone: userJid,
-          connectedAt: new Date().toISOString(),
-          owner: {
-            userId: 'worker',
-            userName: ownerName,
-            accountId: this.accountId,
-          },
-        });
-
-        console.log(`[WhatsAppSession ${this.inboxId}] Conectado com sucesso como ${ownerName}`);
-        /**
-         * Reafirma "offline" depois que a poeira da conexão baixa.
-         *
-         * `markOnlineOnConnect: false` já manda um `unavailable` ao abrir, mas
-         * ele não é necessariamente a última palavra. O Baileys tem um caminho
-         * próprio, em `Socket/socket.js`, que dispara sozinho quando o
-         * `pushName` chega ou muda:
-         *
-         * ```js
-         * ev.on('creds.update', update => {
-         *   if (creds.me?.name !== update.me?.name) {
-         *     sendNode({ tag: 'presence', attrs: { name } })
-         * ```
-         *
-         * É um nó de presença **sem `type`** — e presença sem tipo é presença
-         * disponível. Como o nome costuma chegar logo depois do `open`, ele cai
-         * atrás do nosso `unavailable` e desfaz o efeito sem passar por
-         * `sendPresenceUpdate`, ou seja, sem sequer atualizar
-         * `sendActiveReceipts` do lado do Baileys.
-         *
-         * Repetir aqui custa um nó e fecha essa janela. É idempotente: se nada
-         * tiver mexido na presença, o servidor recebe a mesma informação duas
-         * vezes.
-         */
-        void this.socket?.sendPresenceUpdate('unavailable').catch(() => {
-          // Presença é otimização de notificação, não requisito de operação:
-          // falhar aqui não pode derrubar uma conexão recém-aberta.
-        });
-        void this.subscribeRecentPresences();
-      }
       }),
     );
 
@@ -722,7 +722,7 @@ export class WhatsAppSession {
             } catch (error) {
               console.error(
                 `[WhatsAppSession ${this.inboxId}] Falha ao processar a mensagem ` +
-                  `${msg.key.id ?? '(sem id)'} de ${msg.key.remoteJid ?? '(sem jid)'}:`,
+                `${msg.key.id ?? '(sem id)'} de ${msg.key.remoteJid ?? '(sem jid)'}:`,
                 error,
               );
             } finally {
@@ -1444,7 +1444,7 @@ export class WhatsAppSession {
     if (count > 0) {
       console.log(
         `[WhatsAppSession ${this.inboxId}] Fila represada drenada: ${count} mensagem(ns) em ` +
-          `${touched.size} conversa(s), ${Date.now() - startedAt}ms (${motivo}).`,
+        `${touched.size} conversa(s), ${Date.now() - startedAt}ms (${motivo}).`,
       );
     } else {
       waLog.debug(`[sessão ${this.inboxId}] Nenhuma mensagem represada (${motivo}).`);
@@ -1783,11 +1783,11 @@ export class WhatsAppSession {
       const response = await fetch(remoteUrl);
       const ownUrl = response.ok
         ? await mediaStore.save(
-            mediaId,
-            Buffer.from(await response.arrayBuffer()),
-            { mimeType: response.headers.get('content-type') ?? 'image/jpeg' },
-            { accountId: this.accountId, kind: 'avatar' },
-          )
+          mediaId,
+          Buffer.from(await response.arrayBuffer()),
+          { mimeType: response.headers.get('content-type') ?? 'image/jpeg' },
+          { accountId: this.accountId, kind: 'avatar' },
+        )
         : undefined;
 
       // Pela mesma razao, a falha da copia nao cai para `remoteUrl`: seria
@@ -1950,11 +1950,11 @@ export class WhatsAppSession {
           : media.kind === 'audio'
             ? { audio: media.data, mimetype: media.mimeType, ptt: media.voice === true }
             : {
-                document: media.data,
-                mimetype: media.mimeType,
-                fileName: media.fileName ?? 'arquivo',
-                ...(caption ? { caption } : {}),
-              };
+              document: media.data,
+              mimetype: media.mimeType,
+              fileName: media.fileName ?? 'arquivo',
+              ...(caption ? { caption } : {}),
+            };
 
     const medir = waLog.timer(`[sessão ${this.inboxId}] socket.sendMessage (anexo)`);
     const result = await this.socket.sendMessage(targetJid, payload);

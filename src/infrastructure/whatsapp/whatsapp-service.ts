@@ -138,7 +138,7 @@ export class WhatsAppService {
         if (saved.length > 1) {
           console.warn(
             `[WhatsAppService] ${saved.length} conexoes salvas e este servico atende uma so. ` +
-              'Restaurando a mais recente; para atender todas, use o worker.',
+            'Restaurando a mais recente; para atender todas, use o worker.',
           );
         }
 
@@ -151,10 +151,10 @@ export class WhatsAppService {
             this.owner?.accountId === accountId
               ? this.owner
               : {
-                  userId: conn.pairedByUserId ?? 'system',
-                  userName: conn.profileName ?? 'Administrador',
-                  accountId,
-                };
+                userId: conn.pairedByUserId ?? 'system',
+                userName: conn.profileName ?? 'Administrador',
+                accountId,
+              };
           await this.startSession({ owner: this.owner, resetAttempts: false });
         }
       } catch (err) {
@@ -1423,11 +1423,11 @@ export class WhatsAppService {
           : media.kind === 'audio'
             ? { audio: media.data, mimetype: media.mimeType, ptt: media.voice === true }
             : {
-                document: media.data,
-                mimetype: media.mimeType,
-                fileName: media.fileName ?? 'arquivo',
-                ...(caption ? { caption } : {}),
-              };
+              document: media.data,
+              mimetype: media.mimeType,
+              fileName: media.fileName ?? 'arquivo',
+              ...(caption ? { caption } : {}),
+            };
 
     try {
       const sent = await socket.sendMessage(jid, payload);

@@ -30,55 +30,55 @@ export interface SendTemplateInput {
  */
 export const createSendTemplate =
   (repository: ConversationRepository) =>
-  async ({
-    session,
-    conversationId,
-    template,
-    values,
-  }: SendTemplateInput): Promise<Result<Message>> => {
-    if (!can(session, 'conversas:responder')) {
-      return fail(new DomainError('Sem permissão para responder conversas.', 'FORBIDDEN'));
-    }
-    if (template.approval !== 'aprovado') {
-      return fail(
-        new DomainError(
-          `O template "${template.name}" ainda não foi aprovado e não pode ser enviado.`,
-          'TEMPLATE_NOT_APPROVED',
-        ),
-      );
-    }
-
-    const missing = template.variables.findIndex((_, index) => !values[index]?.trim());
-    if (missing >= 0) {
-      return fail(
-        new DomainError(
-          `Preencha a variável "${template.variables[missing]}" antes de enviar.`,
-          'TEMPLATE_VARIABLE_MISSING',
-        ),
-      );
-    }
-
-    const conversation = await repository.findById(session.account.id, conversationId, session.inboxAccess);
-    if (!conversation) return fail(new DomainError('Conversa não encontrada.', 'NOT_FOUND'));
-
-    const message: Message = {
-      id: newId(),
+    async ({
+      session,
       conversationId,
-      author: 'agent',
-      authorName: session.user.name,
-      origin: 'crm',
-      content: {
-        type: 'template',
-        templateName: template.name,
-        text: renderTemplate(template.body, values),
-      },
-      time: nowLabel(),
-      isPrivate: false,
-      deliveryStatus: 'enviando',
-    };
+      template,
+      values,
+    }: SendTemplateInput): Promise<Result<Message>> => {
+      if (!can(session, 'conversas:responder')) {
+        return fail(new DomainError('Sem permissão para responder conversas.', 'FORBIDDEN'));
+      }
+      if (template.approval !== 'aprovado') {
+        return fail(
+          new DomainError(
+            `O template "${template.name}" ainda não foi aprovado e não pode ser enviado.`,
+            'TEMPLATE_NOT_APPROVED',
+          ),
+        );
+      }
 
-    return ok(await repository.appendRichMessage(session.account.id, conversationId, message));
-  };
+      const missing = template.variables.findIndex((_, index) => !values[index]?.trim());
+      if (missing >= 0) {
+        return fail(
+          new DomainError(
+            `Preencha a variável "${template.variables[missing]}" antes de enviar.`,
+            'TEMPLATE_VARIABLE_MISSING',
+          ),
+        );
+      }
+
+      const conversation = await repository.findById(session.account.id, conversationId, session.inboxAccess);
+      if (!conversation) return fail(new DomainError('Conversa não encontrada.', 'NOT_FOUND'));
+
+      const message: Message = {
+        id: newId(),
+        conversationId,
+        author: 'agent',
+        authorName: session.user.name,
+        origin: 'crm',
+        content: {
+          type: 'template',
+          templateName: template.name,
+          text: renderTemplate(template.body, values),
+        },
+        time: nowLabel(),
+        isPrivate: false,
+        deliveryStatus: 'enviando',
+      };
+
+      return ok(await repository.appendRichMessage(session.account.id, conversationId, message));
+    };
 
 export interface SendMediaInput {
   readonly session: Session;
@@ -96,30 +96,30 @@ export interface SendMediaInput {
  */
 export const createSendMedia =
   (repository: ConversationRepository) =>
-  async ({
-    session,
-    conversationId,
-    content,
-    isPrivate,
-  }: SendMediaInput): Promise<Result<Message>> => {
-    if (!can(session, 'conversas:responder')) {
-      return fail(new DomainError('Sem permissão para responder conversas.', 'FORBIDDEN'));
-    }
-
-    const conversation = await repository.findById(session.account.id, conversationId, session.inboxAccess);
-    if (!conversation) return fail(new DomainError('Conversa não encontrada.', 'NOT_FOUND'));
-
-    const message: Message = {
-      id: newId(),
+    async ({
+      session,
       conversationId,
-      author: 'agent',
-      authorName: session.user.name,
-      origin: 'crm',
       content,
-      time: nowLabel(),
       isPrivate,
-      deliveryStatus: isPrivate ? undefined : 'enviando',
-    };
+    }: SendMediaInput): Promise<Result<Message>> => {
+      if (!can(session, 'conversas:responder')) {
+        return fail(new DomainError('Sem permissão para responder conversas.', 'FORBIDDEN'));
+      }
 
-    return ok(await repository.appendRichMessage(session.account.id, conversationId, message));
-  };
+      const conversation = await repository.findById(session.account.id, conversationId, session.inboxAccess);
+      if (!conversation) return fail(new DomainError('Conversa não encontrada.', 'NOT_FOUND'));
+
+      const message: Message = {
+        id: newId(),
+        conversationId,
+        author: 'agent',
+        authorName: session.user.name,
+        origin: 'crm',
+        content,
+        time: nowLabel(),
+        isPrivate,
+        deliveryStatus: isPrivate ? undefined : 'enviando',
+      };
+
+      return ok(await repository.appendRichMessage(session.account.id, conversationId, message));
+    };

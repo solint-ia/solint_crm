@@ -146,10 +146,10 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
          */
         const quotedMessage = parsed.data.replyToId
           ? await container.conversations.findMessage(
-              session.account.id,
-              conversation.id,
-              parsed.data.replyToId,
-            )
+            session.account.id,
+            conversation.id,
+            parsed.data.replyToId,
+          )
           : null;
 
         const sent = await channel.sendText(
@@ -163,10 +163,10 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
           text,
           quotedMessage?.externalId && !quotedMessage.isPrivate
             ? {
-                externalId: quotedMessage.externalId,
-                fromMe: quotedMessage.author !== 'contact',
-                text: previewOfMessage(quotedMessage),
-              }
+              externalId: quotedMessage.externalId,
+              fromMe: quotedMessage.author !== 'contact',
+              text: previewOfMessage(quotedMessage),
+            }
             : undefined,
         );
         const applied = await applyDispatch(session.account.id, conversation.id, message, sent);
@@ -1044,18 +1044,18 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
         ? { type: 'video', url, mimeType, ...(caption ? { caption } : {}) }
         : kind === 'audio'
           ? {
-              type: 'audio',
-              duration: secondsLabel(durationSeconds),
-              url,
-              mimeType,
-              ...(voice ? { voice: true } : {}),
-            }
+            type: 'audio',
+            duration: secondsLabel(durationSeconds),
+            url,
+            mimeType,
+            ...(voice ? { voice: true } : {}),
+          }
           : {
-              type: 'document',
-              fileName: file.name || 'arquivo',
-              size: humanSize(file.size),
-              url,
-            };
+            type: 'document',
+            fileName: file.name || 'arquivo',
+            size: humanSize(file.size),
+            url,
+          };
 
   const result = await container.useCases.sendMedia({
     session,
