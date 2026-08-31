@@ -6,7 +6,6 @@ import { isGroupContact } from '@/core/domain/contact';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { TONE_DOT_CLASSES } from '@/components/ui/tone';
-import { ChannelDot } from '@/components/domain/channel-badge';
 import { PRIORITY_LABEL, PRIORITY_TONE } from '@/components/domain/presentation-maps';
 import { LabelChips } from '@/components/domain/label-chip';
 import { cn } from '@/lib/cn';
@@ -47,18 +46,23 @@ export function ConversationListItem({
             : 'hover:bg-surface-2/60 active:bg-surface-2',
         )}
       >
-        {/* Avatar com status */}
-        <div className="relative shrink-0">
+        {/* Avatar.
+            Havia aqui um `ChannelDot` no canto inferior direito. Ele saiu por
+            duas razões. A primeira é que não dizia nada: `CHANNELS` tem um
+            único canal, então o ponto era verde e idêntico em toda conversa da
+            lista — informação que não varia não é informação. A segunda é que
+            um ponto verde no canto do avatar é, por convenção, indicador de
+            presença: quem olhava lia "este contato está online", que é uma
+            coisa que o CRM não sabe e nunca afirmou.
+            Quando existir um segundo canal, o lugar de distingui-los é este —
+            e aí o ponto volta com significado. */}
+        <div className="shrink-0">
           <Avatar
             name={conversation.contact.name}
             tone={conversation.contact.avatarTone}
             src={conversation.contact.avatarUrl}
             size="md"
           />
-          {/* Ponto indicador de canal / online */}
-          <div className="absolute -bottom-0.5 -right-0.5 flex size-3.5 items-center justify-center rounded-full bg-surface ring-2 ring-surface">
-            <ChannelDot channel={conversation.channel} />
-          </div>
         </div>
 
         {/* Informações da conversa */}
