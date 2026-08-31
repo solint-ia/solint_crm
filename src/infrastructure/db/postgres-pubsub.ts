@@ -299,8 +299,20 @@ class PostgresPubSubManager {
        * chamadas: cabe no pool que já existe, inclusive no modo transação. O
        * pool do Prisma também resolve, de graça, o que motivava o pool
        * dedicado — duas publicações simultâneas não disputam uma conexão só.
+       *
+       * **`$executeRaw`, e não `$queryRaw`.** `pg_notify` devolve `void`, e o
+       * adaptador `pg` do Prisma não sabe desserializar essa coluna:
+       * `$queryRaw` disparava `Failed to deserialize column of type 'void'`
+       * em **toda** publicação. O efeito colateral acontecia mesmo assim — o
+       * Postgres executa a função e entrega a notificação antes de o cliente
+       * tentar ler o resultado —, então o tempo real continuava funcionando e
+       * o log se enchia de erros que não descreviam falha nenhuma. Pior tipo
+       * de erro: o que treina quem lê o log a ignorá-lo.
+       *
+       * `$executeRaw` não lê colunas, só conta linhas afetadas. Mesma consulta,
+       * mesmo efeito, sem o falso alarme.
        */
-      await prisma.$queryRaw`SELECT pg_notify(${channel}::text, ${safePayload}::text)`;
+      await prisma.$executeRaw`SELECT pg_notify(${channel}::text, ${safePayload}::text)`;
     } catch (err) {
       console.warn('[PostgresPubSub] Falha ao publicar evento no Postgres:', err);
     }

@@ -338,7 +338,10 @@ export class WhatsAppService {
 
         syncFullHistory: false,
         generateHighQualityLinkPreview: true,
-        markOnlineOnConnect: true,
+        // Mesma razão do motor worker (ver a nota extensa em `worker/session.ts`):
+        // declarar-se online o tempo todo faz o servidor do WhatsApp parar de
+        // notificar o celular, porque ele entende que já há alguém lendo aqui.
+        markOnlineOnConnect: false,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
         keepAliveIntervalMs: 25000,
@@ -507,7 +510,8 @@ export class WhatsAppService {
         if (avatarUrl) this.updateStatus({ avatarUrl });
       }
 
-      void sock.sendPresenceUpdate('available');
+      // Sem `sendPresenceUpdate('available')` aqui: ele anulava o
+      // `markOnlineOnConnect: false` logo acima e o celular voltava a ficar mudo.
       void this.subscribeRecentPresences();
     }
 

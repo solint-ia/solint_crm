@@ -382,7 +382,28 @@ export class WhatsAppSession {
         logger: this.logger,
         syncFullHistory: false,
         generateHighQualityLinkPreview: true,
-        markOnlineOnConnect: true,
+        /**
+         * O CRM é um aparelho vinculado, não a pessoa.
+         *
+         * Com `true`, o Baileys manda `presence: 'available'` assim que a
+         * conexão abre (ver `sendPresenceUpdate(markOnlineOnConnect ?
+         * 'available' : 'unavailable')` em `Socket/chats.js`). Para o servidor
+         * do WhatsApp isso significa "o dono está online neste aparelho" — e a
+         * regra dele é entregar a notificação *push* onde a pessoa está. Com o
+         * worker declarando-se online 24 horas por dia, o celular deixava de
+         * receber notificação de mensagem nova: o servidor entendia que já
+         * havia alguém lendo aqui.
+         *
+         * O README do próprio Baileys registra isto em "Receive Notifications
+         * in Whatsapp App": para o aplicativo do celular continuar notificando,
+         * `markOnlineOnConnect` tem que ser `false`.
+         *
+         * Nada se perde no recebimento: `unavailable` descreve a presença do
+         * aparelho, não a assinatura do socket. As mensagens continuam chegando
+         * por `messages.upsert` exatamente como antes — o que muda é o celular
+         * voltar a tocar.
+         */
+        markOnlineOnConnect: false,
         connectTimeoutMs: 60_000,
         /**
          * Um minuto era tempo demais para descobrir que uma consulta não vai
@@ -607,7 +628,13 @@ export class WhatsAppSession {
         });
 
         console.log(`[WhatsAppSession ${this.inboxId}] Conectado com sucesso como ${ownerName}`);
-        void this.socket?.sendPresenceUpdate('available');
+        // Aqui havia um `sendPresenceUpdate('available')`. Ele desfazia, uma
+        // linha depois, o que `markOnlineOnConnect: false` acabara de decidir:
+        // o Baileys mandava `unavailable` ao abrir e nós mandávamos
+        // `available` em seguida, deixando o celular sem notificação do mesmo
+        // jeito. O "digitando" continua sendo anunciado por conversa, em
+        // `sendTypingIndicator` — que é onde estar online quer dizer alguma
+        // coisa para quem está do outro lado.
         void this.subscribeRecentPresences();
       }
       }),

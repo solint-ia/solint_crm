@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
@@ -44,6 +44,7 @@ import { TemplatePicker } from './template-picker';
 import { TransferModal } from './transfer-modal';
 import { cn } from '@/lib/cn';
 import { agendamentoLabel } from '@/lib/datetime';
+import { useConversationEvents } from '@/features/realtime/conversation-events';
 
 /** O que as ações de agendamento devolvem: a lista já no estado novo. */
 export interface ScheduledResult {
@@ -51,6 +52,31 @@ export interface ScheduledResult {
   readonly error?: string;
   readonly items?: readonly ScheduledMessage[];
 }
+
+/**
+ * Folga depois da hora marcada antes de conferir se o agendamento saiu.
+ *
+ * Quem dispara é o varredor do worker, que acorda a cada 20 segundos
+ * (`POLL_MS` em `scheduled-runner.ts`). Perguntar exatamente na hora marcada
+ * quase sempre pegaria a linha ainda pendente, porque o varredor ainda não
+ * passou por ela.
+ */
+const GRACA_DO_VARREDOR_MS = 22_000;
+
+/**
+ * Duas listas de agendamento com o mesmo conteúdo.
+ *
+ * Existe para preservar a identidade do array quando nada mudou. O efeito que
+ * arma o relógio depende de `agendadas`; se cada recarga devolvesse um array
+ * novo, ele rearmaria sozinho a cada 22 segundos para sempre — um laço que
+ * ninguém pediu, girando enquanto a conversa estivesse aberta.
+ */
+const mesmaFila = (
+  a: readonly ScheduledMessage[],
+  b: readonly ScheduledMessage[],
+): boolean =>
+  a.length === b.length &&
+  a.every((item, i) => item.id === b[i]?.id && item.status === b[i]?.status);
 
 interface ChatPanelProps {
   readonly conversation: Conversation;
@@ -125,6 +151,14 @@ export function ChatPanel({
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const prevConversationIdRef = useRef<string | null>(null);
 
+  /**
+   * Qual conversa está aberta *agora*, legível de dentro de uma promessa que
+   * começou antes da troca. Escrito no render de propósito: quem lê é sempre
+   * código assíncrono, que roda depois: nunca observa um valor pela metade.
+   */
+  const conversaAtualRef = useRef(conversation.id);
+  conversaAtualRef.current = conversation.id;
+
   const hsmOpen = isHsmWindowOpen(conversation);
   const isGroup = isGroupContact(conversation.contact);
 
@@ -170,25 +204,64 @@ export function ChatPanel({
    * conversa obrigaria a recarregar a conversa inteira para atualizar uma
    * lista de duas linhas.
    *
-   * `cancelado` protege da troca rápida de conversa: sem ele, a resposta da
-   * conversa anterior podia chegar depois e pintar os agendamentos dela na
-   * conversa que já está aberta.
+   * A comparação com `conversaAtualRef` protege da troca rápida de conversa:
+   * sem ela, a resposta da conversa anterior podia chegar depois e pintar os
+   * agendamentos dela na conversa que já está aberta.
    */
+  const recarregarAgendadas = useCallback(
+    async (conversationId: string) => {
+      if (!listScheduledMessages) return;
+      const resultado = await listScheduledMessages({ conversationId });
+      if (conversaAtualRef.current !== conversationId) return;
+      if (!resultado.ok || !resultado.items) return;
+      const chegou = resultado.items;
+      setAgendadas((atual) => (mesmaFila(atual, chegou) ? atual : chegou));
+    },
+    [listScheduledMessages],
+  );
+
   useEffect(() => {
-    if (!listScheduledMessages) return;
-    let cancelado = false;
     setAgendadas([]);
     setAgendaErro(undefined);
+    void recarregarAgendadas(conversation.id);
+  }, [conversation.id, recarregarAgendadas]);
 
-    void listScheduledMessages({ conversationId: conversation.id }).then((resultado) => {
-      if (cancelado) return;
-      if (resultado.ok && resultado.items) setAgendadas(resultado.items);
-    });
+  /**
+   * O agendamento que já saiu precisa sumir daqui sozinho.
+   *
+   * A lista era buscada uma vez só, na troca de conversa. Quando o varredor
+   * disparava, a mensagem aparecia na timeline — mas a linha continuava no
+   * topo do compositor anunciando um envio futuro que já era passado, e só
+   * sumia ao recarregar a página.
+   *
+   * São dois gatilhos porque nenhum dos dois basta sozinho. O relógio abaixo
+   * sabe *quando* olhar, mas não sabe se o varredor já passou; o evento sabe
+   * que passou, mas só chega se a conversa aberta for a mesma. Juntos cobrem
+   * o caso normal (o evento limpa na hora) e o caso em que o envio acontece
+   * com a aba em outra conversa (o relógio confere ao voltar).
+   */
+  useConversationEvents((payload) => {
+    if (payload.type !== 'new_message') return;
+    if (payload.conversationId !== conversation.id) return;
+    // Sem nada pendente não há o que conferir, e toda mensagem recebida
+    // dispararia uma consulta à toa.
+    if (agendadas.length === 0) return;
+    void recarregarAgendadas(conversation.id);
+  });
 
-    return () => {
-      cancelado = true;
-    };
-  }, [conversation.id, listScheduledMessages]);
+  useEffect(() => {
+    let proxima: number | undefined;
+    for (const item of agendadas) {
+      const instante = new Date(item.scheduledFor).getTime();
+      if (Number.isNaN(instante)) continue;
+      if (proxima === undefined || instante < proxima) proxima = instante;
+    }
+    if (proxima === undefined) return;
+
+    const espera = Math.max(0, proxima - Date.now()) + GRACA_DO_VARREDOR_MS;
+    const relogio = setTimeout(() => void recarregarAgendadas(conversation.id), espera);
+    return () => clearTimeout(relogio);
+  }, [agendadas, conversation.id, recarregarAgendadas]);
 
   const identity = isGroup
     ? `${conversation.contact.participantCount ?? 0} participantes`
