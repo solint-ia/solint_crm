@@ -483,14 +483,14 @@ export function ImportCsvModal({
                   </li>
                 ) : (
                   <li>
-                    Nenhuma coluna de “Sim/Não” mapeada — <strong className="text-ink">todas</strong>{' '}
+                    Nenhuma coluna de “Sim/Não” mapeada: <strong className="text-ink">todas</strong>{' '}
                     as linhas serão importadas.
                   </li>
                 )}
                 {previa.agrupadas > 0 ? (
                   <li>
                     <strong className="text-ink">{previa.agrupadas}</strong> linha(s) da mesma pessoa
-                    foram juntadas — o contato fica com vários números.
+                    foram juntadas, e o contato fica com vários números.
                   </li>
                 ) : null}
                 {previa.invalidas > 0 ? (

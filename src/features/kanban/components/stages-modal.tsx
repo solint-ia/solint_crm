@@ -24,6 +24,7 @@ interface StagesModalProps {
       color: string;
       isWon: boolean;
       isLost: boolean;
+      conversionWeight: number;
       labelId?: string | null;
     }[],
   ) => Promise<void>;
@@ -44,6 +45,7 @@ export function StagesModal({
       color: string;
       isWon: boolean;
       isLost: boolean;
+      conversionWeight: number;
       /** String vazia = etapa sem etiqueta. Vira `null` ao salvar. */
       labelId: string;
     }[]
@@ -55,6 +57,7 @@ export function StagesModal({
       color: s.color,
       isWon: s.isWon ?? false,
       isLost: s.isLost ?? false,
+      conversionWeight: s.isLost ? 0 : s.conversionWeight,
       labelId: s.labelId ?? '',
     })),
   );
@@ -123,6 +126,8 @@ export function StagesModal({
           ...st,
           isWon: willBeWon,
           isLost: willBeWon ? false : st.isLost,
+          conversionWeight:
+            willBeWon && st.conversionWeight === 0 ? 100 : st.conversionWeight,
         };
       }),
     );
@@ -137,6 +142,7 @@ export function StagesModal({
           ...st,
           isLost: willBeLost,
           isWon: willBeLost ? false : st.isWon,
+          conversionWeight: willBeLost ? 0 : st.conversionWeight,
         };
       }),
     );
@@ -166,6 +172,7 @@ export function StagesModal({
         color: defaultColor,
         isWon: false,
         isLost: false,
+        conversionWeight: 0,
         labelId: '',
       },
     ]);
@@ -325,6 +332,41 @@ export function StagesModal({
                 >
                   <Trash2 className="size-3.5" />
                 </button>
+              </div>
+
+              {/* Etiqueta que representa a etapa */}
+              <div className="flex flex-wrap items-center gap-1.5 pl-7">
+                <label
+                  htmlFor={`stage-weight-${stage.id}`}
+                  className="text-micro font-medium text-dim"
+                >
+                  Conversão que esta etapa representa:
+                </label>
+                <div className="flex items-center gap-1">
+                  <input
+                    id={`stage-weight-${stage.id}`}
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={5}
+                    disabled={stage.isLost}
+                    value={stage.conversionWeight}
+                    onChange={(event) => {
+                      const value = Math.min(100, Math.max(0, Number(event.target.value) || 0));
+                      setStages((prev) =>
+                        prev.map((item, itemIndex) =>
+                          itemIndex === index ? { ...item, conversionWeight: value } : item,
+                        ),
+                      );
+                    }}
+                    className="w-16 rounded-control border border-line bg-surface px-2 py-1 text-micro text-ink outline-none focus:border-brand disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                  <span className="text-micro text-dim">%</span>
+                </div>
+                <span className="basis-full text-micro text-dim">
+                  Um card nesta etapa conta como {stage.conversionWeight}% de conversão no
+                  indicador do funil.
+                </span>
               </div>
 
               {/* Etiqueta que representa a etapa */}

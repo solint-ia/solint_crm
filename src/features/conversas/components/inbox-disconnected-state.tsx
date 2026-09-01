@@ -33,7 +33,7 @@ export function InboxDisconnectedState() {
           </h2>
           <p className="mt-1.5 text-sm leading-relaxed text-muted">
             As conversas chegam por uma caixa de entrada, e você ainda não alcança nenhuma. Crie
-            uma e pareie um número de WhatsApp para começar a atender — ou peça ao administrador
+            uma e pareie um número de WhatsApp para começar a atender, ou peça ao administrador
             para incluir você numa equipe que já tenha canais.
           </p>
         </div>

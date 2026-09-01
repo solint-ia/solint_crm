@@ -2,11 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from 'react';
 import type { Deal, PipelineStage, PipelineSummary } from '@/core/domain/pipeline';
-import {
-  calculatePipelineSummary,
-  isDealStale,
-  sumDeals,
-} from '@/core/domain/pipeline';
+import { calculatePipelineSummary, isDealStale, sumDeals } from '@/core/domain/pipeline';
+import { inicioDoDia } from '@/lib/datetime';
 import type { BoardFilters, SortOption } from '../components/kanban-toolbar';
 
 interface UseBoardParams {
@@ -21,11 +18,32 @@ interface UseBoardParams {
 const INITIAL_FILTERS: BoardFilters = {
   searchQuery: '',
   owner: null,
-  team: null,
   source: null,
   period: null,
   priority: null,
   valueRange: null,
+};
+
+const inicioDoPeriodo = (periodo: string, agora: Date = new Date()): number | null => {
+  const hoje = inicioDoDia(agora);
+  const dataCivil = new Date(hoje);
+
+  switch (periodo) {
+    case 'hoje':
+      return hoje;
+    case 'semana': {
+      // Semana comercial começa na segunda-feira. `getUTCDay()` é seguro aqui:
+      // `inicioDoDia` representa o dia civil do produto como meia-noite UTC.
+      const dia = dataCivil.getUTCDay();
+      return hoje - ((dia + 6) % 7) * 86_400_000;
+    }
+    case 'mes':
+      return Date.UTC(dataCivil.getUTCFullYear(), dataCivil.getUTCMonth(), 1);
+    case 'trimestre':
+      return Date.UTC(dataCivil.getUTCFullYear(), Math.floor(dataCivil.getUTCMonth() / 3) * 3, 1);
+    default:
+      return null;
+  }
 };
 
 export function useBoard({ initialDeals, stages: initialStages, moveDeal }: UseBoardParams) {
@@ -53,7 +71,6 @@ export function useBoard({ initialDeals, stages: initialStages, moveDeal }: UseB
     setStages(initialStages);
   }, [initialStages]);
 
-
   // Atualizar filtro específico
   const setFilter = useCallback(<K extends keyof BoardFilters>(key: K, value: BoardFilters[K]) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -68,15 +85,6 @@ export function useBoard({ initialDeals, stages: initialStages, moveDeal }: UseB
     const set = new Set<string>();
     for (const d of deals) {
       if (d.ownerName && d.ownerName !== 'Não atribuído') set.add(d.ownerName);
-    }
-    return Array.from(set).sort();
-  }, [deals]);
-
-  // Lista de equipes únicas
-  const teams = useMemo(() => {
-    const set = new Set<string>();
-    for (const d of deals) {
-      if (d.team) set.add(d.team);
     }
     return Array.from(set).sort();
   }, [deals]);
@@ -97,22 +105,33 @@ export function useBoard({ initialDeals, stages: initialStages, moveDeal }: UseB
       // 2. Filtro de Responsável
       if (filters.owner && deal.ownerName !== filters.owner) return false;
 
-      // 3. Filtro de Equipe
-      if (filters.team && deal.team !== filters.team) return false;
-
-      // 4. Filtro de Origem
+      // 3. Filtro de Origem
       if (filters.source && deal.source !== filters.source) return false;
 
-      // 5. Filtro de Prioridade
+      // 4. Filtro de Prioridade
       if (filters.priority && deal.priority !== filters.priority) return false;
 
-      // 6. Faixa de Valor
+      // 5. Faixa de Valor
       if (filters.valueRange && filters.valueRange !== 'todos') {
         const val = deal.amountInCents;
         if (filters.valueRange === 'ate_5k' && val > 500_000) return false;
         if (filters.valueRange === '5k_20k' && (val < 500_000 || val > 2_000_000)) return false;
         if (filters.valueRange === '20k_50k' && (val < 2_000_000 || val > 5_000_000)) return false;
         if (filters.valueRange === '50k_plus' && val < 5_000_000) return false;
+      }
+
+      // 6. Período — pela criação do card, que é o que o rótulo promete.
+      //
+      // Era `enteredStageAt`, a entrada na etapa atual, porque não havia outro
+      // campo de tempo: um card de março arrastado hoje aparecia em "Criados
+      // hoje". `Deal.createdAt` existe desde a Etapa 11 e responde a pergunta
+      // que a barra de fato faz.
+      if (filters.period && filters.period !== 'todos') {
+        const corte = inicioDoPeriodo(filters.period);
+        const criacao = new Date(deal.createdAt);
+        if (corte !== null && !Number.isNaN(criacao.getTime()) && inicioDoDia(criacao) < corte) {
+          return false;
+        }
       }
 
       return true;
@@ -219,20 +238,14 @@ export function useBoard({ initialDeals, stages: initialStages, moveDeal }: UseB
   );
 
   // Criar nova oportunidade localmente + otimista
-  const handleOptimisticCreate = useCallback(
-    (newDeal: Deal) => {
-      setDeals((prev) => [newDeal, ...prev]);
-    },
-    [],
-  );
+  const handleOptimisticCreate = useCallback((newDeal: Deal) => {
+    setDeals((prev) => [newDeal, ...prev]);
+  }, []);
 
   // Atualizar oportunidade localmente
-  const handleOptimisticUpdate = useCallback(
-    (updated: Deal) => {
-      setDeals((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
-    },
-    [],
-  );
+  const handleOptimisticUpdate = useCallback((updated: Deal) => {
+    setDeals((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
+  }, []);
 
   // Excluir oportunidade localmente
   const handleOptimisticDelete = useCallback(
@@ -251,7 +264,6 @@ export function useBoard({ initialDeals, stages: initialStages, moveDeal }: UseB
     columns,
     summary,
     owners,
-    teams,
     filters,
     sortOption,
     draggingId,

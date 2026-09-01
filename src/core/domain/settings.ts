@@ -2,6 +2,10 @@ import type { AutoReply, BusinessHours } from './business-hours';
 import type { Channel, InboxConnectionStatus } from './channel';
 import type { Id } from './shared';
 
+/**
+ * Estrutura preservada para compatibilidade com os dados existentes.
+ * Ações em um clique não têm ponto de entrada na interface nesta etapa.
+ */
 export interface Macro {
   readonly id: Id;
   readonly name: string;
@@ -13,21 +17,6 @@ export interface CannedResponse {
   readonly shortcut: string;
   readonly content: string;
 }
-
-export type AssignmentMethod = 'round_robin' | 'balanceada' | 'manual';
-
-/**
- * Nomes escritos para quem usa o sistema, não para quem o construiu.
- *
- * Eram `Round-robin`, `Balanceada por carga` e `Manual` — termos corretos e
- * inúteis para o dono de uma loja escolhendo como as conversas chegam à equipe
- * dele. O identificador continua técnico (é chave de banco); só o rótulo mudou.
- */
-export const ASSIGNMENT_METHOD_LABELS: Readonly<Record<AssignmentMethod, string>> = {
-  round_robin: 'Rodízio entre a equipe',
-  balanceada: 'Para quem está mais livre',
-  manual: 'Cada um pega da fila',
-};
 
 /**
  * Uma caixa de entrada conectada.

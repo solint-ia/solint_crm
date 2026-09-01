@@ -68,7 +68,7 @@ const GRUPOS: readonly PermissionGroup[] = [
       {
         id: 'caixas:todas',
         label: 'Ver todas as caixas',
-        hint: 'Ignora a restrição por equipe — enxerga todos os canais da conta.',
+        hint: 'Ignora a restrição por equipe: enxerga todos os canais da conta.',
       },
     ],
   },
@@ -132,7 +132,7 @@ const GRUPOS: readonly PermissionGroup[] = [
   {
     title: 'Configurações · Automação e organização',
     options: [
-      { id: 'config.automacoes:ler', label: 'Ver automações', hint: 'Regras e macros.' },
+      { id: 'config.automacoes:ler', label: 'Ver automações', hint: 'Regras automáticas.' },
       {
         id: 'config.automacoes:escrever',
         label: 'Editar automações',
@@ -153,7 +153,11 @@ const GRUPOS: readonly PermissionGroup[] = [
   {
     title: 'Configurações · Conta',
     options: [
-      { id: 'config.empresa:ler', label: 'Ver dados da empresa', hint: 'Razão social e documento.' },
+      {
+        id: 'config.empresa:ler',
+        label: 'Ver dados da empresa',
+        hint: 'Razão social e documento.',
+      },
       {
         id: 'config.empresa:escrever',
         label: 'Editar dados da empresa',
@@ -180,8 +184,7 @@ export const PERMISSION_GROUPS: readonly PermissionGroup[] = GRUPOS.map((grupo) 
   ...grupo,
   options: grupo.options.filter(
     (opcao) =>
-      !ADMIN_ONLY_PERMISSIONS.includes(opcao.id) &&
-      !HIDDEN_FEATURE_PERMISSIONS.includes(opcao.id),
+      !ADMIN_ONLY_PERMISSIONS.includes(opcao.id) && !HIDDEN_FEATURE_PERMISSIONS.includes(opcao.id),
   ),
 })).filter((grupo) => grupo.options.length > 0);
 

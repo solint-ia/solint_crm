@@ -6,11 +6,16 @@ import { z } from 'zod';
 import { landingRouteFor } from '@/config/navigation';
 import type { Permission, PermissionOverrides } from '@/core/domain/user';
 import { effectivePermissions } from '@/core/domain/user';
-import { SYSTEM_ROLES, systemRoleId } from '@/core/domain/system-roles';
-import { defaultBusinessHours } from '@/core/domain/business-hours';
 import { hashPassword, passwordProblem, verifyPassword } from '@/infrastructure/auth/password';
-import { createSession, destroyCurrentSession, touchUser } from '@/infrastructure/auth/session';
-import { prisma, asJson, readJson } from '@/infrastructure/db/prisma';
+import { provisionAccount } from '@/infrastructure/provisioning/provision-account';
+import {
+  createSession,
+  destroyCurrentSession,
+  readSession,
+  touchUser,
+} from '@/infrastructure/auth/session';
+import { prisma, readJson } from '@/infrastructure/db/prisma';
+import { writeAuditLog } from '@/infrastructure/audit/write-audit-log';
 
 export interface AuthActionResult {
   readonly ok: boolean;
@@ -69,9 +74,6 @@ export async function loginAction(input: unknown): Promise<AuthActionResult> {
   const invalid = { ok: false as const, error: 'E-mail ou senha inválidos.' };
   if (!user) return settle(started, invalid);
 
-  const matches = await verifyPassword(parsed.data.password, user.passwordHash);
-  if (!matches) return settle(started, invalid);
-
   // Em qual workspace abrir. O mais antigo é o padrão razoável; trocar de conta
   // é uma ação depois de entrar, não uma escolha na tela de login.
   // tenant-ok: entre contas por necessidade — no login ainda nao ha conta ativa,
@@ -80,6 +82,23 @@ export async function loginAction(input: unknown): Promise<AuthActionResult> {
     where: { userId: user.id },
     orderBy: { createdAt: 'asc' },
   });
+
+  const matches = await verifyPassword(parsed.data.password, user.passwordHash);
+  if (!matches) {
+    if (membership) {
+      const meta = await requestMeta();
+      void writeAuditLog({
+        accountId: membership.accountId,
+        actorId: user.id,
+        actorName: user.name,
+        action: 'sessao.login_falhou',
+        targetType: 'sessao',
+        ip: meta.ip,
+        userAgent: meta.userAgent,
+      });
+    }
+    return settle(started, invalid);
+  }
 
   /**
    * O superadministrador entra pela área de plataforma.
@@ -109,6 +128,15 @@ export async function loginAction(input: unknown): Promise<AuthActionResult> {
   const meta = await requestMeta();
   await createSession(user.id, membership.accountId, meta);
   await touchUser(user.id);
+  void writeAuditLog({
+    accountId: membership.accountId,
+    actorId: user.id,
+    actorName: user.name,
+    action: 'sessao.login',
+    targetType: 'sessao',
+    ip: meta.ip,
+    userAgent: meta.userAgent,
+  });
 
   const role = await prisma.role.findFirst({
     where: { accountId: membership.accountId, slug: membership.roleSlug },
@@ -126,6 +154,17 @@ export async function loginAction(input: unknown): Promise<AuthActionResult> {
 }
 
 export async function logoutAction(): Promise<never> {
+  const session = await readSession();
+  if (session) {
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'sessao.logout',
+      targetType: 'sessao',
+      targetId: session.tokenId,
+    });
+  }
   await destroyCurrentSession();
   redirect('/login');
 }
@@ -164,23 +203,8 @@ export async function signupAction(input: unknown): Promise<AuthActionResult> {
   const passwordHash = await hashPassword(parsed.data.password);
 
   await prisma.$transaction(async (tx) => {
-    await tx.account.create({
-      data: { id: accountId, name: parsed.data.company, plan: 'starter' },
-    });
-    // Os dois papéis nascem com a conta. Antes só o de administrador era
-    // criado, e quem convidasse um colaborador só podia oferecer acesso total
-    // — não havia outro papel para escolher.
-    await tx.role.createMany({
-      data: SYSTEM_ROLES.map((role) => ({
-        id: systemRoleId(accountId, role.slug),
-        accountId,
-        slug: role.slug,
-        name: role.name,
-        description: role.description,
-        permissions: asJson(role.permissions),
-        isSystem: true,
-      })),
-    });
+    // A pessoa primeiro: `provisionAccount` cria o vínculo de administrador, e
+    // um vínculo aponta para um usuário que precisa existir.
     await tx.user.create({
       data: {
         id: userId,
@@ -190,75 +214,14 @@ export async function signupAction(input: unknown): Promise<AuthActionResult> {
         avatarTone: 'var(--color-brand-deep)',
       },
     });
-    // Quem cria a conta é administrador dela. Papel, equipes e disponibilidade
-    // vivem no vínculo: são do par pessoa+conta, não da pessoa.
-    await tx.membership.create({
-      data: {
-        userId,
-        accountId,
-        roleSlug: 'administrador',
-        availability: 'disponivel',
-      },
-    });
-    await tx.accountSettings.create({
-      data: {
-        accountId,
-        billing: asJson({
-          planName: 'Starter',
-          priceLabel: 'Gratuito',
-          renewalLabel: '—',
-          usage: [],
-          invoices: [],
-        }),
-      },
-    });
-    // Caixa de entrada padrão
-    await tx.inbox.create({
-      data: {
-        id: `ibx-${accountId}`,
-        accountId,
-        name: 'WhatsApp Principal',
-        channel: 'whatsapp',
-        identifier: 'whatsapp-primary',
-        status: 'ativo',
-        provider: 'baileys',
-        // Forma canônica do domínio. Antes gravava `{ enabled, timezone, schedule }`
-        // — outra forma, de uma versão anterior — e toda conta criada pelo
-        // cadastro nascia com a tela de Configurações quebrada.
-        businessHours: asJson(defaultBusinessHours()),
-        // `text`, nunca `message`. O campo já se chamou `message` aqui e o
-        // domínio sempre leu `text`: a caixa nascia sem texto nenhum e a tela
-        // de Configurações recusava salvar qualquer alteração nela.
-        awayMessage: asJson({ enabled: false, text: '' }),
-        greeting: asJson({ enabled: false, text: '' }),
-        closingMessage: asJson({ enabled: false, text: '' }),
-        waitingMessage: asJson({ enabled: false, text: '' }),
-      },
-    });
-    // Funil de vendas comercial padrão
-    const pipelineId = `pip-${accountId}`;
-    await tx.pipeline.create({
-      data: {
-        id: pipelineId,
-        accountId,
-        name: 'Funil Comercial',
-      },
-    });
-    await tx.pipelineStage.createMany({
-      data: [
-        { id: `stg-1-${accountId}`, pipelineId, name: 'Novo Lead', order: 1, color: '#3b82f6' },
-        { id: `stg-2-${accountId}`, pipelineId, name: 'Qualificação', order: 2, color: '#f59e0b' },
-        { id: `stg-3-${accountId}`, pipelineId, name: 'Proposta', order: 3, color: '#8b5cf6' },
-        { id: `stg-4-${accountId}`, pipelineId, name: 'Negociação', order: 4, color: '#ec4899' },
-        {
-          id: `stg-5-${accountId}`,
-          pipelineId,
-          name: 'Fechado',
-          order: 5,
-          color: '#10b981',
-          isWon: true,
-        },
-      ],
+
+    // O molde é o mesmo que o botão "criar novo workspace" usa. Ver
+    // `infrastructure/provisioning/provision-account.ts`: as cem linhas que
+    // moravam aqui divergiriam da outra cópia na primeira etapa de funil nova.
+    await provisionAccount(tx, {
+      accountId,
+      name: parsed.data.company,
+      ownerUserId: userId,
     });
   });
 

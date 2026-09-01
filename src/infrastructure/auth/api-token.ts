@@ -48,6 +48,11 @@ const sessaoDoToken = (
     : PERMISSIONS.filter((p) => declaradas.includes(p));
 
   return {
+    // O token de API não abre `AuthSession`: ele é o próprio credencial, e não
+    // há `jti` a revogar. O identificador aponta para o token para que quem
+    // ler a auditoria saiba que a ação veio de uma integração, não de um
+    // navegador — e para que trocar de workspace por aqui seja impossível.
+    tokenId: `api-token:${token.id}`,
     user: {
       id: `api-token:${token.id}`,
       accountId: account.id,

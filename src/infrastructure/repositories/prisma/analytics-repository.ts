@@ -273,7 +273,7 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
             : `${naFila} na fila ao todo`,
         deltaDirection: abertas > 0 ? 'neutro' : 'positivo',
         description:
-          'Atendimentos com status "aberta" neste exato momento, somando todas as caixas que você alcança. Não depende do período selecionado — é o estado atual da fila.',
+          'Atendimentos com status "aberta" neste exato momento, somando todas as caixas que você alcança. Não depende do período selecionado: é o estado atual da fila.',
       },
       {
         id: 'sem-responsavel',
@@ -305,7 +305,7 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
         value: durationLabel(tprAtual),
         ...variacao(tprAtual, tprAnterior, true),
         description:
-          'Média do intervalo entre a abertura da conversa e a primeira resposta de um atendente humano, dentro do período. Saudação e demais mensagens automáticas não contam — elas sairiam em segundos e mascarariam o indicador.',
+          'Média do intervalo entre a abertura da conversa e a primeira resposta de um atendente humano, dentro do período. Saudação e demais mensagens automáticas não contam, porque sairiam em segundos e mascarariam o indicador.',
       },
       {
         id: 'tmr',
@@ -326,7 +326,7 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
               deltaDirection: (csatAtual ?? 0) >= 4 ? ('positivo' as const) : ('negativo' as const),
             }),
         description:
-          'Média das notas de 1 a 5 que os clientes responderam à pesquisa de satisfação, no período. A pesquisa é enviada no encerramento e precisa estar ligada nas configurações da caixa — sem respostas, o índice fica em branco em vez de exibir um valor de exemplo.',
+          'Média das notas de 1 a 5 que os clientes responderam à pesquisa de satisfação, no período. A pesquisa é enviada no encerramento e precisa estar ligada nas configurações da caixa. Sem respostas, o índice fica em branco em vez de exibir um valor de exemplo.',
       },
     ];
 

@@ -5,14 +5,12 @@ import type { Label, Tone } from '../domain/label';
 import type {
   ActiveSession,
   ApiToken,
-  AssignmentMethod,
   AuditLogEntry,
   BillingInfo,
   CannedResponse,
   ChannelConnection,
   CompanyProfile,
   CustomAttributeDefinition,
-  Macro,
   Team,
   Webhook,
 } from '../domain/settings';
@@ -21,9 +19,7 @@ import type { Role, User } from '../domain/user';
 
 export interface WorkspaceSettings {
   readonly automations: readonly Automation[];
-  readonly macros: readonly Macro[];
   readonly cannedResponses: readonly CannedResponse[];
-  readonly assignmentMethod: AssignmentMethod;
   readonly connections: readonly ChannelConnection[];
   readonly webhooks: readonly Webhook[];
   readonly apiTokens: readonly ApiToken[];
@@ -98,8 +94,6 @@ export interface InboxDeletionImpact {
 export interface SettingsRepository {
   get(accountId: Id): Promise<WorkspaceSettings>;
   setAutomationEnabled(accountId: Id, automationId: Id, enabled: boolean): Promise<Automation>;
-  setAssignmentMethod(accountId: Id, method: AssignmentMethod): Promise<AssignmentMethod>;
-
   saveAutomation(accountId: Id, draft: AutomationDraft): Promise<Automation>;
   deleteAutomation(accountId: Id, automationId: Id): Promise<void>;
   /** A ordem decide quem vence um conflito de sobrescrita — por isso é editável. */
@@ -182,15 +176,6 @@ export interface SettingsRepository {
   createTeam(accountId: Id, draft: TeamDraft): Promise<Team>;
   updateTeam(accountId: Id, teamId: Id, draft: TeamDraft): Promise<Team>;
   deleteTeam(accountId: Id, teamId: Id): Promise<void>;
-
-  /**
-   * Encerra uma sessão ativa, ou todas menos a atual.
-   *
-   * A sessão corrente nunca cai: encerrar a própria sessão a partir desta tela
-   * deslogaria quem clicou, que não é o que o botão promete.
-   */
-  terminateSession(accountId: Id, sessionId: Id): Promise<readonly ActiveSession[]>;
-  terminateOtherSessions(accountId: Id): Promise<readonly ActiveSession[]>;
 
   /** Grava o perfil da empresa. `tradeName` vai para `Account.name`. */
   saveCompanyProfile(

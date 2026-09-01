@@ -175,3 +175,56 @@ export const agendamentoLabel = (date: Date): string => {
   if (dias === -1) return `ontem às ${hora}`;
   return `${dataCurtaLabel(date)} às ${hora}`;
 };
+
+/* ==========================================================================
+   Formato de data escolhido pela empresa.
+   ========================================================================== */
+
+/**
+ * Os formatos que a tela de Empresa oferece.
+ *
+ * Guardado em `AccountSettings.company.dateFormat`. A preferência existia e era
+ * gravada desde sempre, e **nenhum formatador a lia**: todas as datas do
+ * produto saíam de `toLocaleDateString('pt-BR')` com o padrão fixo, então
+ * escolher ISO ou americano não mudava um pixel. Acrescentar o ano de dois
+ * dígitos sem isto teria repetido o mesmo vazio.
+ */
+export const DATE_FORMATS = ['DD/MM/YYYY', 'DD/MM/YY', 'YYYY-MM-DD', 'MM/DD/YYYY'] as const;
+export type DateFormatPreference = (typeof DATE_FORMATS)[number];
+
+export const DEFAULT_DATE_FORMAT: DateFormatPreference = 'DD/MM/YYYY';
+
+/** Aceita o que veio do banco (string livre) e devolve um formato conhecido. */
+export const asDateFormat = (raw: string | undefined): DateFormatPreference =>
+  (DATE_FORMATS as readonly string[]).includes(raw ?? '')
+    ? (raw as DateFormatPreference)
+    : DEFAULT_DATE_FORMAT;
+
+const OPCOES: Readonly<
+  Record<DateFormatPreference, { locale: string; options: Intl.DateTimeFormatOptions }>
+> = {
+  'DD/MM/YYYY': { locale: 'pt-BR', options: { day: '2-digit', month: '2-digit', year: 'numeric' } },
+  'DD/MM/YY': { locale: 'pt-BR', options: { day: '2-digit', month: '2-digit', year: '2-digit' } },
+  // `en-CA` é o atalho honesto para ISO 8601: é o único locale cujo formato
+  // curto já é `AAAA-MM-DD`, e usá-lo evita montar a string na mão.
+  'YYYY-MM-DD': { locale: 'en-CA', options: { day: '2-digit', month: '2-digit', year: 'numeric' } },
+  'MM/DD/YYYY': { locale: 'en-US', options: { day: '2-digit', month: '2-digit', year: 'numeric' } },
+};
+
+/**
+ * Data absoluta no formato que a empresa escolheu.
+ *
+ * Sempre no fuso de exibição, como todo o resto deste módulo: sem `timeZone` o
+ * servidor (UTC) e o navegador imprimiriam dias diferentes na virada da
+ * meia-noite, e o React acusaria divergência de hidratação.
+ *
+ * Vale para **data absoluta**. Hora ("14:32") e rótulo relativo ("há 3 dias")
+ * não passam por aqui: não é disso que a preferência trata.
+ */
+export const formatarData = (
+  date: Date,
+  formato: DateFormatPreference = DEFAULT_DATE_FORMAT,
+): string => {
+  const { locale, options } = OPCOES[formato];
+  return date.toLocaleDateString(locale, { timeZone: APP_TIMEZONE, ...options });
+};

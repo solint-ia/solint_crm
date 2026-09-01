@@ -17,16 +17,11 @@ import { PRIORITIES } from '@/core/domain/conversation';
 import { PRIORITY_LABEL } from '@/components/domain/presentation-maps';
 import { cn } from '@/lib/cn';
 
-export type SortOption =
-  | 'recentes'
-  | 'maior_valor'
-  | 'menor_valor'
-  | 'proxima_atividade';
+export type SortOption = 'recentes' | 'maior_valor' | 'menor_valor' | 'proxima_atividade';
 
 export interface BoardFilters {
   readonly searchQuery: string;
   readonly owner: string | null;
-  readonly team: string | null;
   readonly source: string | null;
   readonly period: string | null;
   readonly priority: string | null;
@@ -37,7 +32,6 @@ interface KanbanToolbarProps {
   readonly filters: BoardFilters;
   readonly sortOption: SortOption;
   readonly owners: readonly string[];
-  readonly teams: readonly string[];
   readonly onFilterChange: <K extends keyof BoardFilters>(key: K, value: BoardFilters[K]) => void;
   readonly onSortChange: (sort: SortOption) => void;
   readonly onClearFilters: () => void;
@@ -47,10 +41,10 @@ interface KanbanToolbarProps {
 
 export const PERIOD_OPTIONS = [
   { id: 'todos', label: 'Todos os períodos' },
-  { id: 'hoje', label: 'Criados Hoje' },
-  { id: 'semana', label: 'Esta semana' },
-  { id: 'mes', label: 'Este mês' },
-  { id: 'trimestre', label: 'Este trimestre' },
+  { id: 'hoje', label: 'Movidos hoje' },
+  { id: 'semana', label: 'Movidos esta semana' },
+  { id: 'mes', label: 'Movidos este mês' },
+  { id: 'trimestre', label: 'Movidos este trimestre' },
 ] as const;
 
 export const VALUE_RANGE_OPTIONS = [
@@ -65,7 +59,6 @@ export function KanbanToolbar({
   filters,
   sortOption,
   owners,
-  teams,
   onFilterChange,
   onSortChange,
   onClearFilters,
@@ -77,7 +70,6 @@ export function KanbanToolbar({
   // Contador de filtros ativos (excluindo busca)
   const activeFiltersCount = [
     filters.owner,
-    filters.team,
     filters.source,
     filters.period && filters.period !== 'todos' ? filters.period : null,
     filters.priority,
@@ -265,25 +257,6 @@ export function KanbanToolbar({
               </select>
             </div>
 
-            {/* Equipe */}
-            <div>
-              <label className="mb-1 block text-micro font-semibold uppercase text-dim">
-                Equipe
-              </label>
-              <select
-                value={filters.team ?? ''}
-                onChange={(e) => onFilterChange('team', e.target.value || null)}
-                className="w-full h-8.5 rounded-control border border-line bg-surface px-2 text-body text-ink outline-none focus:border-brand"
-              >
-                <option value="">Todas as equipes</option>
-                {teams.map((team) => (
-                  <option key={team} value={team}>
-                    {team}
-                  </option>
-                ))}
-              </select>
-            </div>
-
             {/* Origem */}
             <div>
               <label className="mb-1 block text-micro font-semibold uppercase text-dim">
@@ -325,11 +298,13 @@ export function KanbanToolbar({
             {/* Período */}
             <div>
               <label className="mb-1 block text-micro font-semibold uppercase text-dim">
-                Período de Entrada
+                Entrada na etapa
               </label>
               <select
                 value={filters.period ?? 'todos'}
-                onChange={(e) => onFilterChange('period', e.target.value === 'todos' ? null : e.target.value)}
+                onChange={(e) =>
+                  onFilterChange('period', e.target.value === 'todos' ? null : e.target.value)
+                }
                 className="w-full h-8.5 rounded-control border border-line bg-surface px-2 text-body text-ink outline-none focus:border-brand"
               >
                 {PERIOD_OPTIONS.map((p) => (
@@ -403,19 +378,6 @@ export function KanbanToolbar({
             </span>
           )}
 
-          {filters.team && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-surface-2 border border-line px-2 py-0.5 text-meta text-ink">
-              <span>Equipe: {filters.team}</span>
-              <button
-                type="button"
-                onClick={() => onFilterChange('team', null)}
-                className="rounded-full p-0.5 hover:bg-surface text-dim hover:text-ink"
-              >
-                <X className="size-3" />
-              </button>
-            </span>
-          )}
-
           {filters.source && (
             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-soft border border-emerald-soft text-emerald-text px-2 py-0.5 text-meta font-medium">
               <span>
@@ -433,7 +395,11 @@ export function KanbanToolbar({
 
           {filters.priority && (
             <span className="inline-flex items-center gap-1 rounded-full bg-amber-soft border border-amber-soft text-amber-text px-2 py-0.5 text-meta font-medium">
-              <span>Prioridade: {PRIORITY_LABEL[filters.priority as keyof typeof PRIORITY_LABEL] ?? filters.priority}</span>
+              <span>
+                Prioridade:{' '}
+                {PRIORITY_LABEL[filters.priority as keyof typeof PRIORITY_LABEL] ??
+                  filters.priority}
+              </span>
               <button
                 type="button"
                 onClick={() => onFilterChange('priority', null)}
@@ -446,7 +412,10 @@ export function KanbanToolbar({
 
           {filters.period && filters.period !== 'todos' && (
             <span className="inline-flex items-center gap-1 rounded-full bg-purple-soft border border-purple-soft text-purple-text px-2 py-0.5 text-meta font-medium">
-              <span>Período: {PERIOD_OPTIONS.find((p) => p.id === filters.period)?.label ?? filters.period}</span>
+              <span>
+                Período:{' '}
+                {PERIOD_OPTIONS.find((p) => p.id === filters.period)?.label ?? filters.period}
+              </span>
               <button
                 type="button"
                 onClick={() => onFilterChange('period', null)}
@@ -459,7 +428,11 @@ export function KanbanToolbar({
 
           {filters.valueRange && filters.valueRange !== 'todos' && (
             <span className="inline-flex items-center gap-1 rounded-full bg-cyan-soft border border-cyan-soft text-cyan-text px-2 py-0.5 text-meta font-medium">
-              <span>Faixa: {VALUE_RANGE_OPTIONS.find((vr) => vr.id === filters.valueRange)?.label ?? filters.valueRange}</span>
+              <span>
+                Faixa:{' '}
+                {VALUE_RANGE_OPTIONS.find((vr) => vr.id === filters.valueRange)?.label ??
+                  filters.valueRange}
+              </span>
               <button
                 type="button"
                 onClick={() => onFilterChange('valueRange', null)}

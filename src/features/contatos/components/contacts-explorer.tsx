@@ -41,7 +41,9 @@ import { StartConversationButton } from './start-conversation-button';
 import { SaveSegmentModal } from './save-segment-modal';
 import { ImportCsvModal } from './import-csv-modal';
 import {
+  auditContactsExportAction,
   deleteContactAction,
+  deleteContactsAction,
   syncWhatsAppContactsAction,
   syncWhatsAppGroupsAction,
   toggleGroupChatAction,
@@ -253,23 +255,22 @@ export function ContactsExplorer({ contacts, canExport }: ContactsExplorerProps)
     setSelected([]);
 
     startTransition(async () => {
-      let count = 0;
-      for (const id of toDeleteIds) {
-        const res = await deleteContactAction({ contactId: id });
-        if (res.ok) count++;
-      }
+      const result = await deleteContactsAction({ contactIds: toDeleteIds });
+      const count = result.data?.count ?? 0;
 
       show({
-        tone: 'sucesso',
-        title: 'Contatos excluídos',
-        description: `${count} contato(s) foram excluídos da base.`,
+        tone: result.ok ? 'sucesso' : 'erro',
+        title: result.ok ? 'Contatos excluídos' : 'Erro ao excluir contatos',
+        description: result.ok
+          ? `${count} contato(s) foram excluídos da base.`
+          : result.error,
       });
       router.refresh();
     });
   };
 
   // Exportação CSV otimizada com Blob nativo e UTF-8 BOM
-  const handleExportCsv = (onlySelected = false) => {
+  const handleExportCsv = async (onlySelected = false) => {
     const listToExport = onlySelected
       ? sortedContacts.filter((c) => selected.includes(c.id))
       : sortedContacts;
@@ -280,6 +281,12 @@ export function ContactsExplorer({ contacts, canExport }: ContactsExplorerProps)
         title: 'Nenhum contato',
         description: 'Não há contatos disponíveis para exportação.',
       });
+      return;
+    }
+
+    const audit = await auditContactsExportAction({ count: listToExport.length });
+    if (!audit.ok) {
+      show({ tone: 'erro', title: 'Exportação bloqueada', description: audit.error });
       return;
     }
 
@@ -875,6 +882,10 @@ export function ContactsExplorer({ contacts, canExport }: ContactsExplorerProps)
                     const isMenuOpen = activeMenuId === contact.id;
                     const isGroup = contact.kind === 'grupo';
                     const isAllowed = isGroupAllowedInChat(contact);
+                    const formattedPhone = PhoneNumber.format(contact.phone);
+                    const nameIsPhone =
+                      !isGroup &&
+                      PhoneNumber.normalize(contact.name) === PhoneNumber.normalize(contact.phone);
 
                     return (
                       <tr
@@ -913,7 +924,7 @@ export function ContactsExplorer({ contacts, canExport }: ContactsExplorerProps)
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
                                 <span className="block font-semibold text-ink leading-tight line-clamp-1">
-                                  {contact.name}
+                                  {nameIsPhone ? 'Contato do WhatsApp' : contact.name}
                                 </span>
                                 {isGroup && (
                                   <span className="inline-flex items-center gap-1 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[10px] font-semibold px-1.5 py-0.5 border border-indigo-500/20">
@@ -943,7 +954,7 @@ export function ContactsExplorer({ contacts, canExport }: ContactsExplorerProps)
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1.5">
-                              {PhoneNumber.format(contact.phone)}
+                              {formattedPhone}
                               {/* Sem isto, o segundo número de uma pessoa só
                                   aparecia abrindo o cadastro — e ninguém abre
                                   um cadastro para descobrir que existe algo

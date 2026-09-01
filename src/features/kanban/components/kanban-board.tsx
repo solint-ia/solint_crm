@@ -155,6 +155,7 @@ export function KanbanBoard({
       color: string;
       isWon: boolean;
       isLost: boolean;
+      conversionWeight: number;
       labelId?: string | null;
     }[],
   ) => {
@@ -169,6 +170,10 @@ export function KanbanBoard({
           color: s.color,
           isWon: s.isWon,
           isLost: s.isLost,
+          // Sem isto o indicador do funil voltava a 0% até o `router.refresh()`
+          // chegar: a lista otimista descartava o peso que a modal acabou de
+          // salvar, e a tela piscava o número errado no meio do caminho.
+          conversionWeight: s.conversionWeight,
         })),
       );
       router.refresh();
@@ -180,7 +185,6 @@ export function KanbanBoard({
   const isFiltered =
     Boolean(board.filters.searchQuery.trim()) ||
     Boolean(board.filters.owner) ||
-    Boolean(board.filters.team) ||
     Boolean(board.filters.source) ||
     Boolean(board.filters.priority) ||
     Boolean(board.filters.period && board.filters.period !== 'todos') ||
@@ -207,7 +211,6 @@ export function KanbanBoard({
         filters={board.filters}
         sortOption={board.sortOption}
         owners={board.owners}
-        teams={board.teams}
         onFilterChange={board.setFilter}
         onSortChange={board.setSortOption}
         onClearFilters={board.clearAllFilters}

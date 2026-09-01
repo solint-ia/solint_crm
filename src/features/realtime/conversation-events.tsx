@@ -35,7 +35,27 @@ const ConversationEventsContext = createContext<EventsApi | undefined>(undefined
  */
 const SILENCIO_MAXIMO_MS = 50_000;
 
-export function ConversationEventsProvider({ children }: { readonly children: ReactNode }) {
+interface ConversationEventsProviderProps {
+  readonly children: ReactNode;
+  /**
+   * A conta ativa da sessão. Não é usada para filtrar nada aqui — quem filtra é
+   * o servidor —, mas **precisa** ser uma dependência do efeito.
+   *
+   * A rota `/api/conversas/events` resolve a conta uma única vez, no instante em
+   * que a conexão abre, e a guarda no fecho do stream. Trocar de workspace
+   * reassina o cookie e navega, mas a navegação do App Router **preserva** este
+   * layout: sem esta dependência o `EventSource` continuava aberto, e o servidor
+   * seguia empurrando eventos da conta anterior para dentro do workspace novo.
+   * Passar a conta aqui derruba a conexão velha e abre outra já com o cookie
+   * novo.
+   */
+  readonly accountId: string;
+}
+
+export function ConversationEventsProvider({
+  children,
+  accountId,
+}: ConversationEventsProviderProps) {
   const handlers = useRef(new Set<Handler>());
 
   useEffect(() => {
@@ -112,7 +132,7 @@ export function ConversationEventsProvider({ children }: { readonly children: Re
       if (watchdog) clearTimeout(watchdog);
       if (source) source.close();
     };
-  }, []);
+  }, [accountId]);
 
   const api = useMemo<EventsApi>(
     () => ({

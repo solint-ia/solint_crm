@@ -57,6 +57,23 @@ export const extractStatusCode = (error: unknown): number | undefined => {
 export const fallbackPersonName = (phone: string, jid: string): string =>
   phone ? PhoneNumber.format(phone) : `Contato ${userOf(jid).slice(-6)}`;
 
+/** Bullets que o WhatsApp usa para mascarar números fora da agenda. */
+const MASCARA_DE_NUMERO = /[∙•·‧・･*]/;
+
+/**
+ * Decide se um nome recebido do WhatsApp realmente identifica uma pessoa.
+ * Números puros e números mascarados são ausência de nome, não uma etiqueta
+ * que deva sobrescrever o cadastro do CRM.
+ */
+export const nomeUtilizavel = (nome: string | null | undefined): string | undefined => {
+  const limpo = nome?.trim();
+  if (!limpo || MASCARA_DE_NUMERO.test(limpo)) return undefined;
+
+  const digitos = limpo.replace(/[\s()+.-]/g, '');
+  if (/^\d{6,}$/.test(digitos)) return undefined;
+  return limpo;
+};
+
 export const GROUP_METADATA_TTL_MS = 10 * 60 * 1000;
 export const AVATAR_TTL_MS = 60 * 60 * 1000;
 export const MAX_TRACKED_SENT_IDS = 500;

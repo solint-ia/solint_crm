@@ -14,6 +14,7 @@ import { UnsavedChangesBar } from '@/features/configuracoes/components/unsaved-c
 import { WhatsAppConnectionCard } from '@/features/whatsapp/components/whatsapp-connection-card';
 import { WhatsAppModal } from '@/features/whatsapp/components/whatsapp-modal';
 import { updateProfileAction, uploadProfilePhotoAction } from '@/app/(workspace)/perfil/actions';
+import { switchWorkspaceAction } from '@/components/layout/workspace-actions';
 import { ALLOWED_AVATAR_MIME_TYPES } from '@/core/domain/image-upload';
 import { planned } from '@/components/ui/planned';
 import { cn } from '@/lib/cn';
@@ -39,13 +40,14 @@ const NOTIFICATION_ITEMS = [
   { key: 'assigned', label: 'Conversa atribuída diretamente a mim' },
   { key: 'mentions', label: 'Menções com @ em notas internas' },
   { key: 'sla', label: 'Aviso quando o prazo de resposta estiver acabando' },
-  { key: 'campaigns', label: 'Notificar conclusão de campanhas em massa' },
 ] as const;
 
 export function ProfileView({ session, inboxes }: ProfileViewProps) {
   const { user, account, availableAccounts } = session;
   const { show } = useToast();
   const [saving, startSaving] = useTransition();
+  const [trocandoWorkspace, startTrocaWorkspace] = useTransition();
+  const [workspaceAlvo, setWorkspaceAlvo] = useState<string | null>(null);
 
   const [name, setName] = useState(user.name);
   const [availability, setAvailability] = useState<AvailabilityStatus>(user.availability);
@@ -121,6 +123,28 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
     [name, availability, signature, signatureEnabled, notifications, user],
   );
 
+  /**
+   * Entra em outro workspace a partir da lista do perfil.
+   *
+   * A ação reassina o cookie e redireciona, então em caso de sucesso nada aqui
+   * embaixo executa — o `setWorkspaceAlvo(null)` só é alcançado quando deu
+   * errado, e é justamente aí que o botão precisa voltar ao normal.
+   */
+  const trocarWorkspace = (accountId: string) => {
+    setWorkspaceAlvo(accountId);
+    startTrocaWorkspace(async () => {
+      const result = await switchWorkspaceAction({ accountId });
+      setWorkspaceAlvo(null);
+      if (!result.ok) {
+        show({
+          tone: 'erro',
+          title: 'Não foi possível trocar de workspace',
+          description: result.error ?? 'Tente de novo em instantes.',
+        });
+      }
+    });
+  };
+
   const handleDiscard = () => {
     setName(user.name);
     setAvailability(user.availability);
@@ -138,10 +162,7 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
         availability,
         signature: signature.trim(),
         signatureEnabled,
-        notifications: {
-          ...notifications,
-          dailySummaryEmail: notifications.dailySummaryEmail?.trim() ?? '',
-        },
+        notifications,
       });
 
       if (!result.ok) {
@@ -196,7 +217,7 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
             >
               {uploadingPhoto ? 'Enviando…' : 'Alterar foto'}
             </Button>
-            <span className="text-[11px] text-muted">JPG, PNG, WEBP ou GIF, até 5 MB.</span>
+            <span className="text-[11px] text-muted">JPG, PNG ou WEBP, até 5 MB.</span>
             {photoError ? <span className="text-[11px] text-red-text">{photoError}</span> : null}
           </div>
         </div>
@@ -404,36 +425,6 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
             </div>
           ))}
 
-          <div className="flex flex-col gap-2.5 py-2.5">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-body text-ink">Receber resumo diário de atividades</span>
-              <Toggle
-                checked={notifications.dailySummary}
-                onChange={(dailySummary) => patchNotifications({ dailySummary })}
-                label="Receber resumo diário de atividades por email"
-              />
-            </div>
-
-            {/* O campo só existe quando há resumo para mandar. Fora disso ele
-                pediria uma decisão sobre algo desligado. */}
-            {notifications.dailySummary ? (
-              <Field
-                label="Enviar o resumo para"
-                htmlFor="daily-summary-email"
-                hint={`Em branco, vai para ${user.email}.`}
-              >
-                <TextInput
-                  id="daily-summary-email"
-                  type="email"
-                  placeholder={user.email}
-                  value={notifications.dailySummaryEmail ?? ''}
-                  onChange={(event) =>
-                    patchNotifications({ dailySummaryEmail: event.target.value })
-                  }
-                />
-              </Field>
-            ) : null}
-          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-3 border-t border-line-soft pt-4">
@@ -452,7 +443,9 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
           Workspaces vinculados
         </h3>
         <p className="text-body text-muted">
-          Você pode alternar entre contas a qualquer momento.
+          Alterne entre contas a qualquer momento, aqui ou pelo seletor no topo da tela. Cada
+          workspace tem contatos, conversas e funil próprios, e o seu papel pode ser diferente
+          em cada um.
         </p>
 
         <div className="overflow-hidden rounded-surface border border-line bg-surface shadow-xs">
@@ -484,9 +477,10 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
                     <Button
                       variant="secondary"
                       size="sm"
-                      {...planned('Trocar para este workspace')}
+                      disabled={trocandoWorkspace}
+                      onClick={() => trocarWorkspace(acc.id)}
                     >
-                      Alternar
+                      {workspaceAlvo === acc.id ? 'Entrando...' : 'Alternar'}
                     </Button>
                   )}
                 </div>

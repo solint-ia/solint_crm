@@ -6,7 +6,6 @@ import type { Route } from 'next';
 import {
   AtSign,
   Bell,
-  Megaphone,
   MessageSquare,
   Settings2,
   Timer,
@@ -29,7 +28,6 @@ interface NotificationsMenuProps {
 const KIND_ICON: Readonly<Record<NotificationKind, typeof Bell>> = {
   atribuicao: UserPlus,
   sla: Timer,
-  campanha: Megaphone,
   mencao: AtSign,
   sistema: Settings2,
   mensagem: MessageSquare,
@@ -38,7 +36,6 @@ const KIND_ICON: Readonly<Record<NotificationKind, typeof Bell>> = {
 const KIND_TONE: Readonly<Record<NotificationKind, string>> = {
   atribuicao: 'text-blue-text',
   sla: 'text-red-text',
-  campanha: 'text-violet-text',
   mencao: 'text-brand',
   sistema: 'text-dim',
   mensagem: 'text-green-text',

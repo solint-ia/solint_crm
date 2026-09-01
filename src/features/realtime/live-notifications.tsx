@@ -58,12 +58,32 @@ const MAX_ITEMS = 20;
 
 export function LiveNotificationsProvider({
   soundEnabled,
+  accountId,
   children,
 }: {
   readonly soundEnabled: boolean;
+  /** Conta ativa: trocar de workspace esvazia a lista acumulada. */
+  readonly accountId: string;
   readonly children: ReactNode;
 }) {
   const [items, setItems] = useState<readonly AppNotification[]>([]);
+
+  /**
+   * Os avisos vivos são da conta em que nasceram.
+   *
+   * Eles moram só na memória desta aba, e a troca de workspace não remonta este
+   * provider — a navegação do App Router preserva o layout. Sem isto, o sininho
+   * continuaria mostrando mensagens do workspace anterior, com links para
+   * conversas que a pessoa não alcança mais: clicar levaria a um "não
+   * encontrado", e o selo contaria o que não existe ali.
+   */
+  const contaAnterior = useRef(accountId);
+  if (contaAnterior.current !== accountId) {
+    contaAnterior.current = accountId;
+    // Durante o render, e não num efeito: o efeito só rodaria depois de um
+    // quadro com a lista errada já desenhada na tela.
+    setItems([]);
+  }
 
   /**
    * A preferência entra por `ref` porque o handler do barramento é registrado

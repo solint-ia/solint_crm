@@ -177,8 +177,8 @@ export const prismaAutomationEffects: AutomationEffects = {
         // vez de falhar: uma conversa na fila geral é justamente a que mais
         // precisa que alguém seja avisado.
         userId: conversation.assigneeId,
-        kind: 'automacao',
-        text: text ? `${text} — ${contato}` : `Automação disparada na conversa com ${contato}`,
+        kind: 'sistema',
+        text: text ? `${text} (${contato})` : `Automação disparada na conversa com ${contato}`,
         timeLabel: horaLabel(new Date()),
         href: `/conversas?conversa=${conversationId}`,
         read: false,

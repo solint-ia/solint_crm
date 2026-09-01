@@ -1,6 +1,7 @@
 'use server';
 
 import { z } from 'zod';
+import { writeAuditLog } from '@/infrastructure/audit/write-audit-log';
 import { revalidatePath } from 'next/cache';
 import type { Deal } from '@/core/domain/pipeline';
 import { contactLabelsAfterMove } from '@/core/domain/pipeline';
@@ -200,6 +201,7 @@ const updateStagesSchema = z.object({
       color: z.string(),
       isWon: z.boolean().default(false),
       isLost: z.boolean().default(false),
+      conversionWeight: z.number().int().min(0).max(100).default(0),
       // `null` desfaz o vínculo com a etiqueta; ausente mantém o que está lá.
       labelId: z.string().min(1).max(64).nullable().optional(),
     }),
@@ -216,6 +218,15 @@ export async function updateStagesAction(
   try {
     const session = await container.session.getCurrentSession();
     await container.pipelines.updateStages(session.account.id, pipelineId, parsed.data.stages);
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'funil.etapas',
+      targetType: 'funil',
+      targetId: pipelineId,
+      metadata: { stages: parsed.data.stages.length },
+    });
     revalidatePath('/kanban');
     return { ok: true };
   } catch (error) {

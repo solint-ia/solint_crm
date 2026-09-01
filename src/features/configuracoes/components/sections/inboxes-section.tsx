@@ -1057,7 +1057,7 @@ function InboxDetail({
             />
             <p className="mt-1.5 text-[11px] text-dim">
               Deixe vazio para usar a pergunta padrão. O cliente responde com o número, com
-              &ldquo;nota 4&rdquo; ou com estrelas — todas as formas são aceitas.
+              &ldquo;nota 4&rdquo; ou com estrelas: todas as formas são aceitas.
             </p>
           </div>
         </div>

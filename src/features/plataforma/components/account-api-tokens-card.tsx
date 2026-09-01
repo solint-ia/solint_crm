@@ -102,7 +102,7 @@ export function AccountApiTokensCard({
       {segredo ? (
         <div className="mt-4 rounded-xl border border-amber-line/50 bg-amber-soft/40 p-3">
           <p className="text-[11px] font-semibold text-amber-text">
-            Copie agora — este segredo não será mostrado de novo.
+            Copie agora: este segredo não será mostrado de novo.
           </p>
           <code className="mt-1 block break-all font-mono text-xs text-ink">{segredo}</code>
           <button

@@ -333,7 +333,7 @@ export const detectAutomationConflicts = (
             secondId: second.id,
             severity: 'sobrescrita',
             field: label,
-            explanation: `Ambas gravam “${label}” na mesma conversa com valores diferentes (“${action.value}” e “${rival.value}”). Vale a de maior ordem de execução — hoje, “${
+            explanation: `Ambas gravam “${label}” na mesma conversa com valores diferentes (“${action.value}” e “${rival.value}”). Vale a de maior ordem de execução: hoje, “${
               first.order <= second.order ? second.name : first.name
             }”.`,
           });

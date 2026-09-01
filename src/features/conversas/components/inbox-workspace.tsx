@@ -1,13 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import {
-  ArrowLeft,
-  MessageSquare,
-  Search,
-  X,
-} from 'lucide-react';
-import type { Conversation, ConversationStatus, InboxScope, Priority } from '@/core/domain/conversation';
+import { ArrowLeft, MessageSquare, Search, X } from 'lucide-react';
+import type {
+  Conversation,
+  ConversationStatus,
+  InboxScope,
+  Priority,
+} from '@/core/domain/conversation';
 import type { Message } from '@/core/domain/message';
 import type { CannedResponse } from '@/core/domain/settings';
 import { markConversationNotificationsAsReadAction } from '@/components/layout/notification-actions';
@@ -22,12 +22,7 @@ import { ConversationListItem } from './conversation-list-item';
 import { InboxDisconnectedState } from './inbox-disconnected-state';
 import { NotificationVolumeControl } from './notification-volume-control';
 
-import {
-  activeFilterCount,
-  useInbox,
-  type StatusTab,
-} from '../hooks/use-inbox';
-
+import { activeFilterCount, useInbox, type StatusTab } from '../hooks/use-inbox';
 
 interface InboxWorkspaceProps {
   readonly conversations: readonly Conversation[];
@@ -56,9 +51,7 @@ interface InboxWorkspaceProps {
     replyToId?: string;
     scheduledFor: string;
   }) => Promise<ScheduledResult>;
-  readonly listScheduledMessages: (input: {
-    conversationId: string;
-  }) => Promise<ScheduledResult>;
+  readonly listScheduledMessages: (input: { conversationId: string }) => Promise<ScheduledResult>;
   readonly cancelScheduledMessage: (input: {
     conversationId: string;
     scheduledMessageId: string;
@@ -176,8 +169,7 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
    * misturando os números da conta. A primeira da lista é um padrão
    * arbitrário, mas estável — e a pessoa troca num clique.
    */
-  const caixaAtual =
-    inbox.filters.inboxId ?? inbox.selected?.inboxId ?? props.inboxes[0]?.id;
+  const caixaAtual = inbox.filters.inboxId ?? inbox.selected?.inboxId ?? props.inboxes[0]?.id;
   const caixaObj = props.inboxes.find((i) => i.id === caixaAtual);
 
   useEffect(() => {
@@ -213,9 +205,7 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
 
   const filterCount = activeFilterCount(inbox.filters);
   const hasNarrowing =
-    filterCount > 0 ||
-    inbox.search.trim().length > 0 ||
-    inbox.statusTab !== 'todas';
+    filterCount > 0 || inbox.search.trim().length > 0 || inbox.statusTab !== 'todas';
 
   if (semCanais) {
     return <InboxDisconnectedState />;
@@ -246,7 +236,9 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
                       ? 'bg-emerald-500 ring-2 ring-emerald-500/20'
                       : 'bg-amber-500',
                   )}
-                  title={caixaObj?.status === 'conectado' ? 'Canal conectado' : 'Aguardando conexão'}
+                  title={
+                    caixaObj?.status === 'conectado' ? 'Canal conectado' : 'Aguardando conexão'
+                  }
                 />
                 <span className="truncate text-xs font-bold text-ink">
                   {caixaObj?.name ?? 'Canal de atendimento'}
@@ -302,10 +294,7 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
                 labels={props.catalog.labels}
                 onChange={inbox.setFilters}
               />
-              <InboxSortMenu
-                sort={inbox.sort}
-                onChange={inbox.setSort}
-              />
+              <InboxSortMenu sort={inbox.sort} onChange={inbox.setSort} />
               <NotificationVolumeControl />
             </div>
           </div>
@@ -382,7 +371,7 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
               <p className="text-xs text-muted leading-relaxed">
                 {hasNarrowing
                   ? 'Ajuste os filtros, a busca ou a aba de status para ver outros atendimentos.'
-                  : 'Nenhuma mensagem aguardando atendimento na sua fila neste momento.'}
+                  : 'Toda conversa nova fica visível para a equipe da caixa. Quem responder primeiro assume o atendimento.'}
               </p>
               {hasNarrowing && (
                 <button
@@ -414,7 +403,10 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
             )}
           >
             {inbox.error && (
-              <p role="alert" className="bg-red-500/10 border-b border-red-500/20 px-4 py-2 text-xs text-red-600 dark:text-red-300">
+              <p
+                role="alert"
+                className="bg-red-500/10 border-b border-red-500/20 px-4 py-2 text-xs text-red-600 dark:text-red-300"
+              >
                 {inbox.error}
               </p>
             )}
@@ -434,7 +426,9 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
               listScheduledMessages={props.listScheduledMessages}
               cancelScheduledMessage={props.cancelScheduledMessage}
               onSendMedia={inbox.sendMedia}
-              onTyping={(conversationId, isTyping) => props.setOperatorTyping?.({ conversationId, isTyping })}
+              onTyping={(conversationId, isTyping) =>
+                props.setOperatorTyping?.({ conversationId, isTyping })
+              }
               onSendTemplate={inbox.sendTemplate}
               onChangeStatus={inbox.changeStatus}
               onAssign={inbox.assign}
@@ -504,7 +498,8 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
               Selecione uma conversa ao lado
             </h3>
             <p className="text-xs text-muted leading-relaxed">
-              Escolha um atendimento na lista à esquerda para visualizar o histórico de mensagens e começar a responder.
+              Escolha um atendimento na lista à esquerda para visualizar o histórico de mensagens e
+              começar a responder.
             </p>
           </div>
         </div>

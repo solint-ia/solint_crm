@@ -211,7 +211,7 @@ export function AgentRankingCard({ agents }: AgentRankingCardProps) {
       {semDados ? (
         <p className="mt-3 border-t border-line pt-2.5 text-center text-[11px] text-dim">
           {metric === 'csat'
-            ? 'Nenhuma avaliação recebida no período — ligue a pesquisa de satisfação nas configurações da caixa.'
+            ? 'Nenhuma avaliação recebida no período. Ligue a pesquisa de satisfação nas configurações da caixa.'
             : 'Sem atendimentos atribuídos no período selecionado.'}
         </p>
       ) : null}

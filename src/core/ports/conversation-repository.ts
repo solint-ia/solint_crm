@@ -40,7 +40,11 @@ export interface ConversationReader {
     currentUserId: Id,
     filter: ConversationFilter,
   ): Promise<readonly Conversation[]>;
-  findById(accountId: Id, conversationId: Id, inboxAccess: InboxAccess): Promise<Conversation | null>;
+  findById(
+    accountId: Id,
+    conversationId: Id,
+    inboxAccess: InboxAccess,
+  ): Promise<Conversation | null>;
 }
 
 /** Escrita de conversas. */
@@ -93,8 +97,16 @@ export interface ConversationWriter {
    * mostrando a versao antiga ate' o proximo carregamento completo.
    */
   syncContact(accountId: Id, contact: Contact): Promise<void>;
-  /** Anexa uma mensagem já montada (mídia, template) sem passar por texto puro. */
-  appendRichMessage(accountId: Id, conversationId: Id, message: Message): Promise<Message>;
+  /**
+   * Anexa uma mensagem já montada (mídia, template) sem passar por texto puro.
+   * O autor é necessário para a primeira resposta pública assumir o atendimento.
+   */
+  appendRichMessage(
+    accountId: Id,
+    conversationId: Id,
+    message: Message,
+    authorId: Id,
+  ): Promise<Message>;
   markAsRead(accountId: Id, conversationId: Id): Promise<void>;
   /** Uma mensagem da conversa, escopada pela conta. `null` quando não existe. */
   findMessage(accountId: Id, conversationId: Id, messageId: Id): Promise<Message | null>;
@@ -104,7 +116,11 @@ export interface ConversationWriter {
    * A linha continua para a timeline não se recosturar sem ela, mas o conteúdo
    * sai de verdade: "apagar" que deixa o texto legível no banco não é apagar.
    */
-  markMessageDeleted(accountId: Id, conversationId: Id, messageId: Id): Promise<Conversation | null>;
+  markMessageDeleted(
+    accountId: Id,
+    conversationId: Id,
+    messageId: Id,
+  ): Promise<Conversation | null>;
 }
 
 export interface ConversationRepository extends ConversationReader, ConversationWriter {}

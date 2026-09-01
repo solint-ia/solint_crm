@@ -65,6 +65,7 @@ import {
   inboxStatusFrom,
   MAX_INLINE_MEDIA_BYTES,
   MAX_TRACKED_SENT_IDS,
+  nomeUtilizavel,
   timeLabel,
   toneFor,
 } from '../wa-format';
@@ -614,7 +615,7 @@ export class WhatsAppSession {
             );
             await this.updateStatus({
               status: 'conectando',
-              error: 'Reconectando — outra sessão assumiu o número.',
+              error: 'Reconectando: outra sessão assumiu o número.',
               qr: undefined,
             });
             if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
@@ -1043,8 +1044,8 @@ export class WhatsAppSession {
     const phone = PhoneNumber.normalize(`+${phoneDigits}`);
     if (!PhoneNumber.isValid(phone)) return;
 
-    const addressBookName = contact.name?.trim();
-    const pushName = contact.notify?.trim() || contact.verifiedName?.trim();
+    const addressBookName = nomeUtilizavel(contact.name);
+    const pushName = nomeUtilizavel(contact.notify) ?? nomeUtilizavel(contact.verifiedName);
     const resolvedName = addressBookName || pushName || PhoneNumber.format(phone) || phone;
     const avatarUrl =
       typeof contact.imgUrl === 'string' && contact.imgUrl !== 'changed' ? contact.imgUrl : undefined;
@@ -1065,7 +1066,7 @@ export class WhatsAppSession {
       if (existing) {
         const shouldUpdateName =
           (addressBookName && existing.name !== addressBookName) ||
-          (pushName && (existing.name.startsWith('+') || existing.name === phone));
+          (pushName && !nomeUtilizavel(existing.name));
 
         if (shouldUpdateName || (avatarUrl && !existing.avatarUrl)) {
           await prisma.contact.update({
@@ -1201,8 +1202,8 @@ export class WhatsAppSession {
       const phone = PhoneNumber.normalize(`+${phoneDigits}`);
       if (!PhoneNumber.isValid(phone)) continue;
 
-      const addressBookName = contact.name?.trim();
-      const pushName = contact.notify?.trim() || contact.verifiedName?.trim();
+      const addressBookName = nomeUtilizavel(contact.name);
+      const pushName = nomeUtilizavel(contact.notify) ?? nomeUtilizavel(contact.verifiedName);
       const resolvedName = addressBookName || pushName || PhoneNumber.format(phone) || phone;
       const avatarUrl = typeof contact.imgUrl === 'string' && contact.imgUrl !== 'changed' ? contact.imgUrl : undefined;
 
@@ -1712,8 +1713,10 @@ export class WhatsAppSession {
 
     const inboundName = fromMe
       ? undefined
-      : msg.pushName?.trim() || msg.verifiedBizName?.trim();
-    const storedName = this.contactsStore.get(jidNormalizedUser(chat.jid))?.name?.trim();
+      : nomeUtilizavel(msg.pushName) ?? nomeUtilizavel(msg.verifiedBizName);
+    const storedName = nomeUtilizavel(
+      this.contactsStore.get(jidNormalizedUser(chat.jid))?.name,
+    );
     const name =
       inboundName ||
       storedName ||
@@ -1773,7 +1776,7 @@ export class WhatsAppSession {
 
     // 1. Agenda sincronizada deste número (o `name` do `contacts.upsert`).
     const armazenado = jid ? this.contactsStore.get(jid) : undefined;
-    const daAgenda = armazenado?.name?.trim();
+    const daAgenda = nomeUtilizavel(armazenado?.name);
     if (daAgenda) return guardar(daAgenda);
 
     // 2. Cadastro do CRM, quando o participante já é contato desta conta.
@@ -1783,17 +1786,17 @@ export class WhatsAppSession {
           where: { accountId: this.accountId, kind: { not: 'grupo' }, phone: sender.phone },
           select: { name: true },
         });
-        const nome = conhecido?.name?.trim();
+        const nome = nomeUtilizavel(conhecido?.name);
         // Um cadastro cujo nome é o próprio número não acrescenta nada — e
         // aceitá-lo aqui bloquearia o `pushName`, que é melhor que ele.
-        if (nome && !nome.startsWith('+') && nome !== sender.phone) return guardar(nome);
+        if (nome) return guardar(nome);
       } catch (error) {
         waLog.debug(`[sessão ${this.inboxId}] Nome do participante não consultado:`, error);
       }
     }
 
     // 3. O nome que a própria pessoa publica, que vem dentro da mensagem.
-    const pushName = msg.pushName?.trim() || msg.verifiedBizName?.trim();
+    const pushName = nomeUtilizavel(msg.pushName) ?? nomeUtilizavel(msg.verifiedBizName);
     if (pushName) return guardar(pushName);
 
     // 4. Último recurso: o número. Sem cache — assim que um nome aparecer numa

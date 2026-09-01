@@ -158,18 +158,6 @@ export interface NotificationPreferences {
   readonly mentions: boolean;
   /** Prazo de resposta estourando. */
   readonly sla: boolean;
-  /** Conclusão de campanhas em massa. */
-  readonly campaigns: boolean;
-  /** Resumo diário por email. */
-  readonly dailySummary: boolean;
-  /**
-   * Para onde o resumo vai.
-   *
-   * Separado do email de login de propósito: o resumo costuma ser lido pela
-   * gerência ou por uma caixa compartilhada, que raramente é a mesma conta que
-   * atende. Vazio significa "manda para o email do meu login".
-   */
-  readonly dailySummaryEmail?: string;
   /** O navegador emite um som quando chega mensagem nova. */
   readonly sound: boolean;
 }
@@ -178,8 +166,6 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
   assigned: true,
   mentions: true,
   sla: true,
-  campaigns: false,
-  dailySummary: false,
   // Som ligado por padrão: quem atende costuma estar noutra aba, e o aviso
   // silencioso não avisa ninguém. Desligar é um clique.
   sound: true,
@@ -252,6 +238,8 @@ export type InboxAccess = 'todas' | readonly Id[];
 
 /** Sessão do usuário autenticado no contexto de uma conta. */
 export interface Session {
+  /** `jti` do acesso atual, usado para trocar workspace e identificar esta sessão. */
+  readonly tokenId: Id;
   readonly user: User;
   readonly account: Account;
   readonly permissions: readonly Permission[];

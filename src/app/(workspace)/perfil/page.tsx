@@ -1,13 +1,11 @@
 import type { Metadata } from 'next';
-import { LogOut } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { Topbar } from '@/components/layout/topbar';
 import { PageShell } from '@/components/layout/page-shell';
 import { canSeeInbox } from '@/core/domain/user';
 import { ProfileView } from '@/features/perfil/components/profile-view';
 import { container } from '@/infrastructure/container';
 import { prisma } from '@/infrastructure/db/prisma';
-import { planned } from '@/components/ui/planned';
+import { LogoutAllSessionsButton } from '@/features/perfil/components/logout-all-sessions-button';
 
 export const metadata: Metadata = { title: 'Meu perfil' };
 
@@ -40,11 +38,7 @@ export default async function PerfilPage() {
         account={session.account}
         accounts={session.availableAccounts}
         notifications={notifications}
-        actions={
-          <Button variant="danger" size="sm" icon={<LogOut className="size-3.5" />} {...planned('Encerrar todas as sessões ativas desta conta')}>
-            Sair de todas as sessões
-          </Button>
-        }
+        actions={<LogoutAllSessionsButton />}
       />
 
       <PageShell>

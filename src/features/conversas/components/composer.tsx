@@ -915,7 +915,7 @@ export function Composer({
               active={agendaAberta}
               title={
                 hasMedia
-                  ? 'Anexos não podem ser agendados — envie agora ou remova o anexo.'
+                  ? 'Anexos não podem ser agendados. Envie agora ou remova o anexo.'
                   : 'Agendar mensagem'
               }
               onClick={() => (agendaAberta ? setAgendaAberta(false) : abrirAgenda())}

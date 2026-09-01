@@ -3,6 +3,7 @@ import { can } from '@/core/domain/user';
 import { container } from '@/infrastructure/container';
 import { csvFileName, toCsv, type CsvColumn } from '@/lib/csv';
 import { parseOneOf, parsePeriod } from '@/lib/search-params';
+import { writeAuditLog } from '@/infrastructure/audit/write-audit-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -150,6 +151,15 @@ export async function GET(request: Request) {
   }
 
   const fileName = csvFileName(['solint', TAB_FILE_LABEL[tab], period]);
+  await writeAuditLog({
+    accountId: session.account.id,
+    actorId: session.user.id,
+    actorName: session.user.name,
+    action: 'relatorio.exportado',
+    targetType: 'relatorio',
+    targetName: TAB_FILE_LABEL[tab],
+    metadata: { tab, period },
+  });
 
   return new Response(csv, {
     headers: {

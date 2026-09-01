@@ -103,6 +103,12 @@ async function main() {
   const waitingRunner = new WaitingMessageRunner();
   waitingRunner.start();
 
+  const { AuditRetentionRunner } = await import(
+    './infrastructure/scheduling/audit-retention-runner'
+  );
+  const auditRetentionRunner = new AuditRetentionRunner();
+  auditRetentionRunner.start();
+
   /**
    * Batida de presença.
    *
@@ -192,6 +198,7 @@ async function main() {
     server.close();
     scheduledRunner.stop();
     waitingRunner.stop();
+    auditRetentionRunner.stop();
     commandConsumer.stop();
     await sessionManager.shutdown();
     // As chaves de cache (`lid-mapping`, `tctoken`) são gravadas fora do mutex

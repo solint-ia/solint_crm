@@ -17,6 +17,7 @@ export const PIPELINES: readonly Pipeline[] = [
         color: '#3B82F6', // Azul
         isWon: false,
         isLost: false,
+        conversionWeight: 0,
       },
       {
         id: 'st-qualificacao',
@@ -26,6 +27,7 @@ export const PIPELINES: readonly Pipeline[] = [
         color: '#F59E0B', // Âmbar
         isWon: false,
         isLost: false,
+        conversionWeight: 0,
       },
       {
         id: 'st-proposta',
@@ -35,6 +37,7 @@ export const PIPELINES: readonly Pipeline[] = [
         color: '#8B5CF6', // Roxo
         isWon: false,
         isLost: false,
+        conversionWeight: 0,
       },
       {
         id: 'st-negociacao',
@@ -44,6 +47,7 @@ export const PIPELINES: readonly Pipeline[] = [
         color: '#EC4899', // Magenta / Rosa
         isWon: false,
         isLost: false,
+        conversionWeight: 50,
       },
       {
         id: 'st-ganho',
@@ -53,6 +57,7 @@ export const PIPELINES: readonly Pipeline[] = [
         color: '#10B981', // Verde esmeralda
         isWon: true,
         isLost: false,
+        conversionWeight: 100,
       },
       {
         id: 'st-perdido',
@@ -62,6 +67,7 @@ export const PIPELINES: readonly Pipeline[] = [
         color: '#64748B', // Slate
         isWon: false,
         isLost: true,
+        conversionWeight: 0,
       },
     ],
   },
@@ -78,6 +84,7 @@ export const PIPELINES: readonly Pipeline[] = [
         color: '#3B82F6',
         isWon: false,
         isLost: false,
+        conversionWeight: 0,
       },
       {
         id: 'st-ativo',
@@ -87,6 +94,7 @@ export const PIPELINES: readonly Pipeline[] = [
         color: '#10B981',
         isWon: true,
         isLost: false,
+        conversionWeight: 100,
       },
       {
         id: 'st-churn',
@@ -96,6 +104,7 @@ export const PIPELINES: readonly Pipeline[] = [
         color: '#EF4444',
         isWon: false,
         isLost: true,
+        conversionWeight: 0,
       },
     ],
   },
@@ -114,13 +123,12 @@ export const DEALS: readonly Deal[] = [
     amountInCents: 320_000,
     ownerName: 'Rafael Souza',
     priority: 'media',
+    createdAt: daysAgo(1),
     enteredStageAt: daysAgo(1),
     stageAgeLabel: 'há 1 dia',
     nextAction: 'Ligar para apresentar catálogo',
     conversationId: 'cv-mariana',
     source: 'whatsapp',
-    team: 'Comercial',
-    tags: ['Enterprise', 'WhatsApp'],
     history: [{ text: 'Oportunidade criada a partir da conversa WhatsApp', date: '19 ago, 09:14' }],
     tasks: [
       { id: 'tsk-1', title: 'Enviar apresentação institucional', completed: false, dueDate: 'Hoje' },
@@ -138,13 +146,12 @@ export const DEALS: readonly Deal[] = [
     amountInCents: 80_000,
     ownerName: 'Camila Reis',
     priority: 'baixa',
+    createdAt: daysAgo(0),
     enteredStageAt: daysAgo(0),
     stageAgeLabel: 'há 3 horas',
     nextAction: 'Enviar catálogo de soluções',
     conversationId: 'cv-pedro',
     source: 'instagram',
-    team: 'SDR',
-    tags: ['Instagram', 'Pro'],
     history: [{ text: 'Lead recebido via Direct Instagram', date: '20 ago, 11:05' }],
   },
   {
@@ -159,13 +166,12 @@ export const DEALS: readonly Deal[] = [
     amountInCents: 540_000,
     ownerName: 'Rafael Souza',
     priority: 'media',
+    createdAt: daysAgo(2),
     enteredStageAt: daysAgo(2),
     stageAgeLabel: 'há 2 dias',
     nextAction: 'Aguardar retorno sobre orçamento',
     conversationId: 'cv-roberta',
     source: 'site',
-    team: 'Comercial',
-    tags: ['Inbound', 'IA Agents'],
     history: [
       { text: 'Proposta inicial enviada por e-mail', date: '18 ago, 15:40' },
       { text: 'Reunião de descoberta realizada via Meet', date: '16 ago, 10:00' },
@@ -185,12 +191,11 @@ export const DEALS: readonly Deal[] = [
     amountInCents: 210_000,
     ownerName: 'Camila Reis',
     priority: 'baixa',
+    createdAt: daysAgo(6),
     enteredStageAt: daysAgo(6),
     stageAgeLabel: 'há 6 dias',
     nextAction: 'Follow-up de qualificação urgente',
     source: 'indicacao',
-    team: 'SDR',
-    tags: ['Indicação'],
     history: [{ text: 'Sem resposta desde o primeiro contato', date: '14 ago, 09:00' }],
   },
   {
@@ -205,13 +210,12 @@ export const DEALS: readonly Deal[] = [
     amountInCents: 1_250_000,
     ownerName: 'Rafael Souza',
     priority: 'alta',
+    createdAt: daysAgo(1),
     enteredStageAt: daysAgo(1),
     stageAgeLabel: 'há 1 dia',
     nextAction: 'Confirmar aprovação da diretoria',
     conversationId: 'cv-carlos',
     source: 'google',
-    team: 'Enterprise',
-    tags: ['Enterprise', 'Google Ads', 'Ticket Alto'],
     history: [
       { text: 'Orçamento personalizado com SLA enviado', date: '19 ago, 16:02' },
       { text: 'Apresentação para diretoria realizada', date: '15 ago, 14:00' },
@@ -232,13 +236,12 @@ export const DEALS: readonly Deal[] = [
     amountInCents: 890_000,
     ownerName: 'Camila Reis',
     priority: 'urgente',
+    createdAt: daysAgo(9),
     enteredStageAt: daysAgo(9),
     stageAgeLabel: 'há 9 dias',
     nextAction: 'Reenviar proposta e cobrar retorno do CFO',
     conversationId: 'cv-joao',
     source: 'whatsapp',
-    team: 'Comercial',
-    tags: ['Urgente', 'WhatsApp'],
     history: [{ text: 'Proposta enviada, aguardando aprovação financeira', date: '11 ago, 10:30' }],
   },
   {
@@ -253,13 +256,12 @@ export const DEALS: readonly Deal[] = [
     amountInCents: 430_000,
     ownerName: 'Rafael Souza',
     priority: 'alta',
+    createdAt: daysAgo(2),
     enteredStageAt: daysAgo(2),
     stageAgeLabel: 'há 2 dias',
     nextAction: 'Negociar condição e parcelamento',
     conversationId: 'cv-fernanda',
     source: 'inbound',
-    team: 'Comercial',
-    tags: ['Hot Lead', 'Negociação'],
     history: [{ text: 'Cliente solicitou condição de parcelamento em 12x', date: '18 ago, 13:20' }],
     tasks: [
       { id: 'tsk-4', title: 'Aprovar condição comercial com financeiro', completed: true, dueDate: '18 ago' },
@@ -278,13 +280,12 @@ export const DEALS: readonly Deal[] = [
     amountInCents: 160_000,
     ownerName: 'Camila Reis',
     priority: 'baixa',
+    createdAt: daysAgo(4),
     enteredStageAt: daysAgo(4),
     stageAgeLabel: 'há 4 dias',
     nextAction: 'Passar bastão para equipe de Onboarding',
     conversationId: 'cv-ana',
     source: 'site',
-    team: 'Comercial',
-    tags: ['Ganho', 'Self-service'],
     history: [{ text: 'Contrato assinado digitalmente e pagamento confirmado', date: '16 ago, 17:42' }],
   },
   {
@@ -299,13 +300,11 @@ export const DEALS: readonly Deal[] = [
     amountInCents: 670_000,
     ownerName: 'Rafael Souza',
     priority: 'media',
+    createdAt: daysAgo(12),
     enteredStageAt: daysAgo(12),
     stageAgeLabel: 'há 12 dias',
     nextAction: 'Agendar contato de reaquecimento em 6 meses',
     source: 'outbound',
-    team: 'Enterprise',
-    tags: ['Perdido', 'Preço'],
     history: [{ text: 'Perdido: cliente optou por solução local prévia', date: '8 ago, 09:00' }],
   },
 ];
-

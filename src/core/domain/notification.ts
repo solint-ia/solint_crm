@@ -3,7 +3,6 @@ import type { Id } from './shared';
 export type NotificationKind =
   | 'atribuicao'
   | 'sla'
-  | 'campanha'
   | 'mencao'
   | 'sistema'
   /**

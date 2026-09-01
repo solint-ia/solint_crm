@@ -30,7 +30,7 @@ import type {
   TimelineItem,
 } from '@/core/domain/message';
 import type { AppNotification, NotificationKind } from '@/core/domain/notification';
-import type { Deal, Pipeline } from '@/core/domain/pipeline';
+import type { Deal, DealSource, Pipeline } from '@/core/domain/pipeline';
 import type { ChannelConnection } from '@/core/domain/settings';
 import {
   DEFAULT_NOTIFICATION_PREFERENCES,
@@ -305,6 +305,7 @@ export const pipelineRow = (row: PipelineWithStages): Pipeline => ({
       color: stage.color,
       isWon: stage.isWon,
       isLost: stage.isLost,
+      conversionWeight: stage.conversionWeight,
       ...(stage.labelId ? { labelId: stage.labelId } : {}),
     })),
 });
@@ -336,12 +337,15 @@ export const dealRow = (row: DbDealWithTasks): Deal => ({
   amountInCents: row.amountInCents,
   ownerName: row.ownerName,
   priority: row.priority as Priority,
+  createdAt: row.createdAt.toISOString(),
   enteredStageAt: row.enteredStageAt,
   stageAgeLabel: row.stageAgeLabel,
   nextAction: row.nextAction,
   history: readJson<Deal['history']>(row.history, []),
   ...(row.contactId ? { contactId: row.contactId } : {}),
   ...(row.company ? { company: row.company } : {}),
+  ...(row.title ? { title: row.title } : {}),
+  ...(row.source ? { source: row.source as DealSource } : {}),
   ...(row.conversationId ? { conversationId: row.conversationId } : {}),
   ...(row.tasks
     ? {

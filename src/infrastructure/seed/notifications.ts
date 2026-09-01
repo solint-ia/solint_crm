@@ -21,15 +21,6 @@ export const NOTIFICATIONS: readonly AppNotification[] = [
     href: '/conversas',
   },
   {
-    id: 'nt-3',
-    accountId: ACCOUNT_ID,
-    kind: 'campanha',
-    text: 'Campanha Reativação Agosto concluída · 94% entregue',
-    timeLabel: 'Há 1h',
-    read: false,
-    href: '/campanhas',
-  },
-  {
     id: 'nt-4',
     accountId: ACCOUNT_ID,
     kind: 'mencao',

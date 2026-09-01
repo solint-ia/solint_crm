@@ -13,7 +13,6 @@ export const ALLOWED_AVATAR_MIME_TYPES = [
   'image/jpeg',
   'image/png',
   'image/webp',
-  'image/gif',
 ] as const;
 
 export type AllowedAvatarMimeType = (typeof ALLOWED_AVATAR_MIME_TYPES)[number];

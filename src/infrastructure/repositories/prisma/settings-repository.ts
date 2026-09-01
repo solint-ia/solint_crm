@@ -4,16 +4,13 @@ import type { Automation } from '@/core/domain/automation';
 import type { KnowledgeArticle, KnowledgeCategory } from '@/core/domain/knowledge';
 import { slugify } from '@/core/domain/knowledge';
 import type {
-  ActiveSession,
   ApiToken,
-  AssignmentMethod,
   AuditLogEntry,
   BillingInfo,
   CannedResponse,
   ChannelConnection,
   CompanyProfile,
   CustomAttributeDefinition,
-  Macro,
   Team,
   Webhook,
 } from '@/core/domain/settings';
@@ -46,7 +43,12 @@ import {
 } from './mappers';
 
 const nowLabel = (): string =>
-  new Date().toLocaleDateString('pt-BR', { timeZone: APP_TIMEZONE, day: '2-digit', month: 'short', year: 'numeric' });
+  new Date().toLocaleDateString('pt-BR', {
+    timeZone: APP_TIMEZONE,
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
 
 const EMPTY_BILLING: BillingInfo = {
   planName: '—',
@@ -145,7 +147,6 @@ export class PrismaSettingsRepository implements SettingsRepository {
       apiTokens,
       customAttributes,
       cannedResponses,
-      macros,
       auditLog,
     ] = await Promise.all([
       prisma.automation.findMany({ where: { accountId }, orderBy: { order: 'asc' } }),
@@ -174,9 +175,11 @@ export class PrismaSettingsRepository implements SettingsRepository {
         orderBy: { order: 'asc' },
       }),
       prisma.cannedResponse.findMany({ where: { accountId }, orderBy: { shortcut: 'asc' } }),
-      prisma.macro.findMany({ where: { accountId }, orderBy: { name: 'asc' } }),
       prisma.auditLogEntry.findMany({
-        where: { accountId },
+        where: {
+          accountId,
+          createdAt: { gte: new Date(Date.now() - 7 * 86_400_000) },
+        },
         orderBy: { createdAt: 'desc' },
         take: 50,
       }),
@@ -212,12 +215,6 @@ export class PrismaSettingsRepository implements SettingsRepository {
         categories: categories.map(categoryRow),
         articles: articles.map(articleRow),
       },
-      assignmentMethod: (settings?.assignmentMethod ?? 'round_robin') as AssignmentMethod,
-      macros: macros.map((m): Macro => ({
-        id: m.id,
-        name: m.name,
-        steps: m.description ?? 'Ações automáticas configuradas',
-      })),
       cannedResponses: cannedResponses.map((cr): CannedResponse => ({
         id: cr.id,
         shortcut: cr.shortcut,
@@ -273,9 +270,14 @@ export class PrismaSettingsRepository implements SettingsRepository {
         action: al.action,
         target: al.targetType,
         ip: al.ip ?? '—',
-        at: al.createdAt.toLocaleDateString('pt-BR', { timeZone: APP_TIMEZONE, day: '2-digit', month: 'short' }),
+        at: al.createdAt.toLocaleDateString('pt-BR', {
+          timeZone: APP_TIMEZONE,
+          day: '2-digit',
+          month: 'short',
+        }),
       })),
-      activeSessions: readJson<readonly ActiveSession[]>(settings?.activeSessions, []),
+      // Sessões reais vêm de `AuthSession` na página de Segurança.
+      activeSessions: [],
       company: readJson<CompanyProfile>(settings?.company, {}),
     };
   }
@@ -311,14 +313,6 @@ export class PrismaSettingsRepository implements SettingsRepository {
     return automationRow(
       await prisma.automation.update({ where: { id: automationId, accountId }, data: { enabled } }),
     );
-  }
-
-  async setAssignmentMethod(accountId: Id, method: AssignmentMethod): Promise<AssignmentMethod> {
-    await prisma.accountSettings.update({
-      where: { accountId },
-      data: { assignmentMethod: method },
-    });
-    return method;
   }
 
   async saveAutomation(accountId: Id, draft: AutomationDraft): Promise<Automation> {
@@ -469,9 +463,7 @@ export class PrismaSettingsRepository implements SettingsRepository {
             ? {}
             : { waitingMessageDelayMinutes: patch.waitingMessageDelayMinutes }),
           ...(patch.csatEnabled === undefined ? {} : { csatEnabled: patch.csatEnabled }),
-          ...(patch.csatQuestion === undefined
-            ? {}
-            : { csatQuestion: patch.csatQuestion || null }),
+          ...(patch.csatQuestion === undefined ? {} : { csatQuestion: patch.csatQuestion || null }),
           ...(patch.webhookUrl === undefined ? {} : { webhookUrl: patch.webhookUrl || null }),
         },
       }),
@@ -1010,38 +1002,6 @@ export class PrismaSettingsRepository implements SettingsRepository {
     });
     if (!exists) throw new NotFoundError('Equipe', teamId);
     await prisma.team.delete({ where: { id: teamId, accountId } });
-  }
-
-  // --- Sessões ativas ---
-
-  /**
-   * Lê a lista corrente e grava a que o filtro deixou.
-   *
-   * `activeSessions` é uma coluna JSON lida e gravada inteira, então as duas
-   * operações compartilham este caminho — o que muda entre elas é só o critério.
-   */
-  private async writeSessions(
-    accountId: Id,
-    manter: (session: ActiveSession) => boolean,
-  ): Promise<readonly ActiveSession[]> {
-    const settings = await prisma.accountSettings.findUnique({ where: { accountId } });
-    const atuais = readJson<readonly ActiveSession[]>(settings?.activeSessions, []);
-    const restantes = atuais.filter(manter);
-
-    await prisma.accountSettings.update({
-      where: { accountId },
-      data: { activeSessions: asJson(restantes) },
-    });
-
-    return restantes;
-  }
-
-  async terminateSession(accountId: Id, sessionId: Id): Promise<readonly ActiveSession[]> {
-    return this.writeSessions(accountId, (s) => s.id !== sessionId || s.current);
-  }
-
-  async terminateOtherSessions(accountId: Id): Promise<readonly ActiveSession[]> {
-    return this.writeSessions(accountId, (s) => s.current);
   }
 
   // --- Etiquetas ---

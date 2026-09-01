@@ -41,7 +41,7 @@ export const KNOWLEDGE: KnowledgeBase = {
       slug: 'como-configurar-sua-conta-em-5-minutos',
       excerpt: 'Da criação do acesso ao primeiro atendimento respondido.',
       content:
-        'Depois de confirmar o e-mail, acesse Configurações → Empresa e preencha razão social e CNPJ. Em seguida conecte pelo menos uma caixa de entrada em Integrações e convide sua equipe em Equipe e Permissões. Com esses três passos a conta já recebe e responde mensagens.',
+        'Acesse Configurações → Empresa e preencha os dados da empresa. Em seguida conecte pelo menos uma caixa em Caixas de entrada e cadastre sua equipe em Equipe e Permissões. Toda conversa nova cai na caixa de entrada e fica visível para toda a equipe que alcança aquela caixa. Quem responder primeiro assume o atendimento.',
       status: 'publicado',
       updatedLabel: '12 ago 2026',
       authorName: 'Camila Reis',
@@ -141,7 +141,7 @@ export const KNOWLEDGE: KnowledgeBase = {
       categoryId: 'kc-1',
       title: 'Glossário de status de conversa',
       slug: 'glossario-de-status-de-conversa',
-      excerpt: 'Aberta, pendente, em espera e resolvida — quando usar cada uma.',
+      excerpt: 'Aberta, pendente, em espera e resolvida: quando usar cada uma.',
       content:
         'Aberta é o atendimento em andamento. Pendente aguarda resposta do cliente. Em espera aguarda uma ação interna (outra área, um prazo). Resolvida encerra o atendimento e dispara a pesquisa de satisfação.',
       status: 'arquivado',

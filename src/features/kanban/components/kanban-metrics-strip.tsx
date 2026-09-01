@@ -10,6 +10,7 @@ import {
   Users,
 } from 'lucide-react';
 import type { PipelineSummary } from '@/core/domain/pipeline';
+import { InfoTooltip } from '@/components/ui/info-tooltip';
 import { formatMoneyFromCents } from '@/lib/format';
 
 
@@ -92,16 +93,21 @@ export function KanbanMetricsStrip({ summary, isFiltered = false }: KanbanMetric
             </div>
           </div>
 
-          {/* Card 4: Taxa de Conversão */}
+          {/* Card 4: Conversão ponderada */}
           <div className="flex items-center gap-3 rounded-control border border-line bg-surface p-2.5 shadow-2xs transition-all hover:border-line">
             <div className="flex size-8 shrink-0 items-center justify-center rounded-control bg-cyan-soft text-cyan-text">
               <PieChart className="size-4" />
             </div>
             <div className="min-w-0">
-              <p className="truncate text-micro font-medium text-dim uppercase">Taxa de Conversão</p>
+              <p className="flex items-center gap-1 truncate text-micro font-medium text-dim uppercase">
+                Conversão ponderada
+                <InfoTooltip
+                  label="conversão ponderada"
+                  text="Média dos pesos das etapas em que os cards estão. Uma etapa com peso 50 faz cada card nela contribuir com 50%."
+                />
+              </p>
               <p className="font-display text-title font-bold text-ink tracking-tight tabular-nums">
-                {summary.conversionRate}%{' '}
-                <span className="text-micro font-normal text-muted">est.</span>
+                {summary.conversionRate}%
               </p>
             </div>
           </div>

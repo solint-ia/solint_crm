@@ -30,6 +30,7 @@ import {
   openOutboundConversation,
 } from '@/infrastructure/whatsapp/wa-store';
 import { waEventBus } from '@/infrastructure/whatsapp/whatsapp-events';
+import { writeAuditLog } from '@/infrastructure/audit/write-audit-log';
 
 export interface ActionResult {
   readonly ok: boolean;
@@ -199,6 +200,24 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
     });
   }
 
+  void writeAuditLog({
+    accountId: session.account.id,
+    actorId: session.user.id,
+    actorName: session.user.name,
+    action: 'mensagem.enviada',
+    targetType: 'mensagem',
+    targetId: parsed.data.conversationId,
+    targetName: conversation.contact.name,
+    metadata: {
+      conversationId: parsed.data.conversationId,
+      messageId: message.id,
+      contactName: conversation.contact.name,
+      contentType: message.content.type,
+      isPrivate: parsed.data.isPrivate,
+      length: text.length,
+    },
+  });
+
   return dispatchError ? { ok: false, error: dispatchError, message } : { ok: true, message };
 }
 
@@ -292,6 +311,17 @@ export async function deleteMessageAction(input: unknown): Promise<ActionResult>
     ...(updated ? { conversation: updated } : {}),
   });
 
+  await writeAuditLog({
+    accountId: session.account.id,
+    actorId: session.user.id,
+    actorName: session.user.name,
+    action: 'mensagem.apagada',
+    targetType: 'mensagem',
+    targetId: parsed.data.conversationId,
+    targetName: conversation.contact.name,
+    metadata: { messageId: parsed.data.messageId },
+  });
+
   return { ok: true };
 }
 
@@ -346,6 +376,17 @@ export async function changeConversationStatusAction(input: unknown): Promise<Ac
     accountId: session.account.id,
     conversationId: parsed.data.conversationId,
     conversation: result.value,
+  });
+
+  await writeAuditLog({
+    accountId: session.account.id,
+    actorId: session.user.id,
+    actorName: session.user.name,
+    action: 'conversa.status',
+    targetType: 'conversa',
+    targetId: parsed.data.conversationId,
+    targetName: result.value.contact.name,
+    metadata: { status: parsed.data.status },
   });
 
   return { ok: true };
@@ -442,6 +483,16 @@ export async function assignConversationAction(input: unknown): Promise<ActionRe
   });
   if (!result.ok) return { ok: false, error: result.error.message };
 
+  await writeAuditLog({
+    accountId: session.account.id,
+    actorId: session.user.id,
+    actorName: session.user.name,
+    action: assignee ? 'conversa.atribuida' : 'conversa.liberada',
+    targetType: 'conversa',
+    targetId: parsed.data.conversationId,
+    targetName: result.value.contact.name,
+    metadata: assignee ? { assigneeId: assignee.id, assigneeName: assignee.name } : {},
+  });
   await broadcast(parsed.data.conversationId);
   return { ok: true };
 }
@@ -459,6 +510,16 @@ export async function changeConversationPriorityAction(input: unknown): Promise<
   const result = await container.useCases.changeConversationPriority({ session, ...parsed.data });
   if (!result.ok) return { ok: false, error: result.error.message };
 
+  await writeAuditLog({
+    accountId: session.account.id,
+    actorId: session.user.id,
+    actorName: session.user.name,
+    action: 'conversa.prioridade',
+    targetType: 'conversa',
+    targetId: parsed.data.conversationId,
+    targetName: result.value.contact.name,
+    metadata: { priority: parsed.data.priority },
+  });
   await broadcast(parsed.data.conversationId);
   return { ok: true };
 }
@@ -848,6 +909,28 @@ export async function sendTemplateAction(input: unknown): Promise<SendMessageRes
     messageId: message.id,
     message,
     conversation: updated ?? undefined,
+  });
+
+  // O template é uma mensagem que sai para o cliente como qualquer outra, e é
+  // assim que a auditoria a registra. O que a distingue vai no metadata: só
+  // pelo `templateId` dá para saber depois qual texto aprovado foi disparado.
+  void writeAuditLog({
+    accountId: session.account.id,
+    actorId: session.user.id,
+    actorName: session.user.name,
+    action: 'mensagem.enviada',
+    targetType: 'mensagem',
+    targetId: parsed.data.conversationId,
+    ...(conversation ? { targetName: conversation.contact.name } : {}),
+    metadata: {
+      conversationId: parsed.data.conversationId,
+      messageId: message.id,
+      ...(conversation ? { contactName: conversation.contact.name } : {}),
+      contentType: message.content.type,
+      isPrivate: false,
+      templateId: parsed.data.templateId,
+      templateName: template.name,
+    },
   });
 
   return dispatchError ? { ok: false, error: dispatchError, message } : { ok: true, message };

@@ -1,6 +1,12 @@
 import type { AgentFlowBlock, AiAgent } from '@/core/domain/ai-agent';
 import type { AppNotification } from '@/core/domain/notification';
-import type { Deal, Pipeline, PipelineStage } from '@/core/domain/pipeline';
+import {
+  DEFAULT_NEGOTIATION_WEIGHT,
+  DEFAULT_WON_WEIGHT,
+  type Deal,
+  type Pipeline,
+  type PipelineStage,
+} from '@/core/domain/pipeline';
 import { DomainError, NotFoundError, type Id } from '@/core/domain/shared';
 import type { AiAgentRepository, CreateAiAgentDraft } from '@/core/ports/ai-agent-repository';
 import type { NotificationRepository } from '@/core/ports/notification-repository';
@@ -10,12 +16,12 @@ import { aiAgentRow, dealRow, notificationRow, pipelineRow } from './mappers';
 import { dataCurtaLabel } from '@/lib/datetime';
 
 const ETAPAS_PADRAO = (pipelineId: string) => [
-  { id: `stg-1-${pipelineId}`, pipelineId, name: 'Novo Lead', order: 1, color: '#3B82F6' },
-  { id: `stg-2-${pipelineId}`, pipelineId, name: 'Qualificação', order: 2, color: '#F59E0B' },
-  { id: `stg-3-${pipelineId}`, pipelineId, name: 'Proposta Enviada', order: 3, color: '#8B5CF6' },
-  { id: `stg-4-${pipelineId}`, pipelineId, name: 'Negociação', order: 4, color: '#EC4899' },
-  { id: `stg-5-${pipelineId}`, pipelineId, name: 'Fechado Ganho', order: 5, color: '#10B981', isWon: true },
-  { id: `stg-6-${pipelineId}`, pipelineId, name: 'Fechado Perdido', order: 6, color: '#64748B', isLost: true },
+  { id: `stg-1-${pipelineId}`, pipelineId, name: 'Novo Lead', order: 1, color: '#3B82F6', conversionWeight: 0 },
+  { id: `stg-2-${pipelineId}`, pipelineId, name: 'Qualificação', order: 2, color: '#F59E0B', conversionWeight: 0 },
+  { id: `stg-3-${pipelineId}`, pipelineId, name: 'Proposta Enviada', order: 3, color: '#8B5CF6', conversionWeight: 0 },
+  { id: `stg-4-${pipelineId}`, pipelineId, name: 'Negociação', order: 4, color: '#EC4899', conversionWeight: DEFAULT_NEGOTIATION_WEIGHT },
+  { id: `stg-5-${pipelineId}`, pipelineId, name: 'Fechado Ganho', order: 5, color: '#10B981', isWon: true, conversionWeight: DEFAULT_WON_WEIGHT },
+  { id: `stg-6-${pipelineId}`, pipelineId, name: 'Fechado Perdido', order: 6, color: '#64748B', isLost: true, conversionWeight: 0 },
 ];
 
 export class PrismaPipelineRepository implements PipelineRepository {
@@ -76,7 +82,7 @@ export class PrismaPipelineRepository implements PipelineRepository {
           id: pipelineId,
           accountId,
           inboxId: caixa.id,
-          name: `Funil — ${caixa.name}`,
+          name: `Funil de ${caixa.name}`,
           stages: { create: ETAPAS_PADRAO(pipelineId).map(({ pipelineId: _, ...st }) => st) },
         },
       });
@@ -221,6 +227,10 @@ export class PrismaPipelineRepository implements PipelineRepository {
         stageId: draft.stageId,
         contactName: draft.contactName ?? draft.title,
         company: draft.companyName ?? null,
+        // O título e a origem eram recebidos aqui e descartados: o título só
+        // sobrevivia dentro do texto do histórico, e a origem não sobrevivia.
+        title: draft.title,
+        source: draft.source ?? null,
         amountInCents: draft.value,
         ownerName: draft.ownerName ?? 'Não atribuído',
         priority: draft.priority ?? 'baixa',
@@ -263,6 +273,10 @@ export class PrismaPipelineRepository implements PipelineRepository {
     if (patch.ownerName !== undefined) data.ownerName = patch.ownerName;
     if (patch.priority !== undefined) data.priority = patch.priority;
     if (patch.nextAction !== undefined) data.nextAction = patch.nextAction;
+    // Os dois campos que a modal de edição já enviava e que a atualização
+    // ignorava em silêncio: salvar não dava erro e não mudava nada.
+    if (patch.title !== undefined) data.title = patch.title;
+    if (patch.source !== undefined) data.source = patch.source;
     if (patch.stageId && patch.stageId !== deal.stageId) {
       data.stageId = patch.stageId;
       data.enteredStageAt = new Date().toISOString();
@@ -302,6 +316,7 @@ export class PrismaPipelineRepository implements PipelineRepository {
       color: string;
       isWon: boolean;
       isLost: boolean;
+      conversionWeight: number;
       labelId?: string | null;
     }[],
   ): Promise<readonly PipelineStage[]> {
@@ -344,6 +359,7 @@ export class PrismaPipelineRepository implements PipelineRepository {
           color: st.color,
           isWon: st.isWon ?? false,
           isLost: st.isLost ?? false,
+          conversionWeight: st.isLost ? 0 : st.conversionWeight,
           labelId: st.labelId ?? null,
         },
         update: {
@@ -352,6 +368,7 @@ export class PrismaPipelineRepository implements PipelineRepository {
           color: st.color,
           isWon: st.isWon ?? false,
           isLost: st.isLost ?? false,
+          conversionWeight: st.isLost ? 0 : st.conversionWeight,
           // `undefined` mantém o vínculo; `null` o desfaz. Quem manda o campo
           // ausente não está pedindo para desassociar a etiqueta.
           ...(st.labelId === undefined ? {} : { labelId: st.labelId }),
@@ -365,6 +382,7 @@ export class PrismaPipelineRepository implements PipelineRepository {
         color: updated.color,
         isWon: updated.isWon,
         isLost: updated.isLost,
+        conversionWeight: updated.conversionWeight,
         ...(updated.labelId ? { labelId: updated.labelId } : {}),
       });
     }

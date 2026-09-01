@@ -103,15 +103,17 @@ async function main() {
       })),
       // Papéis são por conta: o `administrador` de uma não vale na outra.
       ...(secondary
-        ? [{
-            id: `role-admin-${secondary.id}`,
-            accountId: secondary.id,
-            slug: 'administrador',
-            name: 'Administrador',
-            description: 'Acesso total, incluindo faturamento, integrações e segurança.',
-            permissions: json(PERMISSIONS),
-            isSystem: true,
-          }]
+        ? [
+            {
+              id: `role-admin-${secondary.id}`,
+              accountId: secondary.id,
+              slug: 'administrador',
+              name: 'Administrador',
+              description: 'Acesso total, incluindo faturamento, integrações e segurança.',
+              permissions: json(PERMISSIONS),
+              isSystem: true,
+            },
+          ]
         : []),
     ],
   });
@@ -145,12 +147,14 @@ async function main() {
       // O administrador também atende na segunda conta. É o que torna o seletor
       // de workspace uma coisa testável em vez de um botão com uma opção só.
       ...(secondary && first
-        ? [{
-            userId: first.id,
-            accountId: secondary.id,
-            roleSlug: 'administrador',
-            availability: 'disponivel',
-          }]
+        ? [
+            {
+              userId: first.id,
+              accountId: secondary.id,
+              roleSlug: 'administrador',
+              availability: 'disponivel',
+            },
+          ]
         : []),
     ],
   });
@@ -283,6 +287,7 @@ async function main() {
             color: stage.color,
             isWon: stage.isWon,
             isLost: stage.isLost,
+            conversionWeight: stage.conversionWeight,
           })),
         },
       },
@@ -298,9 +303,12 @@ async function main() {
       contactId: deal.contactId ?? null,
       contactName: deal.contactName,
       company: deal.company ?? null,
+      title: deal.title ?? null,
+      source: deal.source ?? null,
       amountInCents: deal.amountInCents,
       ownerName: deal.ownerName,
       priority: deal.priority,
+      createdAt: new Date(deal.createdAt),
       enteredStageAt: deal.enteredStageAt,
       stageAgeLabel: deal.stageAgeLabel,
       nextAction: deal.nextAction,
@@ -402,9 +410,7 @@ async function main() {
   // Os vínculos vivem em tabelas próprias desde a migração `remove_json_equipes`.
   // São eles que decidem quem enxerga qual caixa de entrada — ver `TeamInbox`.
   await prisma.teamInbox.createMany({
-    data: SETTINGS.teams.flatMap((t) =>
-      t.inboxIds.map((inboxId) => ({ teamId: t.id, inboxId })),
-    ),
+    data: SETTINGS.teams.flatMap((t) => t.inboxIds.map((inboxId) => ({ teamId: t.id, inboxId }))),
     skipDuplicates: true,
   });
 
@@ -448,7 +454,14 @@ async function main() {
       target: ca.appliesTo === 'conversa' ? 'deal' : 'contact',
       name: ca.name,
       key: ca.key,
-      type: ca.type === 'lista' ? 'select' : ca.type === 'numero' ? 'number' : ca.type === 'data' ? 'date' : 'text',
+      type:
+        ca.type === 'lista'
+          ? 'select'
+          : ca.type === 'numero'
+            ? 'number'
+            : ca.type === 'data'
+              ? 'date'
+              : 'text',
       options: json([]),
       isRequired: false,
       order: idx,
@@ -532,7 +545,16 @@ async function main() {
       inboxId: 'ibx-wa-oficial',
       name: c.name,
       channel: 'whatsapp',
-      status: c.status === 'em_andamento' ? 'running' : c.status === 'concluida' ? 'completed' : c.status === 'agendada' ? 'scheduled' : c.status === 'pausada' ? 'paused' : 'draft',
+      status:
+        c.status === 'em_andamento'
+          ? 'running'
+          : c.status === 'concluida'
+            ? 'completed'
+            : c.status === 'agendada'
+              ? 'scheduled'
+              : c.status === 'pausada'
+                ? 'paused'
+                : 'draft',
       stats: json(c.metrics),
     })),
   });
@@ -541,7 +563,6 @@ async function main() {
   await prisma.accountSettings.create({
     data: {
       accountId: ACCOUNT_ID,
-      assignmentMethod: SETTINGS.assignmentMethod,
       billing: json(SETTINGS.billing),
       activeSessions: json(SETTINGS.activeSessions),
     },

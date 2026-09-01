@@ -112,7 +112,7 @@ export default async function RelatoriosPage({
             <ComparisonTable rows={report.comparison} period={period} />
             <p className="mt-3 max-w-[65ch] text-meta leading-relaxed text-dim">
               Tempo de resposta, tempo de resolução e conversas sem resposta melhoram quando
-              caem — por isso uma queda aparece em verde nessas linhas.
+              caem, por isso uma queda aparece em verde nessas linhas.
             </p>
           </Section>
         ) : null}

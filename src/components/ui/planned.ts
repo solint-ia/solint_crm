@@ -13,5 +13,5 @@
 export const planned = (whatItWillDo: string) =>
   ({
     disabled: true,
-    title: `${whatItWillDo} — em desenvolvimento, ainda não disponível.`,
+    title: `${whatItWillDo}: em desenvolvimento, ainda não disponível.`,
   }) as const;

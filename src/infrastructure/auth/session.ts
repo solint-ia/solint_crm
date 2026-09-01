@@ -9,6 +9,7 @@ import type {
   Role,
   Session,
 } from '@/core/domain/user';
+import type { ActiveSession } from '@/core/domain/settings';
 import { effectivePermissions } from '@/core/domain/user';
 import { prisma, readJson } from '@/infrastructure/db/prisma';
 import { userRow } from '@/infrastructure/repositories/prisma/mappers';
@@ -59,6 +60,33 @@ export const createSession = async (
   jar.set(SESSION_COOKIE, token, cookieOptions);
 };
 
+/**
+ * Reassina o cookie apontando para outra conta, **sem** abrir sessão nova.
+ *
+ * É assim que trocar de workspace funciona. O `act` do token é o tenant de toda
+ * requisição, e ele é assinado — trocar a conta ativa por um cookie separado,
+ * não assinado, daria a qualquer um acesso a qualquer conta editando o
+ * navegador. Reassinar é a única forma de mudar o tenant sem abrir esse buraco.
+ *
+ * O `jti` é **o mesmo de propósito**. `AuthSession` é do usuário, não da conta
+ * (a tabela só tem `userId`): emitir um `jti` novo a cada troca encheria a lista
+ * de "sessões ativas" de linhas que são o mesmo navegador, e faria "encerrar
+ * esta sessão" derrubar só um workspace. Mantendo o `jti`, a revogação continua
+ * valendo para o acesso da pessoa, que é o que ela significa.
+ *
+ * Quem chama é responsável por já ter conferido o vínculo com a conta de
+ * destino — esta função assina o que mandarem.
+ */
+export const reissueSessionToken = async (
+  userId: string,
+  tokenId: string,
+  accountId: string,
+): Promise<void> => {
+  const token = await signSessionToken({ sub: userId, act: accountId, jti: tokenId });
+  const jar = await cookies();
+  jar.set(SESSION_COOKIE, token, cookieOptions);
+};
+
 /** Encerra a sessão atual: revoga no banco e apaga o cookie. */
 export const destroyCurrentSession = async (): Promise<void> => {
   const jar = await cookies();
@@ -84,6 +112,72 @@ export const revokeAllSessions = async (userId: string): Promise<number> => {
     data: { revokedAt: new Date() },
   });
   return count;
+};
+
+const deviceLabel = (userAgent: string | null): string => {
+  if (!userAgent) return 'Dispositivo desconhecido';
+  const browser = userAgent.includes('Edg/')
+    ? 'Edge'
+    : userAgent.includes('Firefox/')
+      ? 'Firefox'
+      : userAgent.includes('Chrome/')
+        ? 'Chrome'
+        : userAgent.includes('Safari/')
+          ? 'Safari'
+          : 'Navegador';
+  const system = userAgent.includes('Windows')
+    ? 'Windows'
+    : userAgent.includes('Android')
+      ? 'Android'
+      : userAgent.includes('iPhone') || userAgent.includes('iPad')
+        ? 'iOS'
+        : userAgent.includes('Mac OS')
+          ? 'macOS'
+          : userAgent.includes('Linux')
+            ? 'Linux'
+            : 'Sistema desconhecido';
+  return `${browser} · ${system}`;
+};
+
+export const listActiveSessions = async (
+  userId: string,
+  currentTokenId: string,
+): Promise<readonly ActiveSession[]> => {
+  const rows = await prisma.authSession.findMany({
+    where: { userId, revokedAt: null, expiresAt: { gt: new Date() } },
+    orderBy: { createdAt: 'desc' },
+  });
+  return rows.map((row) => ({
+    id: row.tokenId,
+    device: deviceLabel(row.userAgent),
+    location: row.ip ?? 'Localização indisponível',
+    lastActive: row.createdAt.toLocaleString('pt-BR'),
+    current: row.tokenId === currentTokenId,
+  }));
+};
+
+export const revokeSession = async (
+  userId: string,
+  tokenId: string,
+  currentTokenId: string,
+): Promise<boolean> => {
+  if (tokenId === currentTokenId) return false;
+  const result = await prisma.authSession.updateMany({
+    where: { userId, tokenId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  return result.count === 1;
+};
+
+export const revokeOtherSessions = async (
+  userId: string,
+  currentTokenId: string,
+): Promise<number> => {
+  const result = await prisma.authSession.updateMany({
+    where: { userId, tokenId: { not: currentTokenId }, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  return result.count;
 };
 
 const toDomainAccount = (row: {
@@ -198,6 +292,7 @@ export const readSession = cache(async (): Promise<Session | null> => {
   );
 
   return {
+    tokenId: claims.jti,
     user: userRow(membership.user, membership),
     account: toDomainAccount(membership.account),
     permissions,

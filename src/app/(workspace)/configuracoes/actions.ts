@@ -10,7 +10,7 @@ import {
 import { CHANNELS } from '@/core/domain/channel';
 import { ARTICLE_STATUSES } from '@/core/domain/knowledge';
 import { TONES } from '@/core/domain/label';
-import type { AssignmentMethod, ChannelConnection } from '@/core/domain/settings';
+import type { ChannelConnection } from '@/core/domain/settings';
 import { can, type Permission } from '@/core/domain/user';
 import { ROLES_REQUIRING_TEAM } from '@/core/domain/system-roles';
 import { permissoesForaDoCatalogo } from '@/core/domain/permissions';
@@ -21,11 +21,7 @@ import {
   isAllowedLogoMimeType,
 } from '@/core/domain/image-upload';
 import { BUCKETS, storage } from '@/infrastructure/storage/supabase-storage';
-import {
-  WEEKDAYS,
-  normalizeAutoReply,
-  normalizeBusinessHours,
-} from '@/core/domain/business-hours';
+import { WEEKDAYS, normalizeAutoReply, normalizeBusinessHours } from '@/core/domain/business-hours';
 import { randomUUID } from 'node:crypto';
 import { hashPassword, passwordProblem } from '@/infrastructure/auth/password';
 import { Prisma } from '@/generated/prisma/client';
@@ -33,6 +29,8 @@ import { prisma, asJson, readJson } from '@/infrastructure/db/prisma';
 import { container } from '@/infrastructure/container';
 import type { InboxDeletionImpact } from '@/core/ports/settings-repository';
 import { PrismaSettingsRepository } from '@/infrastructure/repositories/prisma/settings-repository';
+import { revokeOtherSessions, revokeSession } from '@/infrastructure/auth/session';
+import { writeAuditLog } from '@/infrastructure/audit/write-audit-log';
 
 export interface ActionResult {
   readonly ok: boolean;
@@ -108,28 +106,6 @@ export async function toggleAutomationAction(input: unknown): Promise<ActionResu
   }
 }
 
-const setAssignmentMethodSchema = z.object({
-  method: z.enum(['round_robin', 'balanceada', 'manual'] as const),
-});
-
-export async function setAssignmentMethodAction(input: unknown): Promise<ActionResult> {
-  const parsed = setAssignmentMethodSchema.safeParse(input);
-  if (!parsed.success) {
-    return { ok: false, error: 'Método de atribuição inválido.' };
-  }
-
-  try {
-    const session = await assertCanWrite('config.automacoes:escrever');
-    await container.settings.setAssignmentMethod(
-      session.account.id,
-      parsed.data.method as AssignmentMethod,
-    );
-    return { ok: true };
-  } catch (error) {
-    return failureOf(error, 'Erro ao atualizar método de atribuição.');
-  }
-}
-
 const conditionSchema = z.object({
   field: z.enum(['canal', 'etiqueta', 'fila', 'prioridade', 'horario', 'palavra_chave'] as const),
   operator: z.enum(['igual', 'diferente', 'contem'] as const),
@@ -170,7 +146,16 @@ export async function saveAutomationAction(input: unknown): Promise<ActionResult
 
   try {
     const session = await assertCanWrite('config.automacoes:escrever');
-    await container.settings.saveAutomation(session.account.id, parsed.data);
+    const automation = await container.settings.saveAutomation(session.account.id, parsed.data);
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: parsed.data.id ? 'automacao.editada' : 'automacao.criada',
+      targetType: 'automacao',
+      targetId: automation.id,
+      targetName: automation.name,
+    });
     return { ok: true };
   } catch (error) {
     return failureOf(error, 'Erro ao salvar automação.');
@@ -186,6 +171,14 @@ export async function deleteAutomationAction(input: unknown): Promise<ActionResu
   try {
     const session = await assertCanWrite('config.automacoes:escrever');
     await container.settings.deleteAutomation(session.account.id, parsed.data.automationId);
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'automacao.excluida',
+      targetType: 'automacao',
+      targetId: parsed.data.automationId,
+    });
     return { ok: true };
   } catch (error) {
     return failureOf(error, 'Erro ao excluir automação.');
@@ -255,6 +248,15 @@ export async function createInboxAction(
         ? container.settings
         : new PrismaSettingsRepository();
     const connection = await settingsRepo.createInbox(session.account.id, parsed.data);
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'caixa.criada',
+      targetType: 'caixa',
+      targetId: connection.id,
+      targetName: connection.name,
+    });
     revalidatePath('/configuracoes');
     return { ok: true, connection };
   } catch (error) {
@@ -315,7 +317,8 @@ export async function updateInboxAction(input: unknown): Promise<ActionResult> {
     // "Dados inválidos" sozinho não dizia **qual** dos seis campos recusou, e a
     // tela mostra os seis ao mesmo tempo: quem via o erro não tinha o que fazer
     // com ele. O campo e o motivo agora vão junto.
-    const field = typeof first?.path[0] === 'string' ? INBOX_FIELD_LABELS[first.path[0]] : undefined;
+    const field =
+      typeof first?.path[0] === 'string' ? INBOX_FIELD_LABELS[first.path[0]] : undefined;
     return {
       ok: false,
       error: field
@@ -329,6 +332,15 @@ export async function updateInboxAction(input: unknown): Promise<ActionResult> {
   try {
     const session = await assertCanWrite('config.caixas:escrever');
     await container.settings.updateInbox(session.account.id, connectionId, patch);
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'caixa.configurada',
+      targetType: 'caixa',
+      targetId: connectionId,
+      metadata: { fields: Object.keys(patch) },
+    });
     return { ok: true };
   } catch (error) {
     return failureOf(error, 'Erro ao salvar a caixa de entrada.');
@@ -398,6 +410,15 @@ export async function deleteInboxAction(input: unknown): Promise<ActionResult> {
       parsed.data.connectionId,
       parsed.data.confirmName,
     );
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'caixa.excluida',
+      targetType: 'caixa',
+      targetId: parsed.data.connectionId,
+      targetName: parsed.data.confirmName,
+    });
     revalidatePath('/configuracoes');
     revalidatePath('/conversas');
     return { ok: true };
@@ -547,7 +568,6 @@ export async function deleteCannedResponseAction(input: unknown): Promise<Action
 
 // ---------------------------------------------------------------- Onda 3: Atributos Customizados
 
-
 // ---------------------------------------------------------------- Onda 3: Equipes
 
 const teamSchema = z.object({
@@ -663,7 +683,7 @@ const validarPapelEEquipes = async (
     return {
       erro:
         settings.teams.length === 0
-          ? 'Crie ao menos uma equipe antes de cadastrar um colaborador — é a equipe que define quais caixas ele alcança.'
+          ? 'Crie ao menos uma equipe antes de cadastrar um colaborador: é a equipe que define quais caixas ele alcança.'
           : 'Colaboradores precisam estar em ao menos uma equipe.',
       teamIds: [],
     };
@@ -752,6 +772,17 @@ export async function createCollaboratorAction(input: unknown): Promise<ActionRe
           skipDuplicates: true,
         });
       }
+    });
+
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'membro.convidado',
+      targetType: 'membro',
+      targetId: userId,
+      targetName: parsed.data.name,
+      metadata: { roleSlug: parsed.data.roleSlug, teamIds },
     });
 
     revalidatePath('/configuracoes');
@@ -871,6 +902,17 @@ export async function updateCollaboratorAction(input: unknown): Promise<ActionRe
       await prisma.authSession.deleteMany({ where: { userId: parsed.data.userId } });
     }
 
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: vinculo.roleSlug === parsed.data.roleSlug ? 'membro.permissoes' : 'membro.papel',
+      targetType: 'membro',
+      targetId: parsed.data.userId,
+      targetName: parsed.data.name,
+      metadata: { roleSlug: parsed.data.roleSlug, teamIds },
+    });
+
     revalidatePath('/configuracoes');
     return { ok: true };
   } catch (error) {
@@ -924,6 +966,16 @@ export async function removeCollaboratorAction(input: unknown): Promise<ActionRe
       });
       await tx.membership.delete({ where: { id: vinculo.id } });
       await tx.authSession.deleteMany({ where: { userId: parsed.data.userId } });
+    });
+
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'membro.removido',
+      targetType: 'membro',
+      targetId: parsed.data.userId,
+      metadata: { roleSlug: vinculo.roleSlug },
     });
 
     revalidatePath('/configuracoes');
@@ -1004,7 +1056,16 @@ export async function terminateSessionAction(input: unknown): Promise<ActionResu
 
   try {
     const session = await assertCanWrite('config.seguranca:escrever');
-    await container.settings.terminateSession(session.account.id, parsed.data.sessionId);
+    const revoked = await revokeSession(session.user.id, parsed.data.sessionId, session.tokenId);
+    if (!revoked) return { ok: false, error: 'A sessão atual não pode ser encerrada aqui.' };
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'sessao.encerrada',
+      targetType: 'sessao',
+      targetId: parsed.data.sessionId,
+    });
     revalidatePath('/configuracoes');
     return { ok: true };
   } catch (error) {
@@ -1015,7 +1076,15 @@ export async function terminateSessionAction(input: unknown): Promise<ActionResu
 export async function terminateOtherSessionsAction(): Promise<ActionResult> {
   try {
     const session = await assertCanWrite('config.seguranca:escrever');
-    await container.settings.terminateOtherSessions(session.account.id);
+    const count = await revokeOtherSessions(session.user.id, session.tokenId);
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'sessao.encerrada_todas',
+      targetType: 'sessao',
+      metadata: { count },
+    });
     revalidatePath('/configuracoes');
     return { ok: true };
   } catch (error) {
@@ -1032,10 +1101,14 @@ const companySchema = z.object({
   tradeName: z.string().trim().min(2, 'O nome fantasia precisa de ao menos 2 caracteres.').max(120),
   legalName: opcional(160),
   document: opcional(24),
-  website: z.union([z.literal(''), z.string().trim().url('Informe uma URL válida.').max(200)]).optional(),
+  website: z
+    .union([z.literal(''), z.string().trim().url('Informe uma URL válida.').max(200)])
+    .optional(),
   address: opcional(240),
   phone: opcional(32),
-  email: z.union([z.literal(''), z.string().trim().email('Informe um e-mail válido.').max(160)]).optional(),
+  email: z
+    .union([z.literal(''), z.string().trim().email('Informe um e-mail válido.').max(160)])
+    .optional(),
   language: opcional(16),
   timezone: opcional(64),
   currency: opcional(8),
@@ -1053,6 +1126,15 @@ export async function saveCompanyProfileAction(input: unknown): Promise<ActionRe
   try {
     const session = await assertCanWrite('config.empresa:escrever');
     await container.settings.saveCompanyProfile(session.account.id, parsed.data);
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'empresa.alterada',
+      targetType: 'empresa',
+      targetId: session.account.id,
+      targetName: parsed.data.tradeName,
+    });
     revalidatePath('/configuracoes');
     return { ok: true };
   } catch (error) {
@@ -1168,7 +1250,7 @@ export async function updateRolePermissionsAction(input: unknown): Promise<Actio
     if (parsed.data.roleSlug === 'administrador') {
       return {
         ok: false,
-        error: 'O papel de administrador não é editável — ele existe para destravar a conta.',
+        error: 'O papel de administrador não é editável: ele existe para destravar a conta.',
       };
     }
 
@@ -1186,6 +1268,16 @@ export async function updateRolePermissionsAction(input: unknown): Promise<Actio
     await prisma.role.update({
       where: { id: papel.id },
       data: { permissions: asJson(parsed.data.permissions) },
+    });
+
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'papel.editado',
+      targetType: 'papel',
+      targetId: papel.id,
+      targetName: parsed.data.roleSlug,
     });
 
     revalidatePath('/configuracoes');
@@ -1238,7 +1330,7 @@ export async function updateMemberOverridesAction(input: unknown): Promise<Actio
     if (vinculo.roleSlug === 'administrador') {
       return {
         ok: false,
-        error: 'Administradores não são personalizáveis — o papel deles é o acesso total.',
+        error: 'Administradores não são personalizáveis: o papel deles é o acesso total.',
       };
     }
 
@@ -1270,6 +1362,16 @@ export async function updateMemberOverridesAction(input: unknown): Promise<Actio
     // Uma permissão retirada precisa valer agora, não no próximo login: a
     // sessão em memória carrega o efetivo calculado na entrada.
     await prisma.authSession.deleteMany({ where: { userId: parsed.data.userId } });
+
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'membro.permissoes',
+      targetType: 'membro',
+      targetId: parsed.data.userId,
+      metadata: { add, remove },
+    });
 
     revalidatePath('/configuracoes');
     return { ok: true };

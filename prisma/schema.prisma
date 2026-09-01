@@ -107,7 +107,7 @@ model User {
   /// porque ligar isto muda o que o cliente recebe — uma linha a mais em toda
   /// mensagem —, e essa não é uma decisão para tomar em nome de ninguém.
   signatureEnabled Boolean @default(false)
-  /// JSON: NotificationPreferences — avisos pessoais, som e resumo diário.
+  /// JSON: NotificationPreferences — avisos pessoais e som.
   notificationPrefs Json?
   twoFactorEnabled Boolean @default(false)
   lastActiveAt     String?
@@ -346,6 +346,8 @@ model Message {
   id             String   @id
   conversationId String
   author         String
+  /// Usuário do CRM que enviou a mensagem; nulo para contato/sistema.
+  authorId       String?
   authorName     String?
   /// Tipo do conteúdo, duplicado fora do JSON para permitir consulta por mídia.
   contentType    String
@@ -392,6 +394,7 @@ model Message {
   /// mensagem duplicada na tela. Com o unico, o `upsert` resolve no banco.
   @@unique([conversationId, externalId])
   @@index([conversationId, createdAt])
+  @@index([authorId])
   /// Recibo de entrega chega com o id do canal e mais nada.
   ///
   /// `applyDeliveryUpdate` procura por `externalId` sozinho, e o único índice
@@ -440,6 +443,8 @@ model PipelineStage {
   color      String
   isWon      Boolean @default(false)
   isLost     Boolean @default(false)
+  /// Quanto esta etapa representa de conversão, de 0 a 100.
+  conversionWeight Int @default(0)
   /// Etiqueta que representa esta etapa no cadastro do contato.
   ///
   /// É o elo entre o funil e as etiquetas: arrastar um card para cá aplica
@@ -464,10 +469,29 @@ model Deal {
   contactId      String?
   contactName    String
   company        String?
+  /// Como a oportunidade se chama no quadro. Nulo cai em `contactName`.
+  ///
+  /// A modal de nova oportunidade sempre pediu este campo, e ele morria no
+  /// caminho: o repositório o usava para compor o texto do histórico e para
+  /// preencher `contactName` quando não havia contato, e nunca o gravava. A
+  /// busca do Kanban procurava por `deal.title`, um campo que jamais existiu.
+  title          String?
+  /// De onde o negócio veio (`DealSource`). Nulo = não declarada.
+  ///
+  /// O `<select>` de origem existia na modal e na barra de filtros desde
+  /// sempre; sem coluna, o filtro não casava com card nenhum.
+  source         String?
   /// Centavos. Dinheiro nunca é float.
   amountInCents  Int
   ownerName      String
   priority       String    @default("baixa")
+  /// Quando o card nasceu.
+  ///
+  /// Distinto de `enteredStageAt`, que é a entrada na **etapa atual** e muda a
+  /// cada arrasto. Sem esta coluna, o filtro "Criados hoje" do quadro respondia
+  /// pela data do último movimento — um card de março movido hoje entrava como
+  /// criado hoje.
+  createdAt      DateTime @default(now())
   enteredStageAt String
   stageAgeLabel  String
   nextAction     String
@@ -482,6 +506,8 @@ model Deal {
 
   @@index([accountId, pipelineId])
   @@index([stageId])
+  /// O filtro de período do quadro recorta por criação, dentro da conta.
+  @@index([accountId, createdAt])
 }
 
 // ---------------------------------------------------------------- agentes de IA
@@ -889,6 +915,8 @@ model AuditLogEntry {
   account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
   @@index([accountId, createdAt])
+  @@index([createdAt])
+  @@index([accountId, action, createdAt])
 }
 
 model Campaign {

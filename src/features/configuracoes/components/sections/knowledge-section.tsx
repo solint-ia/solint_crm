@@ -634,7 +634,7 @@ function CategoryModal({
       open
       onClose={onClose}
       title={existing ? 'Renomear categoria' : 'Nova categoria'}
-      description="Categorias organizam o portal público — o cliente navega por elas antes de buscar."
+      description="Categorias organizam o portal público: o cliente navega por elas antes de buscar."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>

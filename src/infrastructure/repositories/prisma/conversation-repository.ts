@@ -15,6 +15,8 @@ import type {
   NewMessageInput,
 } from '@/core/ports/conversation-repository';
 import { prisma, asJson } from '@/infrastructure/db/prisma';
+import { waEventBus } from '@/infrastructure/whatsapp/whatsapp-events';
+import { writeAuditLog } from '@/infrastructure/audit/write-audit-log';
 import { horaLabel } from '@/lib/datetime';
 import { CONVERSATION_INCLUDE, conversationRow, messageRow } from './mappers';
 
@@ -93,11 +95,16 @@ export class PrismaConversationRepository implements ConversationRepository {
       ...(input.replyToId ? { replyToId: input.replyToId } : {}),
       ...(input.isPrivate ? {} : { deliveryStatus: 'enviando' as const }),
     };
-    return this.persistMessage(input.accountId, input.conversationId, message);
+    return this.persistMessage(input.accountId, input.conversationId, message, input.authorId);
   }
 
-  async appendRichMessage(accountId: Id, conversationId: Id, message: Message): Promise<Message> {
-    return this.persistMessage(accountId, conversationId, message);
+  async appendRichMessage(
+    accountId: Id,
+    conversationId: Id,
+    message: Message,
+    authorId: Id,
+  ): Promise<Message> {
+    return this.persistMessage(accountId, conversationId, message, authorId);
   }
 
   /**
@@ -111,6 +118,7 @@ export class PrismaConversationRepository implements ConversationRepository {
     accountId: Id,
     conversationId: Id,
     message: Message,
+    authorId: Id,
   ): Promise<Message> {
     const exists = await prisma.conversation.findFirst({
       where: { id: conversationId, accountId },
@@ -119,6 +127,8 @@ export class PrismaConversationRepository implements ConversationRepository {
         lastMessagePreview: true,
         createdAt: true,
         firstResponseAt: true,
+        assigneeId: true,
+        inboxId: true,
       },
     });
     if (!exists) throw new NotFoundError('Conversa', conversationId);
@@ -169,12 +179,13 @@ export class PrismaConversationRepository implements ConversationRepository {
       }
     }
 
-    await prisma.$transaction([
-      prisma.message.create({
+    const assumiuAtendimento = await prisma.$transaction(async (tx) => {
+      await tx.message.create({
         data: {
           id: message.id,
           conversationId,
           author: message.author,
+          authorId: message.author === 'agent' ? authorId : null,
           authorName: message.authorName ?? null,
           contentType: message.content.type,
           content: asJson(message.content),
@@ -186,8 +197,8 @@ export class PrismaConversationRepository implements ConversationRepository {
           externalId: message.externalId ?? null,
           origin: message.origin ?? null,
         },
-      }),
-      prisma.conversation.update({
+      });
+      await tx.conversation.update({
         where: { id: conversationId, accountId },
         data: {
           lastMessagePreview: message.isPrivate
@@ -197,8 +208,49 @@ export class PrismaConversationRepository implements ConversationRepository {
           lastActivityAt: agora,
           ...primeiraResposta,
         },
-      }),
-    ]);
+      });
+
+      if (message.author !== 'agent' || message.isPrivate || exists.assigneeId) return false;
+
+      /**
+       * Compare-and-set: somente a conversa ainda sem responsável pode ser
+       * assumida. Se dois agentes responderem juntos, o segundo UPDATE espera
+       * o primeiro terminar e reavalia `assigneeId: null`; por isso ele não
+       * rouba a conversa que o primeiro acabou de assumir.
+       */
+      const claimed = await tx.conversation.updateMany({
+        where: { id: conversationId, accountId, assigneeId: null },
+        data: { assigneeId: authorId, assigneeName: message.authorName ?? null },
+      });
+      return claimed.count === 1;
+    });
+
+    if (assumiuAtendimento) {
+      void writeAuditLog({
+        accountId,
+        actorId: authorId,
+        actorName: message.authorName ?? 'Atendente',
+        action: 'conversa.assumida',
+        targetType: 'conversa',
+        targetId: conversationId,
+      });
+      try {
+        const conversation = waEventBus.hasConversationListeners
+          ? await this.findById(accountId, conversationId, 'todas')
+          : null;
+        waEventBus.emitConversation({
+          type: 'conversation_updated',
+          accountId,
+          conversationId,
+          inboxId: exists.inboxId,
+          ...(conversation ? { conversation } : {}),
+        });
+      } catch (error) {
+        // O atendimento já foi assumido e a mensagem já está gravada. Uma
+        // falha no aviso em tempo real não pode transformar esse sucesso em erro.
+        console.warn('[ConversationRepository] Falha ao anunciar auto-posse:', error);
+      }
+    }
 
     return message;
   }

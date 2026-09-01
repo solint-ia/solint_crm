@@ -65,6 +65,7 @@ export interface PipelineRepository {
       color: string;
       isWon: boolean;
       isLost: boolean;
+      conversionWeight: number;
       /** `null` desfaz o vínculo; ausente mantém o que já estava gravado. */
       labelId?: string | null;
     }[],

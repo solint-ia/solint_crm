@@ -29,6 +29,8 @@ import {
 } from '@/core/domain/user';
 import { prisma, readJson } from '@/infrastructure/db/prisma';
 import { parseOneOf } from '@/lib/search-params';
+import { listActiveSessions } from '@/infrastructure/auth/session';
+import { PrismaAuditRepository } from '@/infrastructure/repositories/prisma/audit-repository';
 
 /**
  * As permissões efetivas de cada membro da conta, por id de usuário.
@@ -100,7 +102,7 @@ export default async function ConfiguracoesPage({
    */
   const montaVocabulario = currentSection === 'automacoes';
 
-  const [settings, notifications, conversations, pipelines] = await Promise.all([
+  const [settings, notifications, conversations, pipelines, activeSessions, auditRecords] = await Promise.all([
     container.settings.get(session.account.id),
     container.notifications.list(session.account.id, session.user.id),
     montaVocabulario
@@ -110,6 +112,12 @@ export default async function ConfiguracoesPage({
         })
       : Promise.resolve([]),
     montaVocabulario ? container.pipelines.listPipelines(session.account.id) : Promise.resolve([]),
+    currentSection === 'seguranca'
+      ? listActiveSessions(session.user.id, session.tokenId)
+      : Promise.resolve([]),
+    currentSection === 'seguranca'
+      ? new PrismaAuditRepository().list(session.account.id, { limit: 100 })
+      : Promise.resolve([]),
   ]);
 
   /**
@@ -162,12 +170,7 @@ export default async function ConfiguracoesPage({
 
         <main className="flex-1 overflow-y-auto p-4 md:p-6">
           {currentSection === 'automacoes' ? (
-            <AutomationsSection
-              initialAutomations={settings.automations}
-              macros={settings.macros}
-              initialAssignmentMethod={settings.assignmentMethod}
-              vocabulary={vocabulary}
-            />
+            <AutomationsSection initialAutomations={settings.automations} vocabulary={vocabulary} />
           ) : null}
 
           {currentSection === 'caixas' ? (
@@ -207,8 +210,8 @@ export default async function ConfiguracoesPage({
 
           {currentSection === 'seguranca' ? (
             <SecuritySection
-              activeSessions={settings.activeSessions}
-              auditLog={settings.auditLog}
+              activeSessions={activeSessions}
+              auditLog={auditRecords}
             />
           ) : null}
         </main>

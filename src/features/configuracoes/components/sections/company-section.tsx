@@ -383,6 +383,7 @@ export function CompanySection({ account, company }: CompanySectionProps) {
               className="h-10 w-full rounded-xl border border-line bg-surface px-3 text-xs text-ink outline-none focus:border-brand shadow-2xs"
             >
               <option value="DD/MM/YYYY">DD/MM/AAAA (ex: 26/08/2026)</option>
+              <option value="DD/MM/YY">DD/MM/AA (ex: 26/08/26)</option>
               <option value="YYYY-MM-DD">AAAA-MM-DD (ISO 8601)</option>
               <option value="MM/DD/YYYY">MM/DD/AAAA (US)</option>
             </select>

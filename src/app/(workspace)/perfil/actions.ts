@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { DEFAULT_NOTIFICATION_PREFERENCES } from '@/core/domain/user';
 import {
@@ -12,6 +13,11 @@ import {
 import { BUCKETS, storage } from '@/infrastructure/storage/supabase-storage';
 import { container } from '@/infrastructure/container';
 import { asJson, prisma } from '@/infrastructure/db/prisma';
+import {
+  destroyCurrentSession,
+  revokeAllSessions,
+} from '@/infrastructure/auth/session';
+import { writeAuditLog } from '@/infrastructure/audit/write-audit-log';
 
 export interface ProfileActionResult {
   readonly ok: boolean;
@@ -36,15 +42,6 @@ const profileSchema = z.object({
     assigned: z.boolean(),
     mentions: z.boolean(),
     sla: z.boolean(),
-    campaigns: z.boolean(),
-    dailySummary: z.boolean(),
-    /**
-     * Vazio é resposta válida: significa "o email do meu login".
-     *
-     * `z.string().email()` sozinho recusaria a string vazia e obrigaria a
-     * preencher um campo que a pessoa deixou em branco de propósito.
-     */
-    dailySummaryEmail: z.union([z.literal(''), z.string().trim().email().max(160)]).optional(),
     sound: z.boolean(),
   }),
 });
@@ -74,15 +71,7 @@ export async function updateProfileAction(input: unknown): Promise<ProfileAction
     return { ok: false, error: 'Escreva a assinatura antes de ativá-la.' };
   }
 
-  const prefs = {
-    ...DEFAULT_NOTIFICATION_PREFERENCES,
-    ...notifications,
-    // Campo vazio some do JSON em vez de virar `''`: quem lê pergunta "existe
-    // email próprio?", e uma string vazia responde "sim" para nada.
-    ...(notifications.dailySummaryEmail
-      ? { dailySummaryEmail: notifications.dailySummaryEmail }
-      : { dailySummaryEmail: undefined }),
-  };
+  const prefs = { ...DEFAULT_NOTIFICATION_PREFERENCES, ...notifications };
 
   try {
     await prisma.$transaction([
@@ -109,6 +98,22 @@ export async function updateProfileAction(input: unknown): Promise<ProfileAction
   // revalidar só `/perfil` deixaria o avatar do canto com o nome antigo.
   revalidatePath('/', 'layout');
   return { ok: true };
+}
+
+/** Revoga todos os logins desta pessoa, inclusive o navegador atual. */
+export async function logoutAllSessionsAction(): Promise<never> {
+  const session = await container.session.getCurrentSession();
+  const count = await revokeAllSessions(session.user.id);
+  await writeAuditLog({
+    accountId: session.account.id,
+    actorId: session.user.id,
+    actorName: session.user.name,
+    action: 'sessao.encerrada_todas',
+    targetType: 'sessao',
+    metadata: { count },
+  });
+  await destroyCurrentSession();
+  redirect('/login');
 }
 
 /**

@@ -8,6 +8,7 @@ import { prisma, asJson } from '@/infrastructure/db/prisma';
 import { normalizeImportedPhone } from '@/core/domain/contact-import';
 import { postgresPubSub, CHANNELS as DB_CHANNELS } from '@/infrastructure/db/postgres-pubsub';
 import { WA_ENGINE } from '@/infrastructure/whatsapp/channel';
+import { writeAuditLog } from '@/infrastructure/audit/write-audit-log';
 
 export interface ActionResult<T = unknown> {
   readonly ok: boolean;
@@ -99,9 +100,40 @@ export async function deleteContactAction(input: unknown): Promise<ActionResult>
   try {
     const session = await assertCanWrite();
     await container.contacts.delete(session.account.id, parsed.data.contactId);
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'contatos.excluidos',
+      targetType: 'contato',
+      targetId: parsed.data.contactId,
+      metadata: { count: 1 },
+    });
     return { ok: true };
   } catch (error) {
     return failureOf(error, 'Erro ao excluir contato.');
+  }
+}
+
+export async function deleteContactsAction(input: unknown): Promise<ActionResult<{ count: number }>> {
+  const parsed = z.object({ contactIds: z.array(z.string().min(1)).min(1).max(500) }).safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Contatos inválidos.' };
+  try {
+    const session = await assertCanWrite();
+    const result = await prisma.contact.deleteMany({
+      where: { accountId: session.account.id, id: { in: parsed.data.contactIds } },
+    });
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'contatos.excluidos',
+      targetType: 'contato',
+      metadata: { count: result.count },
+    });
+    return { ok: true, data: { count: result.count } };
+  } catch (error) {
+    return failureOf(error, 'Erro ao excluir contatos.');
   }
 }
 
@@ -196,6 +228,26 @@ export interface ImportCsvResult {
   readonly updatedCount: number;
   readonly errorCount: number;
   readonly errors: readonly { readonly line: number; readonly name: string; readonly error: string }[];
+}
+
+export async function auditContactsExportAction(input: unknown): Promise<ActionResult> {
+  const parsed = z.object({ count: z.number().int().min(0).max(1_000_000) }).safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Quantidade inválida.' };
+  try {
+    const session = await container.session.getCurrentSession();
+    if (!can(session, 'contatos:exportar')) return { ok: false, error: 'Sem permissão.' };
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'contatos.exportados',
+      targetType: 'contato',
+      metadata: { count: parsed.data.count, format: 'csv' },
+    });
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao registrar a exportação.');
+  }
 }
 
 export async function importContactsCsvAction(input: unknown): Promise<ActionResult<ImportCsvResult>> {
@@ -309,6 +361,15 @@ export async function importContactsCsvAction(input: unknown): Promise<ActionRes
         importedCount += 1;
       }
     }
+
+    await writeAuditLog({
+      accountId,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'contatos.importados',
+      targetType: 'contato',
+      metadata: { importedCount, updatedCount, errorCount: errors.length },
+    });
 
     return {
       ok: true,

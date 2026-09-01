@@ -1,5 +1,5 @@
 import type { Priority } from './conversation';
-import type { Id } from './shared';
+import type { Id, IsoDateTime } from './shared';
 import type { InboxAccess } from './user';
 
 export interface PipelineStage {
@@ -10,6 +10,8 @@ export interface PipelineStage {
   readonly color: string;
   readonly isWon: boolean;
   readonly isLost: boolean;
+  /** Percentual que um card nesta etapa representa no indicador ponderado. */
+  readonly conversionWeight: number;
   /**
    * Etiqueta que espelha esta etapa no cadastro do contato.
    *
@@ -115,13 +117,7 @@ export interface DealTask {
 }
 
 export type DealSource =
-  | 'whatsapp'
-  | 'instagram'
-  | 'site'
-  | 'indicacao'
-  | 'google'
-  | 'inbound'
-  | 'outbound';
+  'whatsapp' | 'instagram' | 'site' | 'indicacao' | 'google' | 'inbound' | 'outbound';
 
 export const DEAL_SOURCES: readonly { readonly id: DealSource; readonly label: string }[] = [
   { id: 'whatsapp', label: 'WhatsApp' },
@@ -133,7 +129,22 @@ export const DEAL_SOURCES: readonly { readonly id: DealSource; readonly label: s
   { id: 'outbound', label: 'Prospecção Ativa' },
 ];
 
-/** Oportunidade (card do funil). */
+/**
+ * Oportunidade (card do funil).
+ *
+ * Todo campo daqui existe como coluna e é preenchido por algum caminho de
+ * escrita. Já não foi assim: `title`, `source`, `team`, `tags` e
+ * `expectedCloseDate` conviveram aqui como opcionais que **nenhuma** consulta
+ * jamais preenchia, porque não havia coluna nenhuma por trás. O TypeScript não
+ * reclamava (são opcionais), e o efeito aparecia longe: a busca do quadro
+ * procurava por `title` e nunca achava, e os filtros de Origem e Equipe
+ * ofereciam listas vazias que descartavam todos os cards ao serem usadas.
+ *
+ * `title` e `source` ganharam coluna. `team`, `tags` e `expectedCloseDate`
+ * saíram: nada no sistema sabe derivar a equipe de um negócio, e um campo de
+ * texto livre para isso só produziria dado sujo. Se a equipe voltar, virá por
+ * relação com `Team`, não por texto.
+ */
 export interface Deal {
   readonly id: Id;
   readonly accountId: Id;
@@ -141,21 +152,21 @@ export interface Deal {
   readonly stageId: Id;
   readonly contactId?: Id;
   readonly contactName: string;
+  /** Nome do negócio no quadro. Ausente quando o card é só o contato. */
   readonly title?: string;
   readonly company?: string;
   /** Valor em centavos — dinheiro nunca é float (ver REGRAS-GLOBAIS.md §4). */
   readonly amountInCents: number;
   readonly ownerName: string;
   readonly priority: Priority;
+  /** Quando o card nasceu. É por aqui que o filtro de período recorta. */
+  readonly createdAt: IsoDateTime;
   readonly enteredStageAt: string;
   readonly stageAgeLabel: string;
   readonly nextAction: string;
   readonly conversationId?: Id;
   readonly history: readonly DealHistoryEntry[];
   readonly source?: DealSource;
-  readonly team?: string;
-  readonly tags?: readonly string[];
-  readonly expectedCloseDate?: string;
   readonly tasks?: readonly DealTask[];
 }
 
@@ -178,37 +189,35 @@ export interface PipelineSummary {
   readonly conversionRate: number; // 0 - 100
 }
 
+export const DEFAULT_WON_WEIGHT = 100;
+export const DEFAULT_NEGOTIATION_WEIGHT = 50;
+
 export function calculatePipelineSummary(
   deals: readonly Deal[],
   stages: readonly PipelineStage[],
 ): PipelineSummary {
-  const wonStageIds = new Set(stages.filter((s) => s.isWon).map((s) => s.id));
-  const lostStageIds = new Set(stages.filter((s) => s.isLost).map((s) => s.id));
+  const stageById = new Map(stages.map((stage) => [stage.id, stage]));
 
   let totalValueInCents = 0;
   let inNegotiationCount = 0;
   let inNegotiationValueInCents = 0;
-  let wonCount = 0;
-  let closedCount = 0;
+  let conversionWeightTotal = 0;
 
   for (const deal of deals) {
     totalValueInCents += deal.amountInCents;
-    const isWon = wonStageIds.has(deal.stageId);
-    const isLost = lostStageIds.has(deal.stageId);
+    const stage = stageById.get(deal.stageId);
+    const isWon = stage?.isWon === true;
+    const isLost = stage?.isLost === true;
+    conversionWeightTotal += isLost ? 0 : Math.min(100, Math.max(0, stage?.conversionWeight ?? 0));
 
-    if (isWon) {
-      wonCount += 1;
-      closedCount += 1;
-    } else if (isLost) {
-      closedCount += 1;
-    } else {
+    if (!isWon && !isLost) {
       // Ativo no funil
       inNegotiationCount += 1;
       inNegotiationValueInCents += deal.amountInCents;
     }
   }
 
-  const conversionRate = closedCount > 0 ? Math.round((wonCount / closedCount) * 100) : 25;
+  const conversionRate = deals.length > 0 ? Math.round(conversionWeightTotal / deals.length) : 0;
 
   return {
     totalDeals: deals.length,
@@ -222,11 +231,20 @@ export function calculatePipelineSummary(
 export const STAGE_COLOR_PRESETS = [
   { name: 'Azul', value: '#3B82F6', textTone: 'text-blue-500', bgTone: 'bg-blue-500' },
   { name: 'Âmbar / Laranja', value: '#F59E0B', textTone: 'text-amber-500', bgTone: 'bg-amber-500' },
-  { name: 'Roxo / Violeta', value: '#8B5CF6', textTone: 'text-purple-500', bgTone: 'bg-purple-500' },
+  {
+    name: 'Roxo / Violeta',
+    value: '#8B5CF6',
+    textTone: 'text-purple-500',
+    bgTone: 'bg-purple-500',
+  },
   { name: 'Rosa / Magenta', value: '#EC4899', textTone: 'text-pink-500', bgTone: 'bg-pink-500' },
-  { name: 'Verde / Esmeralda', value: '#10B981', textTone: 'text-emerald-500', bgTone: 'bg-emerald-500' },
+  {
+    name: 'Verde / Esmeralda',
+    value: '#10B981',
+    textTone: 'text-emerald-500',
+    bgTone: 'bg-emerald-500',
+  },
   { name: 'Ciano', value: '#06B6D4', textTone: 'text-cyan-500', bgTone: 'bg-cyan-500' },
   { name: 'Índigo', value: '#6366F1', textTone: 'text-indigo-500', bgTone: 'bg-indigo-500' },
   { name: 'Ardósia / Cinza', value: '#64748B', textTone: 'text-slate-500', bgTone: 'bg-slate-500' },
 ] as const;
-

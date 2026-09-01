@@ -141,7 +141,7 @@ export function FlowBuilder({ agentId, initialFlow, canEdit }: FlowBuilderProps)
         title: 'Fluxo salvo',
         description:
           problems.length > 0
-            ? `Salvo com ${problems.length} ${problems.length === 1 ? 'pendência' : 'pendências'} — o agente pode travar nesses pontos.`
+            ? `Salvo com ${problems.length} ${problems.length === 1 ? 'pendência' : 'pendências'}: o agente pode travar nesses pontos.`
             : `${blocks.length} blocos, sem pendências.`,
       });
     } else {
@@ -295,7 +295,7 @@ export function FlowBuilder({ agentId, initialFlow, canEdit }: FlowBuilderProps)
                                 })
                               }
                             >
-                              <option value="">— não ligado —</option>
+                              <option value="">(não ligado)</option>
                               {blocks
                                 .filter((item) => item.id !== block.id)
                                 .map((item) => (

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
@@ -214,12 +215,29 @@ export function NavigationRail({
             href="/dashboard"
             aria-label="Solint CRM"
             className={cn(
-              'mb-2 flex h-10 items-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 font-display font-bold text-white shadow-md shadow-blue-500/25 transition-transform hover:scale-[1.03] active:scale-95',
-              expanded ? 'gap-2.5 px-3' : 'size-10 justify-center',
+              'mb-2 flex h-10 items-center transition-transform hover:scale-[1.03] active:scale-95',
+              expanded ? 'px-3' : 'w-full justify-center',
             )}
           >
-            <span className="text-base">S</span>
-            {expanded ? <span className="truncate text-sm tracking-tight">Solint CRM</span> : null}
+            {expanded ? (
+              <Image
+                src="/brand/solint-logo.png"
+                alt="Solint CRM"
+                width={600}
+                height={160}
+                priority
+                className="h-8 w-auto"
+              />
+            ) : (
+              <Image
+                src="/brand/solint-mark.png"
+                alt="Solint"
+                width={128}
+                height={128}
+                priority
+                className="size-9"
+              />
+            )}
           </Link>
 
           {/* Itens de Navegação */}
@@ -399,9 +417,16 @@ export function NavigationRail({
         <Link
           href="/dashboard"
           aria-label="Solint CRM"
-          className="flex size-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 font-display text-sm font-bold text-white"
+          className="flex size-8 items-center justify-center"
         >
-          S
+          <Image
+            src="/brand/solint-mark.png"
+            alt="Solint"
+            width={128}
+            height={128}
+            priority
+            className="size-8"
+          />
         </Link>
 
         <div className="ml-auto flex items-center gap-1">
@@ -426,9 +451,14 @@ export function NavigationRail({
             className="relative flex h-full w-64 flex-col border-r border-line bg-surface shadow-2xl animate-in slide-in-from-left-2 duration-200"
           >
             <div className="flex items-center justify-between border-b border-line px-4 py-3">
-              <span className="font-display text-base font-bold tracking-tight text-ink">
-                Solint CRM
-              </span>
+              <Image
+                src="/brand/solint-logo.png"
+                alt="Solint CRM"
+                width={600}
+                height={160}
+                priority
+                className="h-7 w-auto"
+              />
               <button
                 type="button"
                 onClick={() => setDrawerOpen(false)}

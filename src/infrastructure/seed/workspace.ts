@@ -84,7 +84,7 @@ export const USERS: readonly User[] = [
     signature: 'Rafael Souza · Solint CRM',
     signatureEnabled: false,
     notifications: DEFAULT_NOTIFICATION_PREFERENCES,
-    twoFactorEnabled: true,
+    twoFactorEnabled: false,
     lastActiveAt: 'agora',
   },
   {
@@ -98,7 +98,7 @@ export const USERS: readonly User[] = [
     teams: ['Comercial'],
     signatureEnabled: false,
     notifications: DEFAULT_NOTIFICATION_PREFERENCES,
-    twoFactorEnabled: true,
+    twoFactorEnabled: false,
     lastActiveAt: 'ha 4 min',
   },
   {
@@ -154,6 +154,9 @@ export const LABEL = {
 } as const;
 
 export const SESSION: Session = {
+  // Sessão de semente não vem de token nenhum: não há `jti` a citar, e o valor
+  // fixo deixa isso explícito em vez de fingir um identificador plausível.
+  tokenId: 'seed',
   user: CURRENT_USER,
   account: ACCOUNTS[0] as Account,
   permissions: PERMISSIONS,

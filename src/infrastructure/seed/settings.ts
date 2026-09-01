@@ -1,4 +1,5 @@
 import type { BusinessHours } from '@/core/domain/business-hours';
+import type { Macro } from '@/core/domain/settings';
 import type { WorkspaceSettings } from '@/core/ports/settings-repository';
 import { KNOWLEDGE } from './knowledge';
 import { ACCOUNT_ID, LABELS, ROLES, USERS } from './workspace';
@@ -16,7 +17,12 @@ const hours = (opensAt: string, closesAt: string, open: readonly string[]): Busi
 const WEEK = ['seg', 'ter', 'qua', 'qui', 'sex'] as const;
 const EVERY_DAY = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'] as const;
 
-export const SETTINGS: WorkspaceSettings = {
+type SeedWorkspaceSettings = WorkspaceSettings & {
+  /** Catálogo legado preservado no banco, sem ponto de entrada na interface. */
+  readonly macros: readonly Macro[];
+};
+
+export const SETTINGS: SeedWorkspaceSettings = {
   automations: [
     {
       id: 'au-1',
@@ -115,7 +121,6 @@ export const SETTINGS: WorkspaceSettings = {
       content: 'Nossos produtos têm 12 meses de garantia contra defeitos de fabricação.',
     },
   ],
-  assignmentMethod: 'round_robin',
   connections: [
     {
       id: 'ibx-wa-oficial',
