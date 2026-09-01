@@ -91,6 +91,7 @@ export default async function WorkspaceLayout({
               unreadCount={unreadCount}
               userName={session.user.name}
               userTone={session.user.avatarTone}
+              userAvatarUrl={session.user.avatarUrl}
               availability={session.user.availability}
               accessibleInboxes={accessibleInboxes}
               conversationCounts={conversationCounts}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useTransition } from 'react';
+import { useMemo, useRef, useState, useTransition } from 'react';
 import { BellOff, Inbox as InboxIcon, Volume2 } from 'lucide-react';
 import type { AvailabilityStatus, NotificationPreferences, Session } from '@/core/domain/user';
 import { Avatar } from '@/components/ui/avatar';
@@ -13,9 +13,10 @@ import { useToast } from '@/components/ui/toast';
 import { UnsavedChangesBar } from '@/features/configuracoes/components/unsaved-changes-bar';
 import { WhatsAppConnectionCard } from '@/features/whatsapp/components/whatsapp-connection-card';
 import { WhatsAppModal } from '@/features/whatsapp/components/whatsapp-modal';
-import { updateProfileAction } from '@/app/(workspace)/perfil/actions';
-import { cn } from '@/lib/cn';
+import { updateProfileAction, uploadProfilePhotoAction } from '@/app/(workspace)/perfil/actions';
+import { ALLOWED_AVATAR_MIME_TYPES } from '@/core/domain/image-upload';
 import { planned } from '@/components/ui/planned';
+import { cn } from '@/lib/cn';
 
 interface ProfileInbox {
   readonly id: string;
@@ -53,6 +54,59 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
   const [notifications, setNotifications] = useState<NotificationPreferences>(user.notifications);
   const [pairingInbox, setPairingInbox] = useState<ProfileInbox | null>(null);
   const [error, setError] = useState<string | undefined>();
+
+  /**
+   * A foto é enviada na hora, fora do "salvar" geral.
+   *
+   * As outras alterações desta tela ficam pendentes até o botão "Salvar" —
+   * mas uma foto escolhida e não enviada é um estado estranho de se abandonar
+   * ("descartar alterações" apagaria a escolha, sem nunca ter mostrado nada na
+   * tela para descartar). Upload de arquivo é, em toda parte da web, uma ação
+   * imediata; esta tela não quebra essa expectativa.
+   */
+  const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [photoError, setPhotoError] = useState<string | undefined>();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handlePhotoChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    // Sempre limpo, mesmo em erro: sem isto, escolher o mesmo arquivo duas
+    // vezes seguidas (para tentar de novo) não disparava `onChange` — o
+    // navegador só avisa quando o valor do campo muda.
+    event.target.value = '';
+    if (!file) return;
+
+    setPhotoError(undefined);
+    setUploadingPhoto(true);
+    try {
+      const formData = new FormData();
+      formData.set('photo', file);
+      const result = await uploadProfilePhotoAction(formData);
+
+      if (!result.ok) {
+        setPhotoError(result.error);
+        show({
+          tone: 'erro',
+          title: 'Não foi possível enviar a foto',
+          description: result.error ?? 'Tente novamente.',
+        });
+        return;
+      }
+
+      // Pré-visualização imediata a partir do próprio arquivo escolhido — não
+      // espera o servidor confirmar para a pessoa ver o resultado. A URL real
+      // (servida por `/api/users/.../avatar`) chega no próximo carregamento da
+      // página, via `revalidatePath` dentro da action.
+      setAvatarUrl(URL.createObjectURL(file));
+      show({ tone: 'sucesso', title: 'Foto de perfil atualizada' });
+    } catch {
+      setPhotoError('Erro ao enviar a imagem.');
+      show({ tone: 'erro', title: 'Erro ao enviar a imagem', description: 'Tente novamente.' });
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
 
   const patchNotifications = (patch: Partial<NotificationPreferences>) =>
     setNotifications((current) => ({ ...current, ...patch }));
@@ -119,10 +173,32 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
         </h3>
 
         <div className="flex items-center gap-4">
-          <Avatar name={name || user.name} tone={user.avatarTone} size="lg" availability={availability} />
-          <Button variant="secondary" size="sm" {...planned('Enviar uma nova foto de perfil')}>
-            Alterar foto
-          </Button>
+          <Avatar
+            name={name || user.name}
+            tone={user.avatarTone}
+            src={avatarUrl}
+            size="lg"
+            availability={availability}
+          />
+          <div className="flex flex-col gap-1">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={ALLOWED_AVATAR_MIME_TYPES.join(',')}
+              className="hidden"
+              onChange={handlePhotoChange}
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={uploadingPhoto}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {uploadingPhoto ? 'Enviando…' : 'Alterar foto'}
+            </Button>
+            <span className="text-[11px] text-muted">JPG, PNG, WEBP ou GIF, até 5 MB.</span>
+            {photoError ? <span className="text-[11px] text-red-text">{photoError}</span> : null}
+          </div>
         </div>
 
         <Field label="Nome completo" htmlFor="profile-name">

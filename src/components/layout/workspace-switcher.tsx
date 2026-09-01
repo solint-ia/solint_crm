@@ -2,15 +2,25 @@
 
 import { useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
-import type { Account } from '@/core/domain/user';
+import type { Account, User } from '@/core/domain/user';
+import { Avatar } from '@/components/ui/avatar';
 import { cn } from '@/lib/cn';
 
 interface WorkspaceSwitcherProps {
   readonly current: Account;
   readonly accounts: readonly Account[];
+  /**
+   * Quem está logado — é o rosto que este botão mostra.
+   *
+   * O menu troca de **conta**, mas o distintivo que fica sempre visível ao
+   * lado do sininho é a identidade de quem está usando o sistema, não da
+   * empresa ativa — é esse distintivo que a foto de perfil precisa alcançar
+   * assim que alguém a envia.
+   */
+  readonly user: Pick<User, 'name' | 'avatarTone' | 'avatarUrl'>;
 }
 
-export function WorkspaceSwitcher({ current, accounts }: WorkspaceSwitcherProps) {
+export function WorkspaceSwitcher({ current, accounts, user }: WorkspaceSwitcherProps) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState(current);
 
@@ -23,9 +33,7 @@ export function WorkspaceSwitcher({ current, accounts }: WorkspaceSwitcherProps)
         aria-haspopup="listbox"
         className="flex items-center gap-2 rounded-control border border-line px-2.5 py-1.5 text-body font-semibold text-ink transition-colors hover:bg-surface-2"
       >
-        <span className="flex size-5 items-center justify-center rounded bg-brand-gradient text-micro font-bold text-white">
-          {selected.name.charAt(0)}
-        </span>
+        <Avatar name={user.name} tone={user.avatarTone} src={user.avatarUrl} size="sm" />
         {selected.name}
         <ChevronDown className="size-3.5 text-dim" />
       </button>

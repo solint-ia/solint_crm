@@ -269,6 +269,7 @@ export const userRow = (
   email: row.email,
   roleSlug: membership.roleSlug,
   avatarTone: row.avatarTone,
+  ...(row.avatarUrl ? { avatarUrl: row.avatarUrl } : {}),
   availability: membership.availability as User['availability'],
   teams,
   signatureEnabled: row.signatureEnabled,

@@ -22,7 +22,15 @@
 export const BUCKETS = {
   /** Mídia de conversa (imagem, vídeo, áudio, documento). Privado. */
   MEDIA: 'whatsapp-media',
-  /** Fotos de perfil de contatos e grupos. Privado, retenção própria. */
+  /**
+   * Fotos de perfil de contatos e grupos do WhatsApp, foto de perfil das
+   * pessoas do CRM e logotipo de cada conta. Privado, retenção própria.
+   *
+   * Um bucket só para as três: são todas "uma imagem pequena, identidade
+   * visual de alguém", e cada uma vive num prefixo de caminho diferente
+   * dentro dele (contatos por `accountId`, pessoas em `users/<userId>`,
+   * contas em `accounts/<accountId>`) — não colidem entre si.
+   */
   AVATARS: 'whatsapp-avatars',
 } as const;
 

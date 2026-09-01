@@ -39,7 +39,7 @@ export async function Topbar({
         <GlobalSearch navItems={navItems} />
         {actions}
         <NotificationsMenu notifications={notifications} />
-        <WorkspaceSwitcher current={account} accounts={accounts} />
+        <WorkspaceSwitcher current={account} accounts={accounts} user={session.user} />
       </div>
     </header>
   );

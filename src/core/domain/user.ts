@@ -192,6 +192,8 @@ export interface User {
   readonly email: string;
   readonly roleSlug: RoleSlug;
   readonly avatarTone: string;
+  /** Foto real, servida por `/api/users/[userId]/avatar`. Ausente = iniciais. */
+  readonly avatarUrl?: string;
   readonly availability: AvailabilityStatus;
   readonly teams: readonly string[];
   readonly signature?: string;

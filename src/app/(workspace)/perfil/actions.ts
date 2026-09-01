@@ -3,6 +3,13 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { DEFAULT_NOTIFICATION_PREFERENCES } from '@/core/domain/user';
+import {
+  ALLOWED_AVATAR_MIME_TYPES,
+  MAX_AVATAR_BYTES,
+  buildAvatarUrl,
+  isAllowedAvatarMimeType,
+} from '@/core/domain/image-upload';
+import { BUCKETS, storage } from '@/infrastructure/storage/supabase-storage';
 import { container } from '@/infrastructure/container';
 import { asJson, prisma } from '@/infrastructure/db/prisma';
 
@@ -100,6 +107,65 @@ export async function updateProfileAction(input: unknown): Promise<ProfileAction
 
   // O nome e a disponibilidade aparecem na rail de navegação, que é do layout:
   // revalidar só `/perfil` deixaria o avatar do canto com o nome antigo.
+  revalidatePath('/', 'layout');
+  return { ok: true };
+}
+
+/**
+ * Grava a foto de perfil.
+ *
+ * `FormData` e não JSON: é o único jeito de uma Server Action receber um
+ * `File` do navegador sem passar a base64 por cima, que infla o payload em
+ * ~33% para nada.
+ */
+export async function uploadProfilePhotoAction(
+  formData: FormData,
+): Promise<ProfileActionResult> {
+  const session = await container.session.getCurrentSession();
+
+  const file = formData.get('photo');
+  if (!(file instanceof File)) {
+    return { ok: false, error: 'Nenhuma imagem recebida.' };
+  }
+  if (file.size === 0) {
+    return { ok: false, error: 'O arquivo está vazio.' };
+  }
+  if (file.size > MAX_AVATAR_BYTES) {
+    return { ok: false, error: 'A imagem passou de 5 MB. Escolha um arquivo menor.' };
+  }
+  if (!isAllowedAvatarMimeType(file.type)) {
+    return {
+      ok: false,
+      error: `Envie uma imagem ${ALLOWED_AVATAR_MIME_TYPES.map((t) => t.split('/')[1]).join(', ')}.`,
+    };
+  }
+
+  const buffer = Buffer.from(await file.arrayBuffer());
+
+  // O caminho é fixo por pessoa — sem extensão no nome do objeto, porque o
+  // tipo já vai na URL (ver `buildAvatarUrl`) e não em lugar nenhum do Storage.
+  // Reenviar uma foto nova substitui a anterior (`x-upsert`, dentro de
+  // `storage.upload`), nunca acumula.
+  const uploaded = await storage.upload(
+    BUCKETS.AVATARS,
+    `users/${session.user.id}`,
+    buffer,
+    file.type,
+  );
+  if (!uploaded) {
+    return {
+      ok: false,
+      error: 'Não foi possível enviar a imagem agora. Tente novamente em instantes.',
+    };
+  }
+
+  await prisma.user.update({
+    where: { id: session.user.id },
+    data: { avatarUrl: buildAvatarUrl(session.user.id, file.type) },
+  });
+
+  // Mesmo alcance de `updateProfileAction`: o avatar aparece na rail de
+  // navegação e no seletor de workspace, que são do layout.
   revalidatePath('/', 'layout');
   return { ok: true };
 }

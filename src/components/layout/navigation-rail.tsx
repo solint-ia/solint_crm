@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import {
   Bot,
   ChevronDown,
+  GripVertical,
   Inbox,
   KanbanSquare,
   LayoutDashboard,
@@ -61,6 +62,8 @@ interface NavigationRailProps {
   readonly unreadCount: number;
   readonly userName: string;
   readonly userTone: string;
+  /** Foto real, se a pessoa enviou uma. Ausente = iniciais coloridas por `userTone`. */
+  readonly userAvatarUrl?: string;
   readonly availability: AvailabilityStatus;
   readonly accessibleInboxes?: readonly AccessibleInbox[];
   readonly conversationCounts?: ConversationCounts;
@@ -73,6 +76,7 @@ export function NavigationRail({
   unreadCount,
   userName,
   userTone,
+  userAvatarUrl,
   availability,
   accessibleInboxes = [],
   conversationCounts,
@@ -293,7 +297,7 @@ export function NavigationRail({
                 : 'justify-center rounded-full ring-2 ring-transparent hover:ring-brand/40',
             )}
           >
-            <Avatar name={userName} tone={userTone} size="sm" availability={availability} />
+            <Avatar name={userName} tone={userTone} src={userAvatarUrl} size="sm" availability={availability} />
             {expanded ? (
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-xs font-semibold text-ink">{userName}</span>
@@ -306,12 +310,12 @@ export function NavigationRail({
         </div>
 
         {/*
-          Alça de redimensionamento.
+          Alça de redimensionamento e expansão com símbolo visual.
 
           É um `separator` com `aria-valuenow` de propósito: quem navega pelo
           teclado também precisa conseguir abrir a barra, e as setas fazem o que
-          o arrasto faz com o ponteiro. O duplo clique alterna entre aberta e
-          fechada — é o gesto que a maioria tenta primeiro.
+          o arrasto faz com o ponteiro. O clique na alça ou o duplo clique na
+          linha alterna entre aberta e fechada.
         */}
         <div
           role="separator"
@@ -340,8 +344,9 @@ export function NavigationRail({
               alternarLargura();
             }
           }}
-          className="group absolute inset-y-0 -right-1 z-20 hidden w-2 cursor-col-resize items-center justify-center focus-visible:outline-none md:flex"
+          className="group absolute inset-y-0 -right-1.5 z-20 hidden w-3 cursor-col-resize items-center justify-center focus-visible:outline-none md:flex"
         >
+          {/* Linha guia de arraste */}
           <span
             aria-hidden
             className={cn(
@@ -351,6 +356,28 @@ export function NavigationRail({
                 : 'bg-transparent group-hover:bg-brand/40 group-focus-visible:bg-brand',
             )}
           />
+
+          {/* Símbolo visual flutuante de arrasto / expansão */}
+          <button
+            type="button"
+            tabIndex={-1}
+            title={
+              expanded
+                ? 'Arrastar para redimensionar ou clique para recolher'
+                : 'Arrastar para redimensionar ou clique para expandir'
+            }
+            onClick={(e) => {
+              e.stopPropagation();
+              alternarLargura();
+            }}
+            className={cn(
+              'absolute top-1/2 -translate-y-1/2 -right-1.5 flex h-7 w-3.5 cursor-pointer items-center justify-center rounded-full border border-line bg-surface shadow-2xs transition-all duration-150',
+              'text-muted hover:border-brand/40 hover:bg-surface-2 hover:text-brand hover:scale-110 active:scale-95',
+              dragging && 'border-brand bg-brand/10 text-brand ring-2 ring-brand/20',
+            )}
+          >
+            <GripVertical className="size-2.5 shrink-0" />
+          </button>
         </div>
       </nav>
 
@@ -380,7 +407,7 @@ export function NavigationRail({
         <div className="ml-auto flex items-center gap-1">
           <ThemeToggle />
           <Link href="/perfil" aria-label={`Perfil de ${userName}`} className="ml-0.5">
-            <Avatar name={userName} tone={userTone} size="sm" availability={availability} />
+            <Avatar name={userName} tone={userTone} src={userAvatarUrl} size="sm" availability={availability} />
           </Link>
         </div>
       </header>
@@ -559,7 +586,7 @@ export function NavigationRail({
                 href="/perfil"
                 className="flex items-center gap-3 rounded-xl px-2.5 py-2 transition-colors hover:bg-surface-2"
               >
-                <Avatar name={userName} tone={userTone} size="sm" availability={availability} />
+                <Avatar name={userName} tone={userTone} src={userAvatarUrl} size="sm" availability={availability} />
                 <span className="min-w-0">
                   <span className="block truncate text-xs font-semibold text-ink">
                     {userName}

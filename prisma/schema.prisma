@@ -90,6 +90,15 @@ model User {
   /// `scrypt` com sal por usuário. A senha em claro nunca é gravada nem logada.
   passwordHash     String
   avatarTone       String
+  /// URL servida por `/api/users/[userId]/avatar`, com o tipo do arquivo e uma
+  /// versão embutidos na própria query string (`?t=<mimeType>&v=<timestamp>`).
+  ///
+  /// Não há coluna separada para o tipo: a URL inteira é o contrato entre quem
+  /// grava e quem serve. O `v` muda a cada envio para que o navegador nunca
+  /// sirva, do próprio cache, uma foto que a pessoa acabou de trocar — sem ele,
+  /// o `<img>` continuaria apontando para o mesmo endereço de sempre e trocar a
+  /// foto pareceria não ter feito nada.
+  avatarUrl        String?
   signature        String?
   /// A assinatura vai ou não vai junto com o que a pessoa escreve.
   ///
