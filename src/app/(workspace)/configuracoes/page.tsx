@@ -16,7 +16,6 @@ import { KnowledgeSection } from '@/features/configuracoes/components/sections/k
 import { TeamSection } from '@/features/configuracoes/components/sections/team-section';
 import { LabelsSection } from '@/features/configuracoes/components/sections/labels-section';
 import { CannedResponsesSection } from '@/features/configuracoes/components/sections/canned-responses-section';
-import { CustomAttributesSection } from '@/features/configuracoes/components/sections/custom-attributes-section';
 import { CompanySection } from '@/features/configuracoes/components/sections/company-section';
 import { BillingSection } from '@/features/configuracoes/components/sections/billing-section';
 import { SecuritySection } from '@/features/configuracoes/components/sections/security-section';
@@ -194,10 +193,6 @@ export default async function ConfiguracoesPage({
 
           {currentSection === 'respostas' ? (
             <CannedResponsesSection cannedResponses={settings.cannedResponses} />
-          ) : null}
-
-          {currentSection === 'atributos' ? (
-            <CustomAttributesSection attributes={settings.customAttributes} />
           ) : null}
 
           {currentSection === 'empresa' ? (

@@ -9,7 +9,6 @@ import {
   Inbox,
   MessageSquare,
   ShieldCheck,
-  Sliders,
   Tag,
   Users,
   Zap,
@@ -58,7 +57,6 @@ const SECTION_GROUPS: readonly NavSectionGroup[] = [
     title: 'Organização',
     items: [
       { id: 'conhecimento', label: 'Base de conhecimento', icon: BookOpen },
-      { id: 'atributos', label: 'Atributos personalizados', icon: Sliders },
       { id: 'empresa', label: 'Empresa', icon: Building2 },
     ],
   },

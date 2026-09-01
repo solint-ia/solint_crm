@@ -540,47 +540,6 @@ export async function deleteCannedResponseAction(input: unknown): Promise<Action
 
 // ---------------------------------------------------------------- Onda 3: Atributos Customizados
 
-const createCustomAttributeSchema = z.object({
-  name: z.string().trim().min(2).max(60),
-  key: z
-    .string()
-    .trim()
-    .min(2)
-    .max(40)
-    .regex(/^[a-z0-9_]+$/, 'A chave deve conter apenas letras minúsculas, números e sublinhados.'),
-  type: z.enum(['texto', 'numero', 'data', 'lista', 'booleano'] as const),
-  appliesTo: z.enum(['contato', 'conversa'] as const),
-  options: z.array(z.string().trim()).optional(),
-});
-
-export async function createCustomAttributeAction(input: unknown): Promise<ActionResult> {
-  const parsed = createCustomAttributeSchema.safeParse(input);
-  if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
-
-  try {
-    const session = await assertCanWrite('config.atributos:escrever');
-    await container.settings.createCustomAttribute(session.account.id, parsed.data);
-    return { ok: true };
-  } catch (error) {
-    return failureOf(error, 'Erro ao criar atributo customizado.');
-  }
-}
-
-const deleteCustomAttributeSchema = z.object({ attributeId: z.string().min(1) });
-
-export async function deleteCustomAttributeAction(input: unknown): Promise<ActionResult> {
-  const parsed = deleteCustomAttributeSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: 'Atributo inválido.' };
-
-  try {
-    const session = await assertCanWrite('config.atributos:escrever');
-    await container.settings.deleteCustomAttribute(session.account.id, parsed.data.attributeId);
-    return { ok: true };
-  } catch (error) {
-    return failureOf(error, 'Erro ao excluir atributo.');
-  }
-}
 
 // ---------------------------------------------------------------- Onda 3: Equipes
 

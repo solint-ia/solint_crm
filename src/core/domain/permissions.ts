@@ -148,16 +148,6 @@ const GRUPOS: readonly PermissionGroup[] = [
         label: 'Editar base de conhecimento',
         hint: 'Escrever e publicar artigos.',
       },
-      {
-        id: 'config.atributos:ler',
-        label: 'Ver atributos personalizados',
-        hint: 'Campos extras de contato e negócio.',
-      },
-      {
-        id: 'config.atributos:escrever',
-        label: 'Editar atributos personalizados',
-        hint: 'Criar e remover campos extras.',
-      },
     ],
   },
   {
