@@ -15,6 +15,13 @@ import { can, type Permission } from '@/core/domain/user';
 import { ROLES_REQUIRING_TEAM } from '@/core/domain/system-roles';
 import { permissoesForaDoCatalogo } from '@/core/domain/permissions';
 import {
+  ALLOWED_LOGO_MIME_TYPES,
+  MAX_LOGO_BYTES,
+  buildLogoUrl,
+  isAllowedLogoMimeType,
+} from '@/core/domain/image-upload';
+import { BUCKETS, storage } from '@/infrastructure/storage/supabase-storage';
+import {
   WEEKDAYS,
   normalizeAutoReply,
   normalizeBusinessHours,
@@ -22,7 +29,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { hashPassword, passwordProblem } from '@/infrastructure/auth/password';
 import { Prisma } from '@/generated/prisma/client';
-import { prisma, asJson } from '@/infrastructure/db/prisma';
+import { prisma, asJson, readJson } from '@/infrastructure/db/prisma';
 import { container } from '@/infrastructure/container';
 import type { InboxDeletionImpact } from '@/core/ports/settings-repository';
 import { PrismaSettingsRepository } from '@/infrastructure/repositories/prisma/settings-repository';
@@ -1050,6 +1057,76 @@ export async function saveCompanyProfileAction(input: unknown): Promise<ActionRe
     return { ok: true };
   } catch (error) {
     return failureOf(error, 'Erro ao salvar os dados da empresa.');
+  }
+}
+
+/**
+ * Grava o logotipo da conta.
+ *
+ * Ação imediata, fora do "Salvar" do resto do formulário — mesmo raciocínio
+ * da foto de perfil: upload de arquivo é, em toda parte da web, algo que
+ * acontece na hora do clique, não algo que fica pendente até um botão salvar
+ * geral. `FormData` e não JSON pelo mesmo motivo de lá: é o único jeito de uma
+ * Server Action receber um `File` sem inflar o payload em ~33% com base64.
+ */
+export async function uploadCompanyLogoAction(formData: FormData): Promise<ActionResult> {
+  try {
+    const session = await assertCanWrite('config.empresa:escrever');
+
+    const file = formData.get('logo');
+    if (!(file instanceof File)) {
+      return { ok: false, error: 'Nenhuma imagem recebida.' };
+    }
+    if (file.size === 0) {
+      return { ok: false, error: 'O arquivo está vazio.' };
+    }
+    if (file.size > MAX_LOGO_BYTES) {
+      return { ok: false, error: 'A imagem passou de 2 MB. Escolha um arquivo menor.' };
+    }
+    if (!isAllowedLogoMimeType(file.type)) {
+      return {
+        ok: false,
+        error: `Envie uma imagem ${ALLOWED_LOGO_MIME_TYPES.map((t) => t.split('/')[1]).join(' ou ')}, de preferência com fundo transparente.`,
+      };
+    }
+
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const uploaded = await storage.upload(
+      BUCKETS.AVATARS,
+      `accounts/${session.account.id}`,
+      buffer,
+      file.type,
+    );
+    if (!uploaded) {
+      return {
+        ok: false,
+        error: 'Não foi possível enviar a imagem agora. Tente novamente em instantes.',
+      };
+    }
+
+    // `company` é um JSON solto (ver `saveCompanyProfile`), então gravar só o
+    // logo exige ler o que já está lá antes — sem isso, o upload apagaria
+    // silenciosamente razão social, endereço e todo o resto do perfil.
+    const settingsRow = await prisma.accountSettings.findUnique({
+      where: { accountId: session.account.id },
+      select: { company: true },
+    });
+    const currentCompany = readJson<Record<string, unknown>>(settingsRow?.company, {});
+
+    await prisma.accountSettings.update({
+      where: { accountId: session.account.id },
+      data: {
+        company: asJson({
+          ...currentCompany,
+          logoUrl: buildLogoUrl(session.account.id, file.type),
+        }),
+      },
+    });
+
+    revalidatePath('/configuracoes');
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao salvar o logotipo da empresa.');
   }
 }
 

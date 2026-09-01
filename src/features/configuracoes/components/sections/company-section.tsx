@@ -1,36 +1,20 @@
 'use client';
 
-import { useEffect, useMemo, useState, useTransition } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  Building2,
-  Eye,
-  Globe,
-  Palette,
-  Sparkles,
-  Upload,
-} from 'lucide-react';
+import { Building2, Globe, Upload } from 'lucide-react';
 import type { CompanyProfile } from '@/core/domain/settings';
 import type { Account } from '@/core/domain/user';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
 import { UnsavedChangesBar } from '@/features/configuracoes/components/unsaved-changes-bar';
-import { cn } from '@/lib/cn';
-import { saveCompanyProfileAction } from '@/app/(workspace)/configuracoes/actions';
+import { saveCompanyProfileAction, uploadCompanyLogoAction } from '@/app/(workspace)/configuracoes/actions';
+import { ALLOWED_LOGO_MIME_TYPES } from '@/core/domain/image-upload';
 
 interface CompanySectionProps {
   readonly account: Account;
   readonly company: CompanyProfile;
 }
-
-const BRAND_PALETTES = [
-  { name: 'Azul Solint (Padrão)', hex: '#2563EB' },
-  { name: 'Índigo Profundo', hex: '#4F46E5' },
-  { name: 'Esmeralda Tech', hex: '#059669' },
-  { name: 'Violeta Moderno', hex: '#7C3AED' },
-  { name: 'Âmbar Premium', hex: '#D97706' },
-  { name: 'Grafite Corporativo', hex: '#334155' },
-];
 
 export function CompanySection({ account, company }: CompanySectionProps) {
   const { show } = useToast();
@@ -65,6 +49,55 @@ export function CompanySection({ account, company }: CompanySectionProps) {
   );
 
   const [form, setForm] = useState(inicial);
+
+  /**
+   * O logo é enviado na hora, fora do "Salvar" geral do formulário.
+   *
+   * Mesmo raciocínio da foto de perfil pessoal: upload de arquivo é, em toda
+   * parte da web, uma ação imediata — encaixar isso no fluxo de "salvar
+   * pendente / descartar" desta tela criaria um estado estranho de se
+   * abandonar.
+   */
+  const [logoUrl, setLogoUrl] = useState(company.logoUrl);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [logoError, setLogoError] = useState<string | null>(null);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+
+  const handleLogoChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    // Sempre limpo, mesmo em erro: sem isto, escolher o mesmo arquivo duas
+    // vezes seguidas não disparava `onChange` de novo.
+    event.target.value = '';
+    if (!file) return;
+
+    setLogoError(null);
+    setUploadingLogo(true);
+    try {
+      const formData = new FormData();
+      formData.set('logo', file);
+      const result = await uploadCompanyLogoAction(formData);
+
+      if (!result.ok) {
+        setLogoError(result.error ?? null);
+        show({
+          tone: 'erro',
+          title: 'Não foi possível enviar o logotipo',
+          description: result.error ?? 'Tente novamente.',
+        });
+        return;
+      }
+
+      // Prévia imediata a partir do arquivo escolhido — não espera o próximo
+      // carregamento da página para a pessoa ver o resultado.
+      setLogoUrl(URL.createObjectURL(file));
+      show({ tone: 'sucesso', title: 'Logotipo atualizado' });
+    } catch {
+      setLogoError('Erro ao enviar a imagem.');
+      show({ tone: 'erro', title: 'Erro ao enviar a imagem', description: 'Tente novamente.' });
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
   useEffect(() => setForm(inicial), [inicial]);
 
   const set = <K extends keyof typeof inicial>(key: K, value: (typeof inicial)[K]) =>
@@ -135,33 +168,45 @@ export function CompanySection({ account, company }: CompanySectionProps) {
 
         {/* Upload de Logotipo */}
         <div className="flex items-center gap-5 py-2">
-          <div
-            className="flex size-20 shrink-0 items-center justify-center rounded-2xl font-display text-2xl font-bold text-white shadow-md transition-all"
-            style={{ backgroundColor: form.brandColor }}
-          >
-            {form.tradeName.charAt(0).toUpperCase()}
-          </div>
+          {logoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={logoUrl}
+              alt={`Logotipo de ${form.tradeName}`}
+              className="size-20 shrink-0 rounded-2xl object-cover shadow-md"
+            />
+          ) : (
+            <div
+              className="flex size-20 shrink-0 items-center justify-center rounded-2xl font-display text-2xl font-bold text-white shadow-md transition-all"
+              style={{ backgroundColor: form.brandColor }}
+            >
+              {form.tradeName.charAt(0).toUpperCase()}
+            </div>
+          )}
           <div className="flex flex-col gap-1.5">
             <span className="text-xs font-semibold text-ink">Logotipo do workspace</span>
             <p className="text-[11px] text-muted">
-              Formatos recomendados: PNG ou SVG transparente de no mínimo 512x512px.
+              Formatos recomendados: PNG ou WEBP transparente de no mínimo 512x512px.
             </p>
             <div className="flex items-center gap-2 mt-1">
+              <input
+                ref={logoInputRef}
+                type="file"
+                accept={ALLOWED_LOGO_MIME_TYPES.join(',')}
+                className="hidden"
+                onChange={handleLogoChange}
+              />
               <Button
                 variant="secondary"
                 size="sm"
                 icon={<Upload className="size-3.5" />}
-                onClick={() =>
-                  show({
-                    tone: 'info',
-                    title: 'Upload de Logo',
-                    description: 'Selecione uma imagem PNG ou SVG para atualizar o logo.',
-                  })
-                }
+                disabled={uploadingLogo}
+                onClick={() => logoInputRef.current?.click()}
               >
-                Alterar logotipo
+                {uploadingLogo ? 'Enviando…' : 'Alterar logotipo'}
               </Button>
             </div>
+            {logoError ? <span className="text-[11px] text-red-text">{logoError}</span> : null}
           </div>
         </div>
 
@@ -356,92 +401,6 @@ export function CompanySection({ account, company }: CompanySectionProps) {
               <option value="segunda">Segunda-feira (Padrão corporativo)</option>
               <option value="domingo">Domingo</option>
             </select>
-          </div>
-        </div>
-      </section>
-
-      {/* ============================================================ */}
-      {/* 3. IDENTIDADE VISUAL COM PRÉVIA EM TEMPO REAL                */}
-      {/* ============================================================ */}
-      <section className="flex flex-col gap-5 rounded-2xl border border-line bg-surface p-6 shadow-2xs">
-        <div className="flex items-center gap-2.5 border-b border-line pb-4">
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400">
-            <Palette className="size-4" />
-          </div>
-          <div>
-            <h3 className="font-display text-base font-bold text-ink">
-              Identidade visual e cor primária
-            </h3>
-            <p className="text-xs text-muted">
-              Personalize o tom de destaque do CRM para combinar com a paleta da sua empresa.
-            </p>
-          </div>
-        </div>
-
-        <div>
-          <label className="mb-2 block text-xs font-semibold text-ink">
-            Paleta de cores recomendadas
-          </label>
-          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-6">
-            {BRAND_PALETTES.map((p) => {
-              const selected = form.brandColor.toLowerCase() === p.hex.toLowerCase();
-              return (
-                <button
-                  type="button"
-                  key={p.hex}
-                  onClick={() => set('brandColor', p.hex)}
-                  className={cn(
-                    'flex flex-col items-center gap-2 rounded-xl border p-2.5 transition-all text-center',
-                    selected
-                      ? 'border-brand bg-blue-500/5 ring-1 ring-brand/30 shadow-2xs'
-                      : 'border-line bg-surface hover:bg-surface-2',
-                  )}
-                >
-                  <span
-                    className="size-6 rounded-full shadow-xs"
-                    style={{ backgroundColor: p.hex }}
-                  />
-                  <span className="text-[11px] font-semibold text-ink line-clamp-1">{p.name}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Prévia em Tempo Real */}
-        <div className="rounded-2xl border border-line-soft bg-surface-2/60 p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Eye className="size-3.5 text-dim" />
-            <span className="text-xs font-bold text-ink uppercase tracking-wider">
-              Prévia dos componentes com a cor escolhida
-            </span>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              className="rounded-xl px-4 py-2 text-xs font-bold text-white shadow-xs transition-opacity hover:opacity-90"
-              style={{ backgroundColor: form.brandColor }}
-            >
-              Botão primário
-            </button>
-            <div
-              className="rounded-xl px-3 py-1.5 text-xs font-semibold border"
-              style={{
-                borderColor: `${form.brandColor}40`,
-                backgroundColor: `${form.brandColor}15`,
-                color: form.brandColor,
-              }}
-            >
-              Badge e destaque ativo
-            </div>
-            <div
-              className="flex items-center gap-2 rounded-xl border border-line bg-surface px-3 py-1.5 text-xs font-bold"
-              style={{ color: form.brandColor }}
-            >
-              <Sparkles className="size-3.5" />
-              Ícone de destaque
-            </div>
           </div>
         </div>
       </section>

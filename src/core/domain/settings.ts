@@ -158,6 +158,8 @@ export interface CompanyProfile {
   readonly dateFormat?: string;
   readonly firstDayOfWeek?: string;
   readonly brandColor?: string;
+  /** Servido por `/api/accounts/[accountId]/logo`. Ausente = iniciais do nome fantasia. */
+  readonly logoUrl?: string;
 }
 
 export interface BillingInfo {
