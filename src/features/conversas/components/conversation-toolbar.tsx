@@ -1,13 +1,27 @@
 'use client';
 
-import { Check, ChevronDown, Inbox, Tag, UserPlus } from 'lucide-react';
+import {
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  Clock,
+  Inbox,
+  PauseCircle,
+  Tag,
+  UserPlus,
+} from 'lucide-react';
 import type { WhatsAppTemplate } from '@/core/domain/campaign';
-import type { Conversation, Priority } from '@/core/domain/conversation';
+import type { Conversation, ConversationStatus, Priority } from '@/core/domain/conversation';
 import { PRIORITIES } from '@/core/domain/conversation';
 import type { Label } from '@/core/domain/label';
 import type { User } from '@/core/domain/user';
 import { Menu, MenuHeader, MenuItem } from '@/components/ui/menu';
-import { PRIORITY_LABEL, PRIORITY_TONE } from '@/components/domain/presentation-maps';
+import {
+  PRIORITY_LABEL,
+  PRIORITY_TONE,
+  STATUS_LABEL,
+  STATUS_TONE,
+} from '@/components/domain/presentation-maps';
 import { isHexColor, TONE_DOT_CLASSES } from '@/components/ui/tone';
 import { cn } from '@/lib/cn';
 
@@ -15,6 +29,133 @@ export interface InboxCatalog {
   readonly members: readonly User[];
   readonly labels: readonly Label[];
   readonly templates: readonly WhatsAppTemplate[];
+}
+
+/**
+ * Seletor rápido e interativo de status da conversa.
+ *
+ * Exibe o selo com a cor/tom do status atual e abre um menu para transicionar
+ * diretamente entre Aberta, Em espera, Pendente e Resolvida.
+ */
+export function StatusMenu({
+  conversation,
+  onChange,
+}: {
+  readonly conversation: Conversation;
+  readonly onChange: (status: ConversationStatus) => void;
+}) {
+  const tone = STATUS_TONE[conversation.status];
+
+  return (
+    <Menu
+      label={`Status: ${STATUS_LABEL[conversation.status]}`}
+      trigger={
+        <span
+          className={cn(
+            'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-all shadow-2xs border cursor-pointer select-none',
+            conversation.status === 'aberta' &&
+              'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/25 hover:bg-blue-500/20',
+            conversation.status === 'espera' &&
+              'bg-amber-500/15 text-amber-600 dark:text-amber-300 border-amber-500/30 hover:bg-amber-500/25',
+            conversation.status === 'pendente' &&
+              'bg-sky-500/15 text-sky-600 dark:text-sky-300 border-sky-500/30 hover:bg-sky-500/25',
+            conversation.status === 'resolvida' &&
+              'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/25',
+          )}
+        >
+          <span className={cn('size-1.5 rounded-full shrink-0', TONE_DOT_CLASSES[tone])} />
+          <span>{STATUS_LABEL[conversation.status]}</span>
+          <ChevronDown className="size-3 opacity-60 shrink-0" />
+        </span>
+      }
+    >
+      {(close) => (
+        <>
+          <MenuHeader>Status do atendimento</MenuHeader>
+          <MenuItem
+            selected={conversation.status === 'aberta'}
+            onClick={() => {
+              onChange('aberta');
+              close();
+            }}
+          >
+            <span
+              className={cn(
+                'size-1.5 shrink-0 rounded-full',
+                TONE_DOT_CLASSES[STATUS_TONE['aberta']],
+              )}
+            />
+            <div className="flex flex-col min-w-0 flex-1">
+              <span className="font-semibold text-xs leading-none">Aberta</span>
+              <span className="text-[10px] text-muted leading-tight mt-0.5">
+                Em atendimento ativo
+              </span>
+            </div>
+            {conversation.status === 'aberta' && (
+              <Check className="size-3.5 ml-auto text-brand shrink-0" />
+            )}
+          </MenuItem>
+
+          <MenuItem
+            selected={conversation.status === 'espera'}
+            onClick={() => {
+              onChange('espera');
+              close();
+            }}
+          >
+            <PauseCircle className="size-3.5 shrink-0 text-amber-500" />
+            <div className="flex flex-col min-w-0 flex-1">
+              <span className="font-semibold text-xs leading-none">Em espera</span>
+              <span className="text-[10px] text-muted leading-tight mt-0.5">
+                Aguardando resposta do cliente
+              </span>
+            </div>
+            {conversation.status === 'espera' && (
+              <Check className="size-3.5 ml-auto text-amber-500 shrink-0" />
+            )}
+          </MenuItem>
+
+          <MenuItem
+            selected={conversation.status === 'pendente'}
+            onClick={() => {
+              onChange('pendente');
+              close();
+            }}
+          >
+            <Clock className="size-3.5 shrink-0 text-sky-500" />
+            <div className="flex flex-col min-w-0 flex-1">
+              <span className="font-semibold text-xs leading-none">Pendente</span>
+              <span className="text-[10px] text-muted leading-tight mt-0.5">
+                Aguardando ação interna ou externa
+              </span>
+            </div>
+            {conversation.status === 'pendente' && (
+              <Check className="size-3.5 ml-auto text-sky-500 shrink-0" />
+            )}
+          </MenuItem>
+
+          <MenuItem
+            selected={conversation.status === 'resolvida'}
+            onClick={() => {
+              onChange('resolvida');
+              close();
+            }}
+          >
+            <CheckCircle2 className="size-3.5 shrink-0 text-emerald-500" />
+            <div className="flex flex-col min-w-0 flex-1">
+              <span className="font-semibold text-xs leading-none">Resolvida</span>
+              <span className="text-[10px] text-muted leading-tight mt-0.5">
+                Atendimento concluído e arquivado
+              </span>
+            </div>
+            {conversation.status === 'resolvida' && (
+              <Check className="size-3.5 ml-auto text-emerald-500 shrink-0" />
+            )}
+          </MenuItem>
+        </>
+      )}
+    </Menu>
+  );
 }
 
 /**
@@ -56,7 +197,10 @@ export function PriorityMenu({
               }}
             >
               <span
-                className={cn('size-1.5 shrink-0 rounded-full', TONE_DOT_CLASSES[PRIORITY_TONE[priority]])}
+                className={cn(
+                  'size-1.5 shrink-0 rounded-full',
+                  TONE_DOT_CLASSES[PRIORITY_TONE[priority]],
+                )}
               />
               {PRIORITY_LABEL[priority]}
             </MenuItem>
@@ -122,7 +266,10 @@ export function LabelMenu({
               return (
                 <MenuItem key={label.id} selected={active} onClick={() => toggle(label)}>
                   <span
-                    className={cn('size-1.5 shrink-0 rounded-full', !isHex && TONE_DOT_CLASSES[label.tone])}
+                    className={cn(
+                      'size-1.5 shrink-0 rounded-full',
+                      !isHex && TONE_DOT_CLASSES[label.tone],
+                    )}
                     style={isHex ? { backgroundColor: label.tone } : undefined}
                   />
                   <span className="min-w-0 flex-1 truncate">{label.name}</span>
@@ -158,9 +305,7 @@ export function AssigneeButton({
       className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold text-ink transition-all hover:bg-surface hover:shadow-2xs"
     >
       <UserPlus className="size-3 text-dim" />
-      <span className="max-w-28 truncate">
-        {conversation.assigneeName ?? 'Sem responsável'}
-      </span>
+      <span className="max-w-28 truncate">{conversation.assigneeName ?? 'Sem responsável'}</span>
     </button>
   );
 }

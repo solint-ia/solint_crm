@@ -5,10 +5,12 @@ import Link from 'next/link';
 import {
   ArrowLeft,
   CalendarClock,
+  Check,
   CheckCircle2,
   Clock,
   Eye,
   FileCheck2,
+  Inbox,
   MoreVertical,
   PanelRight,
   PanelRightClose,
@@ -31,13 +33,13 @@ import { Avatar } from '@/components/ui/avatar';
 import { ImageLightbox } from '@/components/ui/image-lightbox';
 import { Menu, MenuHeader, MenuItem } from '@/components/ui/menu';
 import { Modal } from '@/components/ui/modal';
-import { StatusBadge } from '@/components/domain/status-badge';
 import { Composer, type ComposerMode, type MediaResult } from './composer';
 import {
   AssigneeButton,
   InboxMenu,
   LabelMenu,
   PriorityMenu,
+  StatusMenu,
   type InboxCatalog,
 } from './conversation-toolbar';
 import { MessageBubble } from './message-bubble';
@@ -72,10 +74,7 @@ const GRACA_DO_VARREDOR_MS = 22_000;
  * novo, ele rearmaria sozinho a cada 22 segundos para sempre — um laço que
  * ninguém pediu, girando enquanto a conversa estivesse aberta.
  */
-const mesmaFila = (
-  a: readonly ScheduledMessage[],
-  b: readonly ScheduledMessage[],
-): boolean =>
+const mesmaFila = (a: readonly ScheduledMessage[], b: readonly ScheduledMessage[]): boolean =>
   a.length === b.length &&
   a.every((item, i) => item.id === b[i]?.id && item.status === b[i]?.status);
 
@@ -96,9 +95,7 @@ interface ChatPanelProps {
     replyToId?: string;
     scheduledFor: string;
   }) => Promise<ScheduledResult>;
-  readonly listScheduledMessages?: (input: {
-    conversationId: string;
-  }) => Promise<ScheduledResult>;
+  readonly listScheduledMessages?: (input: { conversationId: string }) => Promise<ScheduledResult>;
   readonly cancelScheduledMessage?: (input: {
     conversationId: string;
     scheduledMessageId: string;
@@ -302,17 +299,8 @@ export function ChatPanel({
   return (
     <section className="flex min-w-0 flex-1 flex-col bg-chat h-full overflow-hidden">
       {/* ---------- Cabeçalho Fixo da Conversa ---------- */}
-      {/* `@container` e não breakpoints de tela.
-          As ações deste cabeçalho apareciam e sumiam conforme a largura da
-          **janela** (`md:`, `lg:`, `2xl:`). Só que a janela não muda de tamanho
-          quando a barra lateral é arrastada para a direita, nem quando o painel
-          de contato abre — o que muda é o espaço que sobra aqui dentro. O
-          cabeçalho seguia desenhando a barra completa num espaço que já não
-          comportava, e os botões se empilhavam por cima do nome do contato.
-          Consultando o próprio container, ele encolhe quando o espaço encolhe,
-          seja qual for o motivo. */}
-      <header className="@container flex h-16 shrink-0 items-center justify-between gap-2 border-b border-line bg-surface px-3 sm:px-4 py-2 z-10 shadow-xs">
-        {/* Lado Esquerdo: Identificação do Contato (Truncamento Seguro) */}
+      <header className="@container flex h-16 shrink-0 items-center justify-between gap-2.5 sm:gap-4 border-b border-line bg-surface px-3 sm:px-4 py-2 z-10 shadow-xs">
+        {/* Lado Esquerdo: Identificação do Contato e Grupo (com espaço garantido e nunca sobreposto) */}
         <div className="flex min-w-0 flex-1 items-center gap-2.5">
           {onBack && (
             <button
@@ -325,12 +313,6 @@ export function ChatPanel({
             </button>
           )}
 
-          {/* A foto e o nome são dois alvos, não um.
-              Eram um botão só, que abria os detalhes. Ampliar a foto não podia
-              virar um botão dentro dele — botão aninhado é HTML inválido e o
-              clique interno não chega ao leitor de tela como ação própria.
-              Separados, cada gesto tem o seu destino: a foto amplia, o nome
-              abre o painel. */}
           {temFoto ? (
             <button
               type="button"
@@ -347,9 +329,6 @@ export function ChatPanel({
               />
             </button>
           ) : (
-            // Sem foto o avatar são as iniciais, e ampliar iniciais não mostra
-            // nada que já não esteja à vista. Fica sem o gesto, em vez de abrir
-            // uma tela cheia com duas letras dentro.
             <div className="shrink-0">
               <Avatar
                 name={conversation.contact.name}
@@ -363,15 +342,18 @@ export function ChatPanel({
             type="button"
             onClick={onToggleContext}
             title={isContextOpen ? 'Recolher detalhes do contato' : 'Ver detalhes do contato'}
-            className="group flex items-center gap-2.5 text-left min-w-0 rounded-lg p-1 -m-1 transition-colors hover:bg-surface-2"
+            className="group flex items-center gap-2 text-left min-w-0 rounded-lg p-1 -m-1 transition-colors hover:bg-surface-2 overflow-hidden"
           >
             <div className="min-w-0 flex flex-col justify-center">
-              <div className="flex items-center gap-1.5 min-w-0">
-                <h2 className="truncate font-display text-xs sm:text-sm font-semibold text-ink group-hover:text-brand transition-colors">
+              <div className="flex items-center gap-2 min-w-0">
+                <h2
+                  className="truncate font-display text-xs sm:text-sm font-semibold text-ink group-hover:text-brand transition-colors"
+                  title={conversation.contact.name}
+                >
                   {conversation.contact.name}
                 </h2>
                 {isGroup && (
-                  <span className="flex shrink-0 items-center gap-1 rounded-md bg-surface-2 border border-line-soft px-1.5 py-0.5 text-[10px] font-semibold text-muted">
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/25 px-2 py-0.5 text-[10px] font-semibold">
                     <Users className="size-3 shrink-0" />
                     Grupo
                   </span>
@@ -384,13 +366,14 @@ export function ChatPanel({
           </button>
         </div>
 
-        {/* Lado Direito: Ações do Atendimento em 3 Grupos Coerentes */}
-        <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
-          {/* Grupo 1: Metadados e Atribuição da Conversa (Cápsula Unificada) */}
+        {/* Lado Direito: Ações e Seletores com Agrupamento Inteligente */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* Seletor Rápido de Status (Interativo e Compacto) */}
+          <StatusMenu conversation={conversation} onChange={onChangeStatus} />
+
+          {/* Grupo de Metadados Expandido em Telas Muito Largas (Container @6xl+) */}
           {!isContextOpen && (
-            <div className="hidden @4xl:flex items-center gap-1 rounded-xl border border-line bg-surface-2/70 p-1 shadow-2xs">
-              <StatusBadge status={conversation.status} />
-              <span className="h-3.5 w-px bg-line/80 mx-0.5" />
+            <div className="hidden @6xl:flex items-center gap-1 rounded-xl border border-line bg-surface-2/70 p-1 shadow-2xs">
               <PriorityMenu conversation={conversation} onChange={onChangePriority} />
               <LabelMenu
                 conversation={conversation}
@@ -405,190 +388,149 @@ export function ChatPanel({
             </div>
           )}
 
-          {/* Grupo 2: Ações de Status e Resolução */}
-          <div className="flex items-center gap-1.5">
-            {!isContextOpen && (
-              <div className="hidden @2xl:flex items-center gap-0.5 rounded-xl border border-line bg-surface-2/70 p-1 shadow-2xs">
-                <button
-                  type="button"
-                  onClick={() => toggleStatus('espera')}
-                  aria-pressed={conversation.status === 'espera'}
-                  title={
-                    conversation.status === 'espera'
-                      ? 'Tirar da espera (reabrir atendimento)'
-                      : 'Colocar atendimento em espera'
-                  }
-                  className={cn(
-                    'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-all',
-                    conversation.status === 'espera'
-                      ? 'border border-amber-500/40 bg-amber-500/15 text-amber-600 dark:text-amber-300 shadow-2xs'
-                      : 'text-ink hover:bg-surface border border-transparent',
-                  )}
-                >
-                  <PauseCircle className="size-3.5 text-amber-500 shrink-0" />
-                  <span>Em espera</span>
-                </button>
+          {/* Grupo de Metadados Compacto (Prioridade + Etiquetas) em Telas Médias-Largura (@4xl a @6xl) */}
+          {!isContextOpen && (
+            <div className="hidden @4xl:flex @6xl:hidden items-center gap-1 rounded-xl border border-line bg-surface-2/70 p-1 shadow-2xs">
+              <PriorityMenu conversation={conversation} onChange={onChangePriority} />
+              <LabelMenu
+                conversation={conversation}
+                labels={catalog.labels}
+                onChange={onSetLabels}
+              />
+            </div>
+          )}
 
-                <button
-                  type="button"
-                  onClick={() => toggleStatus('pendente')}
-                  aria-pressed={conversation.status === 'pendente'}
-                  title={
-                    conversation.status === 'pendente'
-                      ? 'Tirar de pendente (reabrir atendimento)'
-                      : 'Marcar como pendente'
-                  }
-                  className={cn(
-                    'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-all',
-                    conversation.status === 'pendente'
-                      ? 'border border-sky-500/40 bg-sky-500/15 text-sky-600 dark:text-sky-300 shadow-2xs'
-                      : 'text-ink hover:bg-surface border border-transparent',
-                  )}
-                >
-                  <Clock className="size-3.5 text-sky-500 shrink-0" />
-                  <span>Pendente</span>
-                </button>
-              </div>
-            )}
+          {/* Ação Principal: Finalizar / Reabrir Atendimento */}
+          {conversation.status === 'resolvida' ? (
+            <button
+              type="button"
+              onClick={() => onChangeStatus('aberta')}
+              title="Reabrir este atendimento"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-600/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-300 transition-all hover:bg-emerald-500/20 active:scale-[0.98] shadow-2xs"
+            >
+              <RotateCcw className="size-3.5 shrink-0" />
+              <span className="hidden sm:inline">Reabrir atendimento</span>
+              <span className="sm:hidden">Reabrir</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onChangeStatus('resolvida')}
+              title="Finalizar e resolver atendimento"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-xs shadow-emerald-600/25 transition-all hover:bg-emerald-500 active:scale-[0.98]"
+            >
+              <CheckCircle2 className="size-3.5 shrink-0" />
+              <span className="hidden sm:inline">Finalizar atendimento</span>
+              <span className="sm:hidden">Finalizar</span>
+            </button>
+          )}
 
-            {/* Ação Principal: Finalizar / Reabrir Atendimento */}
-            {conversation.status === 'resolvida' ? (
-              <button
-                type="button"
-                onClick={() => onChangeStatus('aberta')}
-                title="Reabrir este atendimento"
-                className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-600/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-300 transition-all hover:bg-emerald-500/20 active:scale-[0.98] shadow-2xs"
-              >
-                <RotateCcw className="size-3.5 shrink-0" />
-                <span className="hidden sm:inline">Reabrir atendimento</span>
-                <span className="sm:hidden">Reabrir</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => onChangeStatus('resolvida')}
-                title="Finalizar e resolver atendimento"
-                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-xs shadow-emerald-600/25 transition-all hover:bg-emerald-500 active:scale-[0.98]"
-              >
-                <CheckCircle2 className="size-3.5 shrink-0" />
-                <span className="hidden sm:inline">Finalizar atendimento</span>
-                <span className="sm:hidden">Finalizar</span>
-              </button>
-            )}
-          </div>
-
-          {/* Grupo 3: Utilitários e Painel Lateral */}
+          {/* Utilitários, Menu Unificado de Ações e Painel Lateral */}
           <div className="flex items-center gap-1.5 pl-1 sm:pl-1.5 border-l border-line/60">
-            {/* Menu de Transbordo para quando a cápsula completa estiver oculta */}
-            {(!isContextOpen ? (
-              <div className="@4xl:hidden">
-                <Menu
-                  label="Mais ações da conversa"
-                  trigger={
-                    <span className="flex size-8 items-center justify-center rounded-xl border border-line bg-surface text-muted hover:bg-surface-2 hover:text-ink transition-colors shadow-2xs">
-                      <MoreVertical className="size-4" />
-                    </span>
-                  }
-                >
-                  {(close) => (
-                    <>
-                      <MenuHeader>Atendimento & Status</MenuHeader>
-                      <MenuItem
-                        onClick={() => {
-                          toggleStatus('espera');
-                          close();
-                        }}
-                      >
-                        <PauseCircle className="size-3.5 text-amber-500" />
-                        <span>
-                          {conversation.status === 'espera' ? 'Tirar da espera' : 'Colocar em espera'}
-                        </span>
-                      </MenuItem>
-                      <MenuItem
-                        onClick={() => {
-                          toggleStatus('pendente');
-                          close();
-                        }}
-                      >
-                        <Clock className="size-3.5 text-sky-500" />
-                        <span>
-                          {conversation.status === 'pendente'
-                            ? 'Tirar de pendente'
-                            : 'Marcar como pendente'}
-                        </span>
-                      </MenuItem>
-                      <MenuItem
-                        onClick={() => {
-                          setTransferOpen(true);
-                          close();
-                        }}
-                      >
-                        <UserCheck className="size-3.5 text-brand" />
-                        <span>Transferir responsável</span>
-                      </MenuItem>
-                    </>
+            {/* Menu Dropdown de Mais Ações e Opções da Conversa */}
+            <Menu
+              label="Mais opções da conversa"
+              panelClassName="w-64"
+              trigger={
+                <span
+                  className={cn(
+                    'flex size-8 items-center justify-center rounded-xl border transition-colors shadow-2xs cursor-pointer',
+                    'border-line bg-surface text-muted hover:bg-surface-2 hover:text-ink',
                   )}
-                </Menu>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1.5">
-                <Menu
-                  label="Mais opções da conversa"
-                  trigger={
-                    <span className="flex size-8 items-center justify-center rounded-xl border border-line bg-surface text-muted hover:bg-surface-2 hover:text-ink transition-colors shadow-2xs">
-                      <MoreVertical className="size-4" />
-                    </span>
-                  }
                 >
-                  {(close) => (
-                    <>
-                      <MenuHeader>Ações Rápidas</MenuHeader>
-                      <MenuItem
-                        onClick={() => {
-                          toggleStatus('espera');
-                          close();
-                        }}
-                      >
-                        <PauseCircle className="size-3.5 text-amber-500" />
-                        <span>
-                          {conversation.status === 'espera' ? 'Tirar da espera' : 'Colocar em espera'}
-                        </span>
-                      </MenuItem>
-                      <MenuItem
-                        onClick={() => {
-                          toggleStatus('pendente');
-                          close();
-                        }}
-                      >
-                        <Clock className="size-3.5 text-sky-500" />
-                        <span>
-                          {conversation.status === 'pendente'
-                            ? 'Tirar de pendente'
-                            : 'Marcar como pendente'}
-                        </span>
-                      </MenuItem>
-                      <MenuItem
-                        onClick={() => {
-                          setTransferOpen(true);
-                          close();
-                        }}
-                      >
-                        <UserCheck className="size-3.5 text-brand" />
-                        <span>Transferir responsável</span>
-                      </MenuItem>
-                    </>
+                  <MoreVertical className="size-4" />
+                </span>
+              }
+            >
+              {(close) => (
+                <>
+                  <MenuHeader>Atribuição & Destino</MenuHeader>
+                  <MenuItem
+                    onClick={() => {
+                      setTransferOpen(true);
+                      close();
+                    }}
+                  >
+                    <UserCheck className="size-3.5 text-brand shrink-0" />
+                    <div className="flex flex-col min-w-0 flex-1">
+                      <span className="font-semibold text-xs leading-none">
+                        Transferir responsável
+                      </span>
+                      <span className="text-[10px] text-muted leading-tight mt-0.5 truncate">
+                        {conversation.assigneeName ?? 'Sem responsável'}
+                      </span>
+                    </div>
+                  </MenuItem>
+
+                  {inboxes.length > 1 && (
+                    <div className="border-t border-line-soft">
+                      <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase text-dim tracking-wider">
+                        Caixa de Entrada
+                      </p>
+                      {inboxes.map((inbox) => (
+                        <MenuItem
+                          key={inbox.id}
+                          selected={inbox.id === conversation.inboxId}
+                          onClick={() => {
+                            if (inbox.id !== conversation.inboxId) onMoveInbox(inbox.id);
+                            close();
+                          }}
+                        >
+                          <Inbox className="size-3.5 text-dim shrink-0" />
+                          <span className="truncate flex-1 text-xs">{inbox.name}</span>
+                          {inbox.id === conversation.inboxId && (
+                            <Check className="size-3.5 text-brand shrink-0" />
+                          )}
+                        </MenuItem>
+                      ))}
+                    </div>
                   )}
-                </Menu>
-              </div>
-            ))}
+
+                  <MenuHeader>Status Rápido</MenuHeader>
+                  <MenuItem
+                    selected={conversation.status === 'espera'}
+                    onClick={() => {
+                      toggleStatus('espera');
+                      close();
+                    }}
+                  >
+                    <PauseCircle className="size-3.5 text-amber-500 shrink-0" />
+                    <span className="text-xs">
+                      {conversation.status === 'espera' ? 'Tirar da espera' : 'Colocar em espera'}
+                    </span>
+                  </MenuItem>
+
+                  <MenuItem
+                    selected={conversation.status === 'pendente'}
+                    onClick={() => {
+                      toggleStatus('pendente');
+                      close();
+                    }}
+                  >
+                    <Clock className="size-3.5 text-sky-500 shrink-0" />
+                    <span className="text-xs">
+                      {conversation.status === 'pendente'
+                        ? 'Tirar de pendente'
+                        : 'Marcar como pendente'}
+                    </span>
+                  </MenuItem>
+                </>
+              )}
+            </Menu>
 
             {/* Botão de Alternar Barra Lateral de Detalhes */}
             {onToggleContext && (
               <button
                 type="button"
                 onClick={onToggleContext}
-                aria-label={isContextOpen ? 'Recolher detalhes do contato' : 'Abrir detalhes do contato'}
-                title={isContextOpen ? 'Recolher detalhes (painel lateral)' : 'Abrir detalhes (painel lateral)'}
+                aria-label={
+                  isContextOpen ? 'Recolher detalhes do contato' : 'Abrir detalhes do contato'
+                }
+                title={
+                  isContextOpen
+                    ? 'Recolher detalhes (painel lateral)'
+                    : 'Abrir detalhes (painel lateral)'
+                }
                 className={cn(
                   'flex size-8 shrink-0 items-center justify-center rounded-xl border transition-all',
                   isContextOpen
