@@ -3,7 +3,11 @@
 import { randomUUID } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
-import { CONVERSATION_STATUSES, PRIORITIES } from '@/core/domain/conversation';
+import {
+  CONVERSATION_ID_MAX_LENGTH,
+  CONVERSATION_STATUSES,
+  PRIORITIES,
+} from '@/core/domain/conversation';
 import { previewOfMessage, type Message, type MessageContent } from '@/core/domain/message';
 import {
   MAX_SCHEDULE_AHEAD_MS,
@@ -79,7 +83,7 @@ async function applyDispatch(
  * o cliente e sempre considerado não confiavel (REGRAS-GLOBAIS.md secao 6.1).
  */
 const sendMessageSchema = z.object({
-  conversationId: z.string().min(1).max(64),
+  conversationId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH),
   text: z.string().trim().min(1).max(MAX_MESSAGE_LENGTH),
   isPrivate: z.boolean(),
   /** Mensagem citada. Vem da timeline aberta, então é sempre um id do CRM. */
@@ -199,7 +203,7 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
 }
 
 const deleteMessageSchema = z.object({
-  conversationId: z.string().min(1).max(64),
+  conversationId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH),
   messageId: z.string().min(1).max(128),
 });
 
@@ -292,7 +296,7 @@ export async function deleteMessageAction(input: unknown): Promise<ActionResult>
 }
 
 const changeStatusSchema = z.object({
-  conversationId: z.string().min(1).max(64),
+  conversationId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH),
   status: z.enum(CONVERSATION_STATUSES),
 });
 
@@ -347,7 +351,7 @@ export async function changeConversationStatusAction(input: unknown): Promise<Ac
   return { ok: true };
 }
 
-const conversationIdSchema = z.object({ conversationId: z.string().min(1).max(64) });
+const conversationIdSchema = z.object({ conversationId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH) });
 
 /** Abrir a conversa no CRM zera o não-lido e confirma a leitura no celular. */
 export async function markConversationReadAction(input: unknown): Promise<ActionResult> {
@@ -410,7 +414,7 @@ const broadcast = async (conversationId: string) => {
 };
 
 const assignSchema = z.object({
-  conversationId: z.string().min(1).max(64),
+  conversationId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH),
   /** `null` devolve a conversa para a fila geral. */
   assigneeId: z.string().min(1).max(64).nullable(),
 });
@@ -443,7 +447,7 @@ export async function assignConversationAction(input: unknown): Promise<ActionRe
 }
 
 const prioritySchema = z.object({
-  conversationId: z.string().min(1).max(64),
+  conversationId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH),
   priority: z.enum(PRIORITIES),
 });
 
@@ -460,7 +464,7 @@ export async function changeConversationPriorityAction(input: unknown): Promise<
 }
 
 const labelsSchema = z.object({
-  conversationId: z.string().min(1).max(64),
+  conversationId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH),
   labelIds: z.array(z.string().min(1).max(64)).max(20),
 });
 
@@ -493,7 +497,7 @@ export async function setConversationLabelsAction(input: unknown): Promise<Actio
 }
 
 const contactLabelsSchema = z.object({
-  conversationId: z.string().min(1).max(64),
+  conversationId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH),
   contactId: z.string().min(1).max(64),
   labelIds: z.array(z.string().min(1).max(64)).max(20),
 });
@@ -776,7 +780,7 @@ export async function startContactConversationAction(
    ========================================================================== */
 
 const templateSchema = z.object({
-  conversationId: z.string().min(1).max(64),
+  conversationId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH),
   templateId: z.string().min(1).max(64),
   values: z.array(z.string().trim().max(300)).max(10),
 });
@@ -1126,7 +1130,7 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
    ========================================================================== */
 
 const moveInboxSchema = z.object({
-  conversationId: z.string().min(1).max(64),
+  conversationId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH),
   inboxId: z.string().min(1).max(64),
 });
 
@@ -1169,7 +1173,7 @@ export async function moveConversationToInboxAction(input: unknown): Promise<Act
    ========================================================================== */
 
 const setTypingSchema = z.object({
-  conversationId: z.string().min(1).max(64),
+  conversationId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH),
   isTyping: z.boolean(),
 });
 
@@ -1211,7 +1215,7 @@ export async function setOperatorTypingAction(input: unknown): Promise<ActionRes
    ========================================================================== */
 
 const reactSchema = z.object({
-  conversationId: z.string().min(1).max(64),
+  conversationId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH),
   messageId: z.string().min(1).max(128),
   /**
    * Vazio **retira** a reação.
@@ -1312,7 +1316,7 @@ export async function reactToMessageAction(input: unknown): Promise<ActionResult
    ========================================================================== */
 
 const scheduleSchema = z.object({
-  conversationId: z.string().min(1).max(64),
+  conversationId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH),
   text: z.string().trim().min(1).max(MAX_MESSAGE_LENGTH),
   isPrivate: z.boolean(),
   replyToId: z.string().min(1).max(128).optional(),
@@ -1443,7 +1447,7 @@ export async function listScheduledMessagesAction(
 }
 
 const cancelScheduleSchema = z.object({
-  conversationId: z.string().min(1).max(64),
+  conversationId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH),
   scheduledMessageId: z.string().min(1).max(64),
 });
 

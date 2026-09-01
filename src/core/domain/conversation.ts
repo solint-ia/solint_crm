@@ -8,6 +8,33 @@ import type { InboxAccess } from './user';
 export const CONVERSATION_STATUSES = ['aberta', 'pendente', 'resolvida', 'espera'] as const;
 export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
 
+/**
+ * Teto de tamanho do id de uma conversa, nas validações de entrada.
+ *
+ * Não é um limite de banco — `Conversation.id` é `TEXT` — é o guarda que
+ * impede um payload absurdo de chegar ao Prisma. Precisa de um número, e o
+ * número precisa ser grande o bastante para o pior id que o próprio sistema
+ * constrói. A conta:
+ *
+ *   `cv-wa-`                                        6
+ *   `inboxId` (`ibx-` + UUID, o gerador mais longo)  40
+ *   `-g-`                                            3
+ *   identificador do grupo (`<criador>-<carimbo>`)  ~30
+ *   ------------------------------------------------ 79
+ *
+ * Estava em 64, e o efeito era invisível até alguém abrir um grupo numa caixa
+ * criada por Configurações: `cv-wa-ibx-<uuid>-g-<grupo>` dá 67 a 79
+ * caracteres, e **toda** ação sobre aquela conversa — enviar, resolver,
+ * transferir, etiquetar — era recusada com "dados inválidos", sem dizer qual
+ * dado. Nas caixas do cadastro (`ibx-acc-...`, 16 caracteres) o mesmo grupo dá
+ * 43-46 e passava, o que fazia o problema parecer um capricho da caixa.
+ *
+ * 128 e não 79: o teto existe para barrar o absurdo, não para ficar rente ao
+ * pior caso de hoje — o WhatsApp já mudou o formato de JID mais de uma vez, e
+ * um teto justo voltaria a quebrar em silêncio na próxima mudança.
+ */
+export const CONVERSATION_ID_MAX_LENGTH = 128;
+
 export const PRIORITIES = ['baixa', 'media', 'alta', 'urgente'] as const;
 export type Priority = (typeof PRIORITIES)[number];
 

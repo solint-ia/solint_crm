@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
 import { MAX_MESSAGE_LENGTH } from '@/core/use-cases/send-message';
+import { CONVERSATION_ID_MAX_LENGTH } from '@/core/domain/conversation';
 import { sessionFromApiToken } from '@/infrastructure/auth/api-token';
 import { container } from '@/infrastructure/container';
 import { getWhatsAppChannel } from '@/infrastructure/whatsapp/channel-provider';
@@ -23,7 +24,7 @@ export const dynamic = 'force-dynamic';
  */
 
 const corpoSchema = z.object({
-  conversaId: z.string().min(1).max(64),
+  conversaId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH),
   texto: z.string().trim().min(1).max(MAX_MESSAGE_LENGTH),
   /** Nota interna nunca sai para o WhatsApp. Padrão é mensagem pública. */
   notaInterna: z.boolean().optional(),
