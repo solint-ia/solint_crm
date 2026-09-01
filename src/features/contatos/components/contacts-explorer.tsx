@@ -8,6 +8,8 @@ import {
   ArrowUp,
   ArrowUpDown,
   Bookmark,
+  ChevronLeft,
+  ChevronRight,
   Download,
   ExternalLink,
   Kanban,
@@ -61,6 +63,9 @@ interface ContactsExplorerProps {
   readonly canExport: boolean;
 }
 
+/** Quantos contatos a tabela desenha por vez. */
+const CONTACTS_PER_PAGE = 50;
+
 export function ContactsExplorer({ contacts, canExport }: ContactsExplorerProps) {
   const router = useRouter();
   const { show } = useToast();
@@ -76,6 +81,18 @@ export function ContactsExplorer({ contacts, canExport }: ContactsExplorerProps)
 
   // Seleção Múltipla
   const [selected, setSelected] = useState<readonly string[]>([]);
+  const [page, setPage] = useState(1);
+
+  /**
+   * Filtrar ou buscar volta para a primeira página.
+   *
+   * Continuar na página 4 depois de trocar o filtro mostraria um pedaço do meio
+   * de uma lista que a pessoa nunca viu começar.
+   */
+  const trocarTab = (nova: ContactTab) => {
+    setTab(nova);
+    setPage(1);
+  };
 
   // Modais e Drawer
   const [isNewContactOpen, setIsNewContactOpen] = useState(false);
@@ -118,7 +135,9 @@ export function ContactsExplorer({ contacts, canExport }: ContactsExplorerProps)
 
     return list.filter((contact) => {
       const nameMatch = contact.name.toLowerCase().includes(term);
-      const phoneMatch = contact.phone.toLowerCase().includes(term);
+      const phoneMatch =
+        contact.phone.toLowerCase().includes(term) ||
+        (contact.extraPhones ?? []).some((numero) => numero.toLowerCase().includes(term));
       const emailMatch = contact.email?.toLowerCase().includes(term) ?? false;
       const companyMatch = contact.company?.toLowerCase().includes(term) ?? false;
       const labelsMatch = contact.labels.some((l) => l.name.toLowerCase().includes(term));
@@ -145,14 +164,41 @@ export function ContactsExplorer({ contacts, canExport }: ContactsExplorerProps)
     });
   }, [filteredContacts, sortField, sortOrder]);
 
+  /**
+   * Paginação: a tabela desenha 50 por vez.
+   *
+   * A lista inteira continua vindo do servidor de uma vez — o filtro, a busca e
+   * a ordenação precisam dela toda para responder certo, e paginar no banco
+   * faria "ordenar por último contato" ordenar só os 50 da página atual. O que
+   * muda é quantas linhas o navegador desenha: uma base de milhares de contatos
+   * montava milhares de `<tr>`, e era isso que travava a rolagem.
+   */
+  const totalPages = Math.max(1, Math.ceil(sortedContacts.length / CONTACTS_PER_PAGE));
+
+  /**
+   * A página nunca fica além do fim.
+   *
+   * Estar na página 7 e digitar uma busca que devolve 12 resultados deixaria a
+   * tabela vazia, com a paginação dizendo "página 7 de 1". Em vez de um
+   * `useEffect` que corrige depois de pintar a tela errada, a página é
+   * grampeada no próprio cálculo — a tela nunca chega a existir errada.
+   */
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * CONTACTS_PER_PAGE;
+  const pagedContacts = sortedContacts.slice(pageStart, pageStart + CONTACTS_PER_PAGE);
+
+  // "Selecionar todos" vale para a página à vista, não para a base inteira:
+  // marcar uma caixinha não deveria alcançar 3 mil contatos que não estão na
+  // tela — sobretudo quando o botão ao lado é "Excluir selecionados".
   const allSelected =
-    sortedContacts.length > 0 && selected.length === sortedContacts.length;
+    pagedContacts.length > 0 && pagedContacts.every((c) => selected.includes(c.id));
 
   const toggleSelectAll = () => {
+    const idsDaPagina = pagedContacts.map((c) => c.id);
     if (allSelected) {
-      setSelected([]);
+      setSelected((prev) => prev.filter((id) => !idsDaPagina.includes(id)));
     } else {
-      setSelected(sortedContacts.map((c) => c.id));
+      setSelected((prev) => [...new Set([...prev, ...idsDaPagina])]);
     }
   };
 
@@ -391,7 +437,7 @@ export function ContactsExplorer({ contacts, canExport }: ContactsExplorerProps)
         <div className="flex items-center gap-1.5 border-b border-line pb-2">
           <button
             type="button"
-            onClick={() => setTab('todos')}
+            onClick={() => trocarTab('todos')}
             className={cn(
               'inline-flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all',
               tab === 'todos'
@@ -410,7 +456,7 @@ export function ContactsExplorer({ contacts, canExport }: ContactsExplorerProps)
 
           <button
             type="button"
-            onClick={() => setTab('pessoas')}
+            onClick={() => trocarTab('pessoas')}
             className={cn(
               'inline-flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all',
               tab === 'pessoas'
@@ -430,7 +476,7 @@ export function ContactsExplorer({ contacts, canExport }: ContactsExplorerProps)
 
           <button
             type="button"
-            onClick={() => setTab('grupos')}
+            onClick={() => trocarTab('grupos')}
             className={cn(
               'inline-flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all',
               tab === 'grupos'
@@ -492,7 +538,10 @@ export function ContactsExplorer({ contacts, canExport }: ContactsExplorerProps)
             <input
               type="search"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
               placeholder="Buscar por nome, telefone, e-mail ou empresa..."
               aria-label="Buscar contatos"
               className="h-10 w-full rounded-xl border border-line bg-surface pr-9 pl-10 text-body text-ink placeholder:text-dim outline-none transition-all focus:border-brand focus:ring-2 focus:ring-brand/20 shadow-2xs"
@@ -821,7 +870,7 @@ export function ContactsExplorer({ contacts, canExport }: ContactsExplorerProps)
 
                 {/* Linhas da Tabela */}
                 <tbody className="divide-y divide-line-soft">
-                  {sortedContacts.map((contact) => {
+                  {pagedContacts.map((contact) => {
                     const isChecked = selected.includes(contact.id);
                     const isMenuOpen = activeMenuId === contact.id;
                     const isGroup = contact.kind === 'grupo';
@@ -893,7 +942,23 @@ export function ContactsExplorer({ contacts, canExport }: ContactsExplorerProps)
                               <span>{contact.participantCount ?? 0} membros</span>
                             </span>
                           ) : (
-                            PhoneNumber.format(contact.phone)
+                            <span className="inline-flex items-center gap-1.5">
+                              {PhoneNumber.format(contact.phone)}
+                              {/* Sem isto, o segundo número de uma pessoa só
+                                  aparecia abrindo o cadastro — e ninguém abre
+                                  um cadastro para descobrir que existe algo
+                                  que não sabia estar lá. */}
+                              {contact.extraPhones && contact.extraPhones.length > 0 ? (
+                                <span
+                                  title={contact.extraPhones
+                                    .map((n) => PhoneNumber.format(n))
+                                    .join(' · ')}
+                                  className="rounded-md bg-surface-2 px-1.5 py-0.5 font-sans text-[10px] font-bold text-muted border border-line-soft"
+                                >
+                                  +{contact.extraPhones.length}
+                                </span>
+                              ) : null}
+                            </span>
                           )}
                         </td>
 
@@ -1079,17 +1144,52 @@ export function ContactsExplorer({ contacts, canExport }: ContactsExplorerProps)
               </table>
             </div>
 
-            {/* Rodapé da Tabela */}
-            <div className="flex items-center justify-between border-t border-line px-5 py-3 text-meta text-muted bg-surface-2/30">
+            {/* Rodapé da Tabela: contagem e navegação entre páginas */}
+            <div className="flex flex-col gap-3 border-t border-line px-5 py-3 text-meta text-muted bg-surface-2/30 sm:flex-row sm:items-center sm:justify-between">
               <span>
-                Mostrando <strong className="text-ink font-semibold">{sortedContacts.length}</strong> de{' '}
-                <strong className="text-ink font-semibold">{contacts.length}</strong> contatos na base
+                Mostrando{' '}
+                <strong className="text-ink font-semibold">
+                  {pagedContacts.length === 0 ? 0 : pageStart + 1}–{pageStart + pagedContacts.length}
+                </strong>{' '}
+                de <strong className="text-ink font-semibold">{sortedContacts.length}</strong>
+                {sortedContacts.length !== contacts.length ? (
+                  <> filtrados ({contacts.length} na base)</>
+                ) : (
+                  <> contatos na base</>
+                )}
+                {search ? <span className="text-dim"> · &ldquo;{search}&rdquo;</span> : null}
               </span>
-              {search && (
-                <span className="text-dim">
-                  Filtrado por: &ldquo;{search}&rdquo;
-                </span>
-              )}
+
+              {/* Some quando há uma página só — um controle que não leva a
+                  lugar nenhum é ruído. */}
+              {totalPages > 1 ? (
+                <nav className="flex items-center gap-1.5" aria-label="Paginação de contatos">
+                  <button
+                    type="button"
+                    onClick={() => setPage(currentPage - 1)}
+                    disabled={currentPage <= 1}
+                    className="inline-flex items-center gap-1 rounded-control border border-line bg-surface px-2.5 py-1 font-medium text-ink transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <ChevronLeft className="size-3.5" />
+                    Anterior
+                  </button>
+
+                  <span className="px-2 tabular-nums">
+                    Página <strong className="text-ink font-semibold">{currentPage}</strong> de{' '}
+                    <strong className="text-ink font-semibold">{totalPages}</strong>
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => setPage(currentPage + 1)}
+                    disabled={currentPage >= totalPages}
+                    className="inline-flex items-center gap-1 rounded-control border border-line bg-surface px-2.5 py-1 font-medium text-ink transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Próxima
+                    <ChevronRight className="size-3.5" />
+                  </button>
+                </nav>
+              ) : null}
             </div>
           </div>
         )}
