@@ -21,8 +21,7 @@ export type SortOption =
   | 'recentes'
   | 'maior_valor'
   | 'menor_valor'
-  | 'proxima_atividade'
-  | 'probabilidade';
+  | 'proxima_atividade';
 
 export interface BoardFilters {
   readonly searchQuery: string;
@@ -201,7 +200,6 @@ export function KanbanToolbar({
               <option value="recentes">Mais recentes</option>
               <option value="maior_valor">Maior valor (R$)</option>
               <option value="menor_valor">Menor valor (R$)</option>
-              <option value="probabilidade">Maior probabilidade (%)</option>
               <option value="proxima_atividade">Próxima atividade</option>
             </select>
           </div>

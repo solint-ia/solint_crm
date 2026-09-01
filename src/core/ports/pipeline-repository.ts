@@ -16,7 +16,6 @@ export interface PipelineRepository {
       companyName?: string;
       ownerName?: string;
       priority?: string;
-      probability?: number;
       source?: string;
       nextAction?: string;
     },
@@ -32,7 +31,6 @@ export interface PipelineRepository {
       companyName?: string;
       ownerName?: string;
       priority?: string;
-      probability?: number;
       source?: string;
       nextAction?: string;
     },
@@ -67,7 +65,6 @@ export interface PipelineRepository {
       color: string;
       isWon: boolean;
       isLost: boolean;
-      defaultProbability?: number;
       /** `null` desfaz o vínculo; ausente mantém o que já estava gravado. */
       labelId?: string | null;
     }[],

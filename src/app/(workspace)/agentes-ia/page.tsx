@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { Route } from 'next';
+import { redirect } from 'next/navigation';
 import { Bot } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -12,6 +13,7 @@ import { AgentsSkeleton } from '@/features/agentes-ia/components/agents-skeleton
 import { CreateAgentButton } from '@/features/agentes-ia/components/create-agent-button';
 import { can } from '@/core/domain/user';
 import { AccessDenied } from '@/components/layout/access-denied';
+import { FEATURES } from '@/config/features';
 import { container } from '@/infrastructure/container';
 import { formatNumber } from '@/lib/format';
 
@@ -23,6 +25,10 @@ export const metadata: Metadata = { title: 'Agentes de IA' };
  * antes de a rota filha poder responder 404.
  */
 export default function AgentesIaPage() {
+  // Desligada para todo mundo, papel nenhum faz diferença — checado antes até
+  // da sessão importar. Ver `src/config/features.ts`.
+  if (!FEATURES.agentesIA) redirect('/conversas');
+
   return (
     <Suspense fallback={<AgentsSkeleton />}>
       <AgentesData />

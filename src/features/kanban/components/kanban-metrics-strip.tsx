@@ -6,7 +6,6 @@ import {
   ChevronUp,
   CircleDollarSign,
   PieChart,
-  Target,
   TrendingUp,
   Users,
 } from 'lucide-react';
@@ -47,7 +46,7 @@ export function KanbanMetricsStrip({ summary, isFiltered = false }: KanbanMetric
       </div>
 
       {!collapsed && (
-        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {/* Card 1: Total de Oportunidades */}
           <div className="flex items-center gap-3 rounded-control border border-line bg-surface p-2.5 shadow-2xs transition-all hover:border-line">
             <div className="flex size-8 shrink-0 items-center justify-center rounded-control bg-blue-soft text-blue-text">
@@ -93,21 +92,8 @@ export function KanbanMetricsStrip({ summary, isFiltered = false }: KanbanMetric
             </div>
           </div>
 
-          {/* Card 4: Previsão Ponderada */}
+          {/* Card 4: Taxa de Conversão */}
           <div className="flex items-center gap-3 rounded-control border border-line bg-surface p-2.5 shadow-2xs transition-all hover:border-line">
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-control bg-violet-soft text-violet-text">
-              <Target className="size-4" />
-            </div>
-            <div className="min-w-0">
-              <p className="truncate text-micro font-medium text-dim uppercase">Previsão Fechamento</p>
-              <p className="font-display text-title font-bold text-ink tracking-tight tabular-nums">
-                {formatMoneyFromCents(summary.weightedForecastInCents)}
-              </p>
-            </div>
-          </div>
-
-          {/* Card 5: Taxa de Conversão */}
-          <div className="flex items-center gap-3 rounded-control border border-line bg-surface p-2.5 shadow-2xs transition-all hover:border-line col-span-2 sm:col-span-1">
             <div className="flex size-8 shrink-0 items-center justify-center rounded-control bg-cyan-soft text-cyan-text">
               <PieChart className="size-4" />
             </div>

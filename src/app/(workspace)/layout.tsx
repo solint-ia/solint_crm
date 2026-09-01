@@ -1,6 +1,6 @@
 import { NavigationRail } from '@/components/layout/navigation-rail';
 import { ToastProvider } from '@/components/ui/toast';
-import { NAV_ITEMS } from '@/config/navigation';
+import { NAV_ITEMS, reachesNavItem } from '@/config/navigation';
 import { can, canSeeInbox } from '@/core/domain/user';
 import { ConversationEventsProvider } from '@/features/realtime/conversation-events';
 import { LiveNotificationsProvider } from '@/features/realtime/live-notifications';
@@ -74,7 +74,7 @@ export default async function WorkspaceLayout({
       unreadCount: conversations.filter((c) => c.inboxId === inbox.id && c.unreadCount > 0).length,
     }));
 
-  const items = NAV_ITEMS.filter((item) => can(session, item.permission));
+  const items = NAV_ITEMS.filter((item) => reachesNavItem(session.permissions, item));
 
   return (
     <ConversationEventsProvider>
@@ -94,14 +94,13 @@ export default async function WorkspaceLayout({
               availability={session.user.availability}
               accessibleInboxes={accessibleInboxes}
               conversationCounts={conversationCounts}
-              // O rodapé do menu leva para `/configuracoes`, então quem não
-              // abre Configurações não pode vê-lo — `caixas:todas` diz quais
-              // caixas a pessoa enxerga, não que ela administra o sistema. Com
-              // o `||`, um papel com alcance amplo e sem acesso a ajustes via
-              // um atalho para uma tela que responderia "acesso negado".
-              canManageInboxes={
-                can(session, 'configuracoes:ler') && can(session, 'configuracoes:escrever')
-              }
+              // O rodapé do menu leva para a seção de caixas de
+              // `/configuracoes`, então a permissão exigida é exatamente a
+              // daquela seção — `caixas:todas` diz quais caixas a pessoa
+              // enxerga, não que ela administra o sistema, e um papel com
+              // alcance amplo e sem acesso a ajustes veria um atalho para uma
+              // tela que responderia "acesso negado".
+              canManageInboxes={can(session, 'config.caixas:escrever')}
               roleName={role?.name ?? session.user.roleSlug}
             />
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>

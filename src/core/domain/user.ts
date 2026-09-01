@@ -34,14 +34,105 @@ export const PERMISSIONS = [
   'agentes-ia:ler',
   'agentes-ia:escrever',
   'relatorios:ler',
-  'configuracoes:ler',
-  'configuracoes:escrever',
-  'equipe:gerenciar',
-  'faturamento:gerenciar',
+
+  /**
+   * Configurações, uma sub-seção de cada vez.
+   *
+   * Antes eram duas permissões — `configuracoes:ler` e `configuracoes:escrever`
+   * — cobrindo as onze sub-seções sem distinção nenhuma. Quem podia ler
+   * etiquetas podia ler faturamento, segurança e a lista inteira de pessoas da
+   * conta; quem podia escrever respostas rápidas podia excluir uma caixa de
+   * entrada com todo o histórico dentro. O par único não era um atalho: era a
+   * ausência da distinção que o negócio precisa fazer.
+   *
+   * O prefixo `config.` marca o grupo, e o terceiro nível (`config.equipe.*`)
+   * aparece só onde uma seção tem sub-abas que merecem separação real.
+   */
+
+  /** Ver e editar caixas: horário de atendimento, mensagens automáticas, CSAT. */
+  'config.caixas:ler',
+  'config.caixas:escrever',
+  /**
+   * Excluir uma caixa de entrada.
+   *
+   * Terceiro verbo, e não parte de `:escrever`, porque a diferença é de
+   * natureza: editar a mensagem de saudação é reversível, apagar a caixa leva
+   * junto conversas e mensagens e não tem lixeira. Só entra no padrão do
+   * administrador.
+   */
+  'config.caixas:excluir',
+  /** Membros e equipes — quem entra, com que papel, em qual equipe. */
+  'config.equipe.membros:ler',
+  'config.equipe.membros:escrever',
+  /**
+   * Papéis e permissões.
+   *
+   * Existe no tipo para o `can()` funcionar, mas **nunca** é oferecida como
+   * caixinha em nenhuma tela de personalização: quem pode editar permissões
+   * pode dar a si mesmo qualquer outra, então concedê-la é conceder tudo. Fica
+   * atada ao papel de administrador, e a trava é reafirmada no servidor a cada
+   * gravação. Ver `ADMIN_ONLY_PERMISSIONS` em `permissions.ts`.
+   */
+  'config.equipe.papeis:ler',
+  'config.equipe.papeis:escrever',
+  'config.automacoes:ler',
+  'config.automacoes:escrever',
+  'config.etiquetas:ler',
+  'config.etiquetas:escrever',
+  'config.respostas:ler',
+  'config.respostas:escrever',
+  'config.conhecimento:ler',
+  'config.conhecimento:escrever',
+  'config.atributos:ler',
+  'config.atributos:escrever',
+  'config.empresa:ler',
+  'config.empresa:escrever',
+  'config.seguranca:ler',
+  'config.seguranca:escrever',
+  /** Faturamento é só leitura: trocar de plano passa por fora do produto. */
+  'config.faturamento:ler',
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
-export type RoleSlug = 'administrador' | 'supervisor' | 'agente' | (string & {});
+/** Aceita qualquer string para papéis personalizados criados pelo administrador. */
+export type RoleSlug = 'administrador' | 'supervisor' | 'colaborador' | (string & {});
+
+/**
+ * Personalização de permissões de **uma pessoa**, sobre o papel dela.
+ *
+ * Guardado como diferença (`add`/`remove`), e não como uma lista fechada, de
+ * propósito: uma lista fechada seria uma fotografia do papel no dia em que
+ * alguém clicou em salvar, e divergiria em silêncio toda vez que o papel fosse
+ * editado depois — o administrador acrescentaria uma permissão ao papel
+ * Colaborador e as pessoas "personalizadas" não a receberiam, sem nada na tela
+ * explicando por quê. Como diferença, a pessoa continua acompanhando o papel em
+ * tudo que não foi explicitamente mexido.
+ */
+export interface PermissionOverrides {
+  readonly add: readonly Permission[];
+  readonly remove: readonly Permission[];
+}
+
+/**
+ * O que a pessoa pode, de fato: o papel dela, menos o que foi tirado, mais o
+ * que foi dado.
+ *
+ * A ordem importa — `remove` é aplicado antes de `add`, então uma permissão que
+ * apareça nas duas listas acaba concedida. É a escolha deliberada: as duas
+ * listas nascem do mesmo formulário, e um estado contraditório vindo de um
+ * payload manipulado deve terminar no resultado mais previsível para quem
+ * olhou a tela e marcou a caixinha.
+ */
+export const effectivePermissions = (
+  rolePermissions: readonly Permission[],
+  overrides: PermissionOverrides | null | undefined,
+): readonly Permission[] => {
+  if (!overrides) return rolePermissions;
+  const removidas = new Set(overrides.remove);
+  const resultado = new Set(rolePermissions.filter((p) => !removidas.has(p)));
+  for (const p of overrides.add) resultado.add(p);
+  return [...resultado];
+};
 
 export interface Role {
   readonly id: Id;

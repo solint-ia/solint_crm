@@ -1,7 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { cookies } from 'next/headers';
 import { cache } from 'react';
-import type { Account, InboxAccess, Permission, Role, Session } from '@/core/domain/user';
+import type {
+  Account,
+  InboxAccess,
+  Permission,
+  PermissionOverrides,
+  Role,
+  Session,
+} from '@/core/domain/user';
+import { effectivePermissions } from '@/core/domain/user';
 import { prisma, readJson } from '@/infrastructure/db/prisma';
 import { userRow } from '@/infrastructure/repositories/prisma/mappers';
 import {
@@ -180,7 +188,14 @@ export const readSession = cache(async (): Promise<Session | null> => {
 
   // Sem papel cadastrado o usuário fica sem permissão nenhuma. É o padrão
   // seguro: um papel apagado não deve virar acesso irrestrito.
-  const permissions = role?.permissions ?? [];
+  //
+  // A personalização individual entra aqui, e não na tela: é o único ponto por
+  // onde toda requisição passa, então `can()` responde o efetivo desta pessoa
+  // sem que nenhum componente precise saber que overrides existem.
+  const permissions = effectivePermissions(
+    role?.permissions ?? [],
+    readJson<PermissionOverrides | null>(membership.permissionOverrides, null),
+  );
 
   return {
     user: userRow(membership.user, membership),
@@ -189,6 +204,53 @@ export const readSession = cache(async (): Promise<Session | null> => {
     availableAccounts: all.map((row) => toDomainAccount(row.account)),
     inboxAccess: resolveInboxAccess(permissions, teamsDaConta),
   };
+});
+
+/** Quem administra a plataforma, sem passar por conta nenhuma. */
+export interface SuperAdminUser {
+  readonly id: string;
+  readonly name: string;
+  readonly email: string;
+}
+
+/**
+ * Resolve o superadministrador a partir do mesmo cookie de login.
+ *
+ * Existe em separado de `readSession()` porque aquela função exige `Membership`
+ * ativa na conta do token e devolve `null` sem ela — e quem administra a
+ * integração de todas as contas normalmente não é membro de nenhuma. As duas
+ * checagens de segurança que importam continuam idênticas: assinatura válida e
+ * registro de sessão não revogado nem expirado.
+ *
+ * Devolve `null` para todo o resto (sem cookie, token inválido, sessão
+ * revogada, usuário sem a flag) — quem chama decide entre redirecionar e
+ * responder 401.
+ */
+export const readSuperAdmin = cache(async (): Promise<SuperAdminUser | null> => {
+  const jar = await cookies();
+  const token = jar.get(SESSION_COOKIE)?.value;
+  if (!token) return null;
+
+  const claims = await verifySessionToken(token);
+  if (!claims) return null;
+
+  const [authSession, user] = await Promise.all([
+    prisma.authSession.findUnique({ where: { tokenId: claims.jti } }),
+    // tenant-ok: a área de plataforma é, por definição, fora de conta — a flag
+    // é do usuário, e as consultas que ela autoriza continuam escopadas por
+    // `accountId` uma a uma.
+    prisma.user.findUnique({
+      where: { id: claims.sub },
+      select: { id: true, name: true, email: true, isSuperAdmin: true },
+    }),
+  ]);
+
+  if (!authSession || authSession.revokedAt || authSession.expiresAt.getTime() < Date.now()) {
+    return null;
+  }
+  if (!user?.isSuperAdmin) return null;
+
+  return { id: user.id, name: user.name, email: user.email };
 });
 
 /**

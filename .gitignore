@@ -49,3 +49,10 @@ Thumbs.db
 *.db-wal
 *.db-shm
 /src/generated/
+
+# planejamento e acompanhamento da implementação
+# Ficam na raiz para serem lidos junto com o código, mas fora do versionamento:
+# são notas de trabalho de uma sessão, não documentação do produto — e mudam a
+# cada retomada, o que só geraria ruído no histórico.
+/PLANO-ATUAL.md
+/PROGRESSO-IMPLEMENTACAO.md

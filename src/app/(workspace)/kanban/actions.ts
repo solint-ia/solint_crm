@@ -108,7 +108,6 @@ const createDealSchema = z.object({
   companyName: z.string().trim().max(100).optional(),
   ownerName: z.string().trim().max(80).optional(),
   priority: z.enum(['baixa', 'media', 'alta', 'urgente']).optional(),
-  probability: z.number().min(0).max(100).optional(),
   source: z.string().optional(),
   nextAction: z.string().trim().max(200).optional(),
 });
@@ -132,7 +131,6 @@ export async function createDealAction(
       companyName: parsed.data.companyName,
       ownerName: parsed.data.ownerName,
       priority: parsed.data.priority,
-      probability: parsed.data.probability,
       source: parsed.data.source,
       nextAction: parsed.data.nextAction,
     });
@@ -152,7 +150,6 @@ const updateDealSchema = z.object({
   companyName: z.string().trim().max(100).optional(),
   ownerName: z.string().trim().max(80).optional(),
   priority: z.enum(['baixa', 'media', 'alta', 'urgente']).optional(),
-  probability: z.number().min(0).max(100).optional(),
   source: z.string().optional(),
   nextAction: z.string().trim().max(200).optional(),
 });
@@ -203,7 +200,6 @@ const updateStagesSchema = z.object({
       color: z.string(),
       isWon: z.boolean().default(false),
       isLost: z.boolean().default(false),
-      defaultProbability: z.number().min(0).max(100).optional(),
       // `null` desfaz o vínculo com a etiqueta; ausente mantém o que está lá.
       labelId: z.string().min(1).max(64).nullable().optional(),
     }),

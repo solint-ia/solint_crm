@@ -13,8 +13,9 @@ const SUPERVISOR_PERMISSIONS: readonly Permission[] = [
   'conversas:ler',
   'conversas:responder',
   'conversas:transferir',
-  // Supervisor move atendimento entre setores; o agente, não. Reatribuir a um
-  // colega e empurrar para a fila da Cobrança são decisões de peso diferente.
+  // Supervisor move atendimento entre setores; o colaborador, não. Reatribuir
+  // a um colega e empurrar para a fila da Cobrança são decisões de peso
+  // diferente.
   'conversas:mover-caixa',
   'conversas:resolver',
   'contatos:ler',
@@ -26,10 +27,10 @@ const SUPERVISOR_PERMISSIONS: readonly Permission[] = [
   'campanhas:disparar',
   'agentes-ia:ler',
   'relatorios:ler',
-  'configuracoes:ler',
+  'config.caixas:ler',
 ];
 
-const AGENT_PERMISSIONS: readonly Permission[] = [
+const COLLABORATOR_PERMISSIONS: readonly Permission[] = [
   'conversas:ler',
   'conversas:responder',
   'conversas:transferir',
@@ -60,12 +61,12 @@ export const ROLES: readonly Role[] = [
     isSystem: true,
   },
   {
-    id: 'role-agente',
+    id: 'role-colaborador',
     accountId: ACCOUNT_ID,
-    slug: 'agente',
-    name: 'Agente',
+    slug: 'colaborador',
+    name: 'Colaborador',
     description: 'Atende conversas atribuídas e gerencia os próprios contatos.',
-    permissions: AGENT_PERMISSIONS,
+    permissions: COLLABORATOR_PERMISSIONS,
     isSystem: true,
   },
 ];
@@ -105,7 +106,7 @@ export const USERS: readonly User[] = [
     accountId: ACCOUNT_ID,
     name: 'Diego Martins',
     email: 'diego.martins@solint.com.br',
-    roleSlug: 'agente',
+    roleSlug: 'colaborador',
     avatarTone: 'var(--color-slate-text)',
     availability: 'ausente',
     teams: ['Suporte N1'],

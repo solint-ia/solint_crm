@@ -9,7 +9,6 @@ import {
   Clock,
   MessageCircle,
   Pencil,
-  Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
@@ -179,24 +178,15 @@ export function DealDetailPanel({
 
         {/* Conteúdo com Scroll Interno Garantido */}
         <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-5">
-          {/* Valor Estimado & Probabilidade */}
+          {/* Valor Estimado */}
           <div className="rounded-xl border border-line bg-surface-2/60 p-4">
-            <div className="flex items-end justify-between">
-              <div>
-                <span className="block text-micro font-semibold uppercase text-dim tracking-wider">
-                  Valor da Oportunidade
-                </span>
-                <span className="font-display text-metric font-bold text-ink tracking-tight tabular-nums">
-                  {formatMoneyFromCents(deal.amountInCents)}
-                </span>
-              </div>
-
-              <div className="flex flex-col items-end">
-                <span className="inline-flex items-center gap-1 rounded bg-brand/10 px-2 py-0.5 text-meta font-bold text-brand">
-                  <Sparkles className="size-3" />
-                  {deal.probability ?? 50}% Probabilidade
-                </span>
-              </div>
+            <div>
+              <span className="block text-micro font-semibold uppercase text-dim tracking-wider">
+                Valor da Oportunidade
+              </span>
+              <span className="font-display text-metric font-bold text-ink tracking-tight tabular-nums">
+                {formatMoneyFromCents(deal.amountInCents)}
+              </span>
             </div>
 
             {/* Badges de Metadados */}

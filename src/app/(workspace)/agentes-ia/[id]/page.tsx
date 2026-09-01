@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Topbar } from '@/components/layout/topbar';
@@ -19,6 +19,7 @@ import { AgentDetailSkeleton } from '@/features/agentes-ia/components/agents-ske
 import { FlowBuilder } from '@/features/agentes-ia/components/flow-builder';
 import { can } from '@/core/domain/user';
 import { AccessDenied } from '@/components/layout/access-denied';
+import { FEATURES } from '@/config/features';
 import { container } from '@/infrastructure/container';
 import { parseOneOf } from '@/lib/search-params';
 import { sandboxReplyAction, setAgentActiveAction, toggleTransferRuleAction } from '../actions';
@@ -32,6 +33,10 @@ export default async function AgenteDetalhePage({
   readonly params: Promise<{ id: string }>;
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  // Desligada para todo mundo, papel nenhum faz diferença — checado antes até
+  // da sessão importar. Ver `src/config/features.ts`.
+  if (!FEATURES.agentesIA) redirect('/conversas');
+
   const [{ id }, query] = await Promise.all([params, searchParams]);
   const tab: AgentTab = parseOneOf(query.aba, AGENT_TABS, 'config');
 

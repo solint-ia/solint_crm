@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import type { Route } from 'next';
-import { Layers } from 'lucide-react';
+import { Layers, MessageCircle } from 'lucide-react';
 
 import type { AppNotification } from '@/core/domain/notification';
 import type { Account } from '@/core/domain/user';
@@ -44,6 +44,7 @@ export function KanbanHeader({
             </span>
           </div>
           <p className="text-meta text-muted">
+            {currentPipeline.inboxName ? `${currentPipeline.inboxName} · ` : ''}
             Arraste as oportunidades entre as etapas para atualizar o funil
           </p>
         </div>
@@ -64,8 +65,14 @@ export function KanbanHeader({
                       : 'text-muted hover:bg-surface/50 hover:text-ink',
                   )}
                 >
-                  <Layers className="size-3" />
-                  <span>{pl.name}</span>
+                  {/* O ícone diz de que espécie é o funil: um número do
+                      WhatsApp, ou um funil avulso que atravessa canais. */}
+                  {pl.inboxId ? (
+                    <MessageCircle className="size-3" />
+                  ) : (
+                    <Layers className="size-3" />
+                  )}
+                  <span>{pl.inboxName ?? pl.name}</span>
                 </Link>
               );
             })}

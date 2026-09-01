@@ -24,6 +24,10 @@ const PROTECTED = [
   '/relatorios',
   '/configuracoes',
   '/perfil',
+  // A área do superadministrador. O portão aqui só confere que existe cookie
+  // assinado; quem de fato é superadministrador é decidido no servidor, pelo
+  // `readSuperAdmin()` do layout — o Edge não tem banco para consultar a flag.
+  '/plataforma',
 ];
 
 export async function middleware(request: NextRequest) {

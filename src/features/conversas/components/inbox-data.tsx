@@ -75,7 +75,7 @@ export async function InboxData({
           channel: connection.channel,
           status: connection.status,
         }))}
-      canManageInboxes={can(session, 'configuracoes:escrever')}
+      canManageInboxes={can(session, 'config.caixas:escrever')}
       moveInbox={moveConversationToInboxAction}
       catalog={{ members: settings.members, labels: settings.labels, templates }}
       cannedResponses={settings.cannedResponses}

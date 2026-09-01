@@ -4,12 +4,13 @@ import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { landingRouteFor } from '@/config/navigation';
-import type { Permission } from '@/core/domain/user';
+import type { Permission, PermissionOverrides } from '@/core/domain/user';
+import { effectivePermissions } from '@/core/domain/user';
 import { SYSTEM_ROLES, systemRoleId } from '@/core/domain/system-roles';
 import { defaultBusinessHours } from '@/core/domain/business-hours';
 import { hashPassword, passwordProblem, verifyPassword } from '@/infrastructure/auth/password';
 import { createSession, destroyCurrentSession, touchUser } from '@/infrastructure/auth/session';
-import { prisma, asJson } from '@/infrastructure/db/prisma';
+import { prisma, asJson, readJson } from '@/infrastructure/db/prisma';
 
 export interface AuthActionResult {
   readonly ok: boolean;
@@ -79,6 +80,23 @@ export async function loginAction(input: unknown): Promise<AuthActionResult> {
     where: { userId: user.id },
     orderBy: { createdAt: 'asc' },
   });
+
+  /**
+   * O superadministrador entra pela área de plataforma.
+   *
+   * Checado **antes** da exigência de vínculo porque quem administra webhooks e
+   * tokens de todas as contas normalmente não é membro de nenhuma — sem isto, o
+   * login dele terminaria em "não está vinculada a nenhum workspace". O `act` do
+   * token fica com a primeira conta quando existe uma, ou com string vazia: a
+   * área `/plataforma` não usa esse campo, ela resolve a identidade por `sub`.
+   */
+  if (user.isSuperAdmin) {
+    const meta = await requestMeta();
+    await createSession(user.id, membership?.accountId ?? '', meta);
+    await touchUser(user.id);
+    return { ok: true, destino: '/plataforma' };
+  }
+
   if (!membership) {
     // Aqui a senha já está certa, então não há mais o que proteger contra
     // enumeração: vale dizer a verdade em vez de repetir "e-mail ou senha".
@@ -96,9 +114,13 @@ export async function loginAction(input: unknown): Promise<AuthActionResult> {
     where: { accountId: membership.accountId, slug: membership.roleSlug },
     select: { permissions: true },
   });
-  const permissions = (
-    Array.isArray(role?.permissions) ? role.permissions : []
-  ) as readonly Permission[];
+  // Mesmo cálculo de `readSession()`: o destino do login precisa considerar a
+  // personalização individual, senão alguém com o Kanban concedido à parte
+  // cairia numa tela que o papel dele sozinho não abriria.
+  const permissions = effectivePermissions(
+    (Array.isArray(role?.permissions) ? role.permissions : []) as readonly Permission[],
+    readJson<PermissionOverrides | null>(membership.permissionOverrides, null),
+  );
 
   return { ok: true, destino: landingRouteFor(permissions) };
 }

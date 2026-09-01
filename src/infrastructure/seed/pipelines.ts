@@ -17,7 +17,6 @@ export const PIPELINES: readonly Pipeline[] = [
         color: '#3B82F6', // Azul
         isWon: false,
         isLost: false,
-        defaultProbability: 15,
       },
       {
         id: 'st-qualificacao',
@@ -27,7 +26,6 @@ export const PIPELINES: readonly Pipeline[] = [
         color: '#F59E0B', // Âmbar
         isWon: false,
         isLost: false,
-        defaultProbability: 35,
       },
       {
         id: 'st-proposta',
@@ -37,7 +35,6 @@ export const PIPELINES: readonly Pipeline[] = [
         color: '#8B5CF6', // Roxo
         isWon: false,
         isLost: false,
-        defaultProbability: 60,
       },
       {
         id: 'st-negociacao',
@@ -47,7 +44,6 @@ export const PIPELINES: readonly Pipeline[] = [
         color: '#EC4899', // Magenta / Rosa
         isWon: false,
         isLost: false,
-        defaultProbability: 80,
       },
       {
         id: 'st-ganho',
@@ -57,7 +53,6 @@ export const PIPELINES: readonly Pipeline[] = [
         color: '#10B981', // Verde esmeralda
         isWon: true,
         isLost: false,
-        defaultProbability: 100,
       },
       {
         id: 'st-perdido',
@@ -67,7 +62,6 @@ export const PIPELINES: readonly Pipeline[] = [
         color: '#64748B', // Slate
         isWon: false,
         isLost: true,
-        defaultProbability: 0,
       },
     ],
   },
@@ -84,7 +78,6 @@ export const PIPELINES: readonly Pipeline[] = [
         color: '#3B82F6',
         isWon: false,
         isLost: false,
-        defaultProbability: 25,
       },
       {
         id: 'st-ativo',
@@ -94,7 +87,6 @@ export const PIPELINES: readonly Pipeline[] = [
         color: '#10B981',
         isWon: true,
         isLost: false,
-        defaultProbability: 100,
       },
       {
         id: 'st-churn',
@@ -104,7 +96,6 @@ export const PIPELINES: readonly Pipeline[] = [
         color: '#EF4444',
         isWon: false,
         isLost: true,
-        defaultProbability: 10,
       },
     ],
   },
@@ -127,7 +118,6 @@ export const DEALS: readonly Deal[] = [
     stageAgeLabel: 'há 1 dia',
     nextAction: 'Ligar para apresentar catálogo',
     conversationId: 'cv-mariana',
-    probability: 20,
     source: 'whatsapp',
     team: 'Comercial',
     tags: ['Enterprise', 'WhatsApp'],
@@ -152,7 +142,6 @@ export const DEALS: readonly Deal[] = [
     stageAgeLabel: 'há 3 horas',
     nextAction: 'Enviar catálogo de soluções',
     conversationId: 'cv-pedro',
-    probability: 15,
     source: 'instagram',
     team: 'SDR',
     tags: ['Instagram', 'Pro'],
@@ -174,7 +163,6 @@ export const DEALS: readonly Deal[] = [
     stageAgeLabel: 'há 2 dias',
     nextAction: 'Aguardar retorno sobre orçamento',
     conversationId: 'cv-roberta',
-    probability: 40,
     source: 'site',
     team: 'Comercial',
     tags: ['Inbound', 'IA Agents'],
@@ -200,7 +188,6 @@ export const DEALS: readonly Deal[] = [
     enteredStageAt: daysAgo(6),
     stageAgeLabel: 'há 6 dias',
     nextAction: 'Follow-up de qualificação urgente',
-    probability: 30,
     source: 'indicacao',
     team: 'SDR',
     tags: ['Indicação'],
@@ -222,7 +209,6 @@ export const DEALS: readonly Deal[] = [
     stageAgeLabel: 'há 1 dia',
     nextAction: 'Confirmar aprovação da diretoria',
     conversationId: 'cv-carlos',
-    probability: 70,
     source: 'google',
     team: 'Enterprise',
     tags: ['Enterprise', 'Google Ads', 'Ticket Alto'],
@@ -250,7 +236,6 @@ export const DEALS: readonly Deal[] = [
     stageAgeLabel: 'há 9 dias',
     nextAction: 'Reenviar proposta e cobrar retorno do CFO',
     conversationId: 'cv-joao',
-    probability: 60,
     source: 'whatsapp',
     team: 'Comercial',
     tags: ['Urgente', 'WhatsApp'],
@@ -272,7 +257,6 @@ export const DEALS: readonly Deal[] = [
     stageAgeLabel: 'há 2 dias',
     nextAction: 'Negociar condição e parcelamento',
     conversationId: 'cv-fernanda',
-    probability: 85,
     source: 'inbound',
     team: 'Comercial',
     tags: ['Hot Lead', 'Negociação'],
@@ -298,7 +282,6 @@ export const DEALS: readonly Deal[] = [
     stageAgeLabel: 'há 4 dias',
     nextAction: 'Passar bastão para equipe de Onboarding',
     conversationId: 'cv-ana',
-    probability: 100,
     source: 'site',
     team: 'Comercial',
     tags: ['Ganho', 'Self-service'],
@@ -319,7 +302,6 @@ export const DEALS: readonly Deal[] = [
     enteredStageAt: daysAgo(12),
     stageAgeLabel: 'há 12 dias',
     nextAction: 'Agendar contato de reaquecimento em 6 meses',
-    probability: 0,
     source: 'outbound',
     team: 'Enterprise',
     tags: ['Perdido', 'Preço'],

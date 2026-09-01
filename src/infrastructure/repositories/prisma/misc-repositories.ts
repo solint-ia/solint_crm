@@ -9,13 +9,35 @@ import { prisma, readJson, asJson } from '@/infrastructure/db/prisma';
 import { aiAgentRow, dealRow, notificationRow, pipelineRow } from './mappers';
 import { dataCurtaLabel } from '@/lib/datetime';
 
+const ETAPAS_PADRAO = (pipelineId: string) => [
+  { id: `stg-1-${pipelineId}`, pipelineId, name: 'Novo Lead', order: 1, color: '#3B82F6' },
+  { id: `stg-2-${pipelineId}`, pipelineId, name: 'Qualificação', order: 2, color: '#F59E0B' },
+  { id: `stg-3-${pipelineId}`, pipelineId, name: 'Proposta Enviada', order: 3, color: '#8B5CF6' },
+  { id: `stg-4-${pipelineId}`, pipelineId, name: 'Negociação', order: 4, color: '#EC4899' },
+  { id: `stg-5-${pipelineId}`, pipelineId, name: 'Fechado Ganho', order: 5, color: '#10B981', isWon: true },
+  { id: `stg-6-${pipelineId}`, pipelineId, name: 'Fechado Perdido', order: 6, color: '#64748B', isLost: true },
+];
+
 export class PrismaPipelineRepository implements PipelineRepository {
+  /**
+   * Os funis da conta — e ela sempre tem os que deveria ter.
+   *
+   * Três curas, na ordem em que importam: conta sem funil nenhum ganha o
+   * avulso; caixa de WhatsApp sem funil próprio ganha o dela; funil sem etapas
+   * ganha as seis padrão. Todas idempotentes, e todas aqui e não num script de
+   * migração porque uma caixa nova pode ser criada a qualquer momento — a
+   * migração corrigiria o passado e deixaria o futuro quebrado.
+   */
   async listPipelines(accountId: Id): Promise<readonly Pipeline[]> {
-    let rows = await prisma.pipeline.findMany({
-      where: { accountId },
-      include: { stages: true },
-      orderBy: { name: 'asc' },
-    });
+    const recarrega = () =>
+      prisma.pipeline.findMany({
+        where: { accountId },
+        include: { stages: true, inbox: { select: { name: true } } },
+        orderBy: { name: 'asc' },
+      });
+
+    let rows = await recarrega();
+    let mexeu = false;
 
     if (rows.length === 0) {
       const pipelineId = `pip-${accountId}`;
@@ -25,45 +47,50 @@ export class PrismaPipelineRepository implements PipelineRepository {
           accountId,
           name: 'Funil Comercial',
           isDefault: true,
-          stages: {
-            create: [
-              { id: `stg-1-${accountId}`, name: 'Novo Lead', order: 1, color: '#3B82F6' },
-              { id: `stg-2-${accountId}`, name: 'Qualificação', order: 2, color: '#F59E0B' },
-              { id: `stg-3-${accountId}`, name: 'Proposta Enviada', order: 3, color: '#8B5CF6' },
-              { id: `stg-4-${accountId}`, name: 'Negociação', order: 4, color: '#EC4899' },
-              { id: `stg-5-${accountId}`, name: 'Fechado Ganho', order: 5, color: '#10B981', isWon: true },
-              { id: `stg-6-${accountId}`, name: 'Fechado Perdido', order: 6, color: '#64748B', isLost: true },
-            ],
-          },
+          stages: { create: ETAPAS_PADRAO(pipelineId).map(({ pipelineId: _, ...st }) => st) },
         },
       });
+      mexeu = true;
+    }
 
-      rows = await prisma.pipeline.findMany({
-        where: { accountId },
-        include: { stages: true },
-        orderBy: { name: 'asc' },
+    /**
+     * Um funil por conexão do WhatsApp.
+     *
+     * Conta com um número só continua vendo exatamente o que via: um funil, e o
+     * seletor invisível. Conta com dois números passa a ter dois quadros, e o
+     * seletor aparece sozinho — que é o pedido. O funil avulso que já existia
+     * não é convertido nem apagado: ele continua ali, ao lado dos novos, porque
+     * é onde estão os negócios que a conta já registrou.
+     */
+    const caixas = await prisma.inbox.findMany({
+      where: { accountId, channel: 'whatsapp' },
+      select: { id: true, name: true },
+    });
+    const jaTemFunil = new Set(rows.map((row) => row.inboxId).filter(Boolean));
+    const semFunil = caixas.filter((caixa) => !jaTemFunil.has(caixa.id));
+
+    for (const caixa of semFunil) {
+      const pipelineId = `pip-ibx-${caixa.id}`;
+      await prisma.pipeline.create({
+        data: {
+          id: pipelineId,
+          accountId,
+          inboxId: caixa.id,
+          name: `Funil — ${caixa.name}`,
+          stages: { create: ETAPAS_PADRAO(pipelineId).map(({ pipelineId: _, ...st }) => st) },
+        },
       });
-    } else if (rows.some((r) => r.stages.length === 0)) {
-      for (const row of rows) {
-        if (row.stages.length === 0) {
-          await prisma.pipelineStage.createMany({
-            data: [
-              { id: `stg-1-${row.id}`, pipelineId: row.id, name: 'Novo Lead', order: 1, color: '#3B82F6' },
-              { id: `stg-2-${row.id}`, pipelineId: row.id, name: 'Qualificação', order: 2, color: '#F59E0B' },
-              { id: `stg-3-${row.id}`, pipelineId: row.id, name: 'Proposta Enviada', order: 3, color: '#8B5CF6' },
-              { id: `stg-4-${row.id}`, pipelineId: row.id, name: 'Negociação', order: 4, color: '#EC4899' },
-              { id: `stg-5-${row.id}`, pipelineId: row.id, name: 'Fechado Ganho', order: 5, color: '#10B981', isWon: true },
-              { id: `stg-6-${row.id}`, pipelineId: row.id, name: 'Fechado Perdido', order: 6, color: '#64748B', isLost: true },
-            ],
-          });
-        }
+      mexeu = true;
+    }
+
+    if (mexeu) rows = await recarrega();
+
+    const semEtapas = rows.filter((row) => row.stages.length === 0);
+    if (semEtapas.length > 0) {
+      for (const row of semEtapas) {
+        await prisma.pipelineStage.createMany({ data: ETAPAS_PADRAO(row.id) });
       }
-
-      rows = await prisma.pipeline.findMany({
-        where: { accountId },
-        include: { stages: true },
-        orderBy: { name: 'asc' },
-      });
+      rows = await recarrega();
     }
 
     return rows.map(pipelineRow);
@@ -176,7 +203,6 @@ export class PrismaPipelineRepository implements PipelineRepository {
       companyName?: string;
       ownerName?: string;
       priority?: string;
-      probability?: number;
       source?: string;
       nextAction?: string;
     },
@@ -223,7 +249,6 @@ export class PrismaPipelineRepository implements PipelineRepository {
       companyName?: string;
       ownerName?: string;
       priority?: string;
-      probability?: number;
       source?: string;
       nextAction?: string;
     },
@@ -277,7 +302,6 @@ export class PrismaPipelineRepository implements PipelineRepository {
       color: string;
       isWon: boolean;
       isLost: boolean;
-      defaultProbability?: number;
       labelId?: string | null;
     }[],
   ): Promise<readonly PipelineStage[]> {
@@ -341,7 +365,6 @@ export class PrismaPipelineRepository implements PipelineRepository {
         color: updated.color,
         isWon: updated.isWon,
         isLost: updated.isLost,
-        defaultProbability: st.defaultProbability,
         ...(updated.labelId ? { labelId: updated.labelId } : {}),
       });
     }

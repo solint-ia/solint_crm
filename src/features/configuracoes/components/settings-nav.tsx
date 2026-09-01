@@ -7,7 +7,6 @@ import {
   Building2,
   CreditCard,
   Inbox,
-  Layers,
   MessageSquare,
   ShieldCheck,
   Sliders,
@@ -20,6 +19,14 @@ import { cn } from '@/lib/cn';
 
 interface SettingsNavProps {
   readonly current: SettingsSectionId;
+  /**
+   * As seções que esta pessoa alcança — já filtradas pela página.
+   *
+   * Chegam de fora, e não são recalculadas aqui, porque este é um componente de
+   * cliente: recalcular exigiria mandar as permissões da sessão para o
+   * navegador, e a lista de links já é a resposta.
+   */
+  readonly sections: readonly { readonly id: SettingsSectionId }[];
 }
 
 interface NavSectionGroup {
@@ -48,12 +55,6 @@ const SECTION_GROUPS: readonly NavSectionGroup[] = [
     ],
   },
   {
-    title: 'Integrações',
-    items: [
-      { id: 'integracoes', label: 'Integrações e Conexões', icon: Layers },
-    ],
-  },
-  {
     title: 'Organização',
     items: [
       { id: 'conhecimento', label: 'Base de conhecimento', icon: BookOpen },
@@ -70,7 +71,15 @@ const SECTION_GROUPS: readonly NavSectionGroup[] = [
   },
 ];
 
-export function SettingsNav({ current }: SettingsNavProps) {
+export function SettingsNav({ current, sections }: SettingsNavProps) {
+  const alcancadas = new Set(sections.map((section) => section.id));
+  // Grupos que ficaram sem nenhum link somem inteiros — um título de grupo
+  // sozinho sugere que existe algo ali que a pessoa não está conseguindo ver.
+  const grupos = SECTION_GROUPS.map((grupo) => ({
+    ...grupo,
+    items: grupo.items.filter((item) => alcancadas.has(item.id)),
+  })).filter((grupo) => grupo.items.length > 0);
+
   return (
     <nav
       aria-label="Seções de configuração"
@@ -78,7 +87,7 @@ export function SettingsNav({ current }: SettingsNavProps) {
     >
       {/* Visualização Desktop: Menu agrupado moderno */}
       <div className="hidden lg:flex lg:flex-col lg:gap-4">
-        {SECTION_GROUPS.map((group) => (
+        {grupos.map((group) => (
           <div key={group.title} className="flex flex-col gap-1">
             <span className="px-2.5 text-[11px] font-bold uppercase tracking-wider text-dim">
               {group.title}
@@ -121,7 +130,7 @@ export function SettingsNav({ current }: SettingsNavProps) {
 
       {/* Visualização Mobile / Tablet: Faixa horizontal rolável com badges e ícones */}
       <div className="flex lg:hidden gap-1.5 overflow-x-auto px-3 py-2.5 scrollbar-none">
-        {SECTION_GROUPS.flatMap((g) => g.items).map((item) => {
+        {grupos.flatMap((g) => g.items).map((item) => {
           const active = item.id === current;
           const Icon = item.icon;
           return (

@@ -19,6 +19,7 @@ import type {
 } from '@/core/domain/settings';
 import { ConflictError, NotFoundError, type Id } from '@/core/domain/shared';
 import { SYSTEM_ROLES, systemRoleId } from '@/core/domain/system-roles';
+import { PERMISSIONS as ADMIN_PERMISSIONS } from '@/core/domain/user';
 import type { Role as PrismaRole } from '@/generated/prisma';
 import type { Permission, Role } from '@/core/domain/user';
 import { defaultBusinessHours } from '@/core/domain/business-hours';
@@ -74,20 +75,49 @@ const ensureSystemRoles = async (
 ): Promise<readonly PrismaRole[]> => {
   const conhecidos = new Set(existentes.map((role) => role.slug));
   const faltando = SYSTEM_ROLES.filter((role) => !conhecidos.has(role.slug));
-  if (faltando.length === 0) return existentes;
 
-  await prisma.role.createMany({
-    data: faltando.map((role) => ({
-      id: systemRoleId(accountId, role.slug),
-      accountId,
-      slug: role.slug,
-      name: role.name,
-      description: role.description,
-      permissions: asJson(role.permissions),
-      isSystem: true,
-    })),
-    skipDuplicates: true,
-  });
+  /**
+   * O administrador acompanha `PERMISSIONS`, sempre.
+   *
+   * "Administrador é acesso total" só é verdade enquanto o papel dele contém
+   * tudo que existe — e uma permissão nova nasce em `PERMISSIONS`, não na linha
+   * gravada em cada conta. Sem esta ressincronização, toda permissão
+   * acrescentada ao sistema estaria ausente do papel de quem governa as contas
+   * já criadas, e ninguém teria como concedê-la a si mesmo (o papel do
+   * administrador é deliberadamente não editável na tela).
+   *
+   * Vale só para o administrador: os demais papéis de sistema são editáveis, e
+   * reescrevê-los apagaria a personalização que o cliente fez.
+   */
+  const admin = existentes.find((role) => role.slug === 'administrador');
+  const adminDesatualizado =
+    admin !== undefined &&
+    JSON.stringify([...ADMIN_PERMISSIONS].sort()) !==
+      JSON.stringify([...readJson<readonly string[]>(admin.permissions, [])].sort());
+
+  if (faltando.length === 0 && !adminDesatualizado) return existentes;
+
+  if (faltando.length > 0) {
+    await prisma.role.createMany({
+      data: faltando.map((role) => ({
+        id: systemRoleId(accountId, role.slug),
+        accountId,
+        slug: role.slug,
+        name: role.name,
+        description: role.description,
+        permissions: asJson(role.permissions),
+        isSystem: true,
+      })),
+      skipDuplicates: true,
+    });
+  }
+
+  if (adminDesatualizado) {
+    await prisma.role.update({
+      where: { accountId_slug: { accountId, slug: 'administrador' } },
+      data: { permissions: asJson(ADMIN_PERMISSIONS) },
+    });
+  }
 
   return prisma.role.findMany({ where: { accountId } });
 };

@@ -42,7 +42,7 @@ async function ContatosData() {
         notifications={notifications}
       />
       <PageShell>
-        <ContactsExplorer contacts={contacts} />
+        <ContactsExplorer contacts={contacts} canExport={can(session, 'contatos:exportar')} />
       </PageShell>
     </>
   );

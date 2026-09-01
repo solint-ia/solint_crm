@@ -24,7 +24,6 @@ interface StagesModalProps {
       color: string;
       isWon: boolean;
       isLost: boolean;
-      defaultProbability?: number;
       labelId?: string | null;
     }[],
   ) => Promise<void>;
@@ -45,7 +44,6 @@ export function StagesModal({
       color: string;
       isWon: boolean;
       isLost: boolean;
-      defaultProbability: number;
       /** String vazia = etapa sem etiqueta. Vira `null` ao salvar. */
       labelId: string;
     }[]
@@ -57,7 +55,6 @@ export function StagesModal({
       color: s.color,
       isWon: s.isWon ?? false,
       isLost: s.isLost ?? false,
-      defaultProbability: s.defaultProbability ?? (s.isWon ? 100 : s.isLost ? 0 : 50),
       labelId: s.labelId ?? '',
     })),
   );
@@ -116,13 +113,6 @@ export function StagesModal({
     );
   };
 
-  // Alterar probabilidade padrão
-  const updateProbability = (index: number, defaultProbability: number) => {
-    setStages((prev) =>
-      prev.map((st, i) => (i === index ? { ...st, defaultProbability } : st)),
-    );
-  };
-
   // Alternar Ganho / Perda
   const toggleWon = (index: number) => {
     setStages((prev) =>
@@ -133,7 +123,6 @@ export function StagesModal({
           ...st,
           isWon: willBeWon,
           isLost: willBeWon ? false : st.isLost,
-          defaultProbability: willBeWon ? 100 : st.defaultProbability,
         };
       }),
     );
@@ -148,7 +137,6 @@ export function StagesModal({
           ...st,
           isLost: willBeLost,
           isWon: willBeLost ? false : st.isWon,
-          defaultProbability: willBeLost ? 0 : st.defaultProbability,
         };
       }),
     );
@@ -178,7 +166,6 @@ export function StagesModal({
         color: defaultColor,
         isWon: false,
         isLost: false,
-        defaultProbability: 50,
         labelId: '',
       },
     ]);
@@ -206,7 +193,7 @@ export function StagesModal({
       open={open}
       onClose={onClose}
       title="Configuração das Etapas do Funil"
-      description="Personalize o nome, cor, ordem e probabilidade de cada etapa do processo comercial."
+      description="Personalize o nome, a cor e a ordem de cada etapa do processo comercial."
       className="max-w-2xl"
     >
       <div className="flex flex-col gap-4">
@@ -264,19 +251,6 @@ export function StagesModal({
                   placeholder="Nome da etapa"
                   className="flex-1 min-w-[140px] rounded-control border border-line bg-surface px-2.5 py-1.5 text-body font-semibold text-ink outline-none focus:border-brand"
                 />
-
-                {/* Probabilidade Padrão */}
-                <div className="flex items-center gap-1 min-w-[90px]">
-                  <span className="text-micro text-dim font-medium">% Prob:</span>
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    value={stage.defaultProbability}
-                    onChange={(e) => updateProbability(index, parseInt(e.target.value, 10) || 0)}
-                    className="w-13 rounded-control border border-line bg-surface px-1.5 py-1 text-center text-body font-mono font-semibold text-ink outline-none focus:border-brand"
-                  />
-                </div>
 
                 {/* Botão Ganho */}
                 <button

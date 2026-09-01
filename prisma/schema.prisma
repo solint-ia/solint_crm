@@ -102,6 +102,16 @@ model User {
   notificationPrefs Json?
   twoFactorEnabled Boolean @default(false)
   lastActiveAt     String?
+  /// Administra webhooks e tokens de API de QUALQUER conta, pela área
+  /// `/plataforma`, fora do isolamento por tenant do resto do sistema.
+  ///
+  /// Mora aqui, e não em `Membership`/`Role`, porque a capacidade é da pessoa e
+  /// não de um vínculo com uma conta — quem administra a integração de todas as
+  /// contas não é membro de nenhuma delas em particular. Ver
+  /// REGRAS-GLOBAIS.md §4.4: esta é a única exceção deliberada e documentada ao
+  /// isolamento multi-tenant, e mesmo ela continua consultando o banco sempre
+  /// escopada por `accountId` — o que muda é quem pode fazer a pergunta.
+  isSuperAdmin     Boolean @default(false)
 
   createdAt DateTime @default(now())
 
@@ -118,7 +128,7 @@ model User {
 ///
 /// Existe porque três campos que estavam em `User` são, na verdade, propriedades
 /// do vínculo e não da pessoa: o **papel** (alguém pode ser administrador aqui e
-/// agente ali), as **equipes** (Comercial de uma conta não é a Comercial de
+/// colaborador ali), as **equipes** (Comercial de uma conta não é a Comercial de
 /// outra) e a **disponibilidade** (dá para estar em atendimento num workspace e
 /// fora em outro). Mantê-los em `User` fazia o segundo workspace herdar o
 /// primeiro em silêncio.
@@ -135,6 +145,17 @@ model Membership {
   /// exclusão do papel nem apagar o vínculo em cascata.
   roleSlug     String
   availability String @default("disponivel")
+
+  /// Personalização de permissões **desta pessoa**, sobre o papel dela.
+  ///
+  /// JSON: `PermissionOverrides` — `{ add: Permission[], remove: Permission[] }`.
+  /// `null` significa "segue o papel exatamente", que é o caso da maioria.
+  ///
+  /// Guardado como diferença, e não como lista fechada, para a pessoa continuar
+  /// acompanhando o papel em tudo que não foi explicitamente mexido: uma lista
+  /// fechada seria uma fotografia do papel no dia da gravação, e divergiria em
+  /// silêncio a cada edição posterior do papel. Ver `effectivePermissions()`.
+  permissionOverrides Json?
 
   createdAt DateTime @default(now())
 
@@ -369,11 +390,26 @@ model Pipeline {
   name      String
   isDefault Boolean @default(false)
 
+  /// A caixa de entrada a que este funil pertence.
+  ///
+  /// `null` = funil avulso, não ligado a conexão nenhuma. É o estado de todos
+  /// os funis criados antes desta coluna existir, e continua sendo válido: um
+  /// funil que atravessa canais é uma escolha legítima do cliente.
+  ///
+  /// `onDelete: SetNull` e não `Cascade`: excluir uma conexão do WhatsApp já
+  /// apaga conversas e mensagens daquela caixa, e levar junto o histórico
+  /// comercial — negócios ganhos, valores fechados — seria uma perda de outra
+  /// natureza, que ninguém pediu ao clicar em "excluir caixa". O funil vira
+  /// avulso em vez de desaparecer.
+  inboxId String?
+  inbox   Inbox?  @relation(fields: [inboxId], references: [id], onDelete: SetNull)
+
   account Account         @relation(fields: [accountId], references: [id], onDelete: Cascade)
   stages  PipelineStage[]
   deals   Deal[]
 
   @@index([accountId])
+  @@index([inboxId])
 }
 
 model PipelineStage {
@@ -531,6 +567,7 @@ model Inbox {
   campaigns     Campaign[]
   mediaObjects  MediaObject[]
   teamInboxes   TeamInbox[]
+  pipelines     Pipeline[]
 
   @@index([accountId])
 }

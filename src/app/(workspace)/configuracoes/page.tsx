@@ -1,5 +1,10 @@
 import type { Metadata } from 'next';
-import { SETTINGS_SECTIONS, type SettingsSectionId } from '@/config/navigation';
+import {
+  SETTINGS_SECTIONS,
+  firstSettingsSectionFor,
+  settingsSectionsFor,
+  type SettingsSectionId,
+} from '@/config/navigation';
 import { CHANNELS, CHANNEL_REGISTRY } from '@/core/domain/channel';
 import { PRIORITIES } from '@/core/domain/conversation';
 import { PRIORITY_LABEL } from '@/components/domain/presentation-maps';
@@ -7,7 +12,6 @@ import { Topbar } from '@/components/layout/topbar';
 import { SettingsNav } from '@/features/configuracoes/components/settings-nav';
 import { AutomationsSection } from '@/features/configuracoes/components/sections/automations-section';
 import { InboxesSection } from '@/features/configuracoes/components/sections/inboxes-section';
-import { IntegrationsSection } from '@/features/configuracoes/components/sections/integrations-section';
 import { KnowledgeSection } from '@/features/configuracoes/components/sections/knowledge-section';
 import { TeamSection } from '@/features/configuracoes/components/sections/team-section';
 import { LabelsSection } from '@/features/configuracoes/components/sections/labels-section';
@@ -16,14 +20,41 @@ import { CustomAttributesSection } from '@/features/configuracoes/components/sec
 import { CompanySection } from '@/features/configuracoes/components/sections/company-section';
 import { BillingSection } from '@/features/configuracoes/components/sections/billing-section';
 import { SecuritySection } from '@/features/configuracoes/components/sections/security-section';
-import { can } from '@/core/domain/user';
 import { AccessDenied } from '@/components/layout/access-denied';
 import { container } from '@/infrastructure/container';
+import { effectivePermissions, type Permission, type PermissionOverrides, type Role } from '@/core/domain/user';
+import { prisma, readJson } from '@/infrastructure/db/prisma';
 import { parseOneOf } from '@/lib/search-params';
 
-export const metadata: Metadata = { title: 'Configurações' };
+/**
+ * As permissões efetivas de cada membro da conta, por id de usuário.
+ *
+ * Uma consulta só para toda a lista, e o cruzamento com os papéis em memória:
+ * perguntar o papel de cada pessoa em separado daria uma ida ao banco por linha
+ * da tabela de membros.
+ */
+const permissoesEfetivasDaConta = async (
+  accountId: string,
+  roles: readonly Role[],
+): Promise<Readonly<Record<string, readonly Permission[]>>> => {
+  const vinculos = await prisma.membership.findMany({
+    where: { accountId },
+    select: { userId: true, roleSlug: true, permissionOverrides: true },
+  });
 
-const SECTION_IDS = SETTINGS_SECTIONS.map((s) => s.id);
+  const porSlug = new Map(roles.map((role) => [role.slug, role.permissions]));
+  return Object.fromEntries(
+    vinculos.map((vinculo) => [
+      vinculo.userId,
+      effectivePermissions(
+        porSlug.get(vinculo.roleSlug) ?? [],
+        readJson<PermissionOverrides | null>(vinculo.permissionOverrides, null),
+      ),
+    ]),
+  );
+};
+
+export const metadata: Metadata = { title: 'Configurações' };
 
 export default async function ConfiguracoesPage({
   searchParams,
@@ -31,11 +62,32 @@ export default async function ConfiguracoesPage({
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
-  const currentSection: SettingsSectionId = parseOneOf(params.secao, SECTION_IDS, 'automacoes');
-
   const session = await container.session.getCurrentSession();
-  // A rail ja esconde o item; sem esta checagem, a URL direta entraria.
-  if (!can(session, 'configuracoes:ler')) return <AccessDenied permission="configuracoes:ler" />;
+
+  /**
+   * Configurações não é mais uma porta só.
+   *
+   * Não existe uma permissão que signifique "entra em Configurações": existe
+   * uma por sub-seção. Quem não alcança nenhuma delas não tem o que fazer aqui;
+   * quem alcança alguma entra na primeira que alcança, e não numa fixa que
+   * jogaria metade das pessoas numa tela de acesso negado logo ao clicar.
+   */
+  const alcancadas = settingsSectionsFor(session.permissions);
+  const primeira = firstSettingsSectionFor(session.permissions);
+  if (!primeira) return <AccessDenied permission="config.caixas:ler" />;
+
+  /**
+   * `?secao=` é escolha do usuário, mas também é URL editável à mão.
+   *
+   * Por isso o parse considera **só** as seções alcançáveis: uma seção pedida
+   * que a pessoa não alcança não vira acesso negado, vira a primeira seção
+   * dela — o mesmo que teria acontecido se ela tivesse clicado no menu.
+   */
+  const currentSection: SettingsSectionId = parseOneOf(
+    params.secao,
+    alcancadas.map((secao) => secao.id),
+    primeira,
+  );
   /**
    * Conversas e funis só alimentam o `vocabulary`, e o `vocabulary` só chega ao
    * construtor de automação. Carregá-los ao abrir "Respostas" ou "Etiquetas"
@@ -57,6 +109,20 @@ export default async function ConfiguracoesPage({
       ? container.pipelines.listPipelines(session.account.id)
       : Promise.resolve([]),
   ]);
+
+  /**
+   * O efetivo de cada pessoa — papel mais a personalização dela.
+   *
+   * Calculado só quando a aba de equipe está aberta e quem olha pode
+   * personalizar: é uma consulta a mais ao banco, e ela não serve a nenhuma
+   * outra seção. A tela precisa do efetivo, e não do papel, porque é ele que a
+   * grade de caixinhas mostra pré-marcado.
+   */
+  const podeEditarPapeis = session.permissions.includes('config.equipe.papeis:escrever');
+  const memberPermissions =
+    currentSection === 'equipe' && podeEditarPapeis
+      ? await permissoesEfetivasDaConta(session.account.id, settings.roles)
+      : {};
 
   const activeSectionMeta = SETTINGS_SECTIONS.find((s) => s.id === currentSection);
 
@@ -90,7 +156,7 @@ export default async function ConfiguracoesPage({
       />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
-        <SettingsNav current={currentSection} />
+        <SettingsNav current={currentSection} sections={alcancadas} />
 
         <main className="flex-1 overflow-y-auto p-4 md:p-6">
           {currentSection === 'automacoes' ? (
@@ -102,16 +168,11 @@ export default async function ConfiguracoesPage({
             />
           ) : null}
 
-          {currentSection === 'integracoes' ? (
-            <IntegrationsSection
-              connections={settings.connections}
-              webhooks={settings.webhooks}
-              apiTokens={settings.apiTokens}
-            />
-          ) : null}
-
           {currentSection === 'caixas' ? (
-            <InboxesSection connections={settings.connections} />
+            <InboxesSection
+              connections={settings.connections}
+              canDelete={session.permissions.includes('config.caixas:excluir')}
+            />
           ) : null}
 
           {currentSection === 'conhecimento' ? (
@@ -124,6 +185,8 @@ export default async function ConfiguracoesPage({
               roles={settings.roles}
               teams={settings.teams}
               inboxes={settings.connections}
+              canEditRoles={podeEditarPapeis}
+              memberPermissions={memberPermissions}
             />
           ) : null}
 

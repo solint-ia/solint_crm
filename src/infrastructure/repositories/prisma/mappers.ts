@@ -283,12 +283,16 @@ export const userRow = (
   ...(row.lastActiveAt ? { lastActiveAt: row.lastActiveAt } : {}),
 });
 
-type PipelineWithStages = Prisma.PipelineGetPayload<{ include: { stages: true } }>;
+type PipelineWithStages = Prisma.PipelineGetPayload<{
+  include: { stages: true; inbox: { select: { name: true } } };
+}>;
 
 export const pipelineRow = (row: PipelineWithStages): Pipeline => ({
   id: row.id,
   accountId: row.accountId,
   name: row.name,
+  ...(row.inboxId ? { inboxId: row.inboxId } : {}),
+  ...(row.inbox?.name ? { inboxName: row.inbox.name } : {}),
   stages: [...row.stages]
     .sort((a, b) => a.order - b.order)
     .map((stage) => ({

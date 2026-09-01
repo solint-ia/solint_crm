@@ -17,7 +17,8 @@ import {
   Users,
 } from 'lucide-react';
 
-import type { Role, User } from '@/core/domain/user';
+import type { Permission, Role, User } from '@/core/domain/user';
+import { PermissionGrid } from '@/features/configuracoes/components/permission-grid';
 import type { ChannelConnection, Team } from '@/core/domain/settings';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -31,6 +32,8 @@ import {
   deleteTeamAction,
   removeCollaboratorAction,
   updateCollaboratorAction,
+  updateMemberOverridesAction,
+  updateRolePermissionsAction,
   updateTeamAction,
 } from '@/app/(workspace)/configuracoes/actions';
 
@@ -39,11 +42,29 @@ interface TeamSectionProps {
   readonly roles: readonly Role[];
   readonly teams: readonly Team[];
   readonly inboxes: readonly ChannelConnection[];
+  /**
+   * Quem está olhando pode editar papéis e personalizar pessoas?
+   *
+   * Vem resolvido do servidor (`config.equipe.papeis:escrever`) porque este é
+   * um componente de cliente e a permissão não deve viajar até o navegador.
+   * Esconder é cortesia com quem não pode — a trava de verdade está na Server
+   * Action, que reconfere a cada gravação.
+   */
+  readonly canEditRoles: boolean;
+  /** Permissões efetivas de cada pessoa, já com os overrides aplicados. */
+  readonly memberPermissions: Readonly<Record<string, readonly Permission[]>>;
 }
 
 type TeamSubTab = 'membros' | 'papeis' | 'equipes';
 
-export function TeamSection({ members, roles, teams, inboxes }: TeamSectionProps) {
+export function TeamSection({
+  members,
+  roles,
+  teams,
+  inboxes,
+  canEditRoles,
+  memberPermissions,
+}: TeamSectionProps) {
   const inboxNameOf = (inboxId: string): string =>
     inboxes.find((inbox) => inbox.id === inboxId)?.name ?? inboxId;
   const router = useRouter();
@@ -75,8 +96,70 @@ export function TeamSection({ members, roles, teams, inboxes }: TeamSectionProps
   const [colabEmail, setColabEmail] = useState('');
   const [colabSenha, setColabSenha] = useState('');
   const [mostrarSenha, setMostrarSenha] = useState(false);
-  const [colabRole, setColabRole] = useState(roles[0]?.slug ?? 'agente');
+  const [colabRole, setColabRole] = useState(roles[0]?.slug ?? 'colaborador');
   const [colabTeamIds, setColabTeamIds] = useState<readonly string[]>([]);
+
+  /**
+   * Editor de permissões — serve ao papel e à pessoa com o mesmo estado.
+   *
+   * `alvo` diz qual dos dois está aberto. A grade é a mesma; muda o que é
+   * gravado no fim: o papel inteiro, ou a diferença desta pessoa em relação ao
+   * papel dela.
+   */
+  const [permAlvo, setPermAlvo] = useState<
+    { readonly tipo: 'papel'; readonly role: Role } | { readonly tipo: 'pessoa'; readonly member: User } | null
+  >(null);
+  const [permMarcadas, setPermMarcadas] = useState<readonly Permission[]>([]);
+  const [permErro, setPermErro] = useState<string | null>(null);
+
+  const abrirPermissoesDoPapel = (role: Role) => {
+    setPermAlvo({ tipo: 'papel', role });
+    setPermMarcadas(role.permissions);
+    setPermErro(null);
+  };
+
+  const abrirPermissoesDaPessoa = (member: User) => {
+    setPermAlvo({ tipo: 'pessoa', member });
+    setPermMarcadas(memberPermissions[member.id] ?? []);
+    setPermErro(null);
+  };
+
+  const alternarPermissao = (permission: Permission) =>
+    setPermMarcadas((atual) =>
+      atual.includes(permission)
+        ? atual.filter((p) => p !== permission)
+        : [...atual, permission],
+    );
+
+  const salvarPermissoes = () => {
+    if (!permAlvo) return;
+    setPermErro(null);
+    startTransition(async () => {
+      const res =
+        permAlvo.tipo === 'papel'
+          ? await updateRolePermissionsAction({
+              roleSlug: permAlvo.role.slug,
+              permissions: permMarcadas,
+            })
+          : await updateMemberOverridesAction({
+              userId: permAlvo.member.id,
+              permissions: permMarcadas,
+            });
+
+      if (!res.ok) {
+        setPermErro(res.error ?? 'Não foi possível salvar.');
+        return;
+      }
+      setPermAlvo(null);
+      router.refresh();
+    });
+  };
+
+  /** O papel de quem está sendo personalizado — a régua da coluna "a mais/a menos". */
+  const papelDoAlvo =
+    permAlvo?.tipo === 'pessoa'
+      ? roles.find((role) => role.slug === permAlvo.member.roleSlug)
+      : undefined;
   const [colabError, setColabError] = useState<string | null>(null);
   const [removendo, setRemovendo] = useState<User | null>(null);
 
@@ -132,9 +215,11 @@ export function TeamSection({ members, roles, teams, inboxes }: TeamSectionProps
     setColabEmail('');
     setColabSenha('');
     setMostrarSenha(false);
-    // Agente é o padrão porque é o acesso menor: se alguém salvar sem olhar
+    // Colaborador é o padrão porque é o acesso menor: se alguém salvar sem olhar
     // este campo, o erro é conceder de menos, não conceder a conta inteira.
-    setColabRole(roles.find((role) => role.slug === 'agente')?.slug ?? roles[0]?.slug ?? 'agente');
+    setColabRole(
+      roles.find((role) => role.slug === 'colaborador')?.slug ?? roles[0]?.slug ?? 'colaborador',
+    );
     setColabTeamIds([]);
     setColabError(null);
     setColabAberto(true);
@@ -329,19 +414,23 @@ export function TeamSection({ members, roles, teams, inboxes }: TeamSectionProps
           <Users className="size-3.5 text-dim" />
           <span>Membros da equipe</span>
         </button>
-        <button
-          type="button"
-          onClick={() => setSubTab('papeis')}
-          className={cn(
-            'flex items-center gap-2 rounded-xl px-3.5 py-1.5 font-semibold transition-all',
-            subTab === 'papeis'
-              ? 'bg-surface text-ink shadow-2xs font-bold ring-1 ring-black/5 dark:ring-white/10'
-              : 'text-muted hover:text-ink',
-          )}
-        >
-          <Shield className="size-3.5 text-dim" />
-          <span>Papéis e permissões</span>
-        </button>
+        {/* Papéis e permissões nunca é delegada: um supervisor com "gerenciar
+            membros" não vê nem a aba. Ver `ADMIN_ONLY_PERMISSIONS`. */}
+        {canEditRoles ? (
+          <button
+            type="button"
+            onClick={() => setSubTab('papeis')}
+            className={cn(
+              'flex items-center gap-2 rounded-xl px-3.5 py-1.5 font-semibold transition-all',
+              subTab === 'papeis'
+                ? 'bg-surface text-ink shadow-2xs font-bold ring-1 ring-black/5 dark:ring-white/10'
+                : 'text-muted hover:text-ink',
+            )}
+          >
+            <Shield className="size-3.5 text-dim" />
+            <span>Papéis e permissões</span>
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={() => setSubTab('equipes')}
@@ -365,7 +454,7 @@ export function TeamSection({ members, roles, teams, inboxes }: TeamSectionProps
           {/* Filtros Rápidos */}
           <div className="flex flex-wrap items-center gap-1.5 text-xs">
             <span className="text-dim mr-1">Filtrar por papel:</span>
-            {['todos', 'administrador', 'supervisor', 'agente'].map((role) => (
+            {['todos', 'administrador', 'supervisor', 'colaborador'].map((role) => (
               <button
                 key={role}
                 type="button"
@@ -465,6 +554,19 @@ export function TeamSection({ members, roles, teams, inboxes }: TeamSectionProps
 
                       <td className="px-4 py-3.5">
                         <div className="flex items-center justify-end gap-1">
+                          {/* Administrador não é personalizável: o papel dele
+                              já é o acesso total, e tirar peças dele por aqui
+                              produziria um administrador que não administra. */}
+                          {canEditRoles && member.roleSlug !== 'administrador' ? (
+                            <button
+                              type="button"
+                              onClick={() => abrirPermissoesDaPessoa(member)}
+                              title={`Personalizar permissões de ${member.name}`}
+                              className="rounded-control p-1.5 text-dim transition-colors hover:bg-surface-2 hover:text-ink"
+                            >
+                              <KeyRound className="size-3.5" />
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             onClick={() => abrirEdicaoColaborador(member)}
@@ -495,7 +597,7 @@ export function TeamSection({ members, roles, teams, inboxes }: TeamSectionProps
       {/* ============================================================ */}
       {/* ABA 2: PAPÉIS E PERMISSÕES                                    */}
       {/* ============================================================ */}
-      {subTab === 'papeis' ? (
+      {subTab === 'papeis' && canEditRoles ? (
         <div className="grid gap-4 sm:grid-cols-3">
           {roles.map((role) => (
             <div
@@ -539,6 +641,27 @@ export function TeamSection({ members, roles, teams, inboxes }: TeamSectionProps
                   </div>
                 </div>
               </div>
+
+              {/* O administrador não é editável: tirar permissão dele é o
+                  caminho mais curto para uma conta sem quem a conserte. */}
+              {canEditRoles && role.slug !== 'administrador' ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="mt-4 w-full"
+                  icon={<Pencil className="size-3.5" />}
+                  onClick={() => abrirPermissoesDoPapel(role)}
+                >
+                  Editar permissões
+                </Button>
+              ) : (
+                <p className="mt-4 text-[11px] text-dim">
+                  {role.slug === 'administrador'
+                    ? 'Acesso total, não editável.'
+                    : 'Somente um administrador edita papéis.'}
+                </p>
+              )}
             </div>
           ))}
         </div>
@@ -899,6 +1022,69 @@ export function TeamSection({ members, roles, teams, inboxes }: TeamSectionProps
         onClose={() => setDeletingTeam(null)}
         onConfirm={handleConfirmDeleteTeam}
       />
+
+      {/* ============================================================ */}
+      {/* EDITOR DE PERMISSÕES (papel ou pessoa — mesma grade)          */}
+      {/* ============================================================ */}
+      <Modal
+        open={permAlvo !== null}
+        onClose={() => setPermAlvo(null)}
+        title={
+          permAlvo?.tipo === 'papel'
+            ? `Permissões do papel ${permAlvo.role.name}`
+            : permAlvo
+              ? `Permissões de ${permAlvo.member.name}`
+              : 'Permissões'
+        }
+        description={
+          permAlvo?.tipo === 'papel'
+            ? 'Vale para todas as pessoas com este papel, inclusive as já cadastradas.'
+            : `Personalização sobre o papel ${
+                permAlvo ? roleNameOf(permAlvo.member.roleSlug) : ''
+              }. O que não for mexido continua acompanhando o papel.`
+        }
+        className="max-w-3xl"
+      >
+        <div className="flex flex-col gap-4">
+          {permErro ? (
+            <p className="rounded-xl border border-red-line/50 bg-red-soft p-3 text-xs text-red-text">
+              {permErro}
+            </p>
+          ) : null}
+
+          <div className="max-h-[55vh] overflow-y-auto pr-1">
+            <PermissionGrid
+              selected={permMarcadas}
+              onToggle={alternarPermissao}
+              disabled={isPending}
+              {...(permAlvo?.tipo === 'pessoa'
+                ? { roleBaseline: papelDoAlvo?.permissions ?? [] }
+                : {})}
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-3 border-t border-line pt-4">
+            <span className="text-[11px] text-muted">
+              {permMarcadas.length} permissão(ões) marcada(s)
+            </span>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={isPending}
+                onClick={() => setPermAlvo(null)}
+              >
+                Cancelar
+              </Button>
+              <Button type="button" size="sm" disabled={isPending} onClick={salvarPermissoes}>
+                {isPending ? 'Salvando…' : 'Salvar permissões'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </Modal>
+
     </div>
   );
 }

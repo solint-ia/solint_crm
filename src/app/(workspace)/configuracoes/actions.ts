@@ -11,7 +11,9 @@ import { CHANNELS } from '@/core/domain/channel';
 import { ARTICLE_STATUSES } from '@/core/domain/knowledge';
 import { TONES } from '@/core/domain/label';
 import type { AssignmentMethod, ChannelConnection } from '@/core/domain/settings';
-import { can } from '@/core/domain/user';
+import { can, type Permission } from '@/core/domain/user';
+import { ROLES_REQUIRING_TEAM } from '@/core/domain/system-roles';
+import { permissoesForaDoCatalogo } from '@/core/domain/permissions';
 import {
   WEEKDAYS,
   normalizeAutoReply,
@@ -19,7 +21,8 @@ import {
 } from '@/core/domain/business-hours';
 import { randomUUID } from 'node:crypto';
 import { hashPassword, passwordProblem } from '@/infrastructure/auth/password';
-import { prisma } from '@/infrastructure/db/prisma';
+import { Prisma } from '@/generated/prisma/client';
+import { prisma, asJson } from '@/infrastructure/db/prisma';
 import { container } from '@/infrastructure/container';
 import type { InboxDeletionImpact } from '@/core/ports/settings-repository';
 import { PrismaSettingsRepository } from '@/infrastructure/repositories/prisma/settings-repository';
@@ -32,13 +35,41 @@ export interface ActionResult {
 /**
  * Escrever em configurações é privilégio de papel, não de tela.
  * Esconder o botão no cliente não protege nada: a checagem mora aqui.
+ *
+ * A permissão vem por parâmetro desde que Configurações deixou de ser uma porta
+ * só: quem edita etiquetas não edita segurança, e o `configuracoes:escrever`
+ * genérico não sabia diferenciar os dois. O padrão é o das caixas — a seção
+ * mais usada — para nenhuma chamada ficar sem checagem por esquecimento.
  */
-const assertCanWrite = async () => {
+const assertCanWrite = async (permission: Permission = 'config.caixas:escrever') => {
   const session = await container.session.getCurrentSession();
-  if (!can(session, 'configuracoes:escrever')) {
-    throw new Error('Seu papel não permite alterar configurações.');
+  if (!can(session, permission)) {
+    throw new Error('Seu papel não permite alterar esta configuração.');
   }
   return session;
+};
+
+/**
+ * Um supervisor com "gerenciar membros" delegado não alcança administradores.
+ *
+ * Nem para promover alguém a administrador, nem para editar ou rebaixar um que
+ * já existe. Sem esta trava, delegar a aba de membros seria delegar a conta
+ * inteira por um caminho indireto: bastaria o supervisor promover a si mesmo.
+ * Só quem já é administrador mexe em administrador.
+ */
+const supervisorNaoAlcancaAdmin = (
+  atorRoleSlug: string,
+  alvoRoleSlugAtual: string | undefined,
+  alvoRoleSlugNovo: string,
+): string | undefined => {
+  if (atorRoleSlug === 'administrador') return undefined;
+  if (alvoRoleSlugNovo === 'administrador') {
+    return 'Só um administrador pode conceder acesso de administrador.';
+  }
+  if (alvoRoleSlugAtual === 'administrador') {
+    return 'Só um administrador pode editar outro administrador.';
+  }
+  return undefined;
 };
 
 const failureOf = (error: unknown, fallback: string): ActionResult => ({
@@ -58,7 +89,7 @@ export async function toggleAutomationAction(input: unknown): Promise<ActionResu
   }
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.automacoes:escrever');
     await container.settings.setAutomationEnabled(
       session.account.id,
       parsed.data.automationId,
@@ -81,7 +112,7 @@ export async function setAssignmentMethodAction(input: unknown): Promise<ActionR
   }
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.automacoes:escrever');
     await container.settings.setAssignmentMethod(
       session.account.id,
       parsed.data.method as AssignmentMethod,
@@ -131,7 +162,7 @@ export async function saveAutomationAction(input: unknown): Promise<ActionResult
   }
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.automacoes:escrever');
     await container.settings.saveAutomation(session.account.id, parsed.data);
     return { ok: true };
   } catch (error) {
@@ -146,7 +177,7 @@ export async function deleteAutomationAction(input: unknown): Promise<ActionResu
   if (!parsed.success) return { ok: false, error: 'Automação inválida.' };
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.automacoes:escrever');
     await container.settings.deleteAutomation(session.account.id, parsed.data.automationId);
     return { ok: true };
   } catch (error) {
@@ -163,7 +194,7 @@ export async function moveAutomationAction(input: unknown): Promise<ActionResult
   if (!parsed.success) return { ok: false, error: 'Movimento inválido.' };
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.automacoes:escrever');
     await container.settings.moveAutomation(
       session.account.id,
       parsed.data.automationId,
@@ -211,7 +242,7 @@ export async function createInboxAction(
   }
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.caixas:escrever');
     const settingsRepo =
       typeof container.settings.createInbox === 'function'
         ? container.settings
@@ -252,13 +283,15 @@ const updateInboxSchema = z.object({
   waitingMessageDelayMinutes: z.number().int().min(1).max(120).optional(),
   csatEnabled: z.boolean().optional(),
   csatQuestion: z.string().trim().max(300).optional(),
-  // String vazia é intencional: significa "remover o webhook".
-  webhookUrl: z.union([z.literal(''), z.string().url().max(300)]).optional(),
+  // `webhookUrl` saiu daqui de propósito: a integração de cada caixa é
+  // administrada pelo superadministrador em `/plataforma`, não por quem usa o
+  // CRM. A coluna continua no banco; o que sai é o poder de editá-la de dentro
+  // da conta — e sai do schema, não só da tela, porque uma action ainda aceita
+  // o campo mesmo quando nenhum formulário o envia.
 });
 
 /** Nome legível do campo, para o erro dizer **onde** o problema está. */
 const INBOX_FIELD_LABELS: Readonly<Record<string, string>> = {
-  webhookUrl: 'a URL do webhook',
   businessHours: 'o horário de atendimento',
   awayMessage: 'a mensagem fora do expediente',
   greeting: 'a mensagem de saudação',
@@ -272,9 +305,6 @@ export async function updateInboxAction(input: unknown): Promise<ActionResult> {
   const parsed = updateInboxSchema.safeParse(input);
   if (!parsed.success) {
     const first = parsed.error.issues[0];
-    if (first?.path.includes('webhookUrl')) {
-      return { ok: false, error: 'A URL do webhook precisa começar com http:// ou https://.' };
-    }
     // "Dados inválidos" sozinho não dizia **qual** dos seis campos recusou, e a
     // tela mostra os seis ao mesmo tempo: quem via o erro não tinha o que fazer
     // com ele. O campo e o motivo agora vão junto.
@@ -290,7 +320,7 @@ export async function updateInboxAction(input: unknown): Promise<ActionResult> {
   const { connectionId, ...patch } = parsed.data;
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.caixas:escrever');
     await container.settings.updateInbox(session.account.id, connectionId, patch);
     return { ok: true };
   } catch (error) {
@@ -316,7 +346,7 @@ export async function inboxDeletionImpactAction(
   }
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.caixas:ler');
     const settingsRepo =
       typeof container.settings.inboxDeletionImpact === 'function'
         ? container.settings
@@ -351,7 +381,7 @@ export async function deleteInboxAction(input: unknown): Promise<ActionResult> {
   }
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.caixas:excluir');
     const settingsRepo =
       typeof container.settings.deleteInbox === 'function'
         ? container.settings
@@ -393,7 +423,7 @@ export async function saveArticleAction(input: unknown): Promise<ActionResult> {
   }
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.conhecimento:escrever');
     await container.settings.saveArticle(session.account.id, parsed.data);
     return { ok: true };
   } catch (error) {
@@ -408,7 +438,7 @@ export async function deleteArticleAction(input: unknown): Promise<ActionResult>
   if (!parsed.success) return { ok: false, error: 'Artigo inválido.' };
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.conhecimento:escrever');
     await container.settings.deleteArticle(session.account.id, parsed.data.articleId);
     return { ok: true };
   } catch (error) {
@@ -427,7 +457,7 @@ export async function saveCategoryAction(input: unknown): Promise<ActionResult> 
   if (!parsed.success) return { ok: false, error: 'Nome de categoria inválido.' };
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.conhecimento:escrever');
     await container.settings.saveCategory(
       session.account.id,
       parsed.data.name,
@@ -447,108 +477,11 @@ export async function deleteCategoryAction(input: unknown): Promise<ActionResult
   if (!parsed.success) return { ok: false, error: 'Categoria inválida.' };
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.conhecimento:escrever');
     await container.settings.deleteCategory(session.account.id, parsed.data.categoryId);
     return { ok: true };
   } catch (error) {
     return failureOf(error, 'Erro ao excluir a categoria.');
-  }
-}
-
-// ---------------------------------------------------------------- Onda 3: Webhooks
-
-const createWebhookSchema = z.object({
-  name: z.string().trim().min(2).max(80),
-  url: z.string().trim().url(),
-  events: z.array(z.string().min(1)).min(1),
-  /** Assina cada entrega em `X-Solint-Signature`. Opcional, mas recomendado. */
-  secret: z.string().trim().min(16).max(200).optional(),
-});
-
-export async function createWebhookAction(input: unknown): Promise<ActionResult> {
-  const parsed = createWebhookSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: 'Dados do webhook inválidos.' };
-
-  try {
-    const session = await assertCanWrite();
-    await container.settings.createWebhook(session.account.id, parsed.data);
-    return { ok: true };
-  } catch (error) {
-    return failureOf(error, 'Erro ao criar webhook.');
-  }
-}
-
-const toggleWebhookSchema = z.object({
-  webhookId: z.string().min(1),
-  enabled: z.boolean(),
-});
-
-export async function toggleWebhookAction(input: unknown): Promise<ActionResult> {
-  const parsed = toggleWebhookSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: 'Dados inválidos.' };
-
-  try {
-    const session = await assertCanWrite();
-    await container.settings.toggleWebhook(
-      session.account.id,
-      parsed.data.webhookId,
-      parsed.data.enabled,
-    );
-    return { ok: true };
-  } catch (error) {
-    return failureOf(error, 'Erro ao alterar status do webhook.');
-  }
-}
-
-const deleteWebhookSchema = z.object({ webhookId: z.string().min(1) });
-
-export async function deleteWebhookAction(input: unknown): Promise<ActionResult> {
-  const parsed = deleteWebhookSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: 'Webhook inválido.' };
-
-  try {
-    const session = await assertCanWrite();
-    await container.settings.deleteWebhook(session.account.id, parsed.data.webhookId);
-    return { ok: true };
-  } catch (error) {
-    return failureOf(error, 'Erro ao excluir webhook.');
-  }
-}
-
-// ---------------------------------------------------------------- Onda 3: Tokens de API
-
-const createApiTokenSchema = z.object({
-  name: z.string().trim().min(2).max(80),
-  permissions: z.array(z.string()).optional(),
-});
-
-export async function createApiTokenAction(
-  input: unknown,
-): Promise<ActionResult & { rawSecret?: string }> {
-  const parsed = createApiTokenSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: 'Nome do token inválido.' };
-
-  try {
-    const session = await assertCanWrite();
-    const { rawSecret } = await container.settings.createApiToken(session.account.id, parsed.data);
-    return { ok: true, rawSecret };
-  } catch (error) {
-    return failureOf(error, 'Erro ao gerar token de API.');
-  }
-}
-
-const deleteApiTokenSchema = z.object({ tokenId: z.string().min(1) });
-
-export async function deleteApiTokenAction(input: unknown): Promise<ActionResult> {
-  const parsed = deleteApiTokenSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: 'Token inválido.' };
-
-  try {
-    const session = await assertCanWrite();
-    await container.settings.deleteApiToken(session.account.id, parsed.data.tokenId);
-    return { ok: true };
-  } catch (error) {
-    return failureOf(error, 'Erro ao revogar token de API.');
   }
 }
 
@@ -564,7 +497,7 @@ export async function createCannedResponseAction(input: unknown): Promise<Action
   if (!parsed.success) return { ok: false, error: 'Atalho ou conteúdo inválido.' };
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.respostas:escrever');
     await container.settings.createCannedResponse(session.account.id, parsed.data);
     return { ok: true };
   } catch (error) {
@@ -582,7 +515,7 @@ export async function updateCannedResponseAction(input: unknown): Promise<Action
 
   const { responseId, ...draft } = parsed.data;
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.respostas:escrever');
     await container.settings.updateCannedResponse(session.account.id, responseId, draft);
     return { ok: true };
   } catch (error) {
@@ -597,7 +530,7 @@ export async function deleteCannedResponseAction(input: unknown): Promise<Action
   if (!parsed.success) return { ok: false, error: 'Resposta rápida inválida.' };
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.respostas:escrever');
     await container.settings.deleteCannedResponse(session.account.id, parsed.data.responseId);
     return { ok: true };
   } catch (error) {
@@ -626,7 +559,7 @@ export async function createCustomAttributeAction(input: unknown): Promise<Actio
     return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.atributos:escrever');
     await container.settings.createCustomAttribute(session.account.id, parsed.data);
     return { ok: true };
   } catch (error) {
@@ -641,7 +574,7 @@ export async function deleteCustomAttributeAction(input: unknown): Promise<Actio
   if (!parsed.success) return { ok: false, error: 'Atributo inválido.' };
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.atributos:escrever');
     await container.settings.deleteCustomAttribute(session.account.id, parsed.data.attributeId);
     return { ok: true };
   } catch (error) {
@@ -663,7 +596,7 @@ export async function createTeamAction(input: unknown): Promise<ActionResult> {
   if (!parsed.success) return { ok: false, error: 'Nome da equipe inválido.' };
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.equipe.membros:escrever');
     await container.settings.createTeam(session.account.id, parsed.data);
     return { ok: true };
   } catch (error) {
@@ -680,7 +613,7 @@ export async function updateTeamAction(input: unknown): Promise<ActionResult> {
   const { teamId, ...draft } = parsed.data;
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.equipe.membros:escrever');
     await container.settings.updateTeam(session.account.id, teamId, draft);
     return { ok: true };
   } catch (error) {
@@ -695,7 +628,7 @@ export async function deleteTeamAction(input: unknown): Promise<ActionResult> {
   if (!parsed.success) return { ok: false, error: 'Equipe inválida.' };
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.equipe.membros:escrever');
     await container.settings.deleteTeam(session.account.id, parsed.data.teamId);
     return { ok: true };
   } catch (error) {
@@ -745,9 +678,32 @@ const validarPapelEEquipes = async (
   if (!settings.roles.some((role) => role.slug === roleSlug)) {
     return { erro: 'Papel não encontrado nesta conta.', teamIds: [] };
   }
-  return {
-    teamIds: (teamIds ?? []).filter((id) => settings.teams.some((team) => team.id === id)),
-  };
+
+  const validas = (teamIds ?? []).filter((id) => settings.teams.some((team) => team.id === id));
+
+  /**
+   * Colaborador sem equipe enxergaria **todas** as caixas.
+   *
+   * Não é hipótese: `resolveInboxAccess` devolve `'todas'` para quem não tem
+   * equipe nenhuma, e essa regra existe para a conta que ainda não organizou
+   * equipes continuar funcionando. O efeito colateral é que o papel de menor
+   * privilégio, salvo sem equipe, acaba com o alcance maior de todos — o
+   * oposto do que quem clicou em "Colaborador" quis dizer.
+   *
+   * A exigência vale para criação e edição a partir de agora; ninguém é
+   * corrigido retroativamente (decisão deliberada, ver o plano).
+   */
+  if (ROLES_REQUIRING_TEAM.includes(roleSlug) && validas.length === 0) {
+    return {
+      erro:
+        settings.teams.length === 0
+          ? 'Crie ao menos uma equipe antes de cadastrar um colaborador — é a equipe que define quais caixas ele alcança.'
+          : 'Colaboradores precisam estar em ao menos uma equipe.',
+      teamIds: [],
+    };
+  }
+
+  return { teamIds: validas };
 };
 
 /**
@@ -768,9 +724,16 @@ export async function createCollaboratorAction(input: unknown): Promise<ActionRe
 
   try {
     const session = await container.session.getCurrentSession();
-    if (!can(session, 'equipe:gerenciar')) {
+    if (!can(session, 'config.equipe.membros:escrever')) {
       return { ok: false, error: 'Seu papel não permite criar acessos.' };
     }
+
+    const barrado = supervisorNaoAlcancaAdmin(
+      session.user.roleSlug,
+      undefined,
+      parsed.data.roleSlug,
+    );
+    if (barrado) return { ok: false, error: barrado };
 
     const { erro, teamIds } = await validarPapelEEquipes(
       session.account.id,
@@ -865,7 +828,7 @@ export async function updateCollaboratorAction(input: unknown): Promise<ActionRe
 
   try {
     const session = await container.session.getCurrentSession();
-    if (!can(session, 'equipe:gerenciar')) {
+    if (!can(session, 'config.equipe.membros:escrever')) {
       return { ok: false, error: 'Seu papel não permite editar acessos.' };
     }
 
@@ -874,6 +837,13 @@ export async function updateCollaboratorAction(input: unknown): Promise<ActionRe
       select: { id: true, roleSlug: true },
     });
     if (!vinculo) return { ok: false, error: 'Colaborador não encontrado nesta conta.' };
+
+    const barrado = supervisorNaoAlcancaAdmin(
+      session.user.roleSlug,
+      vinculo.roleSlug,
+      parsed.data.roleSlug,
+    );
+    if (barrado) return { ok: false, error: barrado };
 
     const { erro, teamIds } = await validarPapelEEquipes(
       session.account.id,
@@ -956,7 +926,7 @@ export async function removeCollaboratorAction(input: unknown): Promise<ActionRe
 
   try {
     const session = await container.session.getCurrentSession();
-    if (!can(session, 'equipe:gerenciar')) {
+    if (!can(session, 'config.equipe.membros:escrever')) {
       return { ok: false, error: 'Seu papel não permite remover acessos.' };
     }
     if (parsed.data.userId === session.user.id) {
@@ -968,6 +938,10 @@ export async function removeCollaboratorAction(input: unknown): Promise<ActionRe
       select: { id: true, roleSlug: true },
     });
     if (!vinculo) return { ok: false, error: 'Colaborador não encontrado nesta conta.' };
+
+    if (session.user.roleSlug !== 'administrador' && vinculo.roleSlug === 'administrador') {
+      return { ok: false, error: 'Só um administrador pode remover outro administrador.' };
+    }
 
     if (vinculo.roleSlug === 'administrador') {
       const admins = await prisma.membership.count({
@@ -1008,7 +982,7 @@ export async function createLabelAction(input: unknown): Promise<ActionResult> {
   }
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.etiquetas:escrever');
     await container.settings.createLabel(session.account.id, parsed.data);
     revalidatePath('/configuracoes');
     return { ok: true };
@@ -1029,7 +1003,7 @@ export async function updateLabelAction(input: unknown): Promise<ActionResult> {
 
   const { labelId, ...draft } = parsed.data;
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.etiquetas:escrever');
     await container.settings.updateLabel(session.account.id, labelId, draft);
     revalidatePath('/configuracoes');
     return { ok: true };
@@ -1045,7 +1019,7 @@ export async function deleteLabelAction(input: unknown): Promise<ActionResult> {
   if (!parsed.success) return { ok: false, error: 'Etiqueta inválida.' };
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.etiquetas:escrever');
     await container.settings.deleteLabel(session.account.id, parsed.data.labelId);
     revalidatePath('/configuracoes');
     return { ok: true };
@@ -1063,7 +1037,7 @@ export async function terminateSessionAction(input: unknown): Promise<ActionResu
   if (!parsed.success) return { ok: false, error: 'Sessão inválida.' };
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.seguranca:escrever');
     await container.settings.terminateSession(session.account.id, parsed.data.sessionId);
     revalidatePath('/configuracoes');
     return { ok: true };
@@ -1074,7 +1048,7 @@ export async function terminateSessionAction(input: unknown): Promise<ActionResu
 
 export async function terminateOtherSessionsAction(): Promise<ActionResult> {
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.seguranca:escrever');
     await container.settings.terminateOtherSessions(session.account.id);
     revalidatePath('/configuracoes');
     return { ok: true };
@@ -1111,11 +1085,159 @@ export async function saveCompanyProfileAction(input: unknown): Promise<ActionRe
   }
 
   try {
-    const session = await assertCanWrite();
+    const session = await assertCanWrite('config.empresa:escrever');
     await container.settings.saveCompanyProfile(session.account.id, parsed.data);
     revalidatePath('/configuracoes');
     return { ok: true };
   } catch (error) {
     return failureOf(error, 'Erro ao salvar os dados da empresa.');
+  }
+}
+
+/* ============================================================================
+   Papéis e personalização por pessoa
+
+   Dois pontos de gravação, uma única trava conceitual: quem edita permissões
+   pode dar a si mesmo qualquer outra. Por isso as duas exigem
+   `config.equipe.papeis:escrever`, que só o administrador tem — e por isso as
+   duas recusam qualquer permissão fora de `GRANTABLE_PERMISSIONS`, mesmo vinda
+   de quem tem o direito de gravar.
+   ========================================================================== */
+
+const permissionListSchema = z.array(z.string().min(1).max(64)).max(80);
+
+const updateRolePermissionsSchema = z.object({
+  roleSlug: z.string().min(1).max(64),
+  permissions: permissionListSchema,
+});
+
+/**
+ * Redefine as permissões de um papel.
+ *
+ * O `administrador` fica de fora: mexer nas permissões dele é o caminho mais
+ * curto para uma conta sem ninguém que possa consertá-la — inclusive quando
+ * quem mexe é ele mesmo, por engano, tirando a própria permissão de voltar
+ * atrás.
+ */
+export async function updateRolePermissionsAction(input: unknown): Promise<ActionResult> {
+  const parsed = updateRolePermissionsSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Dados do papel inválidos.' };
+
+  try {
+    const session = await container.session.getCurrentSession();
+    if (!can(session, 'config.equipe.papeis:escrever')) {
+      return { ok: false, error: 'Só um administrador edita papéis e permissões.' };
+    }
+
+    if (parsed.data.roleSlug === 'administrador') {
+      return {
+        ok: false,
+        error: 'O papel de administrador não é editável — ele existe para destravar a conta.',
+      };
+    }
+
+    const intrusas = permissoesForaDoCatalogo(parsed.data.permissions);
+    if (intrusas.length > 0) {
+      return { ok: false, error: `Permissão não reconhecida: ${intrusas[0]}.` };
+    }
+
+    const papel = await prisma.role.findUnique({
+      where: { accountId_slug: { accountId: session.account.id, slug: parsed.data.roleSlug } },
+      select: { id: true },
+    });
+    if (!papel) return { ok: false, error: 'Papel não encontrado nesta conta.' };
+
+    await prisma.role.update({
+      where: { id: papel.id },
+      data: { permissions: asJson(parsed.data.permissions) },
+    });
+
+    revalidatePath('/configuracoes');
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao salvar as permissões do papel.');
+  }
+}
+
+const updateMemberOverridesSchema = z.object({
+  userId: z.string().min(1).max(64),
+  /** O conjunto final desejado para esta pessoa. O diff é calculado aqui. */
+  permissions: permissionListSchema,
+});
+
+/**
+ * Personaliza as permissões de uma pessoa sobre o papel dela.
+ *
+ * A tela manda o conjunto **final** (foi isso que a pessoa marcou), e o diff
+ * contra o papel é calculado aqui, no servidor. Fazer o contrário — a tela
+ * mandar `{add, remove}` já pronto — daria dois cálculos do mesmo diff em
+ * lugares diferentes, e o do cliente trabalharia com uma cópia do papel que
+ * pode estar velha se outra aba acabou de editá-lo.
+ *
+ * Quando o conjunto final coincide com o papel, o override é apagado em vez de
+ * gravado vazio: "sem personalização" e "personalização que não muda nada" são
+ * a mesma coisa para o usuário, e devem ser a mesma coisa no banco.
+ */
+export async function updateMemberOverridesAction(input: unknown): Promise<ActionResult> {
+  const parsed = updateMemberOverridesSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Dados inválidos.' };
+
+  try {
+    const session = await container.session.getCurrentSession();
+    if (!can(session, 'config.equipe.papeis:escrever')) {
+      return { ok: false, error: 'Só um administrador personaliza permissões.' };
+    }
+
+    const intrusas = permissoesForaDoCatalogo(parsed.data.permissions);
+    if (intrusas.length > 0) {
+      return { ok: false, error: `Permissão não reconhecida: ${intrusas[0]}.` };
+    }
+
+    const vinculo = await prisma.membership.findFirst({
+      where: { accountId: session.account.id, userId: parsed.data.userId },
+      select: { id: true, roleSlug: true },
+    });
+    if (!vinculo) return { ok: false, error: 'Colaborador não encontrado nesta conta.' };
+
+    if (vinculo.roleSlug === 'administrador') {
+      return {
+        ok: false,
+        error: 'Administradores não são personalizáveis — o papel deles é o acesso total.',
+      };
+    }
+
+    const papel = await prisma.role.findUnique({
+      where: { accountId_slug: { accountId: session.account.id, slug: vinculo.roleSlug } },
+      select: { permissions: true },
+    });
+    const doPapel = new Set(
+      (Array.isArray(papel?.permissions) ? papel.permissions : []) as readonly string[],
+    );
+    const desejadas = new Set(parsed.data.permissions);
+
+    const add = [...desejadas].filter((p) => !doPapel.has(p));
+    // Só conta como "tirada" o que o papel de fato dá — e só dentro do
+    // catálogo: uma permissão que a pessoa nunca teria não precisa de uma linha
+    // no override dizendo que ela não a tem.
+    const remove = [...doPapel].filter(
+      (p) => !desejadas.has(p) && !permissoesForaDoCatalogo([p]).length,
+    );
+
+    await prisma.membership.update({
+      where: { id: vinculo.id },
+      data: {
+        permissionOverrides:
+          add.length === 0 && remove.length === 0 ? Prisma.DbNull : asJson({ add, remove }),
+      },
+    });
+
+    // Uma permissão retirada precisa valer agora, não no próximo login: a
+    // sessão em memória carrega o efetivo calculado na entrada.
+    await prisma.authSession.deleteMany({ where: { userId: parsed.data.userId } });
+
+    revalidatePath('/configuracoes');
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao salvar as permissões da pessoa.');
   }
 }

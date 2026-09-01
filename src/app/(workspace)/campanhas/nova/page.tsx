@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Topbar } from '@/components/layout/topbar';
@@ -7,11 +8,14 @@ import { PageShell } from '@/components/layout/page-shell';
 import { CampaignWizard } from '@/features/campanhas/components/campaign-wizard';
 import { can } from '@/core/domain/user';
 import { AccessDenied } from '@/components/layout/access-denied';
+import { FEATURES } from '@/config/features';
 import { container } from '@/infrastructure/container';
 
 export const metadata: Metadata = { title: 'Nova campanha' };
 
 export default async function NovaCampanhaPage() {
+  if (!FEATURES.campanhas) redirect('/conversas');
+
   const session = await container.session.getCurrentSession();
   // A rail ja esconde o item; sem esta checagem, a URL direta entraria.
   if (!can(session, 'campanhas:disparar')) return <AccessDenied permission="campanhas:disparar" />;

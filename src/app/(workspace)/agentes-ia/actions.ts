@@ -2,7 +2,15 @@
 
 import { z } from 'zod';
 import { FLOW_BLOCK_TYPES, type AiAgent } from '@/core/domain/ai-agent';
+import { FEATURES } from '@/config/features';
 import { container } from '@/infrastructure/container';
+
+/**
+ * Defesa em profundidade: esconder a tela não desarma a action, que continua
+ * exposta como endpoint POST para quem souber o id dela. Cada uma confere a
+ * flag antes de tocar em sessão ou banco.
+ */
+const FEATURE_OFF = { ok: false, error: 'Funcionalidade em preparação.' } as const;
 
 const createAgentSchema = z.object({
   name: z.string().trim().min(2, 'Nome deve ter no mínimo 2 caracteres').max(80),
@@ -15,6 +23,8 @@ const createAgentSchema = z.object({
 export async function createAiAgentAction(
   input: unknown,
 ): Promise<{ ok: boolean; agent?: AiAgent; error?: string }> {
+  if (!FEATURES.agentesIA) return FEATURE_OFF;
+
   const parsed = createAgentSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
@@ -43,6 +53,8 @@ const setActiveSchema = z.object({ agentId: idSchema, active: z.boolean() });
 export async function setAgentActiveAction(
   input: unknown,
 ): Promise<{ ok: boolean; error?: string }> {
+  if (!FEATURES.agentesIA) return FEATURE_OFF;
+
   const parsed = setActiveSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Dados inválidos.' };
 
@@ -60,6 +72,8 @@ const toggleRuleSchema = z.object({ agentId: idSchema, ruleId: idSchema });
 export async function toggleTransferRuleAction(
   input: unknown,
 ): Promise<{ ok: boolean; error?: string }> {
+  if (!FEATURES.agentesIA) return FEATURE_OFF;
+
   const parsed = toggleRuleSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Dados inválidos.' };
 
@@ -82,6 +96,8 @@ const sandboxSchema = z.object({ agentId: idSchema, prompt: z.string().trim().mi
 export async function sandboxReplyAction(
   input: unknown,
 ): Promise<{ ok: boolean; reply?: string; error?: string }> {
+  if (!FEATURES.agentesIA) return FEATURE_OFF;
+
   const parsed = sandboxSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Mensagem inválida.' };
 
@@ -115,6 +131,8 @@ const flowSchema = z.object({
 export async function saveAgentFlowAction(
   input: unknown,
 ): Promise<{ ok: boolean; error?: string }> {
+  if (!FEATURES.agentesIA) return FEATURE_OFF;
+
   const parsed = flowSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Fluxo inválido.' };
 

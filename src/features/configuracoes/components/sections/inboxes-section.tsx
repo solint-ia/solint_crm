@@ -6,18 +6,15 @@ import {
   Clock,
   Globe,
   Inbox as InboxIcon,
-  Link2,
   MoonStar,
   Plus,
   QrCode,
   Radio,
-  Send,
   Star,
   Sun,
   Timer,
   Trash2,
   TriangleAlert,
-  Zap,
 } from 'lucide-react';
 import type { BusinessHours, Weekday } from '@/core/domain/business-hours';
 import {
@@ -54,9 +51,18 @@ import { useWhatsAppConnection } from '@/features/whatsapp/hooks/use-whatsapp-co
 
 interface InboxesSectionProps {
   readonly connections: readonly ChannelConnection[];
+  /**
+   * Excluir caixa é um terceiro verbo, e não parte de "editar".
+   *
+   * Editar a mensagem de saudação é reversível; apagar a caixa leva junto
+   * conversas e mensagens e não tem lixeira. Por isso `config.caixas:excluir`
+   * existe em separado e só entra no padrão do administrador — quem edita
+   * horário de atendimento não deveria poder esvaziar o histórico do canal.
+   */
+  readonly canDelete: boolean;
 }
 
-export function InboxesSection({ connections }: InboxesSectionProps) {
+export function InboxesSection({ connections, canDelete }: InboxesSectionProps) {
   const router = useRouter();
 
   const [connectionList, setConnectionList] = useState<readonly ChannelConnection[]>(connections);
@@ -227,6 +233,7 @@ export function InboxesSection({ connections }: InboxesSectionProps) {
               onOpenQr={(conn) => setQrTarget(conn)}
               onDeleted={handleDeleted}
               onLiveStatus={handleLiveStatus}
+              canDelete={canDelete}
             />
           ) : null}
         </div>
@@ -608,12 +615,14 @@ function InboxDetail({
   onOpenQr,
   onDeleted,
   onLiveStatus,
+  canDelete,
 }: {
   readonly connection: ChannelConnection;
   readonly onSaved: (connection: ChannelConnection) => void;
   readonly onOpenQr: (connection: ChannelConnection) => void;
   readonly onDeleted: (connectionId: string) => void;
   readonly onLiveStatus: (connectionId: string, status: ChannelConnection['status']) => void;
+  readonly canDelete: boolean;
 }) {
   const isWhatsApp = connection.channel === 'whatsapp';
   const { statusData } = useWhatsAppConnection(isWhatsApp, connection.id);
@@ -677,10 +686,8 @@ function InboxDetail({
   const [waitingDelay, setWaitingDelay] = useState(connection.waitingMessageDelayMinutes || 5);
   const [csatEnabled, setCsatEnabled] = useState(connection.csatEnabled ?? false);
   const [csatQuestion, setCsatQuestion] = useState(connection.csatQuestion ?? '');
-  const [webhookUrl, setWebhookUrl] = useState(connection.webhookUrl ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | undefined>();
-  const [testingWebhook, setTestingWebhook] = useState(false);
   const { show } = useToast();
 
   // Detecta se houve modificação
@@ -704,8 +711,7 @@ function InboxDetail({
       ) ||
     waitingDelay !== (connection.waitingMessageDelayMinutes || 5) ||
     csatEnabled !== (connection.csatEnabled ?? false) ||
-    csatQuestion !== (connection.csatQuestion ?? '') ||
-    webhookUrl !== (connection.webhookUrl ?? '');
+    csatQuestion !== (connection.csatQuestion ?? '');
 
   const summary = useMemo(() => summarizeBusinessHours(hours), [hours]);
 
@@ -737,7 +743,6 @@ function InboxDetail({
     setWaitingDelay(connection.waitingMessageDelayMinutes || 5);
     setCsatEnabled(connection.csatEnabled ?? false);
     setCsatQuestion(connection.csatQuestion ?? '');
-    setWebhookUrl(connection.webhookUrl ?? '');
     setError(undefined);
   };
 
@@ -754,7 +759,6 @@ function InboxDetail({
       waitingMessageDelayMinutes: waitingDelay,
       csatEnabled,
       csatQuestion,
-      webhookUrl,
     });
     setSaving(false);
 
@@ -778,7 +782,6 @@ function InboxDetail({
       waitingMessageDelayMinutes: waitingDelay,
       csatEnabled,
       ...(csatQuestion ? { csatQuestion } : {}),
-      webhookUrl: webhookUrl || undefined,
     });
 
     show({
@@ -786,19 +789,6 @@ function InboxDetail({
       title: 'Alterações salvas',
       description: `${connection.name} foi atualizada com sucesso.`,
     });
-  };
-
-  const handleTestWebhook = () => {
-    if (!webhookUrl.trim()) return;
-    setTestingWebhook(true);
-    setTimeout(() => {
-      setTestingWebhook(false);
-      show({
-        tone: 'sucesso',
-        title: 'Teste de Webhook enviado',
-        description: 'Um evento ping de validação foi disparado com sucesso.',
-      });
-    }, 1200);
   };
 
   return (
@@ -1074,63 +1064,9 @@ function InboxDetail({
       </div>
 
       {/* ------------------------------------------------------------ */}
-      {/* CARD 4: WEBHOOK DA CAIXA                                     */}
+      {/* CARD 4: ZONA DE RISCO (só para quem pode excluir)            */}
       {/* ------------------------------------------------------------ */}
-      <div className="rounded-2xl border border-line bg-surface p-5 shadow-2xs">
-        <div className="flex items-center gap-2.5 border-b border-line pb-4">
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-violet-500/10 text-violet-600 dark:text-violet-400">
-            <Zap className="size-4" />
-          </div>
-          <div>
-            <h4 className="font-display text-sm font-bold text-ink">
-              Webhook dedicado desta caixa
-            </h4>
-            <p className="text-xs text-muted">
-              Receba um POST em tempo real a cada mensagem e alteração de status deste canal.
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-4 flex flex-col gap-3">
-          <div className="flex flex-col sm:flex-row gap-2">
-            <div className="relative flex-1">
-              <Link2 className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-dim" />
-              <input
-                id={`webhook-${connection.id}`}
-                type="url"
-                placeholder="https://seu-sistema.com/api/webhooks/solint"
-                value={webhookUrl}
-                onChange={(event) => setWebhookUrl(event.target.value)}
-                className="h-10 w-full rounded-xl border border-line bg-surface pr-3 pl-10 text-xs text-ink placeholder:text-dim outline-none transition-all focus:border-brand focus:ring-2 focus:ring-brand/20 shadow-2xs"
-              />
-            </div>
-            <Button
-              type="button"
-              variant="secondary"
-              size="md"
-              icon={<Send className="size-3.5" />}
-              disabled={!webhookUrl.trim() || testingWebhook}
-              onClick={handleTestWebhook}
-            >
-              {testingWebhook ? 'Testando…' : 'Testar conexão'}
-            </Button>
-          </div>
-
-          <div className="flex items-center justify-between text-[11px] text-muted">
-            <span>Deixe vazio para desativar o envio de eventos desta caixa.</span>
-            {webhookUrl ? (
-              <span className="flex items-center gap-1 font-semibold text-green-600 dark:text-green-400">
-                <span className="size-1.5 rounded-full bg-green-500 animate-pulse" />
-                Endpoint configurado
-              </span>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
-      {/* ------------------------------------------------------------ */}
-      {/* CARD 5: ZONA DE RISCO                                        */}
-      {/* ------------------------------------------------------------ */}
+      {canDelete ? (
       <div className="rounded-2xl border border-red-line/50 bg-red-soft/30 p-5">
         <div className="flex items-center gap-2.5 border-b border-red-line/40 pb-4">
           <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-red-500/10 text-red-600 dark:text-red-400">
@@ -1163,6 +1099,7 @@ function InboxDetail({
           </Button>
         </div>
       </div>
+      ) : null}
 
       <DeleteInboxModal
         open={isDeleteOpen}

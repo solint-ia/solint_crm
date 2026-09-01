@@ -52,9 +52,16 @@ type SortOrder = 'asc' | 'desc';
 
 interface ContactsExplorerProps {
   readonly contacts: readonly Contact[];
+  /**
+   * `contatos:exportar` já existia no tipo e nunca era conferida — o botão
+   * saía para todo mundo que abrisse a tela. Resolvida no servidor porque este
+   * é componente de cliente; a lista já sai da máquina de qualquer forma, então
+   * a permissão aqui é sobre o atalho de baixar tudo de uma vez.
+   */
+  readonly canExport: boolean;
 }
 
-export function ContactsExplorer({ contacts }: ContactsExplorerProps) {
+export function ContactsExplorer({ contacts, canExport }: ContactsExplorerProps) {
   const router = useRouter();
   const { show } = useToast();
   const [isPending, startTransition] = useTransition();
@@ -547,14 +554,16 @@ export function ContactsExplorer({ contacts }: ContactsExplorerProps) {
               <span className="md:hidden">Importar</span>
             </Button>
 
-            <Button
-              variant="secondary"
-              size="md"
-              icon={<Download className="size-3.5" />}
-              onClick={() => handleExportCsv(false)}
-            >
-              Exportar
-            </Button>
+            {canExport ? (
+              <Button
+                variant="secondary"
+                size="md"
+                icon={<Download className="size-3.5" />}
+                onClick={() => handleExportCsv(false)}
+              >
+                Exportar
+              </Button>
+            ) : null}
 
             <Button
               variant="primary"
@@ -583,14 +592,16 @@ export function ContactsExplorer({ contacts }: ContactsExplorerProps) {
             </div>
 
             <div className="flex items-center gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={<Download className="size-3.5" />}
-                onClick={() => handleExportCsv(true)}
-              >
-                Exportar selecionados
-              </Button>
+              {canExport ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={<Download className="size-3.5" />}
+                  onClick={() => handleExportCsv(true)}
+                >
+                  Exportar selecionados
+                </Button>
+              ) : null}
 
               <Button
                 variant="danger"

@@ -127,8 +127,6 @@ export function useBoard({ initialDeals, stages: initialStages, moveDeal }: UseB
         return list.sort((a, b) => b.amountInCents - a.amountInCents);
       case 'menor_valor':
         return list.sort((a, b) => a.amountInCents - b.amountInCents);
-      case 'probabilidade':
-        return list.sort((a, b) => (b.probability ?? 50) - (a.probability ?? 50));
       case 'proxima_atividade':
         return list.sort((a, b) => a.nextAction.localeCompare(b.nextAction));
       case 'recentes':
@@ -190,7 +188,6 @@ export function useBoard({ initialDeals, stages: initialStages, moveDeal }: UseB
                 ...deal,
                 stageId: targetStageId,
                 stageAgeLabel: 'agora',
-                probability: targetStage?.defaultProbability ?? deal.probability,
                 history: [
                   ...deal.history,
                   {

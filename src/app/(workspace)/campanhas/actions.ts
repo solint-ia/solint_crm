@@ -2,6 +2,7 @@
 
 import { z } from 'zod';
 import { can } from '@/core/domain/user';
+import { FEATURES } from '@/config/features';
 import { container } from '@/infrastructure/container';
 
 export interface ActionResult<T = unknown> {
@@ -9,6 +10,13 @@ export interface ActionResult<T = unknown> {
   readonly error?: string;
   readonly data?: T;
 }
+
+/**
+ * Defesa em profundidade: esconder a tela não desarma a action, que continua
+ * exposta como endpoint POST para quem souber o id dela. Cada uma confere a
+ * flag antes de tocar em sessão ou banco.
+ */
+const FEATURE_OFF: ActionResult = { ok: false, error: 'Funcionalidade em preparação.' };
 
 const assertCanDispatch = async () => {
   const session = await container.session.getCurrentSession();
@@ -33,6 +41,8 @@ const createCampaignSchema = z.object({
 });
 
 export async function createCampaignAction(input: unknown): Promise<ActionResult> {
+  if (!FEATURES.campanhas) return FEATURE_OFF;
+
   const parsed = createCampaignSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Dados da campanha inválidos.' };
 
@@ -58,6 +68,8 @@ const toggleStatusSchema = z.object({
 });
 
 export async function toggleCampaignStatusAction(input: unknown): Promise<ActionResult> {
+  if (!FEATURES.campanhas) return FEATURE_OFF;
+
   const parsed = toggleStatusSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Dados inválidos.' };
 
@@ -79,6 +91,8 @@ const deleteCampaignSchema = z.object({
 });
 
 export async function deleteCampaignAction(input: unknown): Promise<ActionResult> {
+  if (!FEATURES.campanhas) return FEATURE_OFF;
+
   const parsed = deleteCampaignSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Identificador inválido.' };
 

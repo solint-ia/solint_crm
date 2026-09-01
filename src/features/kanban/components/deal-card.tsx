@@ -12,7 +12,6 @@ import {
   MessageCircle,
   MoreHorizontal,
   Pencil,
-  Sparkles,
   Trash2,
   User,
 } from 'lucide-react';
@@ -59,8 +58,6 @@ export function DealCard({
   const [showMenu, setShowMenu] = useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
 
-
-  const probability = deal.probability ?? 50;
   const sourceInfo = deal.source ? SOURCE_ICONS[deal.source] : null;
 
   return (
@@ -207,38 +204,12 @@ export function DealCard({
           )}
         </div>
 
-        {/* Valor Estimado e Probabilidade */}
-        <div className="mt-2.5 flex items-end justify-between border-t border-line-soft pt-2">
-          <div>
-            <span className="block text-[10px] font-medium uppercase text-dim">Valor Estimado</span>
-            <span className="font-display text-title font-bold text-ink tracking-tight tabular-nums">
-              {formatMoneyFromCents(deal.amountInCents)}
-            </span>
-          </div>
-
-          {/* Probabilidade */}
-          <div className="flex flex-col items-end">
-            <span className="text-micro font-medium text-dim flex items-center gap-0.5">
-              <Sparkles className="size-2.5 text-brand" />
-              {probability}% prob.
-            </span>
-            {/* Barra de Progresso da Probabilidade */}
-            <div className="mt-1 h-1.5 w-16 overflow-hidden rounded-full bg-line-soft">
-              <div
-                className={cn(
-                  'h-full rounded-full transition-all duration-300',
-                  probability >= 80
-                    ? 'bg-emerald-500'
-                    : probability >= 50
-                      ? 'bg-brand'
-                      : probability >= 30
-                        ? 'bg-amber-500'
-                        : 'bg-slate-400',
-                )}
-                style={{ width: `${Math.max(probability, 10)}%` }}
-              />
-            </div>
-          </div>
+        {/* Valor Estimado */}
+        <div className="mt-2.5 border-t border-line-soft pt-2">
+          <span className="block text-[10px] font-medium uppercase text-dim">Valor Estimado</span>
+          <span className="font-display text-title font-bold text-ink tracking-tight tabular-nums">
+            {formatMoneyFromCents(deal.amountInCents)}
+          </span>
         </div>
 
         {/* Próxima Ação */}

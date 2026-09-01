@@ -73,7 +73,6 @@ export function KanbanBoard({
     companyName?: string;
     ownerName?: string;
     priority?: 'baixa' | 'media' | 'alta' | 'urgente';
-    probability?: number;
     source?: string;
     nextAction?: string;
   }) => {
@@ -85,7 +84,6 @@ export function KanbanBoard({
       companyName: data.companyName,
       ownerName: data.ownerName,
       priority: data.priority,
-      probability: data.probability,
       source: data.source,
       nextAction: data.nextAction,
     });
@@ -110,7 +108,6 @@ export function KanbanBoard({
     companyName?: string;
     ownerName?: string;
     priority?: 'baixa' | 'media' | 'alta' | 'urgente';
-    probability?: number;
     source?: string;
     nextAction?: string;
   }) => {
@@ -123,7 +120,6 @@ export function KanbanBoard({
       companyName: data.companyName,
       ownerName: data.ownerName,
       priority: data.priority,
-      probability: data.probability,
       source: data.source,
       nextAction: data.nextAction,
     });
@@ -157,7 +153,6 @@ export function KanbanBoard({
       color: string;
       isWon: boolean;
       isLost: boolean;
-      defaultProbability?: number;
       labelId?: string | null;
     }[],
   ) => {
@@ -172,7 +167,6 @@ export function KanbanBoard({
           color: s.color,
           isWon: s.isWon,
           isLost: s.isLost,
-          defaultProbability: s.defaultProbability,
         })),
       );
       router.refresh();

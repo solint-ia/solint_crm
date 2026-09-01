@@ -1,5 +1,6 @@
 import type { Priority } from './conversation';
 import type { Id } from './shared';
+import type { InboxAccess } from './user';
 
 export interface PipelineStage {
   readonly id: Id;
@@ -9,7 +10,6 @@ export interface PipelineStage {
   readonly color: string;
   readonly isWon: boolean;
   readonly isLost: boolean;
-  readonly defaultProbability?: number;
   /**
    * Etiqueta que espelha esta etapa no cadastro do contato.
    *
@@ -72,7 +72,35 @@ export interface Pipeline {
   readonly accountId: Id;
   readonly name: string;
   readonly stages: readonly PipelineStage[];
+  /**
+   * A caixa de entrada a que este funil pertence.
+   *
+   * Ausente = funil avulso, que atravessa canais. Um número de WhatsApp por
+   * funil é o padrão desde que a conta passou a poder ter mais de uma conexão:
+   * quem atende dois números costuma vender duas coisas diferentes, e misturar
+   * os dois num quadro só torna o total do funil um número sem dono.
+   */
+  readonly inboxId?: Id;
+  /** Nome da conexão, para o seletor dizer de qual caixa é este funil. */
+  readonly inboxName?: string;
 }
+
+/**
+ * Os funis que esta pessoa alcança.
+ *
+ * Um funil avulso é sempre visível — ele não pertence a canal nenhum, então
+ * não há caixa a respeitar. Um funil de caixa segue exatamente a mesma regra
+ * das conversas: quem não alcança a caixa não alcança o funil dela. Sem isto,
+ * um colaborador restrito a uma equipe veria no Kanban os negócios de um canal
+ * cujas conversas ele não pode abrir.
+ */
+export const visiblePipelines = (
+  pipelines: readonly Pipeline[],
+  inboxAccess: InboxAccess,
+): readonly Pipeline[] =>
+  inboxAccess === 'todas'
+    ? pipelines
+    : pipelines.filter((p) => !p.inboxId || inboxAccess.includes(p.inboxId));
 
 export interface DealHistoryEntry {
   readonly text: string;
@@ -124,7 +152,6 @@ export interface Deal {
   readonly nextAction: string;
   readonly conversationId?: Id;
   readonly history: readonly DealHistoryEntry[];
-  readonly probability?: number; // 0 - 100
   readonly source?: DealSource;
   readonly team?: string;
   readonly tags?: readonly string[];
@@ -149,7 +176,6 @@ export interface PipelineSummary {
   readonly inNegotiationCount: number;
   readonly inNegotiationValueInCents: number;
   readonly conversionRate: number; // 0 - 100
-  readonly weightedForecastInCents: number;
 }
 
 export function calculatePipelineSummary(
@@ -162,7 +188,6 @@ export function calculatePipelineSummary(
   let totalValueInCents = 0;
   let inNegotiationCount = 0;
   let inNegotiationValueInCents = 0;
-  let weightedForecastInCents = 0;
   let wonCount = 0;
   let closedCount = 0;
 
@@ -181,9 +206,6 @@ export function calculatePipelineSummary(
       inNegotiationCount += 1;
       inNegotiationValueInCents += deal.amountInCents;
     }
-
-    const prob = deal.probability ?? (isWon ? 100 : isLost ? 0 : 50);
-    weightedForecastInCents += Math.round(deal.amountInCents * (prob / 100));
   }
 
   const conversionRate = closedCount > 0 ? Math.round((wonCount / closedCount) * 100) : 25;
@@ -194,7 +216,6 @@ export function calculatePipelineSummary(
     inNegotiationCount,
     inNegotiationValueInCents,
     conversionRate,
-    weightedForecastInCents,
   };
 }
 

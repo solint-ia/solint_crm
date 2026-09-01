@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { MoreHorizontal, Plus, Sparkles, TrendingUp } from 'lucide-react';
+import { MoreHorizontal, Plus, TrendingUp } from 'lucide-react';
 import type { Deal, PipelineStage } from '@/core/domain/pipeline';
 import { formatMoneyFromCents } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -126,18 +126,11 @@ export function KanbanColumn({
           </div>
         </div>
 
-        {/* Valor Total da Etapa e Probabilidade Padrão */}
-        <div className="flex items-center justify-between border-t border-line-soft pt-1.5 text-meta text-muted">
+        {/* Valor Total da Etapa */}
+        <div className="border-t border-line-soft pt-1.5 text-meta text-muted">
           <span className="font-display font-bold text-ink tracking-tight tabular-nums">
             {formatMoneyFromCents(total)}
           </span>
-
-          {stage.defaultProbability !== undefined && (
-            <span className="inline-flex items-center gap-0.5 rounded bg-surface-2 px-1.5 py-0.2 text-[10px] font-medium text-dim">
-              <Sparkles className="size-2 text-brand" />
-              {stage.defaultProbability}%
-            </span>
-          )}
         </div>
       </header>
 

@@ -23,7 +23,6 @@ interface NewDealModalProps {
     companyName?: string;
     ownerName?: string;
     priority?: 'baixa' | 'media' | 'alta' | 'urgente';
-    probability?: number;
     source?: string;
     nextAction?: string;
   }) => Promise<void>;
@@ -44,7 +43,6 @@ export function NewDealModal({
   const [companyName, setCompanyName] = useState('');
   const [ownerName, setOwnerName] = useState(owners[0] ?? '');
   const [priority, setPriority] = useState<'baixa' | 'media' | 'alta' | 'urgente'>('media');
-  const [probability, setProbability] = useState('50');
   const [source, setSource] = useState('whatsapp');
   const [nextAction, setNextAction] = useState('Entrar em contato para qualificação');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -71,7 +69,6 @@ export function NewDealModal({
         companyName: companyName.trim() || undefined,
         ownerName: ownerName.trim() || undefined,
         priority,
-        probability: parseInt(probability, 10) || 50,
         source,
         nextAction: nextAction.trim() || undefined,
       });
@@ -137,13 +134,7 @@ export function NewDealModal({
             <label className="mb-1 block text-meta font-semibold text-ink">Etapa Inicial</label>
             <select
               value={stageId}
-              onChange={(e) => {
-                setStageId(e.target.value);
-                const st = stages.find((s) => s.id === e.target.value);
-                if (st?.defaultProbability !== undefined) {
-                  setProbability(String(st.defaultProbability));
-                }
-              }}
+              onChange={(e) => setStageId(e.target.value)}
               className="w-full rounded-control border border-line bg-surface px-3 py-2 text-body text-ink outline-none focus:border-brand"
             >
               {stages.map((st) => (
@@ -180,8 +171,8 @@ export function NewDealModal({
           </div>
         </div>
 
-        {/* Vendedor + Prioridade + Probabilidade */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {/* Vendedor + Prioridade */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="mb-1 block text-meta font-semibold text-ink">Vendedor Responsável</label>
             <select
@@ -212,21 +203,6 @@ export function NewDealModal({
             </select>
           </div>
 
-          <div>
-            <label className="mb-1 block text-meta font-semibold text-ink flex items-center justify-between">
-              <span>Probabilidade</span>
-              <span className="text-brand text-micro font-bold">{probability}%</span>
-            </label>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              step="5"
-              value={probability}
-              onChange={(e) => setProbability(e.target.value)}
-              className="w-full accent-brand mt-2"
-            />
-          </div>
         </div>
 
         {/* Origem do Lead + Próxima Ação */}
