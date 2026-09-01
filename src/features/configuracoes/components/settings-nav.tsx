@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import type { Route } from 'next';
 import {
-  BookOpen,
+  // BookOpen,
   Building2,
   CreditCard,
   Inbox,
@@ -49,14 +49,12 @@ const SECTION_GROUPS: readonly NavSectionGroup[] = [
   },
   {
     title: 'Automação',
-    items: [
-      { id: 'automacoes', label: 'Automações e Regras', icon: Zap },
-    ],
+    items: [{ id: 'automacoes', label: 'Automações e Regras', icon: Zap }],
   },
   {
     title: 'Organização',
     items: [
-      { id: 'conhecimento', label: 'Base de conhecimento', icon: BookOpen },
+      // { id: 'conhecimento', label: 'Base de conhecimento', icon: BookOpen },
       { id: 'empresa', label: 'Empresa', icon: Building2 },
     ],
   },
@@ -128,26 +126,33 @@ export function SettingsNav({ current, sections }: SettingsNavProps) {
 
       {/* Visualização Mobile / Tablet: Faixa horizontal rolável com badges e ícones */}
       <div className="flex lg:hidden gap-1.5 overflow-x-auto px-3 py-2.5 scrollbar-none">
-        {grupos.flatMap((g) => g.items).map((item) => {
-          const active = item.id === current;
-          const Icon = item.icon;
-          return (
-            <Link
-              key={item.id}
-              href={`/configuracoes?secao=${item.id}` as Route}
-              aria-current={active ? 'page' : undefined}
-              className={cn(
-                'flex shrink-0 items-center gap-2 rounded-xl px-3 py-1.5 text-meta font-medium whitespace-nowrap transition-all',
-                active
-                  ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 font-bold shadow-2xs border border-blue-500/20'
-                  : 'border border-line bg-surface text-muted hover:bg-surface-2 hover:text-ink',
-              )}
-            >
-              <Icon className={cn('size-3.5', active ? 'text-blue-600 dark:text-blue-400' : 'text-dim')} />
-              <span>{item.label}</span>
-            </Link>
-          );
-        })}
+        {grupos
+          .flatMap((g) => g.items)
+          .map((item) => {
+            const active = item.id === current;
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.id}
+                href={`/configuracoes?secao=${item.id}` as Route}
+                aria-current={active ? 'page' : undefined}
+                className={cn(
+                  'flex shrink-0 items-center gap-2 rounded-xl px-3 py-1.5 text-meta font-medium whitespace-nowrap transition-all',
+                  active
+                    ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 font-bold shadow-2xs border border-blue-500/20'
+                    : 'border border-line bg-surface text-muted hover:bg-surface-2 hover:text-ink',
+                )}
+              >
+                <Icon
+                  className={cn(
+                    'size-3.5',
+                    active ? 'text-blue-600 dark:text-blue-400' : 'text-dim',
+                  )}
+                />
+                <span>{item.label}</span>
+              </Link>
+            );
+          })}
       </div>
     </nav>
   );

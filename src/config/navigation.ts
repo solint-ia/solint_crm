@@ -25,10 +25,7 @@ export interface NavItem {
 }
 
 /** A pessoa alcança este item da barra? */
-export const reachesNavItem = (
-  permissions: readonly Permission[],
-  item: NavItem,
-): boolean =>
+export const reachesNavItem = (permissions: readonly Permission[], item: NavItem): boolean =>
   Array.isArray(item.permission)
     ? item.permission.some((p) => permissions.includes(p))
     : permissions.includes(item.permission as Permission);
@@ -158,19 +155,50 @@ export const landingRouteFor = (permissions: readonly Permission[]): Route => {
  * própria tela decide quais abas mostrar.
  */
 export const SETTINGS_SECTIONS = [
-  { id: 'automacoes', label: 'Automações e Regras', read: 'config.automacoes:ler', write: 'config.automacoes:escrever' },
+  {
+    id: 'automacoes',
+    label: 'Automações e Regras',
+    read: 'config.automacoes:ler',
+    write: 'config.automacoes:escrever',
+  },
   // "Integrações e Conexões" saiu: webhooks e tokens de API passaram a ser
   // administrados pelo superadministrador da plataforma, e o que restava na
   // seção era um duplicado somente-leitura dos cartões de conexão que
   // "Caixas de entrada" já mostra.
-  { id: 'caixas', label: 'Caixas de entrada', read: 'config.caixas:ler', write: 'config.caixas:escrever' },
-  { id: 'equipe', label: 'Equipe e Permissões', read: 'config.equipe.membros:ler', alsoRead: 'config.equipe.papeis:ler', write: 'config.equipe.membros:escrever' },
-  { id: 'etiquetas', label: 'Etiquetas', read: 'config.etiquetas:ler', write: 'config.etiquetas:escrever' },
-  { id: 'respostas', label: 'Respostas rápidas', read: 'config.respostas:ler', write: 'config.respostas:escrever' },
-  { id: 'conhecimento', label: 'Base de conhecimento', read: 'config.conhecimento:ler', write: 'config.conhecimento:escrever' },
+  {
+    id: 'caixas',
+    label: 'Caixas de entrada',
+    read: 'config.caixas:ler',
+    write: 'config.caixas:escrever',
+  },
+  {
+    id: 'equipe',
+    label: 'Equipe e Permissões',
+    read: 'config.equipe.membros:ler',
+    alsoRead: 'config.equipe.papeis:ler',
+    write: 'config.equipe.membros:escrever',
+  },
+  {
+    id: 'etiquetas',
+    label: 'Etiquetas',
+    read: 'config.etiquetas:ler',
+    write: 'config.etiquetas:escrever',
+  },
+  {
+    id: 'respostas',
+    label: 'Respostas rápidas',
+    read: 'config.respostas:ler',
+    write: 'config.respostas:escrever',
+  },
+  // { id: 'conhecimento', label: 'Base de conhecimento', read: 'config.conhecimento:ler', write: 'config.conhecimento:escrever' },
   { id: 'empresa', label: 'Empresa', read: 'config.empresa:ler', write: 'config.empresa:escrever' },
   { id: 'faturamento', label: 'Faturamento e Plano', read: 'config.faturamento:ler' },
-  { id: 'seguranca', label: 'Segurança', read: 'config.seguranca:ler', write: 'config.seguranca:escrever' },
+  {
+    id: 'seguranca',
+    label: 'Segurança',
+    read: 'config.seguranca:ler',
+    write: 'config.seguranca:escrever',
+  },
 ] as const satisfies readonly {
   readonly id: string;
   readonly label: string;

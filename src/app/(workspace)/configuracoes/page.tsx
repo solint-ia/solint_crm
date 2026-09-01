@@ -12,7 +12,7 @@ import { Topbar } from '@/components/layout/topbar';
 import { SettingsNav } from '@/features/configuracoes/components/settings-nav';
 import { AutomationsSection } from '@/features/configuracoes/components/sections/automations-section';
 import { InboxesSection } from '@/features/configuracoes/components/sections/inboxes-section';
-import { KnowledgeSection } from '@/features/configuracoes/components/sections/knowledge-section';
+// import { KnowledgeSection } from '@/features/configuracoes/components/sections/knowledge-section';
 import { TeamSection } from '@/features/configuracoes/components/sections/team-section';
 import { LabelsSection } from '@/features/configuracoes/components/sections/labels-section';
 import { CannedResponsesSection } from '@/features/configuracoes/components/sections/canned-responses-section';
@@ -21,7 +21,12 @@ import { BillingSection } from '@/features/configuracoes/components/sections/bil
 import { SecuritySection } from '@/features/configuracoes/components/sections/security-section';
 import { AccessDenied } from '@/components/layout/access-denied';
 import { container } from '@/infrastructure/container';
-import { effectivePermissions, type Permission, type PermissionOverrides, type Role } from '@/core/domain/user';
+import {
+  effectivePermissions,
+  type Permission,
+  type PermissionOverrides,
+  type Role,
+} from '@/core/domain/user';
 import { prisma, readJson } from '@/infrastructure/db/prisma';
 import { parseOneOf } from '@/lib/search-params';
 
@@ -104,9 +109,7 @@ export default async function ConfiguracoesPage({
           inboxAccess: session.inboxAccess,
         })
       : Promise.resolve([]),
-    montaVocabulario
-      ? container.pipelines.listPipelines(session.account.id)
-      : Promise.resolve([]),
+    montaVocabulario ? container.pipelines.listPipelines(session.account.id) : Promise.resolve([]),
   ]);
 
   /**
@@ -174,9 +177,10 @@ export default async function ConfiguracoesPage({
             />
           ) : null}
 
-          {currentSection === 'conhecimento' ? (
+          {/* Base de conhecimento (desativada/comentada para reutilização futura) */}
+          {/* currentSection === ('conhecimento' as string) ? (
             <KnowledgeSection knowledge={settings.knowledge} />
-          ) : null}
+          ) : null */}
 
           {currentSection === 'equipe' ? (
             <TeamSection
