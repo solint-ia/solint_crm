@@ -1,0 +1,11 @@
+-- Um contato pode ter mais de um número de WhatsApp.
+--
+-- Vem das importações de prospecção: a mesma pessoa aparece em várias linhas da
+-- planilha, uma por telefone. Sem esta coluna, cada linha virava um contato
+-- separado — três "THIAGO FRANKLIN PROENCA" na agenda, e quem abrisse um deles
+-- não tinha como saber que os outros dois eram a mesma pessoa.
+--
+-- `phone` continua sendo um só, e continua sendo por onde a conversa sai: uma
+-- conversa tem um destinatário, e escolher sozinho qual número usar seria
+-- decidir no lugar de quem atende.
+ALTER TABLE "Contact" ADD COLUMN IF NOT EXISTS "extraPhones" TEXT[] NOT NULL DEFAULT '{}';

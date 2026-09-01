@@ -28,6 +28,14 @@ export interface Contact {
   readonly name: string;
   /** Telefone normalizado em E.164 (ver PhoneNumber). Vazio quando kind === 'grupo'. */
   readonly phone: string;
+  /**
+   * Outros números da mesma pessoa, em E.164, sem repetir `phone`.
+   *
+   * Uma conversa continua saindo por `phone` — ela tem um destinatário só, e
+   * escolher sozinho qual número usar seria decidir no lugar de quem atende.
+   * Estes ficam à vista no cadastro para que a escolha seja possível.
+   */
+  readonly extraPhones?: readonly string[];
   readonly email?: string;
   readonly company?: string;
   readonly channel: Channel;

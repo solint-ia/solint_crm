@@ -88,6 +88,7 @@ export const contactRow = (row: ContactWithLabels): Contact => ({
   accountId: row.accountId,
   name: row.name,
   phone: row.phone,
+  ...(row.extraPhones.length > 0 ? { extraPhones: row.extraPhones } : {}),
   channel: row.channel as Channel,
   avatarTone: row.avatarTone,
   labels: row.labels.map(labelRow),

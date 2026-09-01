@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
@@ -13,17 +13,31 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
+import {
+  foldText,
+  prepareImport,
+  sniffColumnKind,
+  type ImportRow,
+} from '@/core/domain/contact-import';
 import { importContactsCsvAction, type ImportCsvResult } from '@/app/(workspace)/contatos/actions';
 
 export interface ParsedCsvRow {
   readonly [key: string]: string;
 }
 
-export type TargetField = 'name' | 'phone' | 'email' | 'company' | 'notes' | 'ignore';
+export type TargetField =
+  | 'name'
+  | 'phone'
+  | 'email'
+  | 'company'
+  | 'notes'
+  | 'whatsappFlag'
+  | 'ignore';
 
 const TARGET_FIELDS: { key: TargetField; label: string; required: boolean }[] = [
   { key: 'name', label: 'Nome do contato', required: true },
   { key: 'phone', label: 'Telefone / WhatsApp', required: true },
+  { key: 'whatsappFlag', label: 'Tem WhatsApp? (coluna Sim/Não)', required: false },
   { key: 'email', label: 'E-mail', required: false },
   { key: 'company', label: 'Empresa', required: false },
   { key: 'notes', label: 'Notas / Observações', required: false },
@@ -91,28 +105,41 @@ function parseCsv(text: string): { headers: string[]; rows: ParsedCsvRow[] } {
   return { headers, rows };
 }
 
-function autoDetectField(header: string): TargetField {
-  const h = header.toLowerCase().replace(/[^a-z0-9]/g, '');
-  if (['nome', 'name', 'nomecompleto', 'fullname', 'contato', 'cliente'].includes(h)) return 'name';
-  if (
-    [
-      'telefone',
-      'phone',
-      'celular',
-      'whatsapp',
-      'mobile',
-      'fone',
-      'tel',
-      'numero',
-      'número',
-      'phonenumber',
-    ].includes(h)
-  )
+/**
+ * Para que serve esta coluna?
+ *
+ * O cabeçalho sozinho engana. Nas exportações de prospecção existe uma coluna
+ * chamada exatamente "WhatsApp" que **não** tem números: tem "Sim" e "Não",
+ * dizendo se aquele telefone recebe mensagem. Um detector que confiasse no nome
+ * mapearia "Sim" como telefone, e a planilha inteira seria recusada linha a
+ * linha sem explicar o motivo.
+ *
+ * Por isso o conteúdo decide primeiro, e o cabeçalho só desempata — é o
+ * caminho inverso do que parece natural, e é o que funciona.
+ */
+function autoDetectField(header: string, amostra: readonly string[]): TargetField {
+  const conteudo = sniffColumnKind(amostra);
+  const h = foldText(header);
+
+  // Uma coluna de Sim/Não só pode ser a marcação de WhatsApp.
+  if (conteudo === 'sim-nao') {
+    return h.includes('whatsapp') || h.includes('zap') ? 'whatsappFlag' : 'ignore';
+  }
+
+  // Entre duas colunas de telefone (a da empresa e a do sócio), a do sócio é a
+  // que interessa: é o celular de quem atende, não o fixo da recepção.
+  if (conteudo === 'telefone') {
+    if (h.includes('empresa') || h.includes('comercial')) return 'ignore';
     return 'phone';
-  if (['email', 'e-mail', 'mail', 'correio'].includes(h)) return 'email';
-  if (['empresa', 'company', 'organizacao', 'organização', 'firma'].includes(h)) return 'company';
-  if (['notas', 'notes', 'observacao', 'observação', 'obs', 'detalhes', 'comments'].includes(h))
-    return 'notes';
+  }
+
+  if (conteudo === 'email') return 'email';
+
+  if (h.includes('nome') || h.includes('name') || h.includes('contato') || h.includes('socio')) {
+    return 'name';
+  }
+  if (h.includes('empresa') || h.includes('company') || h.includes('razaosocial')) return 'company';
+  if (h.includes('nota') || h.includes('obs') || h.includes('coment')) return 'notes';
   return 'ignore';
 }
 
@@ -176,7 +203,11 @@ export function ImportCsvModal({
 
       const initialMapping: Record<string, TargetField> = {};
       parsed.headers.forEach((h) => {
-        initialMapping[h] = autoDetectField(h);
+        // Vinte linhas bastam para reconhecer o tipo da coluna e não custam
+        // nada; varrer o arquivo inteiro para isso atrasaria o passo de
+        // mapeamento numa planilha de milhares de linhas.
+        const amostra = parsed.rows.slice(0, 20).map((row) => row[h] ?? '');
+        initialMapping[h] = autoDetectField(h, amostra);
       });
 
       setHeaders(parsed.headers);
@@ -192,6 +223,51 @@ export function ImportCsvModal({
     reader.readAsText(file);
   };
 
+  /**
+   * O filtro por WhatsApp só existe quando há uma coluna dizendo isso.
+   *
+   * Numa planilha comum, sem essa coluna, filtrar descartaria tudo — o padrão
+   * precisa ser "importa tudo", e o filtro é o caso especial que a presença da
+   * coluna liga.
+   */
+  const temColunaWhatsapp = Object.values(mapping).includes('whatsappFlag');
+
+  /**
+   * O que a planilha vai virar — calculado com as **mesmas** regras da
+   * gravação, e não com uma estimativa parecida.
+   *
+   * Sem isto, o botão prometia "Importar 200 contatos" e o resultado dizia 40,
+   * porque as linhas repetidas da mesma pessoa se juntam e as sem WhatsApp
+   * caem. Um número que muda entre o clique e o resultado é pior que número
+   * nenhum: a pessoa acha que perdeu 160 contatos.
+   */
+  const previa = useMemo(() => {
+    if (step !== 'mapeamento' || rows.length === 0) return null;
+    const mapeadas = Object.values(mapping);
+    if (!mapeadas.includes('name') || !mapeadas.includes('phone')) return null;
+
+    const linhas: ImportRow[] = rows.map((row) => {
+      let name = '';
+      let phone = '';
+      let email = '';
+      let company = '';
+      let notes = '';
+      let whatsappFlag = '';
+      Object.entries(mapping).forEach(([csvHeader, targetField]) => {
+        const val = row[csvHeader] ?? '';
+        if (targetField === 'name') name = val;
+        if (targetField === 'phone') phone = val;
+        if (targetField === 'email') email = val;
+        if (targetField === 'company') company = val;
+        if (targetField === 'notes') notes = val;
+        if (targetField === 'whatsappFlag') whatsappFlag = val;
+      });
+      return { name, phone, email, company, notes, whatsappFlag };
+    });
+
+    return prepareImport(linhas, temColunaWhatsapp);
+  }, [step, rows, mapping, temColunaWhatsapp]);
+
   const handleImport = async () => {
     const mappedValues = Object.values(mapping);
     const hasName = mappedValues.includes('name');
@@ -206,29 +282,50 @@ export function ImportCsvModal({
     setLoading(true);
 
     try {
-      const contactsToImport = rows
-        .map((row) => {
-          let name = '';
-          let phone = '';
-          let email = '';
-          let company = '';
-          let notes = '';
+      /**
+       * A planilha vira contatos aqui, pelas regras do domínio.
+       *
+       * Duas coisas acontecem, e as duas mudam a contagem que o usuário vê:
+       * as linhas sem "Sim" na coluna de WhatsApp são descartadas, e as linhas
+       * da mesma pessoa (mesmo nome, mesma empresa) viram **um** contato com
+       * vários números. Uma planilha de 200 linhas costuma virar 40 contatos.
+       */
+      const linhas: ImportRow[] = rows.map((row) => {
+        let name = '';
+        let phone = '';
+        let email = '';
+        let company = '';
+        let notes = '';
+        let whatsappFlag = '';
 
-          Object.entries(mapping).forEach(([csvHeader, targetField]) => {
-            const val = row[csvHeader] ?? '';
-            if (targetField === 'name') name = val;
-            if (targetField === 'phone') phone = val;
-            if (targetField === 'email') email = val;
-            if (targetField === 'company') company = val;
-            if (targetField === 'notes') notes = val;
-          });
+        Object.entries(mapping).forEach(([csvHeader, targetField]) => {
+          const val = row[csvHeader] ?? '';
+          if (targetField === 'name') name = val;
+          if (targetField === 'phone') phone = val;
+          if (targetField === 'email') email = val;
+          if (targetField === 'company') company = val;
+          if (targetField === 'notes') notes = val;
+          if (targetField === 'whatsappFlag') whatsappFlag = val;
+        });
 
-          return { name, phone, email, company, notes };
-        })
-        .filter((c) => c.name && c.phone);
+        return { name, phone, email, company, notes, whatsappFlag };
+      });
+
+      const preparo = prepareImport(linhas, temColunaWhatsapp);
+      const contactsToImport = preparo.contacts.map((contato) => ({
+        name: contato.name,
+        phones: [...contato.phones],
+        email: contato.email,
+        company: contato.company,
+        notes: contato.notes,
+      }));
 
       if (contactsToImport.length === 0) {
-        setErrorMsg('Nenhum contato com Nome e Telefone preenchidos foi encontrado.');
+        setErrorMsg(
+          preparo.semWhatsapp > 0
+            ? `Nenhuma linha com WhatsApp marcado como "Sim" (${preparo.semWhatsapp} descartada(s)).`
+            : 'Nenhum contato com Nome e Telefone válidos foi encontrado.',
+        );
         setLoading(false);
         return;
       }
@@ -275,7 +372,10 @@ export function ImportCsvModal({
                 </>
               ) : (
                 <>
-                  <span>Importar {rows.length} contatos</span>
+                  <span>
+                    Importar {previa ? previa.contacts.length : rows.length}{' '}
+                    {(previa ? previa.contacts.length : rows.length) === 1 ? 'contato' : 'contatos'}
+                  </span>
                   <ArrowRight className="size-4" />
                 </>
               )}
@@ -368,6 +468,55 @@ export function ImportCsvModal({
               Trocar arquivo
             </button>
           </div>
+
+          {/* O que a planilha vai virar, com as contas à vista. */}
+          {previa ? (
+            <div className="rounded-xl border border-line bg-surface-2/50 p-3 text-[11px] text-muted">
+              <p className="text-xs font-semibold text-ink">
+                {rows.length} linha(s) → {previa.contacts.length} contato(s)
+              </p>
+              <ul className="mt-1.5 flex flex-col gap-0.5">
+                {temColunaWhatsapp ? (
+                  <li>
+                    <strong className="text-ink">{previa.semWhatsapp}</strong> linha(s) descartada(s)
+                    por não ter WhatsApp marcado como “Sim”.
+                  </li>
+                ) : (
+                  <li>
+                    Nenhuma coluna de “Sim/Não” mapeada — <strong className="text-ink">todas</strong>{' '}
+                    as linhas serão importadas.
+                  </li>
+                )}
+                {previa.agrupadas > 0 ? (
+                  <li>
+                    <strong className="text-ink">{previa.agrupadas}</strong> linha(s) da mesma pessoa
+                    foram juntadas — o contato fica com vários números.
+                  </li>
+                ) : null}
+                {previa.invalidas > 0 ? (
+                  <li>
+                    <strong className="text-ink">{previa.invalidas}</strong> linha(s) sem nome ou com
+                    telefone irrecuperável.
+                  </li>
+                ) : null}
+              </ul>
+
+              {previa.contacts.some((c) => c.phones.length > 1) ? (
+                <p className="mt-2 border-t border-line-soft pt-2">
+                  Exemplo:{' '}
+                  {(() => {
+                    const exemplo = previa.contacts.find((c) => c.phones.length > 1)!;
+                    return (
+                      <>
+                        <strong className="text-ink">{exemplo.name}</strong> com{' '}
+                        {exemplo.phones.length} números ({exemplo.phones.join(', ')})
+                      </>
+                    );
+                  })()}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
 
           <p className="text-xs text-muted">
             Relacione as colunas da sua planilha aos campos correspondentes no CRM:

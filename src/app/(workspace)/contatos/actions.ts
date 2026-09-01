@@ -5,6 +5,7 @@ import { CHANNELS } from '@/core/domain/channel';
 import { can } from '@/core/domain/user';
 import { container } from '@/infrastructure/container';
 import { prisma, asJson } from '@/infrastructure/db/prisma';
+import { normalizeImportedPhone } from '@/core/domain/contact-import';
 import { postgresPubSub, CHANNELS as DB_CHANNELS } from '@/infrastructure/db/postgres-pubsub';
 import { WA_ENGINE } from '@/infrastructure/whatsapp/channel';
 
@@ -154,18 +155,40 @@ export async function saveSegmentAction(input: unknown): Promise<ActionResult> {
   }
 }
 
+/**
+ * O schema é deliberadamente tolerante com e-mail, empresa e notas.
+ *
+ * Antes, `email` era `.email()` obrigatório-se-presente e `notes` tinha teto de
+ * 2000 — e o Zod recusa o **payload inteiro** quando uma linha desrespeita
+ * qualquer regra. Numa planilha de prospecção com milhares de linhas, um único
+ * e-mail malformado (ou uma célula com dezesseis e-mails separados por ponto e
+ * vírgula, que é o formato real dessas exportações) derrubava a importação toda
+ * sem dizer qual linha era a culpada. Agora a tela já normaliza esses campos
+ * (ver `contact-import.ts`) e o que chega aqui é cortado, não recusado: o
+ * telefone é o único campo cuja invalidez descarta a linha, e ela é relatada
+ * uma a uma no resultado.
+ */
 const importContactsCsvSchema = z.object({
   contacts: z
     .array(
       z.object({
         name: z.string().trim().min(1, 'Nome é obrigatório.'),
-        phone: z.string().trim().min(5, 'Telefone é obrigatório.'),
-        email: z.string().trim().email('E-mail inválido.').optional().or(z.literal('')),
-        company: z.string().trim().max(100).optional().or(z.literal('')),
-        notes: z.string().trim().max(2000).optional().or(z.literal('')),
+        /**
+         * Todos os números da mesma pessoa. O primeiro vira o principal.
+         *
+         * Era um `phone` só, e a planilha traz a mesma pessoa em várias linhas
+         * — uma por telefone. Cada linha virava um contato separado, três
+         * "Thiago Franklin Proenca" na agenda sem nada indicando que eram a
+         * mesma pessoa.
+         */
+        phones: z.array(z.string().trim().min(5)).min(1).max(20),
+        email: z.string().trim().max(200).optional().or(z.literal('')),
+        company: z.string().trim().max(200).optional().or(z.literal('')),
+        notes: z.string().trim().max(5000).optional().or(z.literal('')),
       }),
     )
-    .min(1, 'Nenhum contato enviado para importação.'),
+    .min(1, 'Nenhum contato enviado para importação.')
+    .max(5000, 'Importe no máximo 5000 contatos por vez.'),
 });
 
 export interface ImportCsvResult {
@@ -193,35 +216,72 @@ export async function importContactsCsvAction(input: unknown): Promise<ActionRes
       const item = parsed.data.contacts[i]!;
       const lineNumber = i + 1;
 
-      let rawDigits = item.phone.replace(/\D/g, '');
-      if (!rawDigits) {
-        errors.push({ line: lineNumber, name: item.name, error: 'Telefone vazio ou inválido.' });
+      /**
+       * A normalização é a mesma da tela, e vem do domínio.
+       *
+       * Antes havia uma cópia aqui — `replace(/\D/g)`, `if length === 10 || 11
+       * prefixa 55` — e a tela tinha outra. Duas cópias da mesma regra é uma
+       * divergência esperando data: a tela dizia "3 contatos, 5 números" e o
+       * banco recebia outra coisa.
+       */
+      const numeros = [
+        ...new Set(
+          item.phones
+            .map((bruto) => normalizeImportedPhone(bruto))
+            .filter((numero): numero is string => numero !== null),
+        ),
+      ];
+
+      if (numeros.length === 0) {
+        errors.push({
+          line: lineNumber,
+          name: item.name,
+          error: `Nenhum telefone válido (${item.phones.join(', ')}).`,
+        });
         continue;
       }
-      if (rawDigits.length === 10 || rawDigits.length === 11) {
-        rawDigits = `55${rawDigits}`;
-      }
-      const normalizedPhone = `+${rawDigits}`;
 
-      if (!/^\+[1-9]\d{7,14}$/.test(normalizedPhone)) {
-        errors.push({ line: lineNumber, name: item.name, error: `Telefone inválido (${item.phone}).` });
-        continue;
-      }
+      const [principal, ...extras] = numeros as [string, ...string[]];
 
+      /**
+       * O contato já existente é procurado por **qualquer** um dos números.
+       *
+       * Só pelo principal, reimportar a mesma planilha depois de o comercial
+       * ter trocado a ordem das linhas criaria um segundo contato da mesma
+       * pessoa — o número que virou principal na segunda passada estava na
+       * lista de extras da primeira, e ninguém encontraria o outro.
+       */
       const existing = await prisma.contact.findFirst({
-        where: { accountId, phone: normalizedPhone },
+        where: {
+          accountId,
+          OR: [{ phone: { in: numeros } }, { extraPhones: { hasSome: numeros } }],
+        },
       });
 
       if (existing) {
+        // Os números se somam, não se substituem: a planilha nova pode trazer
+        // um celular a mais sem que isso apague o que já se sabia da pessoa.
+        const jaConhecidos = new Set([existing.phone, ...existing.extraPhones]);
+        const novosExtras = [...existing.extraPhones];
+        for (const numero of numeros) {
+          if (!jaConhecidos.has(numero)) {
+            novosExtras.push(numero);
+            jaConhecidos.add(numero);
+          }
+        }
+
         await prisma.contact.update({
           where: { id: existing.id, accountId },
           data: {
             name: existing.name || item.name,
+            extraPhones: novosExtras,
             email: existing.email || (item.email ? item.email : undefined),
             company: existing.company || (item.company ? item.company : undefined),
             notes: existing.notes
               ? item.notes
-                ? `${existing.notes}\n\n[Importado]: ${item.notes}`
+                ? `${existing.notes}
+
+[Importado]: ${item.notes}`
                 : existing.notes
               : item.notes || undefined,
           },
@@ -234,7 +294,8 @@ export async function importContactsCsvAction(input: unknown): Promise<ActionRes
             id: contactId,
             accountId,
             name: item.name,
-            phone: normalizedPhone,
+            phone: principal,
+            extraPhones: extras,
             email: item.email || null,
             company: item.company || null,
             channel: 'whatsapp',

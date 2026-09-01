@@ -223,6 +223,27 @@ export function ContactDrawer({
                     </span>
                   </div>
 
+                  {/* Os outros números da mesma pessoa.
+                      Vêm das importações de prospecção, onde a planilha traz
+                      uma linha por telefone. Ficam à vista, e não escondidos,
+                      porque é quem atende que sabe por qual chamar — o sistema
+                      só pode oferecer a escolha. */}
+                  {contact.extraPhones && contact.extraPhones.length > 0 ? (
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="flex items-center gap-2 text-muted">
+                        <Phone className="size-3.5 text-dim" />
+                        <span>
+                          Outros {contact.extraPhones.length === 1 ? 'número' : 'números'}:
+                        </span>
+                      </span>
+                      <span className="flex flex-col items-end gap-0.5 font-mono font-medium text-ink">
+                        {contact.extraPhones.map((numero) => (
+                          <span key={numero}>{PhoneNumber.format(numero)}</span>
+                        ))}
+                      </span>
+                    </div>
+                  ) : null}
+
                   {contact.email && (
                     <div className="flex items-center justify-between gap-3">
                       <span className="flex items-center gap-2 text-muted">

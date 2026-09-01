@@ -224,7 +224,18 @@ model Contact {
   accountId        String
   name             String
   /// E.164. Vazio quando `kind = grupo` — um grupo não tem telefone próprio.
+  ///
+  /// É o número por onde as conversas saem. Continua sendo **um**: uma conversa
+  /// tem um destinatário, e escolher sozinho qual dos números usar seria decidir
+  /// no lugar de quem atende.
   phone            String
+  /// Outros números da mesma pessoa, em E.164, sem repetir o de `phone`.
+  ///
+  /// Nasce das importações de prospecção, onde a mesma pessoa aparece em várias
+  /// linhas — uma por telefone. Guardar cada linha como um contato separado
+  /// criava três "THIAGO FRANKLIN PROENCA" na agenda, e quem abrisse um deles
+  /// não tinha como saber que os outros dois eram a mesma pessoa.
+  extraPhones      String[] @default([])
   email            String?
   company          String?
   channel          String
