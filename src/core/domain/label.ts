@@ -12,7 +12,7 @@ export const TONES = [
   'pink',
   'indigo',
 ] as const;
-export type Tone = (typeof TONES)[number];
+export type Tone = (typeof TONES)[number] | (string & {});
 
 export interface Label {
   readonly id: Id;

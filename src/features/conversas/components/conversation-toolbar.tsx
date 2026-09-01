@@ -8,7 +8,7 @@ import type { Label } from '@/core/domain/label';
 import type { User } from '@/core/domain/user';
 import { Menu, MenuHeader, MenuItem } from '@/components/ui/menu';
 import { PRIORITY_LABEL, PRIORITY_TONE } from '@/components/domain/presentation-maps';
-import { TONE_DOT_CLASSES } from '@/components/ui/tone';
+import { isHexColor, TONE_DOT_CLASSES } from '@/components/ui/tone';
 import { cn } from '@/lib/cn';
 
 export interface InboxCatalog {
@@ -36,7 +36,7 @@ export function PriorityMenu({
     <Menu
       label={`Prioridade: ${PRIORITY_LABEL[conversation.priority]}`}
       trigger={
-        <span className="inline-flex items-center gap-1 rounded-control border border-line px-2 py-1 text-meta font-semibold text-ink transition-colors hover:bg-surface-2">
+        <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold text-ink transition-all hover:bg-surface hover:shadow-2xs">
           <span className={cn('size-1.5 rounded-full', TONE_DOT_CLASSES[tone])} />
           {PRIORITY_LABEL[conversation.priority]}
           <ChevronDown className="size-3 text-dim" />
@@ -96,9 +96,18 @@ export function LabelMenu({
       label="Aplicar etiquetas"
       panelClassName="w-64"
       trigger={
-        <span className="inline-flex items-center gap-1 rounded-control border border-line px-2 py-1 text-meta font-semibold text-ink transition-colors hover:bg-surface-2">
+        <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold text-ink transition-all hover:bg-surface hover:shadow-2xs">
           <Tag className="size-3 text-dim" />
-          {conversation.labels.length > 0 ? conversation.labels.length : 'Etiquetas'}
+          {conversation.labels.length > 0 ? (
+            <span className="flex items-center gap-1">
+              <span>Etiquetas</span>
+              <span className="rounded-full bg-brand/15 text-brand px-1 py-0.2 text-[10px] font-bold">
+                {conversation.labels.length}
+              </span>
+            </span>
+          ) : (
+            'Etiquetas'
+          )}
           <ChevronDown className="size-3 text-dim" />
         </span>
       }
@@ -109,13 +118,15 @@ export function LabelMenu({
           <div className="max-h-64 overflow-y-auto">
             {labels.map((label) => {
               const active = applied.has(label.id);
+              const isHex = isHexColor(label.tone);
               return (
                 <MenuItem key={label.id} selected={active} onClick={() => toggle(label)}>
                   <span
-                    className={cn('size-1.5 shrink-0 rounded-full', TONE_DOT_CLASSES[label.tone])}
+                    className={cn('size-1.5 shrink-0 rounded-full', !isHex && TONE_DOT_CLASSES[label.tone])}
+                    style={isHex ? { backgroundColor: label.tone } : undefined}
                   />
                   <span className="min-w-0 flex-1 truncate">{label.name}</span>
-                  {active ? <Check className="size-3 shrink-0" /> : null}
+                  {active ? <Check className="size-3 shrink-0 text-brand" /> : null}
                 </MenuItem>
               );
             })}
@@ -143,8 +154,8 @@ export function AssigneeButton({
     <button
       type="button"
       onClick={onOpen}
-      title="Transferir atendimento"
-      className="inline-flex items-center gap-1.5 rounded-control border border-line px-2 py-1 text-meta font-semibold text-ink transition-colors hover:bg-surface-2"
+      title="Transferir responsável"
+      className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold text-ink transition-all hover:bg-surface hover:shadow-2xs"
     >
       <UserPlus className="size-3 text-dim" />
       <span className="max-w-28 truncate">
@@ -180,9 +191,9 @@ export function InboxMenu({
     <Menu
       label={`Caixa: ${atual?.name ?? 'atual'}`}
       trigger={
-        <span className="inline-flex items-center gap-1 rounded-control border border-line px-2 py-1 text-meta font-semibold text-ink transition-colors hover:bg-surface-2">
+        <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold text-ink transition-all hover:bg-surface hover:shadow-2xs">
           <Inbox className="size-3 text-dim" />
-          {atual?.name ?? 'Caixa'}
+          <span className="max-w-24 truncate">{atual?.name ?? 'Caixa'}</span>
           <ChevronDown className="size-3 text-dim" />
         </span>
       }

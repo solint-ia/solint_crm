@@ -10,11 +10,12 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import type { Label, Tone } from '@/core/domain/label';
+import type { Label } from '@/core/domain/label';
 import { LabelChip } from '@/components/domain/label-chip';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { ConfirmModal } from '@/components/ui/confirm-modal';
+import { ColorPicker, normalizeToHex, POPULAR_COLORS } from '@/components/ui/color-picker';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/cn';
 import {
@@ -26,17 +27,6 @@ import {
 interface LabelsSectionProps {
   readonly labels: readonly Label[];
 }
-
-const TONES: readonly { readonly id: Tone; readonly label: string; readonly bg: string }[] = [
-  { id: 'blue', label: 'Azul', bg: 'bg-blue-500' },
-  { id: 'green', label: 'Verde', bg: 'bg-emerald-500' },
-  { id: 'amber', label: 'Âmbar', bg: 'bg-amber-500' },
-  { id: 'red', label: 'Vermelho', bg: 'bg-red-500' },
-  { id: 'violet', label: 'Violeta', bg: 'bg-purple-500' },
-  { id: 'cyan', label: 'Ciano', bg: 'bg-cyan-500' },
-  { id: 'pink', label: 'Rosa', bg: 'bg-pink-500' },
-  { id: 'slate', label: 'Cinza', bg: 'bg-slate-500' },
-];
 
 export function LabelsSection({ labels: initialLabels }: LabelsSectionProps) {
   const router = useRouter();
@@ -57,7 +47,7 @@ export function LabelsSection({ labels: initialLabels }: LabelsSectionProps) {
   const [deletingLabel, setDeletingLabel] = useState<Label | null>(null);
 
   const [labelName, setLabelName] = useState('');
-  const [labelTone, setLabelTone] = useState<Tone>('blue');
+  const [labelTone, setLabelTone] = useState<string>('#3B82F6');
   const [labelDescription, setLabelDescription] = useState('');
 
   const { show } = useToast();
@@ -67,7 +57,10 @@ export function LabelsSection({ labels: initialLabels }: LabelsSectionProps) {
       const matchesSearch =
         lbl.name.toLowerCase().includes(search.toLowerCase()) ||
         (lbl.description?.toLowerCase().includes(search.toLowerCase()) ?? false);
-      const matchesTone = selectedTone === 'todos' || lbl.tone === selectedTone;
+      const matchesTone =
+        selectedTone === 'todos' ||
+        lbl.tone === selectedTone ||
+        normalizeToHex(lbl.tone).toUpperCase() === normalizeToHex(selectedTone).toUpperCase();
       return matchesSearch && matchesTone;
     });
   }, [labels, search, selectedTone]);
@@ -75,7 +68,7 @@ export function LabelsSection({ labels: initialLabels }: LabelsSectionProps) {
   const handleOpenNew = () => {
     setEditingLabel(null);
     setLabelName('');
-    setLabelTone('blue');
+    setLabelTone('#3B82F6');
     setLabelDescription('');
     setError(undefined);
     setIsModalOpen(true);
@@ -85,7 +78,7 @@ export function LabelsSection({ labels: initialLabels }: LabelsSectionProps) {
     setError(undefined);
     setEditingLabel(lbl);
     setLabelName(lbl.name);
-    setLabelTone(lbl.tone);
+    setLabelTone(normalizeToHex(lbl.tone));
     setLabelDescription(lbl.description ?? '');
     setIsModalOpen(true);
   };
@@ -215,20 +208,20 @@ export function LabelsSection({ labels: initialLabels }: LabelsSectionProps) {
           >
             Todas
           </button>
-          {TONES.map((t) => (
+          {POPULAR_COLORS.map((c) => (
             <button
-              key={t.id}
+              key={c.hex}
               type="button"
-              onClick={() => setSelectedTone(t.id)}
+              onClick={() => setSelectedTone(c.hex)}
               className={cn(
                 'flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-semibold transition-all',
-                selectedTone === t.id
+                selectedTone.toUpperCase() === c.hex.toUpperCase()
                   ? 'bg-surface text-ink border border-brand shadow-2xs font-bold'
                   : 'border border-line bg-surface text-muted hover:bg-surface-2',
               )}
             >
-              <span className={cn('size-2 rounded-full', t.bg)} />
-              <span className="hidden sm:inline">{t.label}</span>
+              <span className="size-2 rounded-full" style={{ backgroundColor: c.hex }} />
+              <span className="hidden sm:inline">{c.name}</span>
             </button>
           ))}
         </div>
@@ -307,7 +300,7 @@ export function LabelsSection({ labels: initialLabels }: LabelsSectionProps) {
         open={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         title={editingLabel ? 'Editar etiqueta' : 'Nova etiqueta'}
-        description="Defina um nome de identificação e selecione a paleta de cor."
+        description="Defina um nome de identificação e selecione a cor livre ou código hexadecimal."
         className="max-w-md"
       >
         <form onSubmit={handleSave} className="flex flex-col gap-4 pt-1">
@@ -332,32 +325,11 @@ export function LabelsSection({ labels: initialLabels }: LabelsSectionProps) {
             />
           </div>
 
-          <div>
-            <label className="mb-1.5 block text-xs font-semibold text-ink">
-              Paleta de cor acessível
-            </label>
-            <div className="grid grid-cols-4 gap-2">
-              {TONES.map((t) => {
-                const selected = labelTone === t.id;
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => setLabelTone(t.id)}
-                    className={cn(
-                      'flex items-center gap-2 rounded-xl border p-2 text-left text-xs transition-all',
-                      selected
-                        ? 'border-brand bg-blue-500/10 font-bold text-blue-600 dark:text-blue-400 ring-1 ring-brand/30'
-                        : 'border border-line bg-surface text-muted hover:bg-surface-2',
-                    )}
-                  >
-                    <span className={cn('size-3 rounded-full shrink-0', t.bg)} />
-                    <span className="truncate">{t.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          <ColorPicker
+            label="Cor da etiqueta (livre ou código hexadecimal)"
+            value={labelTone}
+            onChange={setLabelTone}
+          />
 
           <div>
             <label htmlFor="label-desc" className="mb-1 block text-xs font-semibold text-ink">

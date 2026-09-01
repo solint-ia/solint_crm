@@ -55,10 +55,7 @@ export function InfoTooltip({
         <span
           id={id}
           role="tooltip"
-          // `left-0` e não centralizado: o cartão mais à esquerda da grade
-          // cortaria o balão contra a borda da janela, e o mais à direita
-          // empurraria a página para o lado.
-          className="absolute top-full left-0 z-30 mt-1.5 w-60 rounded-xl border border-line bg-surface p-2.5 text-left text-[11px] leading-relaxed font-normal text-muted shadow-lg animate-in fade-in duration-100 sm:w-72"
+          className="absolute top-full left-0 z-50 mt-1.5 w-64 rounded-xl border border-line bg-surface/95 dark:bg-surface-2/95 p-3 text-left text-xs leading-relaxed font-normal text-ink shadow-xl backdrop-blur-md animate-in fade-in duration-100 sm:w-72"
         >
           {text}
         </span>

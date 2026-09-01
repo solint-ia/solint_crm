@@ -384,75 +384,115 @@ export function ChatPanel({
           </button>
         </div>
 
-        {/* Lado Direito: Ações do Atendimento */}
-        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-          {/* Se o painel de contexto estiver FECHADO e houver espaço, exibe a barra completa */}
-          {!isContextOpen ? (
-            <>
-              <div className="hidden @5xl:flex items-center gap-1.5">
-                <StatusBadge status={conversation.status} />
-                <PriorityMenu conversation={conversation} onChange={onChangePriority} />
-                <LabelMenu
-                  conversation={conversation}
-                  labels={catalog.labels}
-                  onChange={onSetLabels}
-                />
+        {/* Lado Direito: Ações do Atendimento em 3 Grupos Coerentes */}
+        <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+          {/* Grupo 1: Metadados e Atribuição da Conversa (Cápsula Unificada) */}
+          {!isContextOpen && (
+            <div className="hidden @4xl:flex items-center gap-1 rounded-xl border border-line bg-surface-2/70 p-1 shadow-2xs">
+              <StatusBadge status={conversation.status} />
+              <span className="h-3.5 w-px bg-line/80 mx-0.5" />
+              <PriorityMenu conversation={conversation} onChange={onChangePriority} />
+              <LabelMenu
+                conversation={conversation}
+                labels={catalog.labels}
+                onChange={onSetLabels}
+              />
+              {inboxes.length > 1 && (
                 <InboxMenu conversation={conversation} inboxes={inboxes} onMove={onMoveInbox} />
-              </div>
+              )}
+              <span className="h-3.5 w-px bg-line/80 mx-0.5" />
+              <AssigneeButton conversation={conversation} onOpen={() => setTransferOpen(true)} />
+            </div>
+          )}
 
-              <div className="hidden @3xl:inline-flex">
-                <AssigneeButton conversation={conversation} onOpen={() => setTransferOpen(true)} />
-              </div>
+          {/* Grupo 2: Ações de Status e Resolução */}
+          <div className="flex items-center gap-1.5">
+            {!isContextOpen && (
+              <div className="hidden @2xl:flex items-center gap-0.5 rounded-xl border border-line bg-surface-2/70 p-1 shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => toggleStatus('espera')}
+                  aria-pressed={conversation.status === 'espera'}
+                  title={
+                    conversation.status === 'espera'
+                      ? 'Tirar da espera (reabrir atendimento)'
+                      : 'Colocar atendimento em espera'
+                  }
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-all',
+                    conversation.status === 'espera'
+                      ? 'border border-amber-500/40 bg-amber-500/15 text-amber-600 dark:text-amber-300 shadow-2xs'
+                      : 'text-ink hover:bg-surface border border-transparent',
+                  )}
+                >
+                  <PauseCircle className="size-3.5 text-amber-500 shrink-0" />
+                  <span>Em espera</span>
+                </button>
 
+                <button
+                  type="button"
+                  onClick={() => toggleStatus('pendente')}
+                  aria-pressed={conversation.status === 'pendente'}
+                  title={
+                    conversation.status === 'pendente'
+                      ? 'Tirar de pendente (reabrir atendimento)'
+                      : 'Marcar como pendente'
+                  }
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-all',
+                    conversation.status === 'pendente'
+                      ? 'border border-sky-500/40 bg-sky-500/15 text-sky-600 dark:text-sky-300 shadow-2xs'
+                      : 'text-ink hover:bg-surface border border-transparent',
+                  )}
+                >
+                  <Clock className="size-3.5 text-sky-500 shrink-0" />
+                  <span>Pendente</span>
+                </button>
+              </div>
+            )}
+
+            {/* Ação Principal: Finalizar / Reabrir Atendimento */}
+            {conversation.status === 'resolvida' ? (
               <button
                 type="button"
-                onClick={() => toggleStatus('espera')}
-                aria-pressed={conversation.status === 'espera'}
-                title={
-                  conversation.status === 'espera'
-                    ? 'Tirar da espera (reabrir atendimento)'
-                    : 'Colocar atendimento em espera'
-                }
-                className={cn(
-                  'hidden @2xl:inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-ink transition-all hover:bg-surface-2',
-                  conversation.status === 'espera' && 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-300 font-semibold',
-                )}
+                onClick={() => onChangeStatus('aberta')}
+                title="Reabrir este atendimento"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-600/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-300 transition-all hover:bg-emerald-500/20 active:scale-[0.98] shadow-2xs"
               >
-                <PauseCircle className="size-3.5 text-amber-500" />
-                <span>Em espera</span>
+                <RotateCcw className="size-3.5 shrink-0" />
+                <span className="hidden sm:inline">Reabrir atendimento</span>
+                <span className="sm:hidden">Reabrir</span>
               </button>
-
+            ) : (
               <button
                 type="button"
-                onClick={() => toggleStatus('pendente')}
-                aria-pressed={conversation.status === 'pendente'}
-                title={
-                  conversation.status === 'pendente'
-                    ? 'Tirar de pendente (reabrir atendimento)'
-                    : 'Marcar como pendente'
-                }
-                className={cn(
-                  'hidden @2xl:inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-ink transition-all hover:bg-surface-2',
-                  conversation.status === 'pendente' && 'border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-300 font-semibold',
-                )}
+                onClick={() => onChangeStatus('resolvida')}
+                title="Finalizar e resolver atendimento"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-xs shadow-emerald-600/25 transition-all hover:bg-emerald-500 active:scale-[0.98]"
               >
-                <Clock className="size-3.5 text-sky-500" />
-                <span>Pendente</span>
+                <CheckCircle2 className="size-3.5 shrink-0" />
+                <span className="hidden sm:inline">Finalizar atendimento</span>
+                <span className="sm:hidden">Finalizar</span>
               </button>
+            )}
+          </div>
 
-              {/* Menu de Mais Ações em Telas Médias */}
-              <div className="@5xl:hidden">
+          {/* Grupo 3: Utilitários e Painel Lateral */}
+          <div className="flex items-center gap-1.5 pl-1 sm:pl-1.5 border-l border-line/60">
+            {/* Menu de Transbordo para quando a cápsula completa estiver oculta */}
+            {(!isContextOpen ? (
+              <div className="@4xl:hidden">
                 <Menu
                   label="Mais ações da conversa"
                   trigger={
-                    <span className="flex size-8 items-center justify-center rounded-lg border border-line bg-surface text-muted hover:bg-surface-2 hover:text-ink transition-colors">
+                    <span className="flex size-8 items-center justify-center rounded-xl border border-line bg-surface text-muted hover:bg-surface-2 hover:text-ink transition-colors shadow-2xs">
                       <MoreVertical className="size-4" />
                     </span>
                   }
                 >
                   {(close) => (
                     <>
-                      <MenuHeader>Status & Responsável</MenuHeader>
+                      <MenuHeader>Atendimento & Status</MenuHeader>
                       <MenuItem
                         onClick={() => {
                           toggleStatus('espera');
@@ -490,112 +530,80 @@ export function ChatPanel({
                   )}
                 </Menu>
               </div>
-            </>
-          ) : (
-            /* Quando o painel de contexto está ABERTO: Menu compacto para evitar sobreposição */
-            <div className="flex items-center gap-1.5">
-              <Menu
-                label="Mais opções da conversa"
-                trigger={
-                  <span className="flex size-8 items-center justify-center rounded-lg border border-line bg-surface text-muted hover:bg-surface-2 hover:text-ink transition-colors">
-                    <MoreVertical className="size-4" />
-                  </span>
-                }
-              >
-                {(close) => (
-                  <>
-                    <MenuHeader>Ações Rápidas</MenuHeader>
-                    <MenuItem
-                      onClick={() => {
-                        toggleStatus('espera');
-                        close();
-                      }}
-                    >
-                      <PauseCircle className="size-3.5 text-amber-500" />
-                      <span>
-                        {conversation.status === 'espera' ? 'Tirar da espera' : 'Colocar em espera'}
-                      </span>
-                    </MenuItem>
-                    <MenuItem
-                      onClick={() => {
-                        toggleStatus('pendente');
-                        close();
-                      }}
-                    >
-                      <Clock className="size-3.5 text-sky-500" />
-                      <span>
-                        {conversation.status === 'pendente'
-                          ? 'Tirar de pendente'
-                          : 'Marcar como pendente'}
-                      </span>
-                    </MenuItem>
-                    <MenuItem
-                      onClick={() => {
-                        setTransferOpen(true);
-                        close();
-                      }}
-                    >
-                      <UserCheck className="size-3.5 text-brand" />
-                      <span>Transferir responsável</span>
-                    </MenuItem>
-                  </>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <Menu
+                  label="Mais opções da conversa"
+                  trigger={
+                    <span className="flex size-8 items-center justify-center rounded-xl border border-line bg-surface text-muted hover:bg-surface-2 hover:text-ink transition-colors shadow-2xs">
+                      <MoreVertical className="size-4" />
+                    </span>
+                  }
+                >
+                  {(close) => (
+                    <>
+                      <MenuHeader>Ações Rápidas</MenuHeader>
+                      <MenuItem
+                        onClick={() => {
+                          toggleStatus('espera');
+                          close();
+                        }}
+                      >
+                        <PauseCircle className="size-3.5 text-amber-500" />
+                        <span>
+                          {conversation.status === 'espera' ? 'Tirar da espera' : 'Colocar em espera'}
+                        </span>
+                      </MenuItem>
+                      <MenuItem
+                        onClick={() => {
+                          toggleStatus('pendente');
+                          close();
+                        }}
+                      >
+                        <Clock className="size-3.5 text-sky-500" />
+                        <span>
+                          {conversation.status === 'pendente'
+                            ? 'Tirar de pendente'
+                            : 'Marcar como pendente'}
+                        </span>
+                      </MenuItem>
+                      <MenuItem
+                        onClick={() => {
+                          setTransferOpen(true);
+                          close();
+                        }}
+                      >
+                        <UserCheck className="size-3.5 text-brand" />
+                        <span>Transferir responsável</span>
+                      </MenuItem>
+                    </>
+                  )}
+                </Menu>
+              </div>
+            ))}
+
+            {/* Botão de Alternar Barra Lateral de Detalhes */}
+            {onToggleContext && (
+              <button
+                type="button"
+                onClick={onToggleContext}
+                aria-label={isContextOpen ? 'Recolher detalhes do contato' : 'Abrir detalhes do contato'}
+                title={isContextOpen ? 'Recolher detalhes (painel lateral)' : 'Abrir detalhes (painel lateral)'}
+                className={cn(
+                  'flex size-8 shrink-0 items-center justify-center rounded-xl border transition-all',
+                  isContextOpen
+                    ? 'border-brand/40 bg-brand/12 text-brand shadow-xs'
+                    : 'border-line bg-surface text-muted hover:bg-surface-2 hover:text-ink shadow-2xs',
                 )}
-              </Menu>
-            </div>
-          )}
-
-          {/* Ação Principal: Finalizar / Reabrir Atendimento.
-              Resolvido, o mesmo botão reabre — finalizar por engano era um beco
-              sem saída aqui, só o menu de status trazia a conversa de volta. */}
-          {conversation.status === 'resolvida' ? (
-            <button
-              type="button"
-              onClick={() => onChangeStatus('aberta')}
-              title="Reabrir este atendimento"
-              className={cn(
-                'inline-flex items-center gap-1.5 rounded-lg border border-emerald-600/40 bg-emerald-500/10 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-300 transition-all hover:bg-emerald-500/20 active:scale-[0.98]',
-              )}
-            >
-              <RotateCcw className="size-3.5 shrink-0" />
-              <span className="hidden sm:inline">Reabrir atendimento</span>
-              <span className="sm:hidden">Reabrir</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => onChangeStatus('resolvida')}
-              title="Finalizar e resolver atendimento"
-              className={cn(
-                'inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-white shadow-xs shadow-emerald-600/25 transition-all hover:bg-emerald-500 active:scale-[0.98]',
-              )}
-            >
-              <CheckCircle2 className="size-3.5 shrink-0" />
-              <span className="hidden sm:inline">Finalizar atendimento</span>
-              <span className="sm:hidden">Finalizar</span>
-            </button>
-          )}
-
-          {/* Botão de Alternar Barra Lateral de Detalhes */}
-          {onToggleContext && (
-            <button
-              type="button"
-              onClick={onToggleContext}
-              aria-label={isContextOpen ? 'Recolher detalhes do contato' : 'Abrir detalhes do contato'}
-              title={isContextOpen ? 'Recolher detalhes (painel lateral)' : 'Abrir detalhes (painel lateral)'}
-              className={cn(
-                'flex size-8 shrink-0 items-center justify-center rounded-lg border transition-all',
-                isContextOpen
-                  ? 'border-brand/40 bg-brand/12 text-brand shadow-xs'
-                  : 'border-line bg-surface text-muted hover:bg-surface-2 hover:text-ink',
-              )}
-            >
-              {isContextOpen ? (
-                <PanelRightClose className="size-4" />
-              ) : (
-                <PanelRight className="size-4" />
-              )}
-            </button>
-          )}
+              >
+                {isContextOpen ? (
+                  <PanelRightClose className="size-4" />
+                ) : (
+                  <PanelRight className="size-4" />
+                )}
+              </button>
+            )}
+          </div>
         </div>
       </header>
 

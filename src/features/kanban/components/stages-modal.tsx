@@ -177,8 +177,19 @@ export function StagesModal({
     try {
       // A string vazia da tela vira `null` no banco: são a mesma ideia
       // ("sem etiqueta") em duas linguagens, e o `<select>` não tem `null`.
+      //
+      // A cor é validada aqui, e não a cada tecla do campo hex: o campo é
+      // controlado por `stage.color` sem estado local próprio, então recusar
+      // um hex incompleto no `onChange` faria o input parecer travado
+      // enquanto a pessoa ainda está digitando. Aqui, na saída, é seguro
+      // recusar — e um hex incompleto vira o azul padrão em vez de ser salvo
+      // quebrado.
       await onSaveStages(
-        stages.map((stage) => ({ ...stage, labelId: stage.labelId || null })),
+        stages.map((stage) => ({
+          ...stage,
+          color: /^#[0-9A-Fa-f]{6}$/.test(stage.color) ? stage.color : '#3B82F6',
+          labelId: stage.labelId || null,
+        })),
       );
       onClose();
     } catch (err) {
@@ -232,15 +243,40 @@ export function StagesModal({
                   </button>
                 </div>
 
-                {/* Seletor de Cor da Etapa */}
-                <div className="relative flex items-center">
-                  <input
-                    type="color"
-                    aria-label={`Cor da etapa ${stage.name}`}
-                    value={stage.color.startsWith('#') ? stage.color : '#3B82F6'}
-                    onChange={(e) => updateColor(index, e.target.value)}
-                    className="size-7 cursor-pointer rounded-full border border-line p-0 bg-transparent"
-                  />
+                {/* Seletor de Cor da Etapa com Espectro Livre + HEX */}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="relative group size-7 shrink-0 rounded-lg border border-line shadow-2xs overflow-hidden cursor-pointer transition-transform hover:scale-105">
+                    <div
+                      className="absolute inset-0 transition-colors"
+                      style={{ backgroundColor: stage.color }}
+                    />
+                    <input
+                      type="color"
+                      aria-label={`Cor da etapa ${stage.name}`}
+                      value={stage.color.startsWith('#') ? stage.color : '#3B82F6'}
+                      onChange={(e) => updateColor(index, e.target.value.toUpperCase())}
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full p-0 border-0"
+                      title="Escolher cor livre no espectro"
+                    />
+                  </div>
+                  <div className="relative flex items-center w-20">
+                    <span className="pointer-events-none absolute left-1.5 font-mono text-[10px] font-semibold text-dim">
+                      #
+                    </span>
+                    <input
+                      type="text"
+                      aria-label={`Código hexadecimal da cor da etapa ${stage.name}`}
+                      value={stage.color.replace(/^#/, '')}
+                      onChange={(e) => {
+                        const raw = e.target.value.trim();
+                        const withHash = raw.startsWith('#') ? raw : `#${raw}`;
+                        updateColor(index, withHash.toUpperCase());
+                      }}
+                      maxLength={6}
+                      placeholder="3B82F6"
+                      className="h-7 w-full rounded-control border border-line bg-surface pr-1.5 pl-4 font-mono text-[11px] font-semibold uppercase text-ink outline-none transition-colors focus:border-brand focus:ring-1 focus:ring-brand/20"
+                    />
+                  </div>
                 </div>
 
                 {/* Nome da Etapa */}

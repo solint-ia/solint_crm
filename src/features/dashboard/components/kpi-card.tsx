@@ -52,7 +52,7 @@ export function KpiCard({ kpi }: KpiCardProps) {
   return (
     <div
       className={cn(
-        'group relative flex flex-col justify-between gap-4 overflow-hidden rounded-2xl border bg-surface p-4 shadow-2xs transition-all hover:shadow-xs',
+        'group relative flex flex-col justify-between gap-4 rounded-2xl border bg-surface p-4 shadow-2xs transition-all hover:shadow-xs',
         alerta
           ? 'border-amber-500/35 hover:border-amber-500/60'
           : atencao
@@ -64,7 +64,7 @@ export function KpiCard({ kpi }: KpiCardProps) {
       <span
         aria-hidden
         className={cn(
-          'absolute inset-y-0 left-0 w-0.5',
+          'absolute inset-y-0 left-0 w-0.5 rounded-l-2xl',
           alerta ? 'bg-amber-500' : atencao ? 'bg-blue-500' : 'bg-transparent',
         )}
       />
