@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, useTransition } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { WhatsAppStatusPayload } from '@/infrastructure/whatsapp/whatsapp-events';
 
 const INITIAL: WhatsAppStatusPayload = {
@@ -38,19 +38,24 @@ const createStatusChannel = (inboxId?: string): StatusChannel => {
     for (const listener of listeners) listener(last);
   };
 
+  /**
+   * Leitura pontual, para não depender só do SSE.
+   *
+   * Tinha um `if (!inboxId)` em volta de tudo: para caixa específica esta
+   * função não fazia absolutamente nada. Como o modal sempre passa `inboxId`,
+   * na prática **nunca** havia leitura pontual — o estado inicial embutido
+   * ("desconectado") ficava na tela até o primeiro evento do SSE chegar, e as
+   * duas rechamadas depois de conectar/desconectar caíam no vazio.
+   */
   const fetchStatus = async () => {
-    if (!inboxId) {
-      try {
-        const res = await fetch('/api/whatsapp/status', { cache: 'no-store' });
-        if (res.ok) {
-          const data = (await res.json()) as { ok: boolean; status?: WhatsAppStatusPayload };
-          if (data.ok && data.status) {
-            notifyAll(data.status);
-          }
-        }
-      } catch {
-        // Silencioso
-      }
+    const url = inboxId ? `/api/inboxes/${inboxId}/whatsapp/status` : '/api/whatsapp/status';
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = (await res.json()) as { ok: boolean; status?: WhatsAppStatusPayload };
+      if (data.ok && data.status) notifyAll(data.status);
+    } catch {
+      // Silencioso: o SSE continua sendo a fonte principal.
     }
   };
 
@@ -110,7 +115,16 @@ export function useWhatsAppConnection(active = true, inboxId?: string) {
   const channel = useMemo(() => getStatusChannel(inboxId), [inboxId]);
   const [statusData, setStatusData] = useState<WhatsAppStatusPayload>(channel.snapshot);
   const [actionError, setActionError] = useState<string | undefined>();
-  const [isPending, startTransition] = useTransition();
+  /**
+   * Estado comum, e não `useTransition`.
+   *
+   * O pendente de uma transição é atualização de baixa prioridade por
+   * definição: o React tem liberdade para adiar a pintura dele. Na prática o
+   * botão só virava "Iniciando..." bem depois do clique, e quem clicava achava
+   * que não tinha acontecido nada — e clicava de novo. Aqui o feedback precisa
+   * ser imediato, então é estado normal, marcado antes do `fetch` sair.
+   */
+  const [isPending, setIsPending] = useState(false);
 
   useEffect(() => {
     if (!active) return;
@@ -118,30 +132,62 @@ export function useWhatsAppConnection(active = true, inboxId?: string) {
   }, [active, channel]);
 
   const call = useCallback(
-    (endpoint: string, fallback: string) => {
+    async (endpoint: string, fallback: string, otimista: WhatsAppStatusPayload['status']) => {
       setActionError(undefined);
-      startTransition(async () => {
-        try {
-          const response = await fetch(endpoint, { method: 'POST' });
-          const data = (await response.json()) as {
-            ok: boolean;
-            error?: string;
-            status?: WhatsAppStatusPayload;
-          };
+      setIsPending(true);
 
-          if (data.ok) {
-            if (data.status) {
-              setStatusData(data.status);
-            }
-            setTimeout(() => void channel.fetchNow(), 400);
-            setTimeout(() => void channel.fetchNow(), 1500);
-          } else {
-            setActionError(data.error ?? fallback);
-          }
-        } catch {
-          setActionError(fallback);
+      /**
+       * O estado otimista entra antes do `fetch`.
+       *
+       * Sem ele, entre o clique e a primeira resposta do worker a tela seguia
+       * dizendo "Desconectado" — que é justamente o que o usuário está tentando
+       * mudar. O worker confirma (ou desmente) logo em seguida, pelo SSE ou
+       * pela leitura pontual abaixo.
+       */
+      setStatusData((atual) => ({
+        ...atual,
+        status: otimista,
+        qr: undefined,
+        error: undefined,
+        updatedAt: new Date().toISOString(),
+      }));
+
+      try {
+        const response = await fetch(endpoint, { method: 'POST' });
+        const data = (await response.json()) as {
+          ok: boolean;
+          error?: string;
+          status?: unknown;
+        };
+
+        if (!data.ok) {
+          setActionError(data.error ?? fallback);
+          await channel.fetchNow();
+          return;
         }
-      });
+
+        /**
+         * A rota por caixa devolve `status` como **texto** (`'conectando'`), e
+         * a global devolve o payload inteiro. Confiar cegamente nisso gravava a
+         * string no lugar do objeto: `statusData.status` virava `undefined`,
+         * todos os sinalizadores da tela davam falso e o badge caía em
+         * "Desconectado" — exatamente o sintoma de "cliquei e ele disse que
+         * desconectou". Só objeto é aceito; o resto vem da leitura pontual.
+         */
+        if (data.status && typeof data.status === 'object') {
+          setStatusData(data.status as WhatsAppStatusPayload);
+        }
+      } catch {
+        setActionError(fallback);
+      } finally {
+        setIsPending(false);
+      }
+
+      // O worker leva um instante para publicar o QR. Duas leituras espaçadas
+      // cobrem o caso de o SSE ainda não ter entregue nada.
+      void channel.fetchNow();
+      setTimeout(() => void channel.fetchNow(), 800);
+      setTimeout(() => void channel.fetchNow(), 2_000);
     },
     [channel],
   );
@@ -151,6 +197,7 @@ export function useWhatsAppConnection(active = true, inboxId?: string) {
       call(
         inboxId ? `/api/inboxes/${inboxId}/whatsapp/connect` : '/api/whatsapp/connect',
         'Erro ao iniciar conexão com WhatsApp',
+        'conectando',
       ),
     [call, inboxId],
   );
@@ -160,6 +207,7 @@ export function useWhatsAppConnection(active = true, inboxId?: string) {
       call(
         inboxId ? `/api/inboxes/${inboxId}/whatsapp/disconnect` : '/api/whatsapp/disconnect',
         'Erro ao desconectar WhatsApp',
+        'desconectado',
       ),
     [call, inboxId],
   );
