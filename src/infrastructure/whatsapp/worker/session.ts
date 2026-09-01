@@ -105,6 +105,19 @@ const DRAIN_IDLE_MS = 3_000;
 const MAX_QR_CYCLES = 5;
 
 /**
+ * Quantas substituições seguidas (440) tolerar antes de desistir.
+ *
+ * Um deploy produz uma, no máximo duas: o worker antigo encerra e some. Um
+ * WhatsApp Web aberto de verdade produz uma a cada tentativa, para sempre — e é
+ * esse caso que o teto existe para interromper, com uma mensagem que diz o que
+ * fazer em vez de reconectar em laço.
+ */
+const MAX_REPLACED_RETRIES = 4;
+
+/** Recuo entre tentativas após 440, em milissegundos. */
+const REPLACED_BACKOFF_MS = [3_000, 8_000, 20_000, 45_000];
+
+/**
  * Limitador de concorrência mínimo.
  *
  * Uma fila de espera e um contador — não vale uma dependência nova. Quem chama
@@ -177,6 +190,14 @@ export class WhatsAppSession {
    */
   private isPaired = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  /**
+   * Quantas vezes seguidas esta sessão foi substituída por outra (440).
+   *
+   * Zerado a cada conexão bem-sucedida. Serve só para espaçar as tentativas:
+   * duas sessões brigando pelo mesmo número se derrubam em laço, e reconectar
+   * na hora transforma a briga em tempestade.
+   */
+  private replacedCount = 0;
   private currentStatus: WhatsAppStatusPayload;
 
   private readonly groupCache = new Map<string, { subject: string; size: number; at: number }>();
@@ -552,12 +573,53 @@ export class WhatsAppSession {
             return;
           }
 
+          /**
+           * 440 — outra sessão assumiu este número.
+           *
+           * Isto era terminal: marcava `desconectado` e parava ali. Só que a
+           * causa mais comum não é o cliente ter aberto o WhatsApp Web — é o
+           * **nosso próprio deploy**. Enquanto o worker antigo encerra e o novo
+           * sobe, os dois podem ter socket aberto no mesmo número por alguns
+           * segundos, e o WhatsApp derruba um deles com 440. O que caía ficava
+           * caído até alguém clicar em "Conectar", e como qual das caixas
+           * colidia dependia do tempo de cada uma, o efeito parecia aleatório:
+           * num deploy caía uma, no outro caía outra.
+           *
+           * Reconectar é o certo porque a condição é temporária por
+           * construção: o processo que roubou o número está encerrando. O
+           * recuo cresce a cada substituição seguida para o caso em que a
+           * outra ponta **não** vai embora — o WhatsApp Web aberto de verdade,
+           * onde insistir seria um cabo de guerra infinito. Depois de
+           * `MAX_REPLACED_RETRIES` a sessão para e espera intervenção, que aí
+           * sim é o diagnóstico correto.
+           */
           if (statusCode === DisconnectReason.connectionReplaced || statusCode === 440) {
+            this.replacedCount += 1;
+
+            if (this.replacedCount > MAX_REPLACED_RETRIES) {
+              await this.updateStatus({
+                status: 'desconectado',
+                error:
+                  'Outro dispositivo assumiu este número. Feche o WhatsApp Web e conecte novamente.',
+                qr: undefined,
+              });
+              return;
+            }
+
+            const espera = REPLACED_BACKOFF_MS[this.replacedCount - 1] ?? 30_000;
+            console.warn(
+              `[WhatsAppSession ${this.inboxId}] Sessão substituída (440). ` +
+                `Reconectando em ${Math.round(espera / 1000)}s ` +
+                `(${this.replacedCount}/${MAX_REPLACED_RETRIES}).`,
+            );
             await this.updateStatus({
-              status: 'desconectado',
-              error: 'Conexão substituída por outra sessão ativa.',
+              status: 'conectando',
+              error: 'Reconectando — outra sessão assumiu o número.',
               qr: undefined,
             });
+            if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = setTimeout(() => void this.start(), espera);
+            this.reconnectTimer.unref?.();
             return;
           }
 
@@ -630,6 +692,8 @@ export class WhatsAppSession {
         }
 
         if (connection === 'open') {
+          // A sessão vingou: o orçamento de substituições volta inteiro.
+          this.replacedCount = 0;
           this.isInitializing = false;
           this.isAuthenticated = true;
           this.qrAttempts = 0;

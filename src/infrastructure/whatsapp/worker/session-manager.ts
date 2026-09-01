@@ -41,7 +41,7 @@ export class WhatsAppSessionManager {
 
       const newExpiry = new Date(Date.now() + LOCK_TTL_MS);
       try {
-        await prisma.whatsAppConnection.updateMany({
+        const { count } = await prisma.whatsAppConnection.updateMany({
           where: {
             inboxId: { in: activeInboxIds },
             lockOwner: this.workerId,
@@ -50,6 +50,40 @@ export class WhatsAppSessionManager {
             lockExpiresAt: newExpiry,
           },
         });
+
+        /**
+         * Renovou menos travas do que tem sessões: perdeu a posse de alguma.
+         *
+         * Isto passava despercebido. O `updateMany` não acha a linha, devolve
+         * `count` menor, e o worker seguia com o socket aberto de um número que
+         * já pertence a outro processo — os dois no ar, e o WhatsApp derrubando
+         * um deles com 440. A trava vence quando o banco fica inalcançável por
+         * mais de 30 s (pool esgotado, pooler reiniciando), e o processo nem
+         * fica sabendo.
+         *
+         * Encerrar a sessão órfã é o certo: quem tem a trava é quem manda, e
+         * insistir sem ela é justamente a colisão que a trava existe para
+         * evitar. Quem estiver com a posse mantém o número no ar.
+         */
+        if (count < activeInboxIds.length) {
+          const donos = await prisma.whatsAppConnection.findMany({
+            where: { inboxId: { in: activeInboxIds } },
+            select: { inboxId: true, lockOwner: true },
+          });
+          const perdidas = donos
+            .filter((linha) => linha.lockOwner !== this.workerId)
+            .map((linha) => linha.inboxId);
+
+          for (const inboxId of perdidas) {
+            console.warn(
+              `[WhatsAppSessionManager] Perdi a trava de ${inboxId} para outro worker. ` +
+                'Encerrando a sessão local para não colidir.',
+            );
+            const session = this.sessions.get(inboxId);
+            this.sessions.delete(inboxId);
+            if (session) await session.stop().catch(() => undefined);
+          }
+        }
       } catch (err) {
         console.warn('[WhatsAppSessionManager] Falha ao renovar heartbeat dos locks:', err);
       }
@@ -263,9 +297,21 @@ export class WhatsAppSessionManager {
       this.heartbeatTimer = null;
     }
 
+    /**
+     * Em paralelo, e não uma de cada vez.
+     *
+     * O encerramento acontece dentro do prazo que o supervisor dá entre o
+     * SIGTERM e o SIGKILL — no Render, dezenas de segundos. Em série, cada
+     * caixa espera a anterior fechar o socket e gravar no banco, e as últimas
+     * da fila podiam ser mortas antes de chegar a vez delas: ficavam com a
+     * trava presa até vencer, e o worker novo esperava esse prazo para
+     * restaurá-las. Qual caixa sobrava dependia da ordem do `Map`, o que fazia
+     * o problema parecer aleatório de um deploy para o outro.
+     *
+     * `allSettled` porque uma caixa que falha ao encerrar não pode impedir as
+     * outras de liberar a trava delas.
+     */
     const inboxIds = Array.from(this.sessions.keys());
-    for (const id of inboxIds) {
-      await this.stop(id);
-    }
+    await Promise.allSettled(inboxIds.map((id) => this.stop(id)));
   }
 }
