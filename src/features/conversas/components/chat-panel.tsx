@@ -302,9 +302,18 @@ export function ChatPanel({
   return (
     <section className="flex min-w-0 flex-1 flex-col bg-chat h-full overflow-hidden">
       {/* ---------- Cabeçalho Fixo da Conversa ---------- */}
-      <header className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-line bg-surface px-3 sm:px-4 py-2 z-10 shadow-xs">
+      {/* `@container` e não breakpoints de tela.
+          As ações deste cabeçalho apareciam e sumiam conforme a largura da
+          **janela** (`md:`, `lg:`, `2xl:`). Só que a janela não muda de tamanho
+          quando a barra lateral é arrastada para a direita, nem quando o painel
+          de contato abre — o que muda é o espaço que sobra aqui dentro. O
+          cabeçalho seguia desenhando a barra completa num espaço que já não
+          comportava, e os botões se empilhavam por cima do nome do contato.
+          Consultando o próprio container, ele encolhe quando o espaço encolhe,
+          seja qual for o motivo. */}
+      <header className="@container flex h-16 shrink-0 items-center justify-between gap-2 border-b border-line bg-surface px-3 sm:px-4 py-2 z-10 shadow-xs">
         {/* Lado Esquerdo: Identificação do Contato (Truncamento Seguro) */}
-        <div className="flex items-center gap-2.5 min-w-0 max-w-[48%] sm:max-w-[58%]">
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
           {onBack && (
             <button
               type="button"
@@ -362,8 +371,8 @@ export function ChatPanel({
                   {conversation.contact.name}
                 </h2>
                 {isGroup && (
-                  <span className="flex items-center gap-1 rounded-md bg-surface-2 border border-line-soft px-1.5 py-0.5 text-[10px] font-semibold text-muted">
-                    <Users className="size-3" />
+                  <span className="flex shrink-0 items-center gap-1 rounded-md bg-surface-2 border border-line-soft px-1.5 py-0.5 text-[10px] font-semibold text-muted">
+                    <Users className="size-3 shrink-0" />
                     Grupo
                   </span>
                 )}
@@ -380,7 +389,7 @@ export function ChatPanel({
           {/* Se o painel de contexto estiver FECHADO e houver espaço, exibe a barra completa */}
           {!isContextOpen ? (
             <>
-              <div className="hidden 2xl:flex items-center gap-1.5">
+              <div className="hidden @5xl:flex items-center gap-1.5">
                 <StatusBadge status={conversation.status} />
                 <PriorityMenu conversation={conversation} onChange={onChangePriority} />
                 <LabelMenu
@@ -391,7 +400,7 @@ export function ChatPanel({
                 <InboxMenu conversation={conversation} inboxes={inboxes} onMove={onMoveInbox} />
               </div>
 
-              <div className="hidden lg:inline-flex">
+              <div className="hidden @3xl:inline-flex">
                 <AssigneeButton conversation={conversation} onOpen={() => setTransferOpen(true)} />
               </div>
 
@@ -405,7 +414,7 @@ export function ChatPanel({
                     : 'Colocar atendimento em espera'
                 }
                 className={cn(
-                  'hidden md:inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-ink transition-all hover:bg-surface-2',
+                  'hidden @2xl:inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-ink transition-all hover:bg-surface-2',
                   conversation.status === 'espera' && 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-300 font-semibold',
                 )}
               >
@@ -423,7 +432,7 @@ export function ChatPanel({
                     : 'Marcar como pendente'
                 }
                 className={cn(
-                  'hidden md:inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-ink transition-all hover:bg-surface-2',
+                  'hidden @2xl:inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-ink transition-all hover:bg-surface-2',
                   conversation.status === 'pendente' && 'border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-300 font-semibold',
                 )}
               >
@@ -432,7 +441,7 @@ export function ChatPanel({
               </button>
 
               {/* Menu de Mais Ações em Telas Médias */}
-              <div className="2xl:hidden">
+              <div className="@5xl:hidden">
                 <Menu
                   label="Mais ações da conversa"
                   trigger={
