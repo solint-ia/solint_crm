@@ -245,6 +245,21 @@ export interface Account {
   readonly name: string;
   readonly plan: 'starter' | 'profissional' | 'enterprise';
   readonly document?: string;
+  /**
+   * Marca da empresa, projetada do `CompanyProfile` que mora em
+   * `AccountSettings.company`.
+   *
+   * Os dois campos sobem para cá porque a identidade visual do workspace é
+   * usada **fora** da tela de Configurações — no seletor ao lado do sininho,
+   * que é onde a pessoa confirma em qual empresa está. Deixá-los só no JSON de
+   * configurações obrigaria cada consumidor a carregar o perfil inteiro da
+   * empresa para desenhar um círculo de 32 pixels.
+   *
+   * Ausentes quando a conta nunca enviou logo nem escolheu cor: aí o avatar cai
+   * nas iniciais do nome, como já faz para pessoas.
+   */
+  readonly logoUrl?: string;
+  readonly brandColor?: string;
 }
 
 /**

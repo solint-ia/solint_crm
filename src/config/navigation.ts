@@ -64,6 +64,22 @@ export const CONFIG_READ_PERMISSIONS = [
  * isso vale para todo mundo, papel nenhum faz diferença aqui.
  */
 export const NAV_ITEMS: readonly NavItem[] = [
+  /**
+   * O painel abre a barra.
+   *
+   * Ele é a visão geral, e visão geral vem antes do detalhe. Quem não tem
+   * `relatorios:ler` não o vê, e para essa pessoa a barra continua começando na
+   * caixa de entrada — `landingRouteFor`, logo abaixo, cai no primeiro item
+   * *alcançável*, então mudar a ordem aqui não muda onde ninguém entra.
+   */
+  {
+    id: 'dashboard',
+    label: 'Dashboard e relatórios',
+    href: '/dashboard',
+    icon: 'kanban',
+    permission: 'relatorios:ler',
+    matches: ['/relatorios'],
+  },
   {
     id: 'conversas',
     label: 'Caixa de entrada',
@@ -101,14 +117,6 @@ export const NAV_ITEMS: readonly NavItem[] = [
         } as const,
       ]
     : []),
-  {
-    id: 'dashboard',
-    label: 'Dashboard e relatórios',
-    href: '/dashboard',
-    icon: 'kanban',
-    permission: 'relatorios:ler',
-    matches: ['/relatorios'],
-  },
   {
     id: 'configuracoes',
     label: 'Configurações',

@@ -9,7 +9,8 @@ import type {
   Role,
   Session,
 } from '@/core/domain/user';
-import type { ActiveSession } from '@/core/domain/settings';
+import type { ActiveSession, CompanyProfile } from '@/core/domain/settings';
+import type { Prisma } from '@/generated/prisma';
 import { effectivePermissions } from '@/core/domain/user';
 import { prisma, readJson } from '@/infrastructure/db/prisma';
 import { userRow } from '@/infrastructure/repositories/prisma/mappers';
@@ -185,12 +186,21 @@ const toDomainAccount = (row: {
   name: string;
   plan: string;
   document: string | null;
-}): Account => ({
-  id: row.id,
-  name: row.name,
-  plan: row.plan as Account['plan'],
-  ...(row.document ? { document: row.document } : {}),
-});
+  settings?: { company: Prisma.JsonValue } | null;
+}): Account => {
+  // A marca vive dentro do JSON de configurações; aqui ela é achatada para os
+  // dois campos que o domínio expõe. Ver a nota em `Account`.
+  const company = readJson<CompanyProfile>(row.settings?.company, {});
+
+  return {
+    id: row.id,
+    name: row.name,
+    plan: row.plan as Account['plan'],
+    ...(row.document ? { document: row.document } : {}),
+    ...(company.logoUrl ? { logoUrl: company.logoUrl } : {}),
+    ...(company.brandColor ? { brandColor: company.brandColor } : {}),
+  };
+};
 
 /**
  * Resolve a sessão a partir do cookie.
@@ -228,7 +238,11 @@ export const readSession = cache(async (): Promise<Session | null> => {
     prisma.authSession.findUnique({ where: { tokenId: claims.jti } }),
     prisma.membership.findUnique({
       where: { userId_accountId: { userId: claims.sub, accountId: claims.act } },
-      include: { user: true, account: true },
+      // As configurações vêm junto por causa da marca da conta — logo e cor —,
+      // que o seletor de workspace desenha. É um `LEFT JOIN` na mesma consulta
+      // que já buscava a conta; pedi-las depois seria uma ida a mais ao banco
+      // em todo carregamento de tela.
+      include: { user: true, account: { include: { settings: { select: { company: true } } } } },
     }),
     // Todas as contas em que esta pessoa atende. É o que alimenta o seletor de
     // workspace — que até aqui devolvia `[account]` porque não havia como saber.
@@ -236,7 +250,7 @@ export const readSession = cache(async (): Promise<Session | null> => {
     // que alimenta o seletor. Escopar por conta aqui devolveria sempre uma opcao.
     prisma.membership.findMany({
       where: { userId: claims.sub },
-      include: { account: true },
+      include: { account: { include: { settings: { select: { company: true } } } } },
       orderBy: { createdAt: 'asc' },
     }),
     // Equipes desta conta que têm caixa vinculada, com a informação de o

@@ -5,7 +5,7 @@ import type { Route } from 'next';
 import { Layers, MessageCircle } from 'lucide-react';
 
 import type { AppNotification } from '@/core/domain/notification';
-import type { Account, User } from '@/core/domain/user';
+import type { Account } from '@/core/domain/user';
 import type { Pipeline } from '@/core/domain/pipeline';
 import type { NavItem } from '@/config/navigation';
 import { GlobalSearch } from '@/features/busca/components/global-search';
@@ -18,7 +18,6 @@ interface KanbanHeaderProps {
   readonly pipelines: readonly Pipeline[];
   readonly account: Account;
   readonly accounts: readonly Account[];
-  readonly user: Pick<User, 'name' | 'avatarTone' | 'avatarUrl'>;
   readonly notifications: readonly AppNotification[];
   readonly navItems: readonly NavItem[];
 }
@@ -28,7 +27,6 @@ export function KanbanHeader({
   pipelines,
   account,
   accounts,
-  user,
   notifications,
   navItems,
 }: KanbanHeaderProps) {
@@ -106,7 +104,7 @@ export function KanbanHeader({
       <div className="flex shrink-0 items-center justify-end gap-2 sm:gap-3">
         <GlobalSearch navItems={navItems} />
         <NotificationsMenu notifications={notifications} />
-        <WorkspaceSwitcher current={account} accounts={accounts} user={user} />
+        <WorkspaceSwitcher current={account} accounts={accounts} />
       </div>
     </header>
   );

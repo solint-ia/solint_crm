@@ -7,7 +7,7 @@ import type { Deal, Pipeline } from '@/core/domain/pipeline';
 import type { Label } from '@/core/domain/label';
 
 import type { AppNotification } from '@/core/domain/notification';
-import type { Account, User } from '@/core/domain/user';
+import type { Account } from '@/core/domain/user';
 import type { NavItem } from '@/config/navigation';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
@@ -33,7 +33,6 @@ interface KanbanBoardProps {
   readonly deals: readonly Deal[];
   readonly account: Account;
   readonly accounts: readonly Account[];
-  readonly user: Pick<User, 'name' | 'avatarTone' | 'avatarUrl'>;
   readonly notifications: readonly AppNotification[];
   readonly navItems: readonly NavItem[];
   /** Etiquetas da conta, para vincular cada etapa à sua. */
@@ -50,7 +49,6 @@ export function KanbanBoard({
   deals,
   account,
   accounts,
-  user,
   notifications,
   navItems,
   labels,
@@ -198,7 +196,6 @@ export function KanbanBoard({
         pipelines={pipelines}
         account={account}
         accounts={accounts}
-        user={user}
         notifications={notifications}
         navItems={navItems}
       />

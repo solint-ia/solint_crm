@@ -55,7 +55,6 @@ export default async function KanbanPage({
       deals={deals}
       account={session.account}
       accounts={session.availableAccounts}
-      user={session.user}
       notifications={notifications}
       navItems={navItems}
       labels={settings.labels}
