@@ -38,7 +38,9 @@ import {
 import {
   isSupportedChatJid,
   normalizeTargetJid,
+  phoneFromJid,
   resolveChatIdentity,
+  resolvePhoneJid,
   resolveSenderIdentity,
   userOf,
   type ChatIdentity,
@@ -47,6 +49,7 @@ import {
   decodeWaMessage,
   deliveryStatusFrom,
   mediaContent,
+  mentionedJidsOf,
   revokedMessageId,
   timestampOf,
   adContextOf,
@@ -1713,8 +1716,46 @@ export class WhatsAppSession {
 
     if (fromMe && this.crmSentIds.has(messageId)) return;
 
-    const decoded = decodeWaMessage(msg);
+    let decoded = decodeWaMessage(msg);
     if (!decoded) return;
+
+    /**
+     * As menções viram nome **antes** de qualquer coisa gravar o texto.
+     *
+     * Aqui e não na tela: o texto é persistido, entregue por webhook, lido pelo
+     * agente de IA e usado no preview. Resolver na borda de exibição
+     * consertaria um desses lugares e deixaria os outros com o identificador
+     * cru — e o que está gravado é o que a auditoria vai mostrar depois.
+     *
+     * Os três campos são atualizados juntos porque são três telas diferentes:
+     * o conteúdo é a bolha, o preview é a lista de conversas, e a legenda
+     * sobrevive ao download da mídia para virar o conteúdo final em
+     * `mediaContent`. Trocar só o primeiro deixaria o número comprido aparecendo
+     * na lista lateral.
+     */
+    const mencoes = await this.tabelaDeMencoes(msg);
+    if (mencoes.length > 0) {
+      decoded = {
+        ...decoded,
+        ...(decoded.content.type === 'text'
+          ? {
+              content: {
+                ...decoded.content,
+                text: WhatsAppSession.comMencoes(mencoes, decoded.content.text),
+              },
+            }
+          : {}),
+        preview: WhatsAppSession.comMencoes(mencoes, decoded.preview),
+        ...(decoded.media?.caption
+          ? {
+              media: {
+                ...decoded.media,
+                caption: WhatsAppSession.comMencoes(mencoes, decoded.media.caption),
+              },
+            }
+          : {}),
+      };
+    }
 
     const identity = await resolveChatIdentity(socket, msg.key, {
       accountId: this.accountId,
@@ -1921,6 +1962,36 @@ export class WhatsAppSession {
 
     const jid = sender?.jid ? jidNormalizedUser(sender.jid) : undefined;
 
+    // 1 e 2. Agenda sincronizada e cadastro do CRM.
+    const conhecido = await this.nomeConhecido(jid, sender?.phone ?? '');
+    if (conhecido) return conhecido;
+
+    // 3. O nome que a própria pessoa publica, que vem dentro da mensagem.
+    const pushName = nomeUtilizavel(msg.pushName) ?? nomeUtilizavel(msg.verifiedBizName);
+    if (pushName) {
+      if (jid) this.groupSenderNames.set(jid, pushName);
+      return pushName;
+    }
+
+    // 4. Último recurso: o número. Sem cache — assim que um nome aparecer numa
+    // mensagem seguinte, ele passa a valer.
+    if (sender?.phone) return PhoneNumber.format(sender.phone) || sender.phone;
+    return 'Participante';
+  }
+
+  /**
+   * O nome de um participante pelo que já se sabe dele — agenda e cadastro.
+   *
+   * Extraído de `resolveAuthorName` porque as menções precisam exatamente desta
+   * escada, e uma segunda cópia divergiria na primeira vez que a ordem mudasse:
+   * o mesmo participante apareceria com um nome acima da bolha e outro dentro
+   * da frase que o cita.
+   *
+   * O `pushName` fica de fora de propósito. Ele é da **mensagem**, não da
+   * pessoa: quem foi citado não escreveu nada aqui, então não há `pushName`
+   * dele para consultar. Quem tem um continua usando, logo acima.
+   */
+  private async nomeConhecido(jid: string | undefined, phone: string): Promise<string | undefined> {
     // Cache por participante: num grupo movimentado a mesma pessoa escreve
     // dezenas de vezes seguidas, e nenhuma delas justifica reconsultar o banco.
     if (jid) {
@@ -1939,10 +2010,10 @@ export class WhatsAppSession {
     if (daAgenda) return guardar(daAgenda);
 
     // 2. Cadastro do CRM, quando o participante já é contato desta conta.
-    if (sender?.phone) {
+    if (phone) {
       try {
         const conhecido = await prisma.contact.findFirst({
-          where: { accountId: this.accountId, kind: { not: 'grupo' }, phone: sender.phone },
+          where: { accountId: this.accountId, kind: { not: 'grupo' }, phone },
           select: { name: true },
         });
         const nome = nomeUtilizavel(conhecido?.name);
@@ -1954,14 +2025,59 @@ export class WhatsAppSession {
       }
     }
 
-    // 3. O nome que a própria pessoa publica, que vem dentro da mensagem.
-    const pushName = nomeUtilizavel(msg.pushName) ?? nomeUtilizavel(msg.verifiedBizName);
-    if (pushName) return guardar(pushName);
+    return undefined;
+  }
 
-    // 4. Último recurso: o número. Sem cache — assim que um nome aparecer numa
-    // mensagem seguinte, ele passa a valer.
-    if (sender?.phone) return PhoneNumber.format(sender.phone) || sender.phone;
-    return 'Participante';
+  /**
+   * Quem foi citado com `@`, pronto para substituir no texto.
+   *
+   * Devolvido como tabela, e não aplicado direto, porque o mesmo conjunto de
+   * menções vale para os três lugares em que o texto aparece — bolha, preview e
+   * legenda. Resolver LID→telefone é uma consulta ao mapeamento do socket:
+   * repeti-la três vezes por mensagem seria pagar o triplo pela mesma resposta.
+   */
+  private async tabelaDeMencoes(msg: WAMessage): Promise<{ marca: string; nome: string }[]> {
+    const citados = mentionedJidsOf(msg);
+    if (citados.length === 0) return [];
+
+    const socket = this.socket;
+    const trocas: { marca: string; nome: string }[] = [];
+
+    for (const bruto of citados) {
+      const pnJid = socket ? await resolvePhoneJid(socket, bruto) : bruto;
+      const phone = phoneFromJid(pnJid);
+
+      const nome =
+        (await this.nomeConhecido(jidNormalizedUser(pnJid), phone)) ??
+        (phone ? PhoneNumber.format(phone) || phone : undefined);
+
+      // Sem nome e sem telefone não há o que pôr no lugar. Deixar o
+      // identificador cru é feio; apagá-lo tiraria da frase a marca de que
+      // alguém foi citado ali, que é a informação que importa.
+      if (!nome) continue;
+
+      // Os dois marcadores porque o corpo pode trazer qualquer um deles: o LID
+      // nas conversas já migradas, o telefone nas que ainda não migraram.
+      for (const marca of new Set([userOf(bruto), userOf(pnJid)])) {
+        if (marca) trocas.push({ marca, nome });
+      }
+    }
+
+    // Do marcador mais longo para o mais curto: um identificador que seja
+    // prefixo de outro trocaria o pedaço errado se a ordem fosse a de chegada.
+    return trocas.sort((a, b) => b.marca.length - a.marca.length);
+  }
+
+  /** Aplica a tabela de menções a um texto. */
+  private static comMencoes(
+    trocas: readonly { marca: string; nome: string }[],
+    texto: string,
+  ): string {
+    let resultado = texto;
+    for (const { marca, nome } of trocas) {
+      resultado = resultado.replaceAll(`@${marca}`, `@${nome}`);
+    }
+    return resultado;
   }
 
   private async fetchGroupMetadata(jid: string): Promise<{ subject: string; size: number } | null> {

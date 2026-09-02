@@ -35,16 +35,43 @@ export type TargetField =
   | 'whatsappFlag'
   | 'ignore';
 
+/**
+ * Os destinos que a pessoa realmente escolhe.
+ *
+ * `whatsappFlag` **não** está aqui de propósito, embora continue existindo como
+ * destino interno. Ela não é um campo do cadastro: é o critério que decide se o
+ * telefone do sócio entra, e a importação já a detecta sozinha pelo conteúdo da
+ * coluna. Oferecê-la no menu pedia uma decisão que não existe — e sugeria que
+ * "Sim/Não" seria gravado em algum lugar, o que nunca foi verdade.
+ */
 const TARGET_FIELDS: { key: TargetField; label: string; required: boolean }[] = [
   { key: 'company', label: 'Empresa / Razão Social', required: true },
   { key: 'cnpj', label: 'CNPJ', required: false },
   { key: 'companyAddress', label: 'Endereço da Empresa', required: false },
   { key: 'companyPhone', label: 'Telefone da Empresa', required: false },
   { key: 'partnerPhone', label: 'Telefone do Sócio', required: false },
-  { key: 'whatsappFlag', label: 'WhatsApp (Sim/Não)', required: false },
   { key: 'classification', label: 'Classificação', required: false },
   { key: 'ignore', label: '(Ignorar esta coluna)', required: false },
 ];
+
+/**
+ * Colunas da exportação de prospecção que o CRM não guarda.
+ *
+ * São dados do processo de extração, não do contato: se o registro passou na
+ * validação da origem, em que etapa ele estava lá, e a lista inteira de e-mails
+ * do sócio — que chega com dezenas de endereços numa célula só e não cabe num
+ * campo de e-mail. Listadas pelo nome porque o conteúdo delas não tem forma
+ * reconhecível: "Status" é texto livre, e a heurística as deixaria no meio das
+ * colunas a mapear, pedindo uma decisão sobre algo que nunca será importado.
+ */
+const COLUNAS_DESCARTADAS = new Set([
+  'crmvalido',
+  'status',
+  'emailsdosocio',
+  'emaildosocio',
+  'emailsocio',
+  'emails',
+]);
 
 /** Divide uma linha CSV respeitando aspas */
 function parseCsvLine(line: string, delimiter: string): string[] {
@@ -123,6 +150,9 @@ function autoDetectField(header: string, amostra: readonly string[]): TargetFiel
   const conteudo = sniffColumnKind(amostra);
   const h = foldText(header);
 
+  // Antes de qualquer heurística: o que se sabe que não é importado.
+  if (COLUNAS_DESCARTADAS.has(h)) return 'ignore';
+
   // O layout B2B tem contrato de cabeçalhos conhecido. Ele vence qualquer
   // heurística de conteúdo para que "Telefone da Empresa" nunca seja ignorado.
   if (h === 'empresa' || h === 'razaosocial') return 'company';
@@ -161,6 +191,16 @@ export function ImportCsvModal({
   const [headers, setHeaders] = useState<string[]>([]);
   const [rows, setRows] = useState<ParsedCsvRow[]>([]);
   const [mapping, setMapping] = useState<Record<string, TargetField>>({});
+  /**
+   * Colunas que saíram da lista de mapeamento.
+   *
+   * Estado próprio, fixado na leitura do arquivo, e não derivado de
+   * `mapping === 'ignore'`: derivar faria a linha **sumir da tela** no instante
+   * em que alguém escolhesse "Ignorar" no menu, o que parece um defeito e tira
+   * a chance de desfazer. Assim a lista só encolhe uma vez, na detecção, e o
+   * bloco de descartadas permite trazer qualquer uma de volta.
+   */
+  const [descartadas, setDescartadas] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [result, setResult] = useState<ImportCsvResult | null>(null);
@@ -172,6 +212,7 @@ export function ImportCsvModal({
     setHeaders([]);
     setRows([]);
     setMapping({});
+    setDescartadas([]);
     setLoading(false);
     setErrorMsg(null);
     setResult(null);
@@ -218,6 +259,9 @@ export function ImportCsvModal({
       setHeaders(parsed.headers);
       setRows(parsed.rows);
       setMapping(initialMapping);
+      // A coluna de WhatsApp não entra aqui: ela não é descartada, é o filtro —
+      // e sai da lista por outro caminho, sem oferecer volta.
+      setDescartadas(parsed.headers.filter((h) => initialMapping[h] === 'ignore'));
       setStep('mapeamento');
     };
 
@@ -236,6 +280,19 @@ export function ImportCsvModal({
    * coluna liga.
    */
   const temColunaWhatsapp = Object.values(mapping).includes('whatsappFlag');
+
+  /**
+   * O que a tela pergunta.
+   *
+   * Fora ficam as descartadas e a coluna de WhatsApp. As duas saem por motivos
+   * diferentes: a descartada é dado que o CRM não guarda e pode voltar pelo
+   * bloco abaixo; a de WhatsApp é o filtro em si, que não tem para onde voltar
+   * porque não existe campo de destino para ela.
+   */
+  const colunasMapeaveis = headers.filter(
+    (header) => !descartadas.includes(header) && mapping[header] !== 'whatsappFlag',
+  );
+  const colunaWhatsapp = headers.find((header) => mapping[header] === 'whatsappFlag');
 
   /**
    * O que a planilha vai virar — calculado com as **mesmas** regras da
@@ -584,7 +641,7 @@ export function ImportCsvModal({
           </p>
 
           <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-            {headers.map((header) => (
+            {colunasMapeaveis.map((header) => (
               <div
                 key={header}
                 className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface px-3 py-2 text-xs"
@@ -618,6 +675,41 @@ export function ImportCsvModal({
               </div>
             ))}
           </div>
+
+          {/* O que ficou de fora, dito em vez de sumir em silêncio. */}
+          {descartadas.length > 0 || colunaWhatsapp ? (
+            <div className="rounded-xl border border-line-soft bg-surface-2/40 p-3 text-[11px]">
+              {colunaWhatsapp ? (
+                <p className="text-muted">
+                  <strong className="text-ink">{colunaWhatsapp}</strong> é usada como filtro: o
+                  telefone do sócio só entra nas linhas marcadas “Sim”.
+                </p>
+              ) : null}
+
+              {descartadas.length > 0 ? (
+                <>
+                  <p className={colunaWhatsapp ? 'mt-2 text-muted' : 'text-muted'}>
+                    {descartadas.length} coluna(s) não importada(s). Clique para trazer de volta ao
+                    mapeamento:
+                  </p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {descartadas.map((header) => (
+                      <button
+                        key={header}
+                        type="button"
+                        onClick={() =>
+                          setDescartadas((prev) => prev.filter((item) => item !== header))
+                        }
+                        className="rounded-md border border-line-soft bg-surface px-2 py-1 font-medium text-muted transition-colors hover:border-brand/40 hover:text-ink"
+                      >
+                        {header}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+            </div>
+          ) : null}
 
           {/* Prévia dos Primeiros Contatos */}
           <div className="rounded-xl border border-line-soft bg-surface-2/40 p-3">

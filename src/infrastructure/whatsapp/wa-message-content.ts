@@ -342,3 +342,40 @@ export const adContextOf = (raw: WAMessage): AdContext | undefined => {
     ...(link ? { link } : {}),
   };
 };
+
+/**
+ * Os JIDs que a mensagem cita com `@`.
+ *
+ * **Por que o corpo da mensagem mostra um número comprido.** O WhatsApp não
+ * escreve o nome de quem foi citado dentro do texto: escreve `@` seguido da
+ * parte de usuário do JID, e manda a lista de JIDs à parte, no `contextInfo`.
+ * Casar as duas coisas é trabalho de quem exibe — o aplicativo faz isso, e nós
+ * não fazíamos.
+ *
+ * Enquanto o identificador era o telefone, o estrago era pequeno: aparecia
+ * `@5579998…`, feio mas reconhecível. A partir do Baileys 7 as conversas
+ * migram para LID (`@lid`), e aí o que sobra no texto é um identificador
+ * interno sem significado nenhum — o `@94716930600979` que aparecia na tela.
+ *
+ * A varredura é por valor, e não uma lista de tipos: `contextInfo` existe em
+ * todo tipo que aceita legenda, e uma lista fixa perderia em silêncio o
+ * próximo tipo que o WhatsApp inventar.
+ */
+export const mentionedJidsOf = (raw: WAMessage): readonly string[] => {
+  // `normalizeMessageContent` desembrulha `ephemeralMessage`/`viewOnceMessage`
+  // pelo mesmo motivo de `revokedMessageId`: num chat com mensagens temporárias
+  // o conteúdo real chega aninhado.
+  const message = normalizeMessageContent(raw.message);
+  if (!message) return [];
+
+  const jids = new Set<string>();
+  for (const conteudo of Object.values(message)) {
+    const citados = (conteudo as { contextInfo?: { mentionedJid?: string[] | null } } | null)
+      ?.contextInfo?.mentionedJid;
+    for (const jid of citados ?? []) {
+      if (jid) jids.add(jid);
+    }
+  }
+
+  return [...jids];
+};
