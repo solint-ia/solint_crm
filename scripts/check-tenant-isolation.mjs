@@ -48,6 +48,8 @@ const SCOPED = new Set([
   'invite',
   'task',
   'mediaObject',
+  'scheduledMessage',
+  'contactImportBatch',
 ]);
 
 /** Escopados pelo pai. Listados para leitura, não cobrados. */
@@ -59,6 +61,9 @@ const VIA_PARENT = new Set([
   'whatsAppKey',
   'whatsAppCommand',
   'campaignRecipient',
+  // A linha de ligação não tem `accountId`: ela existe dentro de um lote, e o
+  // lote é da conta. Escopar aqui seria guardar a mesma informação duas vezes.
+  'contactImportBatchContact',
 ]);
 
 /** Globais de propósito: a pessoa e a conta não pertencem a uma conta. */

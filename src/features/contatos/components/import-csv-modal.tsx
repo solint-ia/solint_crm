@@ -26,21 +26,23 @@ export interface ParsedCsvRow {
 }
 
 export type TargetField =
-  | 'name'
-  | 'phone'
-  | 'email'
   | 'company'
-  | 'notes'
+  | 'cnpj'
+  | 'companyAddress'
+  | 'companyPhone'
+  | 'partnerPhone'
+  | 'classification'
   | 'whatsappFlag'
   | 'ignore';
 
 const TARGET_FIELDS: { key: TargetField; label: string; required: boolean }[] = [
-  { key: 'name', label: 'Nome do contato', required: true },
-  { key: 'phone', label: 'Telefone / WhatsApp', required: true },
-  { key: 'whatsappFlag', label: 'Tem WhatsApp? (coluna Sim/Não)', required: false },
-  { key: 'email', label: 'E-mail', required: false },
-  { key: 'company', label: 'Empresa', required: false },
-  { key: 'notes', label: 'Notas / Observações', required: false },
+  { key: 'company', label: 'Empresa / Razão Social', required: true },
+  { key: 'cnpj', label: 'CNPJ', required: false },
+  { key: 'companyAddress', label: 'Endereço da Empresa', required: false },
+  { key: 'companyPhone', label: 'Telefone da Empresa', required: false },
+  { key: 'partnerPhone', label: 'Telefone do Sócio', required: false },
+  { key: 'whatsappFlag', label: 'WhatsApp (Sim/Não)', required: false },
+  { key: 'classification', label: 'Classificação', required: false },
   { key: 'ignore', label: '(Ignorar esta coluna)', required: false },
 ];
 
@@ -121,6 +123,16 @@ function autoDetectField(header: string, amostra: readonly string[]): TargetFiel
   const conteudo = sniffColumnKind(amostra);
   const h = foldText(header);
 
+  // O layout B2B tem contrato de cabeçalhos conhecido. Ele vence qualquer
+  // heurística de conteúdo para que "Telefone da Empresa" nunca seja ignorado.
+  if (h === 'empresa' || h === 'razaosocial') return 'company';
+  if (h === 'cnpj') return 'cnpj';
+  if (h === 'enderecodaempresa' || h === 'enderecoempresa') return 'companyAddress';
+  if (h === 'telefonedaempresa' || h === 'telefoneempresa') return 'companyPhone';
+  if (h === 'telefonedosocio' || h === 'telefonesocio') return 'partnerPhone';
+  if (h === 'classificacao') return 'classification';
+  if (h === 'whatsapp') return 'whatsappFlag';
+
   // Uma coluna de Sim/Não só pode ser a marcação de WhatsApp.
   if (conteudo === 'sim-nao') {
     return h.includes('whatsapp') || h.includes('zap') ? 'whatsappFlag' : 'ignore';
@@ -128,18 +140,8 @@ function autoDetectField(header: string, amostra: readonly string[]): TargetFiel
 
   // Entre duas colunas de telefone (a da empresa e a do sócio), a do sócio é a
   // que interessa: é o celular de quem atende, não o fixo da recepção.
-  if (conteudo === 'telefone') {
-    if (h.includes('empresa') || h.includes('comercial')) return 'ignore';
-    return 'phone';
-  }
-
-  if (conteudo === 'email') return 'email';
-
-  if (h.includes('nome') || h.includes('name') || h.includes('contato') || h.includes('socio')) {
-    return 'name';
-  }
+  if (conteudo === 'telefone') return 'companyPhone';
   if (h.includes('empresa') || h.includes('company') || h.includes('razaosocial')) return 'company';
-  if (h.includes('nota') || h.includes('obs') || h.includes('coment')) return 'notes';
   return 'ignore';
 }
 
@@ -155,6 +157,7 @@ export function ImportCsvModal({
 
   const [step, setStep] = useState<'upload' | 'mapeamento' | 'resultado'>('upload');
   const [fileName, setFileName] = useState<string>('');
+  const [batchName, setBatchName] = useState('');
   const [headers, setHeaders] = useState<string[]>([]);
   const [rows, setRows] = useState<ParsedCsvRow[]>([]);
   const [mapping, setMapping] = useState<Record<string, TargetField>>({});
@@ -165,6 +168,7 @@ export function ImportCsvModal({
   const reset = () => {
     setStep('upload');
     setFileName('');
+    setBatchName('');
     setHeaders([]);
     setRows([]);
     setMapping({});
@@ -185,6 +189,7 @@ export function ImportCsvModal({
     }
 
     setFileName(file.name);
+    setBatchName((current) => current || file.name.replace(/\.csv$/i, '').replace(/[_-]+/g, ' '));
     setErrorMsg(null);
 
     const reader = new FileReader();
@@ -244,37 +249,53 @@ export function ImportCsvModal({
   const previa = useMemo(() => {
     if (step !== 'mapeamento' || rows.length === 0) return null;
     const mapeadas = Object.values(mapping);
-    if (!mapeadas.includes('name') || !mapeadas.includes('phone')) return null;
+    if (!mapeadas.includes('company')) return null;
 
     const linhas: ImportRow[] = rows.map((row) => {
-      let name = '';
-      let phone = '';
-      let email = '';
       let company = '';
-      let notes = '';
+      let cnpj = '';
+      let companyAddress = '';
+      let companyPhone = '';
+      let partnerPhone = '';
+      let classification = '';
       let whatsappFlag = '';
       Object.entries(mapping).forEach(([csvHeader, targetField]) => {
         const val = row[csvHeader] ?? '';
-        if (targetField === 'name') name = val;
-        if (targetField === 'phone') phone = val;
-        if (targetField === 'email') email = val;
         if (targetField === 'company') company = val;
-        if (targetField === 'notes') notes = val;
+        if (targetField === 'cnpj') cnpj = val;
+        if (targetField === 'companyAddress') companyAddress = val;
+        if (targetField === 'companyPhone') companyPhone = val;
+        if (targetField === 'partnerPhone') partnerPhone = val;
+        if (targetField === 'classification') classification = val;
         if (targetField === 'whatsappFlag') whatsappFlag = val;
       });
-      return { name, phone, email, company, notes, whatsappFlag };
+      return {
+        company,
+        cnpj,
+        companyAddress,
+        companyPhone,
+        partnerPhone,
+        classification,
+        whatsappFlag,
+      };
     });
 
-    return prepareImport(linhas, temColunaWhatsapp);
-  }, [step, rows, mapping, temColunaWhatsapp]);
+    return prepareImport(linhas);
+    // `temColunaWhatsapp` sai da lista por ser derivado de `mapping`, que já
+    // está aqui: mantê-lo não acrescentava um recálculo, só ruído.
+  }, [step, rows, mapping]);
 
   const handleImport = async () => {
     const mappedValues = Object.values(mapping);
-    const hasName = mappedValues.includes('name');
-    const hasPhone = mappedValues.includes('phone');
+    const hasCompany = mappedValues.includes('company');
+    const hasPhone = mappedValues.includes('companyPhone') || mappedValues.includes('partnerPhone');
 
-    if (!hasName || !hasPhone) {
-      setErrorMsg('É necessário mapear as colunas de Nome e Telefone para continuar.');
+    if (batchName.trim().length < 2) {
+      setErrorMsg('Informe um nome para a lista de importação.');
+      return;
+    }
+    if (!hasCompany || !hasPhone) {
+      setErrorMsg('É necessário mapear Empresa e ao menos uma coluna de telefone.');
       return;
     }
 
@@ -291,46 +312,62 @@ export function ImportCsvModal({
        * vários números. Uma planilha de 200 linhas costuma virar 40 contatos.
        */
       const linhas: ImportRow[] = rows.map((row) => {
-        let name = '';
-        let phone = '';
-        let email = '';
         let company = '';
-        let notes = '';
+        let cnpj = '';
+        let companyAddress = '';
+        let companyPhone = '';
+        let partnerPhone = '';
+        let classification = '';
         let whatsappFlag = '';
 
         Object.entries(mapping).forEach(([csvHeader, targetField]) => {
           const val = row[csvHeader] ?? '';
-          if (targetField === 'name') name = val;
-          if (targetField === 'phone') phone = val;
-          if (targetField === 'email') email = val;
           if (targetField === 'company') company = val;
-          if (targetField === 'notes') notes = val;
+          if (targetField === 'cnpj') cnpj = val;
+          if (targetField === 'companyAddress') companyAddress = val;
+          if (targetField === 'companyPhone') companyPhone = val;
+          if (targetField === 'partnerPhone') partnerPhone = val;
+          if (targetField === 'classification') classification = val;
           if (targetField === 'whatsappFlag') whatsappFlag = val;
         });
 
-        return { name, phone, email, company, notes, whatsappFlag };
+        return {
+          company,
+          cnpj,
+          companyAddress,
+          companyPhone,
+          partnerPhone,
+          classification,
+          whatsappFlag,
+        };
       });
 
-      const preparo = prepareImport(linhas, temColunaWhatsapp);
+      const preparo = prepareImport(linhas);
       const contactsToImport = preparo.contacts.map((contato) => ({
         name: contato.name,
-        phones: [...contato.phones],
-        email: contato.email,
         company: contato.company,
-        notes: contato.notes,
+        cnpj: contato.cnpj,
+        companyAddress: contato.companyAddress,
+        companyPhone: contato.companyPhone,
+        partnerPhone: contato.partnerPhone,
+        whatsappFlag: contato.partnerPhone ? 'Sim' : '',
+        classification: contato.classification,
       }));
 
       if (contactsToImport.length === 0) {
         setErrorMsg(
           preparo.semWhatsapp > 0
-            ? `Nenhuma linha com WhatsApp marcado como "Sim" (${preparo.semWhatsapp} descartada(s)).`
-            : 'Nenhum contato com Nome e Telefone válidos foi encontrado.',
+            ? `Nenhum contato com empresa e telefone válidos foi encontrado.`
+            : 'Nenhum contato com empresa e telefone válidos foi encontrado.',
         );
         setLoading(false);
         return;
       }
 
-      const res = await importContactsCsvAction({ contacts: contactsToImport });
+      const res = await importContactsCsvAction({
+        batchName: batchName.trim(),
+        contacts: contactsToImport,
+      });
 
       if (!res.ok || !res.data) {
         setErrorMsg(res.error ?? 'Erro ao importar contatos.');
@@ -361,7 +398,12 @@ export function ImportCsvModal({
           </Button>
         ) : step === 'mapeamento' ? (
           <>
-            <Button variant="secondary" size="sm" onClick={() => setStep('upload')} disabled={loading}>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setStep('upload')}
+              disabled={loading}
+            >
               Voltar
             </Button>
             <Button size="sm" onClick={handleImport} disabled={loading}>
@@ -397,6 +439,18 @@ export function ImportCsvModal({
 
       {step === 'upload' && (
         <div className="flex flex-col gap-4">
+          <label className="flex flex-col gap-1.5 text-xs font-semibold text-ink">
+            Nome da lista importada
+            <input
+              type="text"
+              value={batchName}
+              onChange={(event) => setBatchName(event.target.value)}
+              maxLength={120}
+              placeholder="Ex.: Prospecção Fortaleza (setembro)"
+              className="h-10 rounded-xl border border-line bg-surface px-3 text-body font-normal text-ink outline-none transition-all placeholder:text-dim focus:border-brand focus:ring-2 focus:ring-brand/20"
+            />
+          </label>
+
           <label
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
@@ -432,20 +486,19 @@ export function ImportCsvModal({
           <div className="rounded-xl border border-line bg-surface p-3.5 text-xs text-muted">
             <p className="font-semibold text-ink mb-1.5 flex items-center gap-1.5">
               <FileSpreadsheet className="size-3.5 text-brand" />
-              <span>Colunas recomendadas no CSV:</span>
+              <span>Colunas reconhecidas automaticamente:</span>
             </p>
             <ul className="list-disc pl-4 space-y-1 text-dim">
               <li>
-                <strong className="text-ink">Nome</strong> (obrigatório): Nome completo do contato
+                <strong className="text-ink">Empresa</strong> e ao menos um telefone
               </li>
-              <li>
-                <strong className="text-ink">Telefone / Celular</strong> (obrigatório): Com DDD (ex:
-                11999998888 ou +55 11 99999-8888)
-              </li>
-              <li>
-                <strong className="text-ink">E-mail, Empresa, Notas</strong> (opcionais)
-              </li>
+              <li>CNPJ, Endereço da Empresa e Classificação</li>
+              <li>Telefone da Empresa, Telefone do Sócio e WhatsApp</li>
             </ul>
+            <p className="mt-2 border-t border-line-soft pt-2 text-[11px] text-dim">
+              O telefone do sócio só é armazenado quando a célula WhatsApp contém exatamente
+              &ldquo;Sim&rdquo;. As demais colunas são descartadas.
+            </p>
           </div>
         </div>
       )}
@@ -469,6 +522,17 @@ export function ImportCsvModal({
             </button>
           </div>
 
+          <label className="flex flex-col gap-1 text-xs font-semibold text-ink">
+            Nome da lista
+            <input
+              type="text"
+              value={batchName}
+              onChange={(event) => setBatchName(event.target.value)}
+              maxLength={120}
+              className="h-9 rounded-lg border border-line bg-surface px-3 text-xs font-normal text-ink outline-none focus:border-brand"
+            />
+          </label>
+
           {/* O que a planilha vai virar, com as contas à vista. */}
           {previa ? (
             <div className="rounded-xl border border-line bg-surface-2/50 p-3 text-[11px] text-muted">
@@ -478,25 +542,22 @@ export function ImportCsvModal({
               <ul className="mt-1.5 flex flex-col gap-0.5">
                 {temColunaWhatsapp ? (
                   <li>
-                    <strong className="text-ink">{previa.semWhatsapp}</strong> linha(s) descartada(s)
-                    por não ter WhatsApp marcado como “Sim”.
+                    <strong className="text-ink">{previa.semWhatsapp}</strong> telefone(s) de sócio
+                    descartado(s) porque WhatsApp não era exatamente “Sim”.
                   </li>
                 ) : (
-                  <li>
-                    Nenhuma coluna de “Sim/Não” mapeada: <strong className="text-ink">todas</strong>{' '}
-                    as linhas serão importadas.
-                  </li>
+                  <li>Sem coluna WhatsApp: telefones de sócio não serão armazenados.</li>
                 )}
                 {previa.agrupadas > 0 ? (
                   <li>
-                    <strong className="text-ink">{previa.agrupadas}</strong> linha(s) da mesma pessoa
-                    foram juntadas, e o contato fica com vários números.
+                    <strong className="text-ink">{previa.agrupadas}</strong> linha(s) da mesma
+                    pessoa foram juntadas, e o contato fica com vários números.
                   </li>
                 ) : null}
                 {previa.invalidas > 0 ? (
                   <li>
-                    <strong className="text-ink">{previa.invalidas}</strong> linha(s) sem nome ou com
-                    telefone irrecuperável.
+                    <strong className="text-ink">{previa.invalidas}</strong> linha(s) sem nome ou
+                    com empresa ou telefone utilizável.
                   </li>
                 ) : null}
               </ul>
@@ -565,27 +626,38 @@ export function ImportCsvModal({
               <table className="w-full text-left">
                 <thead>
                   <tr className="border-b border-line text-muted">
-                    <th className="pb-1 pr-2 font-medium">Nome</th>
-                    <th className="pb-1 pr-2 font-medium">Telefone</th>
-                    <th className="pb-1 font-medium">Empresa</th>
+                    <th className="pb-1 pr-2 font-medium">Empresa</th>
+                    <th className="pb-1 pr-2 font-medium">Telefone empresa</th>
+                    <th className="pb-1 font-medium">Telefone sócio</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line-soft">
                   {rows.slice(0, 3).map((r, i) => {
-                    const nameHeader = Object.keys(mapping).find((k) => mapping[k] === 'name');
-                    const phoneHeader = Object.keys(mapping).find((k) => mapping[k] === 'phone');
-                    const companyHeader = Object.keys(mapping).find((k) => mapping[k] === 'company');
+                    const companyHeader = Object.keys(mapping).find(
+                      (k) => mapping[k] === 'company',
+                    );
+                    const companyPhoneHeader = Object.keys(mapping).find(
+                      (k) => mapping[k] === 'companyPhone',
+                    );
+                    const partnerPhoneHeader = Object.keys(mapping).find(
+                      (k) => mapping[k] === 'partnerPhone',
+                    );
+                    const whatsappHeader = Object.keys(mapping).find(
+                      (k) => mapping[k] === 'whatsappFlag',
+                    );
 
                     return (
                       <tr key={i}>
                         <td className="py-1 pr-2 font-semibold text-ink">
-                          {nameHeader ? r[nameHeader] : '-'}
+                          {companyHeader ? r[companyHeader] : '-'}
                         </td>
                         <td className="py-1 pr-2 text-muted">
-                          {phoneHeader ? r[phoneHeader] : '-'}
+                          {companyPhoneHeader ? r[companyPhoneHeader] : '-'}
                         </td>
                         <td className="py-1 text-muted">
-                          {companyHeader ? r[companyHeader] : '-'}
+                          {partnerPhoneHeader && whatsappHeader && r[whatsappHeader] === 'Sim'
+                            ? r[partnerPhoneHeader]
+                            : '—'}
                         </td>
                       </tr>
                     );
@@ -602,7 +674,9 @@ export function ImportCsvModal({
           <div className="flex items-center gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-emerald-700 dark:text-emerald-300">
             <CheckCircle2 className="size-6 shrink-0 text-emerald-500" />
             <div>
-              <p className="text-sm font-bold text-ink">Importação concluída com sucesso!</p>
+              <p className="text-sm font-bold text-ink">
+                Lista &ldquo;{result.batchName}&rdquo; importada!
+              </p>
               <p className="text-xs text-muted mt-0.5">
                 {result.importedCount} novos contatos criados e {result.updatedCount} atualizados.
               </p>

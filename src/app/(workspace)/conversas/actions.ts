@@ -162,8 +162,7 @@ const interpolarParaConversa = async (
     clienteNome: conversa?.contact?.name ?? '',
     agenteNome: session.user.name,
     empresa: session.account.name,
-    protocolo:
-      currentProtocol(readJson<readonly Protocol[]>(conversa?.protocols, []))?.code ?? '',
+    protocolo: currentProtocol(readJson<readonly Protocol[]>(conversa?.protocols, []))?.code ?? '',
   });
 };
 
@@ -213,9 +212,7 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
    * identificar. Template também não passa por aqui — o corpo dele é aprovado
    * pela Meta e uma linha a mais o invalidaria.
    */
-  const text = parsed.data.isPrivate
-    ? interpolado
-    : withSignature(session.user, interpolado);
+  const text = parsed.data.isPrivate ? interpolado : withSignature(session.user, interpolado);
 
   /**
    * Os candidatos a menção são carregados só para nota interna.
@@ -273,10 +270,10 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
          */
         const quotedMessage = parsed.data.replyToId
           ? await container.conversations.findMessage(
-            session.account.id,
-            conversation.id,
-            parsed.data.replyToId,
-          )
+              session.account.id,
+              conversation.id,
+              parsed.data.replyToId,
+            )
           : null;
 
         const sent = await channel.sendText(
@@ -290,10 +287,10 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
           text,
           quotedMessage?.externalId && !quotedMessage.isPrivate
             ? {
-              externalId: quotedMessage.externalId,
-              fromMe: quotedMessage.author !== 'contact',
-              text: previewOfMessage(quotedMessage),
-            }
+                externalId: quotedMessage.externalId,
+                fromMe: quotedMessage.author !== 'contact',
+                text: previewOfMessage(quotedMessage),
+              }
             : undefined,
         );
         const applied = await applyDispatch(session.account.id, conversation.id, message, sent);
@@ -477,9 +474,7 @@ export interface ChangeStatusResult extends ActionResult {
   readonly aviso?: CsatAviso;
 }
 
-export async function changeConversationStatusAction(
-  input: unknown,
-): Promise<ChangeStatusResult> {
+export async function changeConversationStatusAction(input: unknown): Promise<ChangeStatusResult> {
   const parsed = changeStatusSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: 'Status inválido.' };
@@ -496,13 +491,8 @@ export async function changeConversationStatusAction(
   let csatAviso: CsatAviso | undefined;
   if (parsed.data.status === 'resolvida') {
     try {
-      const { runClosingAutoReply } = await import(
-        '@/infrastructure/whatsapp/inbox-auto-messages'
-      );
-      const fechamento = await runClosingAutoReply(
-        session.account.id,
-        parsed.data.conversationId,
-      );
+      const { runClosingAutoReply } = await import('@/infrastructure/whatsapp/inbox-auto-messages');
+      const fechamento = await runClosingAutoReply(session.account.id, parsed.data.conversationId);
       csatAviso = avisoDeFechamento(fechamento);
     } catch (err) {
       console.warn('[conversas] Falha ao despachar mensagem automática de encerramento:', err);
@@ -561,7 +551,9 @@ export async function changeConversationStatusAction(
   return { ok: true, ...(csatAviso ? { aviso: csatAviso } : {}) };
 }
 
-const conversationIdSchema = z.object({ conversationId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH) });
+const conversationIdSchema = z.object({
+  conversationId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH),
+});
 
 /** Abrir a conversa no CRM zera o não-lido e confirma a leitura no celular. */
 export async function markConversationReadAction(input: unknown): Promise<ActionResult> {
@@ -870,10 +862,14 @@ export interface ContactConversationResult {
   readonly conversationId?: string;
   /** Ausente a conversa, as caixas por onde a primeira mensagem pode sair. */
   readonly caixas?: readonly CaixaDisponivel[];
+  /** Mais de um destinatário exige escolha antes de procurar/criar conversa. */
+  readonly phoneSelectionRequired?: boolean;
+  readonly phones?: readonly string[];
 }
 
 const contactConversationSchema = z.object({
   contactId: z.string().min(1).max(64),
+  recipientPhone: z.string().trim().max(30).optional(),
 });
 
 /**
@@ -898,10 +894,21 @@ export async function findContactConversationAction(
   const contact = await container.contacts.findById(session.account.id, parsed.data.contactId);
   if (!contact) return { ok: false, error: 'Contato não encontrado.' };
 
+  const phones = [...new Set([contact.phone, ...(contact.extraPhones ?? [])].filter(Boolean))];
+  if (phones.length > 1 && !parsed.data.recipientPhone) {
+    return { ok: true, phoneSelectionRequired: true, phones };
+  }
+
+  const recipientPhone = parsed.data.recipientPhone ?? phones[0];
+  if (recipientPhone && !phones.includes(recipientPhone)) {
+    return { ok: false, error: 'O telefone escolhido não pertence a este contato.' };
+  }
+
   const existente = await findContactConversation(
     session.account.id,
     contact.id,
     session.inboxAccess,
+    recipientPhone,
   );
   if (existente) return { ok: true, conversationId: existente.id };
 
@@ -961,6 +968,7 @@ const startContactConversationSchema = z.object({
   contactId: z.string().min(1).max(64),
   inboxId: z.string().min(1).max(64),
   text: z.string().trim().min(1).max(MAX_MESSAGE_LENGTH),
+  recipientPhone: z.string().trim().min(8).max(30).optional(),
 });
 
 /**
@@ -990,6 +998,14 @@ export async function startContactConversationAction(
   const contact = await container.contacts.findById(session.account.id, parsed.data.contactId);
   if (!contact) return { ok: false, error: 'Contato não encontrado.' };
 
+  const phones = [...new Set([contact.phone, ...(contact.extraPhones ?? [])].filter(Boolean))];
+  if (contact.kind !== 'grupo' && !parsed.data.recipientPhone) {
+    return { ok: false, error: 'Escolha o telefone que receberá a mensagem.' };
+  }
+  if (parsed.data.recipientPhone && !phones.includes(parsed.data.recipientPhone)) {
+    return { ok: false, error: 'O telefone escolhido não pertence a este contato.' };
+  }
+
   const settings = await container.settings.get(session.account.id);
   const inbox = settings.connections.find((item) => item.id === parsed.data.inboxId);
   if (!inbox || inbox.channel !== 'whatsapp') {
@@ -1002,6 +1018,7 @@ export async function startContactConversationAction(
       accountId: session.account.id,
       inboxId: parsed.data.inboxId,
       contact,
+      recipientPhone: parsed.data.recipientPhone,
     });
     conversationId = aberta.id;
   } catch (error) {
@@ -1305,18 +1322,18 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
         ? { type: 'video', url, mimeType, ...(caption ? { caption } : {}) }
         : kind === 'audio'
           ? {
-            type: 'audio',
-            duration: secondsLabel(durationSeconds),
-            url,
-            mimeType,
-            ...(voice ? { voice: true } : {}),
-          }
+              type: 'audio',
+              duration: secondsLabel(durationSeconds),
+              url,
+              mimeType,
+              ...(voice ? { voice: true } : {}),
+            }
           : {
-            type: 'document',
-            fileName: file.name || 'arquivo',
-            size: humanSize(file.size),
-            url,
-          };
+              type: 'document',
+              fileName: file.name || 'arquivo',
+              size: humanSize(file.size),
+              url,
+            };
 
   const result = await container.useCases.sendMedia({
     session,
@@ -1339,11 +1356,7 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
       // Mesma regra do envio de texto: a citação só viaja se a citada existir
       // no canal (`externalId`) e não for nota interna — ver `sendMessageAction`.
       const quotedMessage = replyToId
-        ? await container.conversations.findMessage(
-            session.account.id,
-            conversation.id,
-            replyToId,
-          )
+        ? await container.conversations.findMessage(session.account.id, conversation.id, replyToId)
         : null;
 
       // Só o identificador viaja para o canal: os bytes já estão no depósito

@@ -44,7 +44,20 @@ export const foldText = (raw: string): string =>
  * Junior", mas "MARIA DE LOURDES" vira "Maria de Lourdes" — e não "Maria De
  * Lourdes", que nenhum brasileiro escreve.
  */
-const PARTICULAS = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'di', 'du', 'del', 'la', 'van', 'von']);
+const PARTICULAS = new Set([
+  'de',
+  'da',
+  'do',
+  'das',
+  'dos',
+  'e',
+  'di',
+  'du',
+  'del',
+  'la',
+  'van',
+  'von',
+]);
 
 /**
  * Nome de pessoa em caixa alta vira Maiúsculas Iniciais.
@@ -85,7 +98,10 @@ export const normalizePersonName = (raw: string): string => {
  * formato da origem.
  */
 export const firstEmail = (raw: string): string => {
-  const candidatos = raw.split(/[;,\s]+/).map((parte) => parte.trim()).filter(Boolean);
+  const candidatos = raw
+    .split(/[;,\s]+/)
+    .map((parte) => parte.trim())
+    .filter(Boolean);
   const valido = candidatos.find((parte) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(parte));
   return valido ? valido.toLowerCase() : '';
 };
@@ -117,27 +133,31 @@ export const normalizeImportedPhone = (raw: string): string | null => {
 
 /** Uma linha da planilha, já com as colunas resolvidas para os campos do CRM. */
 export interface ImportRow {
-  readonly name: string;
-  readonly phone: string;
-  readonly email: string;
   readonly company: string;
-  readonly notes: string;
-  /** Conteúdo da coluna de sim/não, quando o usuário mapeou uma. */
-  readonly whatsappFlag?: string;
+  readonly cnpj: string;
+  readonly companyAddress: string;
+  readonly companyPhone: string;
+  readonly partnerPhone: string;
+  readonly classification: string;
+  /** Conteúdo literal da coluna `WhatsApp`. */
+  readonly whatsappFlag: string;
 }
 
 export interface ImportContact {
   readonly name: string;
   /** Todos os números da pessoa, em E.164, sem repetir. O primeiro vira `phone`. */
   readonly phones: readonly string[];
-  readonly email: string;
   readonly company: string;
-  readonly notes: string;
+  readonly cnpj: string;
+  readonly companyAddress: string;
+  readonly companyPhone: string;
+  readonly partnerPhone: string;
+  readonly classification: string;
 }
 
 export interface ImportPreparation {
   readonly contacts: readonly ImportContact[];
-  /** Linhas descartadas por não terem WhatsApp marcado como "Sim". */
+  /** Telefones de sócio descartados porque `WhatsApp` não era exatamente `Sim`. */
   readonly semWhatsapp: number;
   /** Linhas descartadas por não ter nome ou por telefone irrecuperável. */
   readonly invalidas: number;
@@ -166,45 +186,56 @@ export interface ImportPreparation {
  * planilha é a única informação disponível — as outras ficam à vista no
  * cadastro para quem atende escolher.
  */
-export const prepareImport = (rows: readonly ImportRow[], filtrarPorWhatsapp: boolean): ImportPreparation => {
+export const prepareImport = (rows: readonly ImportRow[]): ImportPreparation => {
   const porChave = new Map<string, { contato: ImportContact; numeros: string[] }>();
   let semWhatsapp = 0;
   let invalidas = 0;
   let agrupadas = 0;
 
   for (const row of rows) {
-    if (filtrarPorWhatsapp && !isAffirmative(row.whatsappFlag ?? '')) {
-      semWhatsapp += 1;
-      continue;
-    }
+    const empresa = row.company.trim().replace(/\s+/g, ' ');
+    const telefoneEmpresa = normalizeImportedPhone(row.companyPhone);
 
-    const nome = normalizePersonName(row.name);
-    const telefone = normalizeImportedPhone(row.phone);
-    if (!nome || !telefone) {
+    // Regra deliberadamente literal: `sim`, `SIM`, `1` e qualquer outro valor
+    // não autorizam importar o telefone pessoal do sócio.
+    const telefoneSocio =
+      row.whatsappFlag === 'Sim' ? normalizeImportedPhone(row.partnerPhone) : null;
+    if (row.partnerPhone.trim() && row.whatsappFlag !== 'Sim') semWhatsapp += 1;
+
+    const numeros = [telefoneEmpresa, telefoneSocio].filter(
+      (numero): numero is string => numero !== null,
+    );
+
+    if (!empresa || numeros.length === 0) {
       invalidas += 1;
       continue;
     }
 
-    const empresa = row.company.trim().replace(/\s+/g, ' ');
-    const chave = `${foldText(nome)}|${foldText(empresa)}`;
+    const cnpj = row.cnpj.trim();
+    const chave = cnpj.replace(/\D/g, '') || foldText(empresa);
     const existente = porChave.get(chave);
 
     if (!existente) {
       porChave.set(chave, {
         contato: {
-          name: nome,
-          phones: [telefone],
-          email: firstEmail(row.email),
+          name: empresa,
+          phones: [...new Set(numeros)],
           company: empresa,
-          notes: row.notes.trim(),
+          cnpj,
+          companyAddress: row.companyAddress.trim(),
+          companyPhone: telefoneEmpresa ?? '',
+          partnerPhone: telefoneSocio ?? '',
+          classification: row.classification.trim(),
         },
-        numeros: [telefone],
+        numeros: [...new Set(numeros)],
       });
       continue;
     }
 
     agrupadas += 1;
-    if (!existente.numeros.includes(telefone)) existente.numeros.push(telefone);
+    for (const numero of numeros) {
+      if (!existente.numeros.includes(numero)) existente.numeros.push(numero);
+    }
 
     // Campos que faltavam na primeira linha são completados pelas seguintes: a
     // planilha repete os dados do sócio em toda linha dele, mas nem sempre
@@ -212,9 +243,12 @@ export const prepareImport = (rows: readonly ImportRow[], filtrarPorWhatsapp: bo
     existente.contato = {
       ...existente.contato,
       phones: existente.numeros,
-      email: existente.contato.email || firstEmail(row.email),
       company: existente.contato.company || empresa,
-      notes: existente.contato.notes || row.notes.trim(),
+      cnpj: existente.contato.cnpj || cnpj,
+      companyAddress: existente.contato.companyAddress || row.companyAddress.trim(),
+      companyPhone: existente.contato.companyPhone || telefoneEmpresa || '',
+      partnerPhone: existente.contato.partnerPhone || telefoneSocio || '',
+      classification: existente.contato.classification || row.classification.trim(),
     };
   }
 

@@ -88,6 +88,7 @@ model Account {
   tasks            Task[]
   mediaObjects     MediaObject[]
   scheduledMessages ScheduledMessage[]
+  contactImportBatches ContactImportBatch[]
 }
 
 /// A pessoa. Nada aqui é específico de uma conta — o que é, mora em `Membership`.
@@ -100,6 +101,12 @@ model User {
   email            String  @unique
   /// `scrypt` com sal por usuário. A senha em claro nunca é gravada nem logada.
   passwordHash     String
+  /// Projeção para inspeção direta da tabela: `superadmin` quando a
+  /// pessoa administra a plataforma; nos demais casos, o papel do primeiro
+  /// workspace ao qual ela foi vinculada. A autorização continua usando
+  /// `Membership.roleSlug`, pois uma pessoa pode ter papéis diferentes em
+  /// workspaces diferentes. Triggers do banco mantêm esta coluna sincronizada.
+  role             String?
   avatarTone       String
   /// URL servida por `/api/users/[userId]/avatar`, com o tipo do arquivo e uma
   /// versão embutidos na própria query string (`?t=<mimeType>&v=<timestamp>`).
@@ -257,7 +264,16 @@ model Contact {
   /// não tinha como saber que os outros dois eram a mesma pessoa.
   extraPhones      String[] @default([])
   email            String?
-  company          String?
+  /// Nome empresarial / razão social. A coluna física usa o nome pedido
+  /// pelo formato B2B; `company` preserva o contrato existente do domínio/UI.
+  company          String? @map("empresa")
+  cnpj             String?
+  companyAddress   String? @map("endereco")
+  companyPhone     String? @map("telefone_empresa")
+  partnerPhone     String? @map("telefone_socio")
+  classification   String? @map("classificacao")
+  /// `manual`, `csv` ou `whatsapp`; separa a proveniência sem alterar `kind`.
+  origin           String  @default("manual") @map("origem")
   channel          String
   avatarTone       String
   location         String?
@@ -278,8 +294,38 @@ model Contact {
   labels             Label[]             @relation("ContactLabels")
   conversations      Conversation[]
   campaignRecipients CampaignRecipient[]
+  importBatchEntries ContactImportBatchContact[]
 
   @@index([accountId])
+}
+
+/// Uma execução de importação CSV nomeada pelo usuário.
+model ContactImportBatch {
+  id        String   @id @default(cuid())
+  accountId String   @map("account_id")
+  name      String   @map("nome")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  account  Account                     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  contacts ContactImportBatchContact[]
+
+  @@index([accountId, createdAt])
+  @@map("contact_import_batches")
+}
+
+/// Relação explícita porque um contato pode reaparecer em importações futuras.
+model ContactImportBatchContact {
+  batchId   String   @map("batch_id")
+  contactId String   @map("contact_id")
+  rowNumber Int?     @map("row_number")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  batch   ContactImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  contact Contact            @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([batchId, contactId])
+  @@index([contactId])
+  @@map("contact_import_batch_contacts")
 }
 
 // ---------------------------------------------------------------- conversas
@@ -707,6 +753,10 @@ model WhatsAppCommand {
   payload   Json     @default("{}")
   status    String   @default("pending") // pending | processing | completed | failed
   error     String?
+  /// Quantas vezes o comando voltou para a fila por sessão fora do ar.
+  /// É o que dá um teto à retentativa: sem ele, uma caixa desconectada de vez
+  /// faria o mesmo envio circular entre `pending` e `processing` para sempre.
+  attempts  Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

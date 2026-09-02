@@ -23,6 +23,7 @@ import {
 } from '@/core/domain/contact';
 import { DB_POOL_SIZE, asJson, prisma } from '@/infrastructure/db/prisma';
 import { initPostgresAuthState, isPairedCreds } from '../auth/postgres-auth-state';
+import { SessaoIndisponivelError } from './errors';
 import {
   applyDeliveryUpdate,
   applyReaction,
@@ -301,6 +302,18 @@ export class WhatsAppSession {
   private emVoo = 0;
   private readonly ociosos: (() => void)[] = [];
 
+  /**
+   * Quem está esperando esta sessão ficar de pé.
+   *
+   * O envio não tinha como esperar: `start()` devolve assim que o socket é
+   * construído — muito antes de `connection: 'open'` —, então quem mandasse uma
+   * mensagem na janela de reconexão batia na guarda de `sendMessage` e via a
+   * bolha virar "falha" em definitivo, mesmo que a sessão subisse dois segundos
+   * depois. Esta lista é o que permite esperar a abertura em vez de desistir
+   * dela. Ver `waitUntilConnected`.
+   */
+  private readonly prontos: ((abriu: boolean) => void)[] = [];
+
   constructor(inboxId: string, accountId: string) {
     this.inboxId = inboxId;
     this.accountId = accountId;
@@ -315,6 +328,106 @@ export class WhatsAppSession {
     return this.currentStatus;
   }
 
+  /**
+   * O socket está de pé e autenticado?
+   *
+   * A pergunta que o banco **não** responde. `WhatsAppConnection.status` é um
+   * valor gravado, e ele só é verdade enquanto a gravação seguinte acontecer;
+   * isto aqui é o objeto vivo. Quando os dois divergem, quem manda é este.
+   */
+  get isConnected(): boolean {
+    return Boolean(this.socket) && this.isAuthenticated;
+  }
+
+  /**
+   * Já existe uma tentativa de conexão em curso ou agendada?
+   *
+   * Serve para distinguir os dois motivos de uma sessão não estar de pé, que
+   * pedem respostas opostas: se ela está subindo, o certo é esperar; se está
+   * parada e ninguém vai levantá-la, o certo é chamar `start()`. Sem essa
+   * distinção, todo envio na janela de reconexão reiniciaria o socket por
+   * cima de uma tentativa que já estava andando — e o recuo do 440, que existe
+   * para não brigar com um WhatsApp Web aberto, seria atropelado.
+   */
+  get isReconnecting(): boolean {
+    return this.isInitializing || this.reconnectTimer !== null;
+  }
+
+  /**
+   * Espera a sessão abrir, até `timeoutMs`. `false` se o prazo vencer.
+   *
+   * Não dispara conexão nenhuma — só observa. Quem decide levantar a sessão é
+   * quem chama, porque essa decisão depende de `isReconnecting`.
+   */
+  async waitUntilConnected(timeoutMs: number): Promise<boolean> {
+    if (this.isConnected) return true;
+
+    return new Promise<boolean>((resolve) => {
+      // `avisar` só é chamado depois de entrar na lista, o que acontece abaixo
+      // da criação do prazo: quando ele roda, `prazo` já existe.
+      const avisar = (abriu: boolean) => {
+        clearTimeout(prazo);
+        resolve(abriu);
+      };
+
+      const prazo = setTimeout(() => {
+        const posicao = this.prontos.indexOf(avisar);
+        if (posicao !== -1) this.prontos.splice(posicao, 1);
+        resolve(false);
+      }, timeoutMs);
+      prazo.unref?.();
+
+      this.prontos.push(avisar);
+    });
+  }
+
+  /** Libera quem espera pela abertura. */
+  private liberarEspera(abriu: boolean): void {
+    for (const avisar of this.prontos.splice(0)) avisar(abriu);
+  }
+
+  /**
+   * Agenda a volta da sessão.
+   *
+   * É método próprio — e é chamado **antes** de qualquer gravação no banco —
+   * porque o agendamento é a única coisa do tratador de queda que não pode ser
+   * perdida. O tratador inteiro roda dentro de `guarded`, que engole exceções:
+   * quando `updateStatus` falhava (e ele falha justamente sob a pressão de
+   * pooler que já derrubou este worker antes), a queda tomava o caminho
+   * `isAuthenticated = false` → exceção → **nada**. Sobrava uma sessão zumbi:
+   * socket morto, banco preso em `conectado`, tela verde, todo envio recusado,
+   * e nenhuma reconexão a caminho. Só um clique em "Conectar" ou um reinício do
+   * worker tiravam a caixa daquilo.
+   *
+   * Armado primeiro, o pior caso de uma falha de banco passa a ser um estado
+   * desatualizado por alguns segundos — que a própria reconexão corrige ao
+   * gravar `conectando` e depois `conectado`.
+   */
+  private agendarReconexao(delayMs: number): void {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = setTimeout(() => void this.start(), delayMs);
+    this.reconnectTimer.unref?.();
+  }
+
+  /**
+   * Grava o estado sem deixar a falha escapar.
+   *
+   * Usado no tratador de queda, onde uma exceção não custaria só a linha do
+   * banco: ela abortaria o resto do tratador. O erro é registrado — perder a
+   * gravação em silêncio seria trocar um defeito visível por um invisível.
+   */
+  private async registrarEstado(patch: Partial<WhatsAppStatusPayload>): Promise<void> {
+    try {
+      await this.updateStatus(patch);
+    } catch (error) {
+      console.error(
+        `[WhatsAppSession ${this.inboxId}] Falha ao gravar o estado ` +
+          `'${patch.status ?? this.currentStatus.status}':`,
+        error,
+      );
+    }
+  }
+
   private async updateStatus(patch: Partial<WhatsAppStatusPayload>) {
     this.currentStatus = {
       ...this.currentStatus,
@@ -323,6 +436,19 @@ export class WhatsAppSession {
       inboxId: this.inboxId,
       updatedAt: new Date().toISOString(),
     };
+
+    /**
+     * Estado terminal solta quem espera na hora.
+     *
+     * `desconectado` é o único que ninguém vai desfazer sozinho: os demais são
+     * degraus a caminho de `conectado`. Sem isto, um envio enfileirado contra
+     * uma caixa deslogada ou substituída em definitivo ficaria os trinta
+     * segundos inteiros esperando uma abertura que já se sabe que não vem.
+     *
+     * Antes das gravações de propósito: a informação já é verdadeira aqui, e
+     * ela não pode depender de o Postgres responder.
+     */
+    if (this.currentStatus.status === 'desconectado') this.liberarEspera(false);
 
     await prisma.whatsAppConnection.updateMany({
       where: { inboxId: this.inboxId },
@@ -541,7 +667,7 @@ export class WhatsAppSession {
             );
             this.teardownSocket();
             this.qrCycles = 0;
-            await this.updateStatus({
+            await this.registrarEstado({
               status: 'desconectado',
               qr: undefined,
               error: 'O QR expirou sem ser lido. Clique em conectar para gerar outro.',
@@ -552,7 +678,7 @@ export class WhatsAppSession {
           console.log(
             `[WhatsAppSession ${this.inboxId}] QR Code recebido (${this.qrCycles}/${MAX_QR_CYCLES}).`,
           );
-          await this.updateStatus({
+          await this.registrarEstado({
             status: 'aguardando_leitura',
             qr,
             error: undefined,
@@ -570,7 +696,10 @@ export class WhatsAppSession {
 
           if (statusCode === DisconnectReason.restartRequired || statusCode === 515) {
             console.log(`[WhatsAppSession ${this.inboxId}] Reinício pós-pareamento (515)...`);
-            setTimeout(() => void this.start(), 500);
+            // Pelo agendador, e não por um `setTimeout` solto: um timer que a
+            // sessão não conhece não pode ser cancelado, e voltava meio segundo
+            // depois para abrir um socket numa sessão que `stop()` já encerrou.
+            this.agendarReconexao(500);
             return;
           }
 
@@ -598,7 +727,7 @@ export class WhatsAppSession {
             this.replacedCount += 1;
 
             if (this.replacedCount > MAX_REPLACED_RETRIES) {
-              await this.updateStatus({
+              await this.registrarEstado({
                 status: 'desconectado',
                 error:
                   'Outro dispositivo assumiu este número. Feche o WhatsApp Web e conecte novamente.',
@@ -613,24 +742,32 @@ export class WhatsAppSession {
                 `Reconectando em ${Math.round(espera / 1000)}s ` +
                 `(${this.replacedCount}/${MAX_REPLACED_RETRIES}).`,
             );
-            await this.updateStatus({
+            this.agendarReconexao(espera);
+            await this.registrarEstado({
               status: 'conectando',
               error: 'Reconectando: outra sessão assumiu o número.',
               qr: undefined,
             });
-            if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-            this.reconnectTimer = setTimeout(() => void this.start(), espera);
-            this.reconnectTimer.unref?.();
             return;
           }
 
           if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
-            await prisma.whatsAppKey.deleteMany({ where: { inboxId: this.inboxId } });
-            await prisma.whatsAppConnection.updateMany({
-              where: { inboxId: this.inboxId },
-              data: { credsCipher: null, credsIv: null, credsTag: null, status: 'desconectado' },
-            });
-            await this.updateStatus({
+            // A limpeza vai num `try` próprio: ela é irrelevante para o estado
+            // que a tela precisa mostrar, e não pode ser o que impede a caixa de
+            // ser marcada como desconectada.
+            try {
+              await prisma.whatsAppKey.deleteMany({ where: { inboxId: this.inboxId } });
+              await prisma.whatsAppConnection.updateMany({
+                where: { inboxId: this.inboxId },
+                data: { credsCipher: null, credsIv: null, credsTag: null, status: 'desconectado' },
+              });
+            } catch (error) {
+              console.error(
+                `[WhatsAppSession ${this.inboxId}] Falha ao limpar as credenciais revogadas:`,
+                error,
+              );
+            }
+            await this.registrarEstado({
               status: 'desconectado',
               error: 'Desconectado no aparelho do WhatsApp.',
               qr: undefined,
@@ -639,7 +776,16 @@ export class WhatsAppSession {
           }
 
           if (statusCode === DisconnectReason.badSession || statusCode === 500) {
-            await prisma.whatsAppKey.deleteMany({ where: { inboxId: this.inboxId } });
+            // Mesmo motivo: uma falha ao apagar as chaves não pode engolir a
+            // reconexão que vem logo abaixo.
+            try {
+              await prisma.whatsAppKey.deleteMany({ where: { inboxId: this.inboxId } });
+            } catch (error) {
+              console.error(
+                `[WhatsAppSession ${this.inboxId}] Falha ao descartar as chaves da sessão inválida:`,
+                error,
+              );
+            }
           }
 
           // Handshake transitório inicial do WebSocket WhatsApp para sessões não pareadas:
@@ -651,8 +797,8 @@ export class WhatsAppSession {
               console.log(
                 `[WhatsAppSession ${this.inboxId}] Handshake transitório (${statusCode}). Tentativa ${this.qrAttempts}/8 gerando QR...`,
               );
-              await this.updateStatus({ status: 'gerando_qr' });
-              this.reconnectTimer = setTimeout(() => void this.start(), 1500);
+              this.agendarReconexao(1500);
+              await this.registrarEstado({ status: 'gerando_qr' });
               return;
             }
 
@@ -660,7 +806,7 @@ export class WhatsAppSession {
             // conectar, e a tentativa seguinte precisa começar inteira.
             this.qrAttempts = 0;
             this.qrCycles = 0;
-            await this.updateStatus({
+            await this.registrarEstado({
               status: 'desconectado',
               qr: undefined,
               error: 'O QR expirou sem ser lido. Clique em conectar para gerar outro.',
@@ -673,14 +819,17 @@ export class WhatsAppSession {
             const delays = [3000, 8000, 20000, 60000];
             const delay = (delays[Math.min(this.retryCount - 1, delays.length - 1)] ?? 60000) + Math.random() * 1000;
 
-            await this.updateStatus({
+            // Armado antes da gravação, e não depois: ver `agendarReconexao`.
+            // Era exatamente aqui que uma falha de banco deixava a sessão sem
+            // volta e a caixa verde na tela para sempre.
+            this.agendarReconexao(delay);
+
+            await this.registrarEstado({
               status: 'conectando',
               error: `Conexão perdida. Reconectando em ${Math.round(delay / 1000)}s...`,
             });
-
-            this.reconnectTimer = setTimeout(() => void this.start(), delay);
           } else {
-            await this.updateStatus({ status: 'desconectado', qr: undefined });
+            await this.registrarEstado({ status: 'desconectado', qr: undefined });
           }
         }
 
@@ -700,13 +849,23 @@ export class WhatsAppSession {
           this.qrAttempts = 0;
           this.qrCycles = 0;
           this.retryCount = 0;
+          if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+          }
           this.beginDrain();
+
+          // Antes da gravação, de propósito. O socket **está** aberto neste
+          // ponto; o banco é escrituração. Fazer o envio que espera depender de
+          // uma ida ao Postgres seria devolver ao caminho crítico justamente a
+          // dependência que a queda mostrou ser frágil.
+          this.liberarEspera(true);
 
           const userJid = this.socket?.user?.id ? jidNormalizedUser(this.socket.user.id) : undefined;
 
           const ownerName = this.socket?.user?.name ?? (userJid ? PhoneNumber.format(userOf(userJid)) : 'WhatsApp');
 
-          await this.updateStatus({
+          await this.registrarEstado({
             status: 'conectado',
             qr: undefined,
             error: undefined,
@@ -1006,7 +1165,7 @@ export class WhatsAppSession {
     emoji: string,
   ): Promise<void> {
     if (!this.socket || !this.isAuthenticated) {
-      throw new Error(`Sessão WhatsApp ${this.inboxId} não está conectada.`);
+      throw new SessaoIndisponivelError(`Sessão WhatsApp ${this.inboxId} não está conectada.`);
     }
 
     const raw = recipient.channelThreadId ?? recipient.jid ?? recipient.phone;
@@ -1916,7 +2075,7 @@ export class WhatsAppSession {
     } = {},
   ): Promise<string> {
     if (!this.socket || !this.isAuthenticated) {
-      throw new Error(`Sessão WhatsApp ${this.inboxId} não está conectada.`);
+      throw new SessaoIndisponivelError(`Sessão WhatsApp ${this.inboxId} não está conectada.`);
     }
 
     const raw = recipient.channelThreadId ?? recipient.jid ?? recipient.phone;
@@ -1966,7 +2125,7 @@ export class WhatsAppSession {
     externalId: string,
   ): Promise<void> {
     if (!this.socket || !this.isAuthenticated) {
-      throw new Error(`Sessão WhatsApp ${this.inboxId} não está conectada.`);
+      throw new SessaoIndisponivelError(`Sessão WhatsApp ${this.inboxId} não está conectada.`);
     }
 
     const raw = recipient.channelThreadId ?? recipient.jid ?? recipient.phone;
@@ -1999,7 +2158,7 @@ export class WhatsAppSession {
     },
   ): Promise<string> {
     if (!this.socket || !this.isAuthenticated) {
-      throw new Error(`Sessão WhatsApp ${this.inboxId} não está conectada.`);
+      throw new SessaoIndisponivelError(`Sessão WhatsApp ${this.inboxId} não está conectada.`);
     }
 
     const raw = recipient.channelThreadId ?? recipient.jid ?? recipient.phone;
@@ -2099,6 +2258,9 @@ export class WhatsAppSession {
     this.teardownSocket();
     this.isAuthenticated = false;
     this.isInitializing = false;
+    // Ninguém mais vai abrir esta sessão. Quem espera precisa saber agora, em
+    // vez de descobrir daqui a trinta segundos pelo tempo limite.
+    this.liberarEspera(false);
     // Encerramento explícito zera os orçamentos de pareamento: quem desconectar
     // e voltar a conectar começa do zero, não do que sobrou da tentativa antiga.
     this.qrAttempts = 0;

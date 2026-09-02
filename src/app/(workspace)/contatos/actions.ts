@@ -40,7 +40,8 @@ const createContactSchema = z.object({
 
 export async function createContactAction(input: unknown): Promise<ActionResult> {
   const parsed = createContactSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
 
   try {
     const session = await assertCanWrite();
@@ -72,7 +73,8 @@ const updateContactSchema = z.object({
 
 export async function updateContactAction(input: unknown): Promise<ActionResult> {
   const parsed = updateContactSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
 
   try {
     const session = await assertCanWrite();
@@ -115,8 +117,12 @@ export async function deleteContactAction(input: unknown): Promise<ActionResult>
   }
 }
 
-export async function deleteContactsAction(input: unknown): Promise<ActionResult<{ count: number }>> {
-  const parsed = z.object({ contactIds: z.array(z.string().min(1)).min(1).max(500) }).safeParse(input);
+export async function deleteContactsAction(
+  input: unknown,
+): Promise<ActionResult<{ count: number }>> {
+  const parsed = z
+    .object({ contactIds: z.array(z.string().min(1)).min(1).max(500) })
+    .safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Contatos inválidos.' };
   try {
     const session = await assertCanWrite();
@@ -201,22 +207,18 @@ export async function saveSegmentAction(input: unknown): Promise<ActionResult> {
  * uma a uma no resultado.
  */
 const importContactsCsvSchema = z.object({
+  batchName: z.string().trim().min(2, 'Informe um nome para a lista.').max(120),
   contacts: z
     .array(
       z.object({
         name: z.string().trim().min(1, 'Nome é obrigatório.'),
-        /**
-         * Todos os números da mesma pessoa. O primeiro vira o principal.
-         *
-         * Era um `phone` só, e a planilha traz a mesma pessoa em várias linhas
-         * — uma por telefone. Cada linha virava um contato separado, três
-         * "Thiago Franklin Proenca" na agenda sem nada indicando que eram a
-         * mesma pessoa.
-         */
-        phones: z.array(z.string().trim().min(5)).min(1).max(20),
-        email: z.string().trim().max(200).optional().or(z.literal('')),
         company: z.string().trim().max(200).optional().or(z.literal('')),
-        notes: z.string().trim().max(5000).optional().or(z.literal('')),
+        cnpj: z.string().trim().max(32).optional().or(z.literal('')),
+        companyAddress: z.string().trim().max(500).optional().or(z.literal('')),
+        companyPhone: z.string().trim().max(30).optional().or(z.literal('')),
+        partnerPhone: z.string().trim().max(30).optional().or(z.literal('')),
+        whatsappFlag: z.string().trim().max(20).optional().or(z.literal('')),
+        classification: z.string().trim().max(120).optional().or(z.literal('')),
       }),
     )
     .min(1, 'Nenhum contato enviado para importação.')
@@ -224,10 +226,16 @@ const importContactsCsvSchema = z.object({
 });
 
 export interface ImportCsvResult {
+  readonly batchId: string;
+  readonly batchName: string;
   readonly importedCount: number;
   readonly updatedCount: number;
   readonly errorCount: number;
-  readonly errors: readonly { readonly line: number; readonly name: string; readonly error: string }[];
+  readonly errors: readonly {
+    readonly line: number;
+    readonly name: string;
+    readonly error: string;
+  }[];
 }
 
 export async function auditContactsExportAction(input: unknown): Promise<ActionResult> {
@@ -250,19 +258,30 @@ export async function auditContactsExportAction(input: unknown): Promise<ActionR
   }
 }
 
-export async function importContactsCsvAction(input: unknown): Promise<ActionResult<ImportCsvResult>> {
+export async function importContactsCsvAction(
+  input: unknown,
+): Promise<ActionResult<ImportCsvResult>> {
   const parsed = importContactsCsvSchema.safeParse(input);
   if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados de importação inválidos.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Dados de importação inválidos.',
+    };
   }
 
   try {
     const session = await assertCanWrite();
     const accountId = session.account.id;
 
+    const batch = await prisma.contactImportBatch.create({
+      data: { accountId, name: parsed.data.batchName },
+      select: { id: true, name: true },
+    });
+
     let importedCount = 0;
     let updatedCount = 0;
     const errors: { line: number; name: string; error: string }[] = [];
+    const batchContacts = new Map<string, number>();
 
     for (let i = 0; i < parsed.data.contacts.length; i++) {
       const item = parsed.data.contacts[i]!;
@@ -276,11 +295,27 @@ export async function importContactsCsvAction(input: unknown): Promise<ActionRes
        * divergência esperando data: a tela dizia "3 contatos, 5 números" e o
        * banco recebia outra coisa.
        */
+      /**
+       * Os dois números da linha, já em E.164 e em variáveis próprias.
+       *
+       * Eles não servem só para montar `numeros`: as colunas `companyPhone` e
+       * `partnerPhone` também são gravadas, e antes recebiam `item.*` — o texto
+       * como veio. Hoje a tela normaliza antes de enviar, então na prática
+       * chegava E.164; mas a Server Action é uma porta de entrada por si só, e
+       * depender de o chamador ter normalizado deixava as duas metades do
+       * cadastro livres para discordar: `phone` em `+5524998296234` e
+       * `companyPhone` em `(24) 99829-6234`. Quando isso acontece, a tabela da
+       * lista importada mostra o número deformado e o seletor de destinatário
+       * — que compara o telefone escolhido com estes campos para rotular
+       * "Empresa" ou "Sócio" — nunca casa, e o rótulo some.
+       */
+      const telefoneEmpresa = normalizeImportedPhone(item.companyPhone ?? '');
+      const telefoneSocio =
+        item.whatsappFlag === 'Sim' ? normalizeImportedPhone(item.partnerPhone ?? '') : null;
+
       const numeros = [
         ...new Set(
-          item.phones
-            .map((bruto) => normalizeImportedPhone(bruto))
-            .filter((numero): numero is string => numero !== null),
+          [telefoneEmpresa, telefoneSocio].filter((numero): numero is string => numero !== null),
         ),
       ];
 
@@ -288,7 +323,7 @@ export async function importContactsCsvAction(input: unknown): Promise<ActionRes
         errors.push({
           line: lineNumber,
           name: item.name,
-          error: `Nenhum telefone válido (${item.phones.join(', ')}).`,
+          error: 'Nenhum telefone da empresa ou do sócio com WhatsApp válido.',
         });
         continue;
       }
@@ -306,10 +341,15 @@ export async function importContactsCsvAction(input: unknown): Promise<ActionRes
       const existing = await prisma.contact.findFirst({
         where: {
           accountId,
-          OR: [{ phone: { in: numeros } }, { extraPhones: { hasSome: numeros } }],
+          OR: [
+            ...(item.cnpj ? [{ cnpj: item.cnpj }] : []),
+            { phone: { in: numeros } },
+            { extraPhones: { hasSome: numeros } },
+          ],
         },
       });
 
+      let contactId: string;
       if (existing) {
         // Os números se somam, não se substituem: a planilha nova pode trazer
         // um celular a mais sem que isso apague o que já se sabia da pessoa.
@@ -327,20 +367,34 @@ export async function importContactsCsvAction(input: unknown): Promise<ActionRes
           data: {
             name: existing.name || item.name,
             extraPhones: novosExtras,
-            email: existing.email || (item.email ? item.email : undefined),
             company: existing.company || (item.company ? item.company : undefined),
-            notes: existing.notes
-              ? item.notes
-                ? `${existing.notes}
-
-[Importado]: ${item.notes}`
-                : existing.notes
-              : item.notes || undefined,
+            cnpj: existing.cnpj || item.cnpj || undefined,
+            companyAddress: existing.companyAddress || item.companyAddress || undefined,
+            companyPhone: telefoneEmpresa ?? existing.companyPhone ?? undefined,
+            /**
+             * Nunca apagado por uma reimportação.
+             *
+             * Aqui estava escrito `: null` no ramo em que a coluna `WhatsApp`
+             * não dizia "Sim" — e isso não deixava o campo de fora, **apagava**
+             * o que já estava lá. Bastava a mesma empresa reaparecer numa lista
+             * nova sem o celular do sócio para o número, importado corretamente
+             * semanas antes, sumir do cadastro.
+             *
+             * A regra do "somente se WhatsApp = Sim" vale para o que se
+             * importa, e ela continua valendo: sem autorização, `telefoneSocio`
+             * é nulo e nada novo é gravado. Ela nunca foi uma ordem para
+             * destruir o que já se sabia — e o comentário logo acima já diz que
+             * nesta importação os números se somam, não se substituem.
+             */
+            partnerPhone: telefoneSocio ?? existing.partnerPhone ?? undefined,
+            classification: item.classification || existing.classification || undefined,
+            origin: 'csv',
           },
         });
+        contactId = existing.id;
         updatedCount += 1;
       } else {
-        const contactId = `ct-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+        contactId = `ct-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
         await prisma.contact.create({
           data: {
             id: contactId,
@@ -348,19 +402,43 @@ export async function importContactsCsvAction(input: unknown): Promise<ActionRes
             name: item.name,
             phone: principal,
             extraPhones: extras,
-            email: item.email || null,
             company: item.company || null,
+            cnpj: item.cnpj || null,
+            companyAddress: item.companyAddress || null,
+            companyPhone: telefoneEmpresa,
+            partnerPhone: telefoneSocio,
+            classification: item.classification || null,
+            origin: 'csv',
             channel: 'whatsapp',
             avatarTone: 'blue',
             kind: 'pessoa',
-            notes: item.notes || null,
             customFields: asJson([]),
             timeline: asJson([]),
           },
         });
         importedCount += 1;
       }
+
+      if (!batchContacts.has(contactId)) batchContacts.set(contactId, lineNumber);
     }
+
+    if (batchContacts.size === 0) {
+      // A conta entra no filtro mesmo sendo redundante — o lote foi criado
+      // nesta mesma requisição, com este `accountId`. É a regra da casa: nenhuma
+      // escrita sai daqui sem escopo, para que nenhuma refatoração futura possa
+      // transformar este `id` num identificador vindo de fora.
+      await prisma.contactImportBatch.delete({ where: { id: batch.id, accountId } });
+      return { ok: false, error: 'Nenhum contato válido foi encontrado para esta lista.' };
+    }
+
+    await prisma.contactImportBatchContact.createMany({
+      data: [...batchContacts].map(([contactId, rowNumber]) => ({
+        batchId: batch.id,
+        contactId,
+        rowNumber,
+      })),
+      skipDuplicates: true,
+    });
 
     await writeAuditLog({
       accountId,
@@ -368,12 +446,16 @@ export async function importContactsCsvAction(input: unknown): Promise<ActionRes
       actorName: session.user.name,
       action: 'contatos.importados',
       targetType: 'contato',
+      targetId: batch.id,
+      targetName: batch.name,
       metadata: { importedCount, updatedCount, errorCount: errors.length },
     });
 
     return {
       ok: true,
       data: {
+        batchId: batch.id,
+        batchName: batch.name,
         importedCount,
         updatedCount,
         errorCount: errors.length,
@@ -413,7 +495,9 @@ const aguardarComando = async (commandId: string): Promise<'concluido' | 'em_and
   return 'em_andamento';
 };
 
-export async function syncWhatsAppContactsAction(): Promise<ActionResult<{ syncedCount: number; newCount: number }>> {
+export async function syncWhatsAppContactsAction(): Promise<
+  ActionResult<{ syncedCount: number; newCount: number }>
+> {
   try {
     const session = await assertCanWrite();
     const accountId = session.account.id;

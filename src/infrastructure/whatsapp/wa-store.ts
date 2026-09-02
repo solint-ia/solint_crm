@@ -9,10 +9,7 @@ import {
   conversationRow,
 } from '@/infrastructure/repositories/prisma/mappers';
 import { dispararAutomacoes } from '@/infrastructure/automations/dispatch';
-import {
-  dispararWebhooks,
-  mensagemDoPayload,
-} from '@/infrastructure/webhooks/webhook-dispatch';
+import { dispararWebhooks, mensagemDoPayload } from '@/infrastructure/webhooks/webhook-dispatch';
 import type { ChatIdentity } from './wa-identity';
 import type { AdContext } from './wa-message-content';
 import { waEventBus } from './whatsapp-events';
@@ -308,9 +305,8 @@ export const commitMessage = async (input: CommitInput): Promise<void> => {
       try {
         const inboxId = input.inboxId ?? existing?.inboxId;
         if (inboxId) {
-          const { captureCsatAnswer, runInboundAutoReplies } = await import(
-            './inbox-auto-messages'
-          );
+          const { captureCsatAnswer, runInboundAutoReplies } =
+            await import('./inbox-auto-messages');
 
           // Uma resposta de pesquisa não é o começo de conversa nenhum: se ela
           // for consumida como nota, nem saudação nem ausência têm o que dizer.
@@ -439,7 +435,13 @@ const createConversationWith = async (input: CommitInput): Promise<void> => {
   }
 
   if (!input.silent) {
-    await announce(input.accountId, 'new_conversation', chat.conversationId, message, targetInboxId);
+    await announce(
+      input.accountId,
+      'new_conversation',
+      chat.conversationId,
+      message,
+      targetInboxId,
+    );
   }
 };
 
@@ -488,59 +490,59 @@ const attachToConversation = async (
 
   try {
     await prisma.$transaction([
-        prisma.message.upsert({
-          where: { id: message.id },
-          create: {
-            id: message.id,
-            conversationId: chat.conversationId,
-            author: message.author,
-            authorName: message.authorName ?? null,
-            contentType: message.content.type,
-            content: asJson(message.content),
-            time: message.time,
-            createdAt: at,
-            deliveryStatus: message.deliveryStatus ?? null,
-            isPrivate: message.isPrivate,
-            externalId: message.externalId ?? null,
-            origin: message.origin ?? null,
-            senderJid: message.senderJid ?? null,
-          },
-          update: {
-            deliveryStatus: message.deliveryStatus ?? undefined,
-            authorName: message.authorName ?? undefined,
-            senderJid: message.senderJid ?? undefined,
-          },
-        }),
-        prisma.conversation.update({
-          where: { id: chat.conversationId, accountId: input.accountId },
-          data: {
-            lastMessagePreview: preview,
-            lastMessageAt: message.time,
-            lastActivityAt: at,
-            lastInboundAt: fromMe ? existing.lastInboundAt : nowIso(at),
-            unreadCount: fromMe ? undefined : { increment: 1 },
-            status: existing.status === 'resolvida' ? 'aberta' : existing.status,
-            statusLabel: existing.status === 'resolvida' ? 'Em andamento' : undefined,
-            channelThreadId: chat.jid,
-            /**
-             * Mensagem do contato arma o prazo de resposta.
-             *
-             * Este caminho não passa por `persistMessage` — a entrada do
-             * WhatsApp escreve direto —, então o carimbo precisa acontecer aqui
-             * também. Mensagem nossa (`fromMe`) não arma nada: quem está
-             * esperando, do lado de cá, é o cliente.
-             */
-            ...(fromMe
-              ? {}
-              : calcularSla(
-                  at,
-                  !existing.firstResponseAt,
-                  normalizeBusinessHours(existing.inbox?.businessHours),
-                  at,
-                )),
-          },
-        }),
-      ]);
+      prisma.message.upsert({
+        where: { id: message.id },
+        create: {
+          id: message.id,
+          conversationId: chat.conversationId,
+          author: message.author,
+          authorName: message.authorName ?? null,
+          contentType: message.content.type,
+          content: asJson(message.content),
+          time: message.time,
+          createdAt: at,
+          deliveryStatus: message.deliveryStatus ?? null,
+          isPrivate: message.isPrivate,
+          externalId: message.externalId ?? null,
+          origin: message.origin ?? null,
+          senderJid: message.senderJid ?? null,
+        },
+        update: {
+          deliveryStatus: message.deliveryStatus ?? undefined,
+          authorName: message.authorName ?? undefined,
+          senderJid: message.senderJid ?? undefined,
+        },
+      }),
+      prisma.conversation.update({
+        where: { id: chat.conversationId, accountId: input.accountId },
+        data: {
+          lastMessagePreview: preview,
+          lastMessageAt: message.time,
+          lastActivityAt: at,
+          lastInboundAt: fromMe ? existing.lastInboundAt : nowIso(at),
+          unreadCount: fromMe ? undefined : { increment: 1 },
+          status: existing.status === 'resolvida' ? 'aberta' : existing.status,
+          statusLabel: existing.status === 'resolvida' ? 'Em andamento' : undefined,
+          channelThreadId: chat.jid,
+          /**
+           * Mensagem do contato arma o prazo de resposta.
+           *
+           * Este caminho não passa por `persistMessage` — a entrada do
+           * WhatsApp escreve direto —, então o carimbo precisa acontecer aqui
+           * também. Mensagem nossa (`fromMe`) não arma nada: quem está
+           * esperando, do lado de cá, é o cliente.
+           */
+          ...(fromMe
+            ? {}
+            : calcularSla(
+                at,
+                !existing.firstResponseAt,
+                normalizeBusinessHours(existing.inbox?.businessHours),
+                at,
+              )),
+        },
+      }),
+    ]);
   } catch (error) {
     // A mensagem já estava gravada — reentrega do WhatsApp, ou duas cópias do
     // mesmo evento chegando juntas. Nada a fazer e nada a anunciar.
@@ -568,12 +570,16 @@ export const findContactConversation = async (
   accountId: string,
   contactId: string,
   inboxIds: readonly string[] | 'todas',
+  recipientPhone?: string,
 ): Promise<{ readonly id: string; readonly inboxId: string } | null> =>
   prisma.conversation.findFirst({
     where: {
       accountId,
       contactId,
       channel: 'whatsapp',
+      ...(recipientPhone
+        ? { channelThreadId: `${recipientPhone.replace(/\D/g, '')}@s.whatsapp.net` }
+        : {}),
       ...(inboxIds === 'todas' ? {} : { inboxId: { in: [...inboxIds] } }),
     },
     orderBy: { lastActivityAt: 'desc' },
@@ -595,8 +601,9 @@ export const openOutboundConversation = async (input: {
   readonly accountId: string;
   readonly inboxId: string;
   readonly contact: Contact;
+  readonly recipientPhone?: string;
 }): Promise<{ readonly id: string; readonly created: boolean }> => {
-  const { accountId, inboxId, contact } = input;
+  const { accountId, inboxId, contact, recipientPhone } = input;
 
   let jid: string;
   let id: string;
@@ -609,7 +616,7 @@ export const openOutboundConversation = async (input: {
     const cleanId = groupId.replace('@g.us', '');
     id = `cv-wa-${inboxId}-g-${cleanId}`;
   } else {
-    const digits = contact.phone.replace(/\D/g, '');
+    const digits = (recipientPhone ?? contact.phone).replace(/\D/g, '');
     if (!digits) throw new Error('O contato não tem telefone para receber uma mensagem.');
     jid = `${digits}@s.whatsapp.net`;
     id = `cv-wa-${inboxId}-${digits}`;
@@ -713,7 +720,10 @@ export const applyDeliveryUpdate = async (
     ? await prisma.message.updateMany({
         where: {
           id: row.id,
-          OR: [{ deliveryStatus: null }, { deliveryStatus: { in: substituiveisPor(deliveryStatus) } }],
+          OR: [
+            { deliveryStatus: null },
+            { deliveryStatus: { in: substituiveisPor(deliveryStatus) } },
+          ],
         },
         data: { deliveryStatus },
       })
@@ -779,7 +789,9 @@ export const applyReaction = async (
   });
   if (!row) return;
 
-  const atuais = Array.isArray(row.reactions) ? (row.reactions as unknown as MessageReaction[]) : [];
+  const atuais = Array.isArray(row.reactions)
+    ? (row.reactions as unknown as MessageReaction[])
+    : [];
   const semAnterior = atuais.filter(
     (item) => item && typeof item === 'object' && item.actorId !== reaction.actorId,
   );
@@ -1063,7 +1075,6 @@ const publish = async (
   });
 };
 
-
 /**
  * Recupera o conteúdo de uma mensagem enviada anteriormente para atender
  * pedidos de reenvio de decifragem do Baileys (getMessage).
@@ -1084,4 +1095,3 @@ export const findSentMessage = async (
   }
   return undefined;
 };
-

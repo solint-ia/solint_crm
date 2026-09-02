@@ -45,6 +45,12 @@ export class PrismaContactRepository implements ContactRepository {
         phone: input.phone ? PhoneNumber.normalize(input.phone) : '',
         email: input.email ?? null,
         company: input.company ?? null,
+        cnpj: input.cnpj ?? null,
+        companyAddress: input.companyAddress ?? null,
+        companyPhone: input.companyPhone ?? null,
+        partnerPhone: input.partnerPhone ?? null,
+        classification: input.classification ?? null,
+        origin: input.origin ?? 'manual',
         channel: input.channel,
         avatarTone: input.avatarTone,
         location: input.location ?? null,
@@ -79,6 +85,16 @@ export class PrismaContactRepository implements ContactRepository {
         ...(patch.phone === undefined ? {} : { phone: PhoneNumber.normalize(patch.phone) }),
         ...(patch.email === undefined ? {} : { email: patch.email ?? null }),
         ...(patch.company === undefined ? {} : { company: patch.company ?? null }),
+        ...(patch.cnpj === undefined ? {} : { cnpj: patch.cnpj ?? null }),
+        ...(patch.companyAddress === undefined
+          ? {}
+          : { companyAddress: patch.companyAddress ?? null }),
+        ...(patch.companyPhone === undefined ? {} : { companyPhone: patch.companyPhone ?? null }),
+        ...(patch.partnerPhone === undefined ? {} : { partnerPhone: patch.partnerPhone ?? null }),
+        ...(patch.classification === undefined
+          ? {}
+          : { classification: patch.classification ?? null }),
+        ...(patch.origin === undefined ? {} : { origin: patch.origin }),
         ...(patch.notes === undefined ? {} : { notes: patch.notes ?? null }),
         ...(patch.ownerName === undefined ? {} : { ownerName: patch.ownerName ?? null }),
         ...(patch.avatarUrl === undefined ? {} : { avatarUrl: patch.avatarUrl ?? null }),

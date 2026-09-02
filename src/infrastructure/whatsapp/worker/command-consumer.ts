@@ -5,6 +5,8 @@ import { mediaStore } from '../wa-media-store';
 import { waLog } from '../wa-log';
 import { loadConversationForEvent } from '../wa-store';
 import { waEventBus } from '../whatsapp-events';
+import { SessaoIndisponivelError } from './errors';
+import type { WhatsAppSession } from './session';
 import type { WhatsAppSessionManager } from './session-manager';
 
 /**
@@ -30,6 +32,34 @@ const COMMAND_RETENTION_MS = 6 * 60 * 60 * 1000;
 
 /** Uma limpeza a cada N varreduras: de hora em hora, na prática. */
 const CLEANUP_EVERY_N_SWEEPS = 240;
+
+/**
+ * Quanto um comando de escrita espera a sessão abrir antes de desistir da vez.
+ *
+ * Trinta segundos porque é o que cobre uma reconexão real do Baileys — os
+ * recuos são 3s, 8s, 20s e o handshake leva poucos segundos — sem prender a
+ * raia de envio da caixa por tempo demais quando a sessão está mesmo caída.
+ *
+ * Antes não havia espera nenhuma: `start()` devolve assim que o socket é
+ * construído, muito antes de `connection: 'open'`, e o envio despachado em
+ * seguida batia na guarda de `sendMessage`. Toda mensagem escrita na janela de
+ * reconexão — a que se abre num deploy, num 440 ou numa queda de rede — virava
+ * bolha vermelha, mesmo com a sessão voltando dois segundos depois.
+ */
+const ESPERA_SESSAO_MS = 30_000;
+
+/**
+ * Quantas vezes um comando volta para a fila por sessão indisponível.
+ *
+ * Só conta a falha que comprovadamente **não** tocou o socket
+ * (`SessaoIndisponivelError`) — repetir qualquer outra arriscaria entregar a
+ * mesma mensagem duas vezes, que é pior que não entregar.
+ *
+ * Cinco tentativas somam mais de dois minutos de janela junto com o intervalo
+ * da varredura. Passado isso, a sessão não está voltando por conta própria e a
+ * bolha vermelha é a informação honesta.
+ */
+const MAX_TENTATIVAS = 5;
 
 /**
  * Raias de execução.
@@ -80,6 +110,7 @@ interface CommandRow {
   readonly inboxId: string;
   readonly kind: string;
   readonly payload: unknown;
+  readonly attempts: number;
 }
 
 export class CommandConsumer {
@@ -195,9 +226,43 @@ export class CommandConsumer {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Erro ao processar comando';
       medir(`falhou: ${errorMessage}`);
+
+      /**
+       * Sessão fora do ar é adiamento, não fracasso.
+       *
+       * `SessaoIndisponivelError` só é lançado por guardas que rodam **antes**
+       * de `socket.sendMessage` — nada foi entregue ao canal, então repetir é
+       * seguro. Qualquer outro erro cai no caminho antigo: pode ter saído, e
+       * reenviar arriscaria uma segunda cópia no aparelho do cliente.
+       *
+       * Devolver a linha para `pending` basta para a retentativa acontecer: a
+       * varredura a encontra no ciclo seguinte, e o intervalo dela é o recuo.
+       */
+      const adiavel = error instanceof SessaoIndisponivelError && cmd.attempts + 1 < MAX_TENTATIVAS;
+
+      if (adiavel) {
+        console.warn(
+          `[CommandConsumer] Comando ${cmd.id} (${cmd.kind}) adiado: ${errorMessage} ` +
+            `Tentativa ${cmd.attempts + 1}/${MAX_TENTATIVAS}.`,
+        );
+        const { count: devolvido } = await prisma.whatsAppCommand
+          .updateMany({
+            where: { id: cmd.id, status: 'processing' },
+            data: { status: 'pending', error: errorMessage, attempts: { increment: 1 } },
+          })
+          .catch(() => ({ count: 0 }));
+        // Só sai daqui se a linha realmente voltou para a fila. Se a gravação
+        // falhou, o comando ficaria preso em `processing` para sempre — e a
+        // bolha, em "enviando", sem ninguém para desmenti-la.
+        if (devolvido > 0) return;
+      }
+
       console.error(`[CommandConsumer] Erro no comando ${cmd.id} (${cmd.kind}):`, error);
       await prisma.whatsAppCommand
-        .update({ where: { id: cmd.id }, data: { status: 'failed', error: errorMessage } })
+        .update({
+          where: { id: cmd.id },
+          data: { status: 'failed', error: errorMessage, attempts: { increment: 1 } },
+        })
         .catch(() => undefined);
       await this.markMessageFailed(cmd.payload, errorMessage);
     }
@@ -230,6 +295,41 @@ export class CommandConsumer {
     await pruneCacheKeys();
   }
 
+  /**
+   * A sessão da caixa, **de pé**.
+   *
+   * Substitui o `get(inboxId) ?? start(inboxId)` que os quatro comandos de
+   * escrita repetiam, e que tinha dois furos, ambos capazes de perder a
+   * mensagem sozinhos:
+   *
+   *  - `get()` devolvia uma sessão morta sem olhar para ela. Como o `??` só
+   *    cai no `start()` quando o lado esquerdo é nulo, o único caminho que
+   *    reconstrói o socket **nunca era tomado** — a caixa ficava recusando
+   *    envio indefinidamente com a sessão que já tinha caído.
+   *  - `start()` devolve assim que `makeWASocket` volta, muito antes de
+   *    `connection: 'open'`. Quem enviasse em seguida encontrava
+   *    `isAuthenticated === false` e falhava por chegar cedo demais.
+   *
+   * A distinção entre "parada" e "subindo" é o que impede a correção de virar
+   * outro defeito: reiniciar por cima de uma tentativa em curso atropelaria o
+   * recuo do 440, que existe justamente para não brigar com um WhatsApp Web
+   * aberto do outro lado.
+   */
+  private async sessaoPronta(inboxId: string): Promise<WhatsAppSession> {
+    const atual = this.sessionManager.get(inboxId);
+    if (atual?.isConnected) return atual;
+
+    // Sem sessão no processo, ou parada e sem ninguém para levantá-la.
+    const sessao = atual?.isReconnecting ? atual : await this.sessionManager.start(inboxId);
+    if (sessao.isConnected) return sessao;
+
+    if (await sessao.waitUntilConnected(ESPERA_SESSAO_MS)) return sessao;
+
+    throw new SessaoIndisponivelError(
+      `Sessão WhatsApp ${inboxId} não ficou pronta em ${Math.round(ESPERA_SESSAO_MS / 1000)}s.`,
+    );
+  }
+
   private async executeCommand(cmd: CommandRow): Promise<void> {
     const { inboxId, kind } = cmd;
     const payload = (cmd.payload && typeof cmd.payload === 'object' ? cmd.payload : {}) as Record<
@@ -249,8 +349,7 @@ export class CommandConsumer {
       }
 
       case 'send': {
-        const session =
-          this.sessionManager.get(inboxId) ?? (await this.sessionManager.start(inboxId));
+        const session = await this.sessaoPronta(inboxId);
         const quote = payload['quote'] as
           | { externalId: string; fromMe: boolean; text: string }
           | undefined;
@@ -267,8 +366,7 @@ export class CommandConsumer {
       }
 
       case 'delete': {
-        const session =
-          this.sessionManager.get(inboxId) ?? (await this.sessionManager.start(inboxId));
+        const session = await this.sessaoPronta(inboxId);
         const externalId = payload['externalId'];
         if (typeof externalId !== 'string' || !externalId) {
           throw new Error('Comando de exclusão sem o id da mensagem no canal.');
@@ -281,8 +379,7 @@ export class CommandConsumer {
       }
 
       case 'react': {
-        const session =
-          this.sessionManager.get(inboxId) ?? (await this.sessionManager.start(inboxId));
+        const session = await this.sessaoPronta(inboxId);
         const alvo = (payload['message'] ?? {}) as {
           externalId?: string;
           fromMe?: boolean;
@@ -304,8 +401,7 @@ export class CommandConsumer {
       }
 
       case 'send_media': {
-        const session =
-          this.sessionManager.get(inboxId) ?? (await this.sessionManager.start(inboxId));
+        const session = await this.sessaoPronta(inboxId);
         const media = (payload['media'] ?? {}) as {
           kind?: 'image' | 'video' | 'audio' | 'document';
           mediaId?: string;

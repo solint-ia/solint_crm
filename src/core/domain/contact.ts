@@ -38,6 +38,13 @@ export interface Contact {
   readonly extraPhones?: readonly string[];
   readonly email?: string;
   readonly company?: string;
+  readonly cnpj?: string;
+  readonly companyAddress?: string;
+  readonly companyPhone?: string;
+  readonly partnerPhone?: string;
+  readonly classification?: string;
+  /** Como entrou na base. Não se confunde com `kind` (pessoa/grupo). */
+  readonly origin?: 'manual' | 'csv' | 'whatsapp';
   readonly channel: Channel;
   readonly avatarTone: string;
   readonly location?: string;
@@ -55,6 +62,15 @@ export interface Contact {
   readonly avatarUrl?: string;
   /** Número de participantes — so faz sentido para kind === 'grupo'. */
   readonly participantCount?: number;
+}
+
+/** Resumo suficiente para navegar pelas listas importadas sem nova requisição. */
+export interface ContactImportBatchSummary {
+  readonly id: Id;
+  readonly name: string;
+  readonly createdAt: IsoDateTime;
+  readonly contactCount: number;
+  readonly contactIds: readonly Id[];
 }
 
 export const isGroupContact = (contact: Pick<Contact, 'kind'>): boolean => contact.kind === 'grupo';
@@ -77,9 +93,7 @@ export const GROUP_ALLOWED_FIELD_LABEL = 'group_chat_enabled';
 export const GROUP_INBOXES_FIELD_LABEL = 'group_inbox_ids';
 
 /** As caixas que participam do grupo. Vazio = desconhecido, não "nenhuma". */
-export const groupInboxIds = (
-  contact: Pick<Contact, 'customFields'>,
-): readonly string[] =>
+export const groupInboxIds = (contact: Pick<Contact, 'customFields'>): readonly string[] =>
   contact.customFields
     ?.find((field) => field.label === GROUP_INBOXES_FIELD_LABEL)
     ?.value.split(',')
@@ -88,9 +102,13 @@ export const groupInboxIds = (
 
 export const isGroupAllowedInChat = (contact: Pick<Contact, 'kind' | 'customFields'>): boolean => {
   if (contact.kind !== 'grupo') return true;
-  return contact.customFields?.some(
-    (field) => (field.label === GROUP_ALLOWED_FIELD_LABEL || field.label === 'Permitido no Chat') && field.value === 'true',
-  ) ?? false;
+  return (
+    contact.customFields?.some(
+      (field) =>
+        (field.label === GROUP_ALLOWED_FIELD_LABEL || field.label === 'Permitido no Chat') &&
+        field.value === 'true',
+    ) ?? false
+  );
 };
 
 const E164 = /^\+[1-9]\d{7,14}$/;

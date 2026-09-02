@@ -1,0 +1,11 @@
+-- Teto da retentativa de comando.
+--
+-- O consumidor passou a devolver para `pending` o comando que falhou por
+-- sessão fora do ar — a falha que comprovadamente não tocou o socket, e que por
+-- isso pode ser repetida sem risco de entregar a mesma mensagem duas vezes.
+-- Sem um contador, um envio para uma caixa desconectada de vez circularia entre
+-- `pending` e `processing` para sempre.
+--
+-- O padrão zero vale para as linhas antigas: elas já foram resolvidas, e as
+-- pendentes que sobrarem começam com o orçamento inteiro.
+ALTER TABLE "WhatsAppCommand" ADD COLUMN "attempts" INTEGER NOT NULL DEFAULT 0;

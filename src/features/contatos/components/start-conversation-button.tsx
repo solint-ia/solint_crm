@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, MessageCircle, Send } from 'lucide-react';
+import { Loader2, MessageCircle, Phone, Send } from 'lucide-react';
 import type { Contact } from '@/core/domain/contact';
 import { Button } from '@/components/ui/button';
 import { Field, TextArea } from '@/components/ui/field';
@@ -50,12 +50,17 @@ export function StartConversationButton({
 
   const [checking, setChecking] = useState(false);
   const [caixas, setCaixas] = useState<readonly CaixaDisponivel[] | undefined>();
+  const [phoneOptions, setPhoneOptions] = useState<readonly string[] | undefined>();
+  const [recipientPhone, setRecipientPhone] = useState(contact.phone);
 
-  const handleClick = async () => {
+  const resolveDestination = async (phone?: string) => {
     if (checking) return;
     setChecking(true);
 
-    const result = await findContactConversationAction({ contactId: contact.id });
+    const result = await findContactConversationAction({
+      contactId: contact.id,
+      ...(phone ? { recipientPhone: phone } : {}),
+    });
     setChecking(false);
 
     if (!result.ok) {
@@ -64,6 +69,12 @@ export function StartConversationButton({
         title: 'Não foi possível abrir a conversa',
         description: result.error ?? 'Tente novamente.',
       });
+      return;
+    }
+
+    if (result.phoneSelectionRequired && result.phones) {
+      setRecipientPhone(result.phones[0] ?? contact.phone);
+      setPhoneOptions(result.phones);
       return;
     }
 
@@ -82,8 +93,11 @@ export function StartConversationButton({
       return;
     }
 
+    setRecipientPhone(phone ?? contact.phone);
     setCaixas(result.caixas);
   };
+
+  const handleClick = () => void resolveDestination();
 
   return (
     <>
@@ -104,6 +118,7 @@ export function StartConversationButton({
       {caixas ? (
         <FirstMessageModal
           contact={contact}
+          recipientPhone={recipientPhone}
           caixas={caixas}
           onClose={() => setCaixas(undefined)}
           onSent={(conversationId) => {
@@ -112,6 +127,52 @@ export function StartConversationButton({
             router.push(`/conversas/${conversationId}`);
           }}
         />
+      ) : null}
+
+      {phoneOptions ? (
+        <Modal
+          open
+          onClose={() => setPhoneOptions(undefined)}
+          title="Escolha o número do destinatário"
+          description={`${contact.name} possui mais de um telefone. Selecione explicitamente qual receberá a conversa.`}
+          className="max-w-md"
+        >
+          <div className="flex flex-col gap-4 pt-1">
+            <Field label="Enviar para" htmlFor="recipient-phone">
+              <select
+                id="recipient-phone"
+                value={recipientPhone}
+                onChange={(event) => setRecipientPhone(event.target.value)}
+                className="h-10 w-full rounded-xl border border-line bg-surface px-3 font-mono text-body text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+              >
+                {phoneOptions.map((phone) => (
+                  <option key={phone} value={phone}>
+                    {phone}
+                    {phone === contact.companyPhone ? ' · Empresa' : ''}
+                    {phone === contact.partnerPhone ? ' · Sócio' : ''}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <div className="flex justify-end gap-2 border-t border-line pt-4">
+              <Button type="button" variant="secondary" onClick={() => setPhoneOptions(undefined)}>
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                icon={checking ? undefined : <Phone className="size-3.5" />}
+                disabled={checking || !recipientPhone}
+                onClick={() => {
+                  const selected = recipientPhone;
+                  setPhoneOptions(undefined);
+                  void resolveDestination(selected);
+                }}
+              >
+                {checking ? 'Verificando…' : 'Continuar'}
+              </Button>
+            </div>
+          </div>
+        </Modal>
       ) : null}
     </>
   );
@@ -127,11 +188,13 @@ export function StartConversationButton({
  */
 function FirstMessageModal({
   contact,
+  recipientPhone,
   caixas,
   onClose,
   onSent,
 }: {
   readonly contact: Contact;
+  readonly recipientPhone: string;
   readonly caixas: readonly CaixaDisponivel[];
   readonly onClose: () => void;
   readonly onSent: (conversationId: string) => void;
@@ -160,6 +223,7 @@ function FirstMessageModal({
       contactId: contact.id,
       inboxId,
       text: text.trim(),
+      ...(recipientPhone ? { recipientPhone } : {}),
     });
 
     setSending(false);
@@ -195,7 +259,7 @@ function FirstMessageModal({
 
         <div className="rounded-xl border border-line bg-surface-2/60 px-3 py-2 text-meta text-muted">
           Para <strong className="text-ink">{contact.name}</strong> ·{' '}
-          <span className="font-mono">{contact.phone}</span>
+          <span className="font-mono">{recipientPhone || 'Grupo do WhatsApp'}</span>
         </div>
 
         <Field label="Enviar pelo número" htmlFor="first-message-inbox">

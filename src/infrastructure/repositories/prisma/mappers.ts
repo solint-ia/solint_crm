@@ -23,12 +23,7 @@ import type {
 } from '@/core/domain/conversation';
 import type { KnowledgeArticle, KnowledgeCategory } from '@/core/domain/knowledge';
 import type { Label, Tone } from '@/core/domain/label';
-import type {
-  Message,
-  MessageContent,
-  MessageReaction,
-  TimelineItem,
-} from '@/core/domain/message';
+import type { Message, MessageContent, MessageReaction, TimelineItem } from '@/core/domain/message';
 import type { AppNotification, NotificationKind } from '@/core/domain/notification';
 import type { Deal, DealSource, Pipeline } from '@/core/domain/pipeline';
 import type { ChannelConnection } from '@/core/domain/settings';
@@ -95,6 +90,12 @@ export const contactRow = (row: ContactWithLabels): Contact => ({
   customFields: readJson<readonly CustomField[]>(row.customFields, []),
   ...(row.email ? { email: row.email } : {}),
   ...(row.company ? { company: row.company } : {}),
+  ...(row.cnpj ? { cnpj: row.cnpj } : {}),
+  ...(row.companyAddress ? { companyAddress: row.companyAddress } : {}),
+  ...(row.companyPhone ? { companyPhone: row.companyPhone } : {}),
+  ...(row.partnerPhone ? { partnerPhone: row.partnerPhone } : {}),
+  ...(row.classification ? { classification: row.classification } : {}),
+  ...(row.origin ? { origin: row.origin as Contact['origin'] } : {}),
   ...(row.location ? { location: row.location } : {}),
   ...(row.timezone ? { timezone: row.timezone } : {}),
   ...(row.ownerName ? { ownerName: row.ownerName } : {}),

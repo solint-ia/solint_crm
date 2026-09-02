@@ -7,6 +7,7 @@ import { ContactsSkeleton } from '@/features/contatos/components/contacts-skelet
 import { can } from '@/core/domain/user';
 import { AccessDenied } from '@/components/layout/access-denied';
 import { container } from '@/infrastructure/container';
+import { prisma } from '@/infrastructure/db/prisma';
 
 export const metadata: Metadata = { title: 'Contatos' };
 
@@ -27,9 +28,17 @@ async function ContatosData() {
   const session = await container.session.getCurrentSession();
   // A rail ja esconde o item; sem esta checagem, a URL direta entraria.
   if (!can(session, 'contatos:ler')) return <AccessDenied permission="contatos:ler" />;
-  const [contacts, notifications] = await Promise.all([
+  const [contacts, notifications, importBatches] = await Promise.all([
     container.useCases.listContacts(session.account.id),
     container.notifications.list(session.account.id, session.user.id),
+    prisma.contactImportBatch.findMany({
+      where: { accountId: session.account.id },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        contacts: { select: { contactId: true } },
+        _count: { select: { contacts: true } },
+      },
+    }),
   ]);
 
   return (
@@ -42,7 +51,17 @@ async function ContatosData() {
         notifications={notifications}
       />
       <PageShell>
-        <ContactsExplorer contacts={contacts} canExport={can(session, 'contatos:exportar')} />
+        <ContactsExplorer
+          contacts={contacts}
+          importBatches={importBatches.map((batch) => ({
+            id: batch.id,
+            name: batch.name,
+            createdAt: batch.createdAt.toISOString(),
+            contactCount: batch._count.contacts,
+            contactIds: batch.contacts.map((entry) => entry.contactId),
+          }))}
+          canExport={can(session, 'contatos:exportar')}
+        />
       </PageShell>
     </>
   );

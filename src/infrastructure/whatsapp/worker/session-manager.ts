@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { prisma } from '@/infrastructure/db/prisma';
 import { hasPairedSession } from '../auth/postgres-auth-state';
+import { SessaoIndisponivelError } from './errors';
 import { WhatsAppSession } from './session';
 
 const LOCK_TTL_MS = 30_000;
@@ -161,7 +162,22 @@ export class WhatsAppSessionManager {
     // 3. Tenta adquirir a trava de posse (Mutex distribuído)
     const acquired = await this.acquireLock(inboxId);
     if (!acquired) {
-      throw new Error(`Outro worker já está operando a sessão da caixa ${inboxId}.`);
+      /**
+       * `SessaoIndisponivelError`, e não um erro comum: quem manda é o outro
+       * worker, e o comando precisa **voltar para a fila** para que ele o pegue.
+       *
+       * A fila não é particionada por trava — `dispatchPending` lê os pendentes
+       * de todas as caixas —, então durante um deploy, com os dois workers no
+       * ar, o que não tinha a posse podia pegar um envio, bater aqui e marcar a
+       * bolha como falha. A mensagem morria por ter sido lida pelo processo
+       * errado, enquanto o dono da sessão nunca chegava a vê-la.
+       *
+       * O texto é o mesmo de antes de propósito: `restoreOne` reconhece a
+       * disputa por ele para decidir se insiste.
+       */
+      throw new SessaoIndisponivelError(
+        `Outro worker já está operando a sessão da caixa ${inboxId}.`,
+      );
     }
 
     // 4. Cria e inicia a sessão
