@@ -14,7 +14,12 @@ import type {
 import { AUTOMATION_CONDITION_LOGICS } from '@/core/domain/automation';
 import { normalizeAutoReply, normalizeBusinessHours } from '@/core/domain/business-hours';
 import type { Channel } from '@/core/domain/channel';
-import type { Contact, CustomField, TimelineEvent } from '@/core/domain/contact';
+import type {
+  Contact,
+  ContactPartner,
+  CustomField,
+  TimelineEvent,
+} from '@/core/domain/contact';
 import type {
   Conversation,
   ConversationStatus,
@@ -95,6 +100,13 @@ export const contactRow = (row: ContactWithLabels): Contact => ({
   ...(row.companyPhone ? { companyPhone: row.companyPhone } : {}),
   ...(row.partnerPhone ? { partnerPhone: row.partnerPhone } : {}),
   ...(row.classification ? { classification: row.classification } : {}),
+  ...(() => {
+    // Lista vazia é o mesmo que ausente para quem consome: o campo só existe
+    // para contatos da importação B2B, e entregar `[]` faria toda tela ter de
+    // distinguir "sem sócios" de "não se aplica".
+    const socios = readJson<readonly ContactPartner[]>(row.partners, []);
+    return socios.length > 0 ? { partners: socios } : {};
+  })(),
   ...(row.origin ? { origin: row.origin as Contact['origin'] } : {}),
   ...(row.location ? { location: row.location } : {}),
   ...(row.timezone ? { timezone: row.timezone } : {}),

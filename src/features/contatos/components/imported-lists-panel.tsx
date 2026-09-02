@@ -124,8 +124,24 @@ export function ImportedListsPanel({ batches, contacts, onImport }: ImportedList
                   <td className="px-4 py-3 font-mono text-ink">
                     {contact.companyPhone ? PhoneNumber.format(contact.companyPhone) : '—'}
                   </td>
+                  {/* A coluna segue mostrando o telefone do sócio principal,
+                      como antes. O que muda é o aviso de que há mais: sem ele a
+                      tabela sugeria que aquele era o único número da empresa, e
+                      quem clicasse em conversar levava um susto com a lista. */}
                   <td className="px-4 py-3 font-mono text-ink">
                     {contact.partnerPhone ? PhoneNumber.format(contact.partnerPhone) : '—'}
+                    {(() => {
+                      const socios = contact.partners ?? [];
+                      const total = socios.reduce((soma, s) => soma + s.phones.length, 0);
+                      if (total <= 1) return null;
+                      return (
+                        <span className="ml-1.5 rounded-md bg-brand/10 px-1.5 py-0.5 font-sans text-[10px] font-semibold text-brand">
+                          {socios.length > 1
+                            ? `${socios.length} sócios · ${total} números`
+                            : `+${total - 1}`}
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td className="px-4 py-3">
                     {contact.classification ? (

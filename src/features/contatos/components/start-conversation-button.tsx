@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, MessageCircle, Phone, Send } from 'lucide-react';
-import type { Contact } from '@/core/domain/contact';
+import { PhoneNumber, type Contact } from '@/core/domain/contact';
 import { Button } from '@/components/ui/button';
 import { Field, TextArea } from '@/components/ui/field';
 import { Modal } from '@/components/ui/modal';
@@ -12,8 +12,28 @@ import {
   findContactConversationAction,
   startContactConversationAction,
   type CaixaDisponivel,
+  type DestinoPossivel,
 } from '@/app/(workspace)/conversas/actions';
 import { cn } from '@/lib/cn';
+
+/**
+ * Junta os destinos pelo sócio dono, preservando a ordem que o servidor mandou.
+ *
+ * O servidor já ordena (sócios primeiro, empresa por último); aqui só se
+ * agrupa, sem reordenar — a ordem é uma decisão de domínio e refazê-la na tela
+ * abriria espaço para as duas divergirem.
+ */
+const agruparPorSocio = (
+  destinos: readonly DestinoPossivel[],
+): { nome: string; destinos: DestinoPossivel[] }[] => {
+  const grupos: { nome: string; destinos: DestinoPossivel[] }[] = [];
+  for (const destino of destinos) {
+    const ultimo = grupos.at(-1);
+    if (ultimo && ultimo.nome === destino.partnerName) ultimo.destinos.push(destino);
+    else grupos.push({ nome: destino.partnerName, destinos: [destino] });
+  }
+  return grupos;
+};
 
 /**
  * "Conversar" a partir da agenda.
@@ -50,7 +70,7 @@ export function StartConversationButton({
 
   const [checking, setChecking] = useState(false);
   const [caixas, setCaixas] = useState<readonly CaixaDisponivel[] | undefined>();
-  const [phoneOptions, setPhoneOptions] = useState<readonly string[] | undefined>();
+  const [phoneOptions, setPhoneOptions] = useState<readonly DestinoPossivel[] | undefined>();
   const [recipientPhone, setRecipientPhone] = useState(contact.phone);
 
   const resolveDestination = async (phone?: string) => {
@@ -73,7 +93,7 @@ export function StartConversationButton({
     }
 
     if (result.phoneSelectionRequired && result.phones) {
-      setRecipientPhone(result.phones[0] ?? contact.phone);
+      setRecipientPhone(result.phones[0]?.phone ?? contact.phone);
       setPhoneOptions(result.phones);
       return;
     }
@@ -133,27 +153,56 @@ export function StartConversationButton({
         <Modal
           open
           onClose={() => setPhoneOptions(undefined)}
-          title="Escolha o número do destinatário"
-          description={`${contact.name} possui mais de um telefone. Selecione explicitamente qual receberá a conversa.`}
-          className="max-w-md"
+          title="Para quem você quer escrever?"
+          description={`${contact.name} tem mais de um destinatário possível. Escolha o sócio e o número.`}
+          className="max-w-lg"
         >
           <div className="flex flex-col gap-4 pt-1">
-            <Field label="Enviar para" htmlFor="recipient-phone">
-              <select
-                id="recipient-phone"
-                value={recipientPhone}
-                onChange={(event) => setRecipientPhone(event.target.value)}
-                className="h-10 w-full rounded-xl border border-line bg-surface px-3 font-mono text-body text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
-              >
-                {phoneOptions.map((phone) => (
-                  <option key={phone} value={phone}>
-                    {phone}
-                    {phone === contact.companyPhone ? ' · Empresa' : ''}
-                    {phone === contact.partnerPhone ? ' · Sócio' : ''}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            {/* Agrupado por dono, e não uma lista de números soltos: numa
+                empresa com dois sócios e cinco telefones, saber de quem é cada
+                número é a informação que falta para escolher. A classificação
+                vem junto porque é por ela que a prospecção prioriza. */}
+            <div
+              role="radiogroup"
+              aria-label="Destinatário"
+              className="flex max-h-80 flex-col gap-3 overflow-y-auto pr-1"
+            >
+              {agruparPorSocio(phoneOptions).map((grupo) => (
+                <div key={grupo.nome || 'empresa'} className="flex flex-col gap-1">
+                  <span className="px-0.5 text-[11px] font-semibold uppercase tracking-wide text-dim">
+                    {grupo.nome || 'Telefone da empresa'}
+                  </span>
+                  {grupo.destinos.map((destino) => {
+                    const escolhido = destino.phone === recipientPhone;
+                    return (
+                      <button
+                        key={destino.phone}
+                        type="button"
+                        role="radio"
+                        aria-checked={escolhido}
+                        onClick={() => setRecipientPhone(destino.phone)}
+                        className={cn(
+                          'flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left transition-colors',
+                          escolhido
+                            ? 'border-brand bg-brand/5'
+                            : 'border-line hover:border-brand/40 hover:bg-surface-2',
+                        )}
+                      >
+                        <span className="font-mono text-body text-ink">
+                          {PhoneNumber.format(destino.phone) || destino.phone}
+                        </span>
+                        {destino.classification ? (
+                          <span className="shrink-0 rounded-md border border-line-soft bg-surface-2 px-2 py-0.5 text-[11px] font-semibold text-muted">
+                            {destino.classification}
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+
             <div className="flex justify-end gap-2 border-t border-line pt-4">
               <Button type="button" variant="secondary" onClick={() => setPhoneOptions(undefined)}>
                 Cancelar

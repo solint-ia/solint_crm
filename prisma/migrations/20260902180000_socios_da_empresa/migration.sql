@@ -1,0 +1,11 @@
+-- Os sócios da empresa e os telefones de cada um.
+--
+-- A planilha B2B vem com uma linha por número, e uma empresa costuma ter vários
+-- sócios com vários telefones cada. Isso era achatado num contato só, com um
+-- `telefone_socio` e uma `classificacao`: o primeiro número ficava, o resto ia
+-- para `extraPhones` sem dono e sem classificação. Quem fosse conversar via uma
+-- lista de números soltos e tinha que adivinhar de quem era cada um.
+--
+-- Nulo para todo contato que não veio da importação B2B, que é o caso da
+-- maioria: a coluna descreve uma estrutura que só a prospecção tem.
+ALTER TABLE "Contact" ADD COLUMN "socios" JSONB;

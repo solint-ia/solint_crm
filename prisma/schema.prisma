@@ -272,6 +272,17 @@ model Contact {
   companyPhone     String? @map("telefone_empresa")
   partnerPhone     String? @map("telefone_socio")
   classification   String? @map("classificacao")
+  /// JSON: ContactPartner[] — os sócios da empresa e os telefones de cada um,
+  /// com a classificação de cada número.
+  ///
+  /// É JSON pela regra do topo deste arquivo: o agregado é lido e gravado
+  /// inteiro, pela importação e pela tela que escolhe o destinatário, e
+  /// nenhuma consulta filtra por sócio. Os números **também** ficam em `phone`
+  /// e `extraPhones`, que são as colunas consultáveis: é por elas que a
+  /// importação acha o contato já existente e que o envio valida o
+  /// destinatário. A duplicação é deliberada, e cada lado responde uma pergunta
+  /// diferente.
+  partners         Json?   @map("socios")
   /// `manual`, `csv` ou `whatsapp`; separa a proveniência sem alterar `kind`.
   origin           String  @default("manual") @map("origem")
   channel          String

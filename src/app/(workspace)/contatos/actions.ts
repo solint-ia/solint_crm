@@ -5,7 +5,8 @@ import { CHANNELS } from '@/core/domain/channel';
 import { can } from '@/core/domain/user';
 import { container } from '@/infrastructure/container';
 import { prisma, asJson } from '@/infrastructure/db/prisma';
-import { normalizeImportedPhone } from '@/core/domain/contact-import';
+import { foldText, normalizeImportedPhone } from '@/core/domain/contact-import';
+import type { ContactPartner, ContactPartnerPhone } from '@/core/domain/contact';
 import { postgresPubSub, CHANNELS as DB_CHANNELS } from '@/infrastructure/db/postgres-pubsub';
 import { WA_ENGINE } from '@/infrastructure/whatsapp/channel';
 import { writeAuditLog } from '@/infrastructure/audit/write-audit-log';
@@ -219,11 +220,87 @@ const importContactsCsvSchema = z.object({
         partnerPhone: z.string().trim().max(30).optional().or(z.literal('')),
         whatsappFlag: z.string().trim().max(20).optional().or(z.literal('')),
         classification: z.string().trim().max(120).optional().or(z.literal('')),
+        /**
+         * Os sócios e os telefones de cada um.
+         *
+         * Os tetos são generosos mas existem: sem eles, um payload manipulado
+         * poderia gravar um JSON arbitrariamente grande numa coluna que toda
+         * leitura de contato carrega.
+         */
+        partners: z
+          .array(
+            z.object({
+              name: z.string().trim().max(200),
+              phones: z
+                .array(
+                  z.object({
+                    phone: z.string().trim().max(30),
+                    classification: z.string().trim().max(120).optional().or(z.literal('')),
+                  }),
+                )
+                .max(50),
+            }),
+          )
+          .max(50)
+          .optional(),
       }),
     )
     .min(1, 'Nenhum contato enviado para importação.')
     .max(5000, 'Importe no máximo 5000 contatos por vez.'),
 });
+
+/** Sócios já gravados neste contato, tolerando coluna nula ou lixo antigo. */
+const readSocios = (bruto: unknown): readonly ContactPartner[] => {
+  if (!Array.isArray(bruto)) return [];
+  return bruto.filter(
+    (item): item is ContactPartner =>
+      Boolean(item) &&
+      typeof item === 'object' &&
+      typeof (item as ContactPartner).name === 'string' &&
+      Array.isArray((item as ContactPartner).phones),
+  );
+};
+
+/**
+ * Junta a lista de sócios que chegou à que já existia.
+ *
+ * **Some, não substitui.** Uma planilha nova costuma trazer um recorte — só os
+ * sócios de um estado, só quem tem WhatsApp confirmado — e sobrescrever faria a
+ * segunda importação apagar o que a primeira descobriu. O mesmo raciocínio dos
+ * números logo acima, um nível abaixo.
+ *
+ * A chave é o nome dobrado, e o telefone é o desempate dentro do sócio: um
+ * número que já estava lá não é duplicado, e a classificação que chega só
+ * preenche o que estava vazio, sem sobrescrever uma anterior.
+ */
+const fundirSocios = (
+  atuais: readonly ContactPartner[],
+  novos: readonly ContactPartner[],
+): ContactPartner[] => {
+  const porNome = new Map<string, { name: string; phones: Map<string, ContactPartnerPhone> }>();
+
+  for (const socio of [...atuais, ...novos]) {
+    const chave = foldText(socio.name);
+    const entrada = porNome.get(chave) ?? { name: socio.name, phones: new Map() };
+    for (const telefone of socio.phones) {
+      const existente = entrada.phones.get(telefone.phone);
+      // A classificação que chega só preenche o que estava vazio: uma
+      // reimportação não sobrescreve o que já se sabia sobre o número.
+      entrada.phones.set(telefone.phone, {
+        phone: telefone.phone,
+        ...(existente?.classification || telefone.classification
+          ? { classification: existente?.classification || telefone.classification }
+          : {}),
+      });
+    }
+    porNome.set(chave, entrada);
+  }
+
+  return [...porNome.values()].map((socio) => ({
+    name: socio.name,
+    phones: [...socio.phones.values()],
+  }));
+};
 
 export interface ImportCsvResult {
   readonly batchId: string;
@@ -313,9 +390,49 @@ export async function importContactsCsvAction(
       const telefoneSocio =
         item.whatsappFlag === 'Sim' ? normalizeImportedPhone(item.partnerPhone ?? '') : null;
 
+      /**
+       * Os sócios, com cada telefone normalizado aqui também.
+       *
+       * A estrutura é gravada como veio, mas os números dela passam pela mesma
+       * normalização de `phone` e `extraPhones` — é o que garante que o
+       * telefone escolhido no seletor case com a lista contra a qual o envio o
+       * valida. Um sócio cujos números todos se perderam na normalização sai
+       * fora: um nome sem telefone nenhum não é um destinatário possível.
+       */
+      const socios = (item.partners ?? [])
+        .map((socio) => ({
+          name: socio.name,
+          phones: socio.phones
+            .map((telefone) => ({
+              phone: normalizeImportedPhone(telefone.phone),
+              classification: telefone.classification ?? '',
+            }))
+            .filter(
+              (telefone): telefone is { phone: string; classification: string } =>
+                telefone.phone !== null,
+            ),
+        }))
+        .filter((socio) => socio.phones.length > 0);
+
+      /**
+       * **Todos** os números da empresa, e não só os dois primeiros.
+       *
+       * Aqui estava o defeito que esvaziava o modelo: `numeros` saía de
+       * `companyPhone` mais um único `partnerPhone`, então uma empresa com dois
+       * sócios e cinco telefones era gravada com dois. Os outros três nunca
+       * chegavam a `extraPhones` — e como é contra `extraPhones` que o envio
+       * valida o destinatário, escolher um deles seria recusado como "telefone
+       * que não pertence a este contato".
+       *
+       * A ordem importa: o primeiro da lista vira `phone`, o principal.
+       */
       const numeros = [
         ...new Set(
-          [telefoneEmpresa, telefoneSocio].filter((numero): numero is string => numero !== null),
+          [
+            telefoneEmpresa,
+            telefoneSocio,
+            ...socios.flatMap((socio) => socio.phones.map((telefone) => telefone.phone)),
+          ].filter((numero): numero is string => numero !== null),
         ),
       ];
 
@@ -388,6 +505,12 @@ export async function importContactsCsvAction(
              */
             partnerPhone: telefoneSocio ?? existing.partnerPhone ?? undefined,
             classification: item.classification || existing.classification || undefined,
+            // Mesma regra dos números: a lista nova se soma à conhecida em vez
+            // de substituí-la. Uma planilha que só traz um dos sócios não pode
+            // apagar os outros, que foram importados corretamente antes.
+            ...(socios.length > 0
+              ? { partners: asJson(fundirSocios(readSocios(existing.partners), socios)) }
+              : {}),
             origin: 'csv',
           },
         });
@@ -408,6 +531,7 @@ export async function importContactsCsvAction(
             companyPhone: telefoneEmpresa,
             partnerPhone: telefoneSocio,
             classification: item.classification || null,
+            partners: socios.length > 0 ? asJson(socios) : undefined,
             origin: 'csv',
             channel: 'whatsapp',
             avatarTone: 'blue',

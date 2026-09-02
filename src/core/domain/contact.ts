@@ -22,6 +22,41 @@ export interface TimelineEvent {
  */
 export type ContactKind = 'pessoa' | 'grupo';
 
+/**
+ * Um telefone de sócio, com a classificação que a origem deu **àquele número**.
+ *
+ * A classificação é do telefone, não da pessoa: na planilha de prospecção o
+ * mesmo sócio aparece com `D` num número e `C2` noutro. Guardá-la no sócio
+ * perderia essa distinção, que é exatamente o critério por onde quem prospecta
+ * escolhe para qual número ligar primeiro.
+ */
+export interface ContactPartnerPhone {
+  /** E.164. Também está em `phone`/`extraPhones` do contato — ver `ContactPartner`. */
+  readonly phone: string;
+  readonly classification?: string;
+}
+
+/**
+ * Um sócio da empresa e os telefones dele.
+ *
+ * **Por que isto existe.** A planilha B2B vem com uma linha por número, e uma
+ * empresa costuma ter vários sócios, cada um com vários telefones. Tudo isso
+ * era achatado num contato só, com um `partnerPhone` e uma `classification`: o
+ * primeiro número encontrado ficava, o resto virava `extraPhones` sem dono e
+ * sem classificação, e não havia como saber de quem era cada um. Quem ia
+ * conversar via uma lista de números soltos e tinha que adivinhar.
+ *
+ * Os números continuam **também** em `phone`/`extraPhones`, e não só aqui. Essa
+ * duplicação é deliberada: aquelas duas colunas são as consultáveis (a
+ * importação procura contato existente por elas, e o envio valida o
+ * destinatário contra elas), enquanto esta estrutura é lida e gravada inteira e
+ * responde outra pergunta — de quem é o número, e com qual classificação.
+ */
+export interface ContactPartner {
+  readonly name: string;
+  readonly phones: readonly ContactPartnerPhone[];
+}
+
 export interface Contact {
   readonly id: Id;
   readonly accountId: Id;
@@ -41,8 +76,12 @@ export interface Contact {
   readonly cnpj?: string;
   readonly companyAddress?: string;
   readonly companyPhone?: string;
+  /** Telefone do sócio principal — o primeiro da planilha. Ver `partners`. */
   readonly partnerPhone?: string;
+  /** Classificação de `partnerPhone`. Cada número tem a sua, em `partners`. */
   readonly classification?: string;
+  /** Sócios da empresa e os telefones de cada um. Vazio fora da importação B2B. */
+  readonly partners?: readonly ContactPartner[];
   /** Como entrou na base. Não se confunde com `kind` (pessoa/grupo). */
   readonly origin?: 'manual' | 'csv' | 'whatsapp';
   readonly channel: Channel;

@@ -17,7 +17,7 @@ import {
   MIN_SCHEDULE_LEAD_MS,
   type ScheduledMessage,
 } from '@/core/domain/scheduled-message';
-import { groupInboxIds, type Contact } from '@/core/domain/contact';
+import { groupInboxIds, type Contact, type ContactPartner } from '@/core/domain/contact';
 import { stageLabelIds } from '@/core/domain/pipeline';
 import { can, canSeeInbox, withSignature, type Session } from '@/core/domain/user';
 import { canSendFreeText, MAX_MESSAGE_LENGTH } from '@/core/use-cases/send-message';
@@ -864,13 +864,67 @@ export interface ContactConversationResult {
   readonly caixas?: readonly CaixaDisponivel[];
   /** Mais de um destinatário exige escolha antes de procurar/criar conversa. */
   readonly phoneSelectionRequired?: boolean;
-  readonly phones?: readonly string[];
+  readonly phones?: readonly DestinoPossivel[];
+}
+
+/**
+ * Um destinatário possível, com o dono e a classificação do número.
+ *
+ * Era uma lista de strings, e ela não respondia a pergunta de quem escolhe: numa
+ * empresa com dois sócios e cinco telefones, cinco números soltos não dizem de
+ * quem é cada um nem qual vale a pena tentar primeiro. O agrupamento por sócio
+ * e a classificação do número são exatamente o critério da prospecção.
+ */
+export interface DestinoPossivel {
+  readonly phone: string;
+  /** Nome do sócio dono do número. Vazio quando é o telefone da empresa. */
+  readonly partnerName: string;
+  readonly classification: string;
 }
 
 const contactConversationSchema = z.object({
   contactId: z.string().min(1).max(64),
   recipientPhone: z.string().trim().max(30).optional(),
 });
+
+/**
+ * Descreve cada número do contato com o dono e a classificação.
+ *
+ * **A lista de números continua sendo a autoridade.** Ela sai de
+ * `phone`/`extraPhones`, que são as colunas contra as quais o envio valida o
+ * destinatário; `partners` só acrescenta de quem é cada um. Um número que
+ * estivesse em `partners` e não naquelas colunas não apareceria aqui, e é o
+ * comportamento certo: oferecer um destino que o envio depois recusaria seria
+ * pior que não oferecê-lo.
+ *
+ * A ordem agrupa por sócio, e o telefone da empresa vai para o fim: quem
+ * prospecta quer falar com a pessoa, e o fixo da recepção é o último recurso.
+ */
+const destinosDe = (
+  contact: { partners?: readonly ContactPartner[] },
+  phones: readonly string[],
+): readonly DestinoPossivel[] => {
+  const dono = new Map<string, { partnerName: string; classification: string }>();
+  for (const socio of contact.partners ?? []) {
+    for (const telefone of socio.phones) {
+      dono.set(telefone.phone, {
+        partnerName: socio.name,
+        classification: telefone.classification ?? '',
+      });
+    }
+  }
+
+  return phones
+    .map((phone) => ({
+      phone,
+      partnerName: dono.get(phone)?.partnerName ?? '',
+      classification: dono.get(phone)?.classification ?? '',
+    }))
+    .sort((a, b) => {
+      if (!a.partnerName !== !b.partnerName) return a.partnerName ? -1 : 1;
+      return a.partnerName.localeCompare(b.partnerName, 'pt-BR');
+    });
+};
 
 /**
  * Existe conversa com este contato? Se não, por onde ela poderia começar.
@@ -896,7 +950,7 @@ export async function findContactConversationAction(
 
   const phones = [...new Set([contact.phone, ...(contact.extraPhones ?? [])].filter(Boolean))];
   if (phones.length > 1 && !parsed.data.recipientPhone) {
-    return { ok: true, phoneSelectionRequired: true, phones };
+    return { ok: true, phoneSelectionRequired: true, phones: destinosDe(contact, phones) };
   }
 
   const recipientPhone = parsed.data.recipientPhone ?? phones[0];

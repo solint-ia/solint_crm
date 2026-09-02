@@ -137,22 +137,40 @@ export interface ImportRow {
   readonly cnpj: string;
   readonly companyAddress: string;
   readonly companyPhone: string;
+  /** Nome do sócio dono do telefone desta linha. */
+  readonly partnerName: string;
   readonly partnerPhone: string;
+  /** Classificação **deste** telefone, não do sócio. */
   readonly classification: string;
   /** Conteúdo literal da coluna `WhatsApp`. */
   readonly whatsappFlag: string;
 }
 
+/** Um telefone de sócio conforme a planilha o descreve. */
+export interface ImportPartnerPhone {
+  readonly phone: string;
+  readonly classification: string;
+}
+
+export interface ImportPartner {
+  readonly name: string;
+  readonly phones: readonly ImportPartnerPhone[];
+}
+
 export interface ImportContact {
   readonly name: string;
-  /** Todos os números da pessoa, em E.164, sem repetir. O primeiro vira `phone`. */
+  /** Todos os números da empresa, em E.164, sem repetir. O primeiro vira `phone`. */
   readonly phones: readonly string[];
   readonly company: string;
   readonly cnpj: string;
   readonly companyAddress: string;
   readonly companyPhone: string;
+  /** O primeiro telefone de sócio encontrado. É o que a tabela mostra na coluna. */
   readonly partnerPhone: string;
+  /** Classificação de `partnerPhone`. */
   readonly classification: string;
+  /** Os sócios e os telefones de cada um. É aqui que o modelo real fica. */
+  readonly partners: readonly ImportPartner[];
 }
 
 export interface ImportPreparation {
@@ -163,6 +181,8 @@ export interface ImportPreparation {
   readonly invalidas: number;
   /** Quantas linhas foram fundidas em contatos que já apareceram antes. */
   readonly agrupadas: number;
+  /** Empresas em que há mais de um destinatário possível — sócio ou número. */
+  readonly comEscolha: number;
 }
 
 /**
@@ -187,7 +207,24 @@ export interface ImportPreparation {
  * cadastro para quem atende escolher.
  */
 export const prepareImport = (rows: readonly ImportRow[]): ImportPreparation => {
-  const porChave = new Map<string, { contato: ImportContact; numeros: string[] }>();
+  /**
+   * A empresa em construção, com os sócios indexados para a fusão.
+   *
+   * `socios` é um `Map` por nome dobrado, e não um array, porque as linhas do
+   * mesmo sócio não vêm necessariamente juntas — e procurar linearmente a cada
+   * linha transformaria uma planilha de milhares de linhas numa varredura
+   * quadrática.
+   */
+  interface EmAndamento {
+    empresa: string;
+    cnpj: string;
+    endereco: string;
+    telefoneEmpresa: string;
+    numeros: string[];
+    socios: Map<string, { nome: string; telefones: ImportPartnerPhone[] }>;
+  }
+
+  const porChave = new Map<string, EmAndamento>();
   let semWhatsapp = 0;
   let invalidas = 0;
   let agrupadas = 0;
@@ -197,7 +234,9 @@ export const prepareImport = (rows: readonly ImportRow[]): ImportPreparation => 
     const telefoneEmpresa = normalizeImportedPhone(row.companyPhone);
 
     // Regra deliberadamente literal: `sim`, `SIM`, `1` e qualquer outro valor
-    // não autorizam importar o telefone pessoal do sócio.
+    // não autorizam importar o telefone pessoal do sócio. Um fixo marcado como
+    // "Não" não vira destinatário — e mostrá-lo na lista de escolha seria
+    // oferecer um número que não recebe mensagem.
     const telefoneSocio =
       row.whatsappFlag === 'Sim' ? normalizeImportedPhone(row.partnerPhone) : null;
     if (row.partnerPhone.trim() && row.whatsappFlag !== 'Sim') semWhatsapp += 1;
@@ -213,51 +252,85 @@ export const prepareImport = (rows: readonly ImportRow[]): ImportPreparation => 
 
     const cnpj = row.cnpj.trim();
     const chave = cnpj.replace(/\D/g, '') || foldText(empresa);
-    const existente = porChave.get(chave);
+    let entrada = porChave.get(chave);
 
-    if (!existente) {
-      porChave.set(chave, {
-        contato: {
-          name: empresa,
-          phones: [...new Set(numeros)],
-          company: empresa,
-          cnpj,
-          companyAddress: row.companyAddress.trim(),
-          companyPhone: telefoneEmpresa ?? '',
-          partnerPhone: telefoneSocio ?? '',
-          classification: row.classification.trim(),
-        },
-        numeros: [...new Set(numeros)],
-      });
-      continue;
+    if (!entrada) {
+      entrada = {
+        empresa,
+        cnpj,
+        endereco: row.companyAddress.trim(),
+        telefoneEmpresa: telefoneEmpresa ?? '',
+        numeros: [],
+        socios: new Map(),
+      };
+      porChave.set(chave, entrada);
+    } else {
+      agrupadas += 1;
+      // Campos que faltavam na primeira linha são completados pelas seguintes:
+      // a planilha repete os dados da empresa em toda linha dela, mas nem
+      // sempre todas vêm preenchidas.
+      entrada.cnpj ||= cnpj;
+      entrada.endereco ||= row.companyAddress.trim();
+      entrada.telefoneEmpresa ||= telefoneEmpresa ?? '';
     }
 
-    agrupadas += 1;
     for (const numero of numeros) {
-      if (!existente.numeros.includes(numero)) existente.numeros.push(numero);
+      if (!entrada.numeros.includes(numero)) entrada.numeros.push(numero);
     }
 
-    // Campos que faltavam na primeira linha são completados pelas seguintes: a
-    // planilha repete os dados do sócio em toda linha dele, mas nem sempre
-    // todas vêm preenchidas.
-    existente.contato = {
-      ...existente.contato,
-      phones: existente.numeros,
-      company: existente.contato.company || empresa,
-      cnpj: existente.contato.cnpj || cnpj,
-      companyAddress: existente.contato.companyAddress || row.companyAddress.trim(),
-      companyPhone: existente.contato.companyPhone || telefoneEmpresa || '',
-      partnerPhone: existente.contato.partnerPhone || telefoneSocio || '',
-      classification: existente.contato.classification || row.classification.trim(),
+    if (!telefoneSocio) continue;
+
+    /**
+     * O sócio sem nome ainda é um dono possível.
+     *
+     * Nem toda planilha traz a coluna, e recusar a linha por causa disso
+     * descartaria um telefone bom. A chave vazia agrupa todos esses num
+     * "Sócio" só, que é a informação honesta: sabe-se que o número é de um
+     * sócio, não se sabe de qual.
+     */
+    const nome = row.partnerName.trim().replace(/\s+/g, ' ');
+    const chaveSocio = foldText(nome);
+    const socio = entrada.socios.get(chaveSocio) ?? {
+      nome: normalizePersonName(nome) || 'Sócio',
+      telefones: [],
     };
+    if (!socio.telefones.some((item) => item.phone === telefoneSocio)) {
+      socio.telefones.push({ phone: telefoneSocio, classification: row.classification.trim() });
+    }
+    entrada.socios.set(chaveSocio, socio);
   }
 
-  return {
-    contacts: [...porChave.values()].map((entrada) => entrada.contato),
-    semWhatsapp,
-    invalidas,
-    agrupadas,
-  };
+  const contacts: ImportContact[] = [];
+  let comEscolha = 0;
+
+  for (const entrada of porChave.values()) {
+    const partners: ImportPartner[] = [...entrada.socios.values()].map((socio) => ({
+      name: socio.nome,
+      phones: socio.telefones,
+    }));
+
+    // O primeiro telefone de sócio da planilha é o que a coluna da tabela
+    // mostra. Não há como saber qual é o preferido da pessoa, e a ordem da
+    // planilha é a única informação disponível — os outros ficam em `partners`,
+    // à vista de quem for escolher.
+    const principal = partners[0]?.phones[0];
+
+    contacts.push({
+      name: entrada.empresa,
+      phones: entrada.numeros,
+      company: entrada.empresa,
+      cnpj: entrada.cnpj,
+      companyAddress: entrada.endereco,
+      companyPhone: entrada.telefoneEmpresa,
+      partnerPhone: principal?.phone ?? '',
+      classification: principal?.classification ?? '',
+      partners,
+    });
+
+    if (entrada.numeros.length > 1) comEscolha += 1;
+  }
+
+  return { contacts, semWhatsapp, invalidas, agrupadas, comEscolha };
 };
 
 /**

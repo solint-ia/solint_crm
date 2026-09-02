@@ -30,6 +30,7 @@ export type TargetField =
   | 'cnpj'
   | 'companyAddress'
   | 'companyPhone'
+  | 'partnerName'
   | 'partnerPhone'
   | 'classification'
   | 'whatsappFlag'
@@ -49,6 +50,7 @@ const TARGET_FIELDS: { key: TargetField; label: string; required: boolean }[] = 
   { key: 'cnpj', label: 'CNPJ', required: false },
   { key: 'companyAddress', label: 'Endereço da Empresa', required: false },
   { key: 'companyPhone', label: 'Telefone da Empresa', required: false },
+  { key: 'partnerName', label: 'Nome do Sócio', required: false },
   { key: 'partnerPhone', label: 'Telefone do Sócio', required: false },
   { key: 'classification', label: 'Classificação', required: false },
   { key: 'ignore', label: '(Ignorar esta coluna)', required: false },
@@ -159,6 +161,7 @@ function autoDetectField(header: string, amostra: readonly string[]): TargetFiel
   if (h === 'cnpj') return 'cnpj';
   if (h === 'enderecodaempresa' || h === 'enderecoempresa') return 'companyAddress';
   if (h === 'telefonedaempresa' || h === 'telefoneempresa') return 'companyPhone';
+  if (h === 'nomedosocio' || h === 'nomesocio' || h === 'socio') return 'partnerName';
   if (h === 'telefonedosocio' || h === 'telefonesocio') return 'partnerPhone';
   if (h === 'classificacao') return 'classification';
   if (h === 'whatsapp') return 'whatsappFlag';
@@ -313,6 +316,7 @@ export function ImportCsvModal({
       let cnpj = '';
       let companyAddress = '';
       let companyPhone = '';
+      let partnerName = '';
       let partnerPhone = '';
       let classification = '';
       let whatsappFlag = '';
@@ -322,6 +326,7 @@ export function ImportCsvModal({
         if (targetField === 'cnpj') cnpj = val;
         if (targetField === 'companyAddress') companyAddress = val;
         if (targetField === 'companyPhone') companyPhone = val;
+        if (targetField === 'partnerName') partnerName = val;
         if (targetField === 'partnerPhone') partnerPhone = val;
         if (targetField === 'classification') classification = val;
         if (targetField === 'whatsappFlag') whatsappFlag = val;
@@ -331,6 +336,7 @@ export function ImportCsvModal({
         cnpj,
         companyAddress,
         companyPhone,
+        partnerName,
         partnerPhone,
         classification,
         whatsappFlag,
@@ -373,6 +379,7 @@ export function ImportCsvModal({
         let cnpj = '';
         let companyAddress = '';
         let companyPhone = '';
+        let partnerName = '';
         let partnerPhone = '';
         let classification = '';
         let whatsappFlag = '';
@@ -383,7 +390,8 @@ export function ImportCsvModal({
           if (targetField === 'cnpj') cnpj = val;
           if (targetField === 'companyAddress') companyAddress = val;
           if (targetField === 'companyPhone') companyPhone = val;
-          if (targetField === 'partnerPhone') partnerPhone = val;
+          if (targetField === 'partnerName') partnerName = val;
+        if (targetField === 'partnerPhone') partnerPhone = val;
           if (targetField === 'classification') classification = val;
           if (targetField === 'whatsappFlag') whatsappFlag = val;
         });
@@ -393,6 +401,7 @@ export function ImportCsvModal({
           cnpj,
           companyAddress,
           companyPhone,
+          partnerName,
           partnerPhone,
           classification,
           whatsappFlag,
@@ -409,6 +418,10 @@ export function ImportCsvModal({
         partnerPhone: contato.partnerPhone,
         whatsappFlag: contato.partnerPhone ? 'Sim' : '',
         classification: contato.classification,
+        // A estrutura de sócios vai inteira. `partnerPhone` acima é só o
+        // primeiro deles, que a coluna da tabela mostra — quem precisa saber de
+        // quem é cada número lê daqui.
+        partners: contato.partners,
       }));
 
       if (contactsToImport.length === 0) {
@@ -608,7 +621,13 @@ export function ImportCsvModal({
                 {previa.agrupadas > 0 ? (
                   <li>
                     <strong className="text-ink">{previa.agrupadas}</strong> linha(s) da mesma
-                    pessoa foram juntadas, e o contato fica com vários números.
+                    empresa foram juntadas, com os sócios e os telefones de cada um.
+                  </li>
+                ) : null}
+                {previa.comEscolha > 0 ? (
+                  <li>
+                    <strong className="text-ink">{previa.comEscolha}</strong> empresa(s) com mais de
+                    um destinatário: quem for conversar escolhe o sócio e o número.
                   </li>
                 ) : null}
                 {previa.invalidas > 0 ? (
@@ -619,20 +638,27 @@ export function ImportCsvModal({
                 ) : null}
               </ul>
 
-              {previa.contacts.some((c) => c.phones.length > 1) ? (
-                <p className="mt-2 border-t border-line-soft pt-2">
-                  Exemplo:{' '}
-                  {(() => {
-                    const exemplo = previa.contacts.find((c) => c.phones.length > 1)!;
-                    return (
-                      <>
-                        <strong className="text-ink">{exemplo.name}</strong> com{' '}
-                        {exemplo.phones.length} números ({exemplo.phones.join(', ')})
-                      </>
-                    );
-                  })()}
-                </p>
-              ) : null}
+              {/* Um exemplo real vale mais que a contagem: é o que deixa a
+                  pessoa conferir se a planilha foi lida como ela espera. */}
+              {(() => {
+                const exemplo = previa.contacts.find((c) =>
+                  c.partners.some((s) => s.phones.length > 1 || c.partners.length > 1),
+                );
+                if (!exemplo) return null;
+                return (
+                  <div className="mt-2 flex flex-col gap-0.5 border-t border-line-soft pt-2">
+                    <strong className="text-ink">{exemplo.name}</strong>
+                    {exemplo.partners.map((socio) => (
+                      <span key={socio.name}>
+                        {socio.name}:{' '}
+                        {socio.phones
+                          .map((t) => (t.classification ? `${t.phone} (${t.classification})` : t.phone))
+                          .join(', ')}
+                      </span>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           ) : null}
 
