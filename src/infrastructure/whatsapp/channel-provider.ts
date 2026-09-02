@@ -18,10 +18,19 @@ export const getWhatsAppChannel = (): Promise<WhatsAppChannel> => {
   cached ??= (async () => {
     if (WA_ENGINE === 'worker') {
       const { QueueWhatsAppChannel } = await import('./queue-channel');
-      const { watchWorker } = await import('./worker-presence');
-      // Começa a ouvir as batidas já: quem perguntar o status logo depois do
-      // boot precisa ter uma resposta honesta, não um "offline" por ignorância.
-      watchWorker();
+      /**
+       * A escuta da batida **não** começa aqui.
+       *
+       * Ela começava, e este é o caminho de toda mensagem enviada pelo site:
+       * cada instância serverless que despachasse uma mensagem abria uma
+       * conexão `LISTEN` em modo sessão, das quinze que o projeto inteiro tem.
+       *
+       * Quem precisa da batida a pede sob demanda — `workerPresence()` e
+       * `waitForWorker()` assinam sozinhos, e a assinatura expira por
+       * ociosidade. Despachar mensagem não depende dela: `getStatus` e
+       * `workerOnline` conferem primeiro a trava de sessão, que já prova worker
+       * vivo e sai do banco, não do barramento.
+       */
       return new QueueWhatsAppChannel();
     }
 
@@ -59,6 +68,10 @@ export const getWhatsAppChannel = (): Promise<WhatsAppChannel> => {
     // A mensagem de espera precisa do mesmo relógio, e pela mesma razão.
     const { WaitingMessageRunner } = await import('../scheduling/waiting-message-runner');
     new WaitingMessageRunner().start();
+
+    // O prazo de resposta precisa do mesmo relógio, e pela mesma razão.
+    const { SlaRunner } = await import('../scheduling/sla-runner');
+    new SlaRunner().start();
 
     return canal;
   })();

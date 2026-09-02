@@ -110,6 +110,14 @@ async function main() {
   auditRetentionRunner.start();
 
   /**
+   * O prazo de resposta, pelo mesmo motivo da mensagem de espera: só um relógio
+   * observa "ninguém respondeu ainda".
+   */
+  const { SlaRunner } = await import('./infrastructure/scheduling/sla-runner');
+  const slaRunner = new SlaRunner();
+  slaRunner.start();
+
+  /**
    * Batida de presença.
    *
    * É como a aplicação sabe que existe um worker no ar. Sem ela, com o motor
@@ -199,6 +207,7 @@ async function main() {
     scheduledRunner.stop();
     waitingRunner.stop();
     auditRetentionRunner.stop();
+    slaRunner.stop();
     commandConsumer.stop();
     await sessionManager.shutdown();
     // As chaves de cache (`lid-mapping`, `tctoken`) são gravadas fora do mutex

@@ -68,8 +68,8 @@ const enviar = async (
   text: string,
   origin: AutoMessageOrigin,
   authorName: string,
-): Promise<void> => {
-  await dispatchAutoMessage({
+): Promise<{ readonly falhaDeEntrega?: string }> => {
+  const enviada = await dispatchAutoMessage({
     accountId: destino.accountId,
     inboxId: destino.inboxId,
     conversationId: destino.conversationId,
@@ -78,6 +78,7 @@ const enviar = async (
     origin,
     authorName,
   });
+  return { ...(enviada?.falhaDeEntrega ? { falhaDeEntrega: enviada.falhaDeEntrega } : {}) };
 };
 
 const CONFIG_SELECT = {
@@ -179,10 +180,27 @@ export const runInboundAutoReplies = async (input: InboundAutoInput): Promise<vo
  * banco e o cliente nunca recebia o encerramento — a mensagem existia, estava
  * ligada, e simplesmente não saía quando quem resolvia era uma regra.
  */
+export interface ClosingResult {
+  /** A pergunta de satisfação saiu para o cliente? */
+  readonly csatEnviado: boolean;
+  /**
+   * Por que não saiu, quando não saiu.
+   *
+   * A tela usa isto literalmente no aviso que aparece ao resolver. Antes esta
+   * função devolvia `void` e a Server Action a chamava dentro de um `try` que
+   * só escrevia no console: resolver com a caixa desconectada, com o CSAT
+   * desligado ou dentro da janela de 24 h produzia exatamente o mesmo silêncio,
+   * e quem resolveu não tinha como distinguir os três.
+   */
+  readonly motivo?: 'desligado' | 'ja_perguntou' | 'ja_respondeu' | 'canal' | 'sem_caixa';
+  /** A mensagem de encerramento falhou ao sair? */
+  readonly encerramentoFalhou?: boolean;
+}
+
 export const runClosingAutoReply = async (
   accountId: string,
   conversationId: string,
-): Promise<void> => {
+): Promise<ClosingResult> => {
   const conversation = await prisma.conversation.findFirst({
     where: { id: conversationId, accountId },
     select: {
@@ -195,10 +213,10 @@ export const runClosingAutoReply = async (
       contact: { select: { phone: true } },
     },
   });
-  if (!conversation) return;
+  if (!conversation) return { csatEnviado: false, motivo: 'sem_caixa' };
 
   const config = await loadInboxAutoConfig(accountId, conversation.inboxId);
-  if (!config) return;
+  if (!config) return { csatEnviado: false, motivo: 'sem_caixa' };
 
   const destino: Destino = {
     accountId,
@@ -208,25 +226,42 @@ export const runClosingAutoReply = async (
     phone: conversation.contact?.phone ?? '',
   };
 
+  let encerramentoFalhou = false;
   if (utilizavel(config.closing)) {
     const ultimo = await ultimoDisparo(conversationId, 'encerramento');
     if (!ultimo || Date.now() - ultimo.getTime() > CLOSING_COOLDOWN_MS) {
-      await enviar(destino, config.closing.text, 'encerramento', 'Encerramento automático');
+      const saida = await enviar(
+        destino,
+        config.closing.text,
+        'encerramento',
+        'Encerramento automático',
+      );
+      encerramentoFalhou = Boolean(saida.falhaDeEntrega);
     }
   }
 
   // A pesquisa vale uma vez por atendimento, e só enquanto não houver nota —
   // reperguntar a quem já respondeu é pedir para ser ignorado.
-  if (!config.csatEnabled || conversation.csatScore !== null) return;
+  if (!config.csatEnabled) return { csatEnviado: false, motivo: 'desligado', encerramentoFalhou };
+  if (conversation.csatScore !== null) {
+    return { csatEnviado: false, motivo: 'ja_respondeu', encerramentoFalhou };
+  }
   const jaPerguntou =
     conversation.csatAskedAt && Date.now() - conversation.csatAskedAt.getTime() < CSAT_WINDOW_MS;
-  if (jaPerguntou) return;
+  if (jaPerguntou) return { csatEnviado: false, motivo: 'ja_perguntou', encerramentoFalhou };
 
-  await enviar(destino, config.csatQuestion, 'csat', 'Pesquisa de satisfação');
+  const saida = await enviar(destino, config.csatQuestion, 'csat', 'Pesquisa de satisfação');
+  if (saida.falhaDeEntrega) {
+    // Sem carimbar `csatAskedAt`: a pergunta não chegou, então a janela de 24 h
+    // não começou e resolver de novo deve poder tentar outra vez.
+    return { csatEnviado: false, motivo: 'canal', encerramentoFalhou };
+  }
+
   await prisma.conversation.updateMany({
     where: { id: conversationId, accountId },
     data: { csatAskedAt: new Date() },
   });
+  return { csatEnviado: true, encerramentoFalhou };
 };
 
 /* ==========================================================================

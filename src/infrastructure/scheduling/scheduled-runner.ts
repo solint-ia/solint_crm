@@ -1,5 +1,7 @@
+import { currentProtocol, type Protocol } from '@/core/domain/conversation';
 import { previewOfMessage, type Message } from '@/core/domain/message';
-import { asJson, prisma } from '@/infrastructure/db/prisma';
+import { hasVariables, interpolate } from '@/core/domain/message-variables';
+import { asJson, prisma, readJson } from '@/infrastructure/db/prisma';
 import { horaLabel } from '@/lib/datetime';
 import { waEventBus } from '@/infrastructure/whatsapp/whatsapp-events';
 
@@ -170,7 +172,9 @@ export class ScheduledMessageRunner {
         channel: true,
         channelThreadId: true,
         lastMessagePreview: true,
-        contact: { select: { phone: true } },
+        protocols: true,
+        account: { select: { name: true } },
+        contact: { select: { phone: true, name: true } },
       },
     });
 
@@ -182,13 +186,30 @@ export class ScheduledMessageRunner {
       return;
     }
 
+    /**
+     * As variáveis são resolvidas **na hora do envio**, não na hora do agendamento.
+     *
+     * O contato pode ter sido renomeado, e o atendimento pode ter ganhado outro
+     * protocolo, entre agendar e sair. Congelar o texto na criação mandaria ao
+     * cliente um número de protocolo que já foi fechado.
+     */
+    const texto = hasVariables(linha.text)
+      ? interpolate(linha.text, {
+          clienteNome: conversation.contact?.name ?? '',
+          agenteNome: linha.userName,
+          empresa: conversation.account?.name ?? '',
+          protocolo:
+            currentProtocol(readJson<readonly Protocol[]>(conversation.protocols, []))?.code ?? '',
+        })
+      : linha.text;
+
     const agora = new Date();
     const message: Message = {
       id: `msg-${agora.getTime()}-${Math.random().toString(36).slice(2, 8)}`,
       conversationId: conversation.id,
       author: 'agent',
       authorName: linha.userName,
-      content: { type: 'text', text: linha.text },
+      content: { type: 'text', text: texto },
       time: horaLabel(agora),
       createdAt: agora.toISOString(),
       isPrivate: linha.isPrivate,
@@ -242,7 +263,7 @@ export class ScheduledMessageRunner {
             : {}),
           ...(conversation.contact.phone ? { phone: conversation.contact.phone } : {}),
         },
-        text: linha.text,
+        text: texto,
       });
 
       if (!resultado.ok) {

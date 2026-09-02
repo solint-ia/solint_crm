@@ -23,7 +23,8 @@ import {
   X,
 } from 'lucide-react';
 import type { Conversation, ConversationStatus, Priority } from '@/core/domain/conversation';
-import { isHsmWindowOpen } from '@/core/domain/conversation';
+import { currentProtocol, isHsmWindowOpen } from '@/core/domain/conversation';
+import type { VariableContext } from '@/core/domain/message-variables';
 import { previewOfMessage, type Message } from '@/core/domain/message';
 import type { ScheduledMessage } from '@/core/domain/scheduled-message';
 import { isGroupContact, PhoneNumber } from '@/core/domain/contact';
@@ -84,6 +85,10 @@ interface ChatPanelProps {
   readonly currentUserId: string;
   readonly catalog: InboxCatalog;
   readonly cannedResponses: readonly CannedResponse[];
+  /** Nome da empresa, para `{{empresa}}`. */
+  readonly companyName: string;
+  /** Nome de quem atende, para `{{agente.nome}}`. */
+  readonly currentUserName: string;
   readonly onSend: (text: string, mode: ComposerMode, replyToId?: string) => void;
   readonly onDeleteMessage?: (messageId: string) => void;
   /** `emoji` vazio retira a reação de quem está atendendo. */
@@ -120,6 +125,8 @@ export function ChatPanel({
   currentUserId,
   catalog,
   cannedResponses,
+  companyName,
+  currentUserName,
   onSend,
   onDeleteMessage,
   onReactToMessage,
@@ -179,6 +186,24 @@ export function ChatPanel({
    */
   const toggleStatus = (alvo: ConversationStatus) =>
     onChangeStatus(conversation.status === alvo ? 'aberta' : alvo);
+
+  /**
+   * O que preenche as variáveis das respostas rápidas nesta conversa.
+   *
+   * Montado aqui porque é o único lugar que tem as quatro peças ao mesmo
+   * tempo: o contato vem da conversa, o agente e a empresa vêm da sessão, e o
+   * protocolo é o atendimento em aberto — o mesmo que o painel de contexto
+   * mostra ao lado.
+   */
+  const variableContext = useMemo<VariableContext>(
+    () => ({
+      clienteNome: conversation.contact.name,
+      agenteNome: currentUserName,
+      empresa: companyName,
+      protocolo: currentProtocol(conversation.protocols)?.code ?? '',
+    }),
+    [conversation.contact.name, conversation.protocols, currentUserName, companyName],
+  );
 
   /**
    * As mensagens por id, para resolver a citação sem varrer a timeline por
@@ -587,6 +612,8 @@ export function ChatPanel({
               key={item.message.id}
               message={item.message}
               showAuthorName={isGroup}
+              mentionCandidates={catalog.members}
+              currentUserId={currentUserId}
               {...(item.message.replyToId && byId.has(item.message.replyToId)
                 ? { quoted: byId.get(item.message.replyToId) }
                 : {})}
@@ -699,6 +726,8 @@ export function ChatPanel({
           onSendMedia={onSendMedia}
           onTyping={(isTyping) => onTyping?.(conversation.id, isTyping)}
           cannedResponses={cannedResponses}
+          variableContext={variableContext}
+          mentionCandidates={catalog.members}
           pending={pending}
           {...(scheduleMessage
             ? {

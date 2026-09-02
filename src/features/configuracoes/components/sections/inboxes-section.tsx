@@ -1059,6 +1059,38 @@ function InboxDetail({
               Deixe vazio para usar a pergunta padrão. O cliente responde com o número, com
               &ldquo;nota 4&rdquo; ou com estrelas: todas as formas são aceitas.
             </p>
+
+            {/* O que vai acontecer, escrito por extenso.
+                
+                O toggle sozinho não diz quando a pergunta sai nem qual texto o
+                cliente recebe, e a queixa recorrente era "liguei o CSAT e a
+                mensagem não chegou" — quase sempre com a caixa desconectada ou
+                com o toggle marcado e não salvo. */}
+            {csatEnabled ? (
+              <div className="mt-3 flex flex-col gap-2">
+                <div className="rounded-xl border border-line-soft bg-surface-2/60 p-3">
+                  <p className="text-[11px] font-semibold text-muted">
+                    Ao resolver uma conversa desta caixa, o cliente recebe:
+                  </p>
+                  <p className="mt-1 text-xs italic leading-relaxed text-ink">
+                    &ldquo;{csatQuestion.trim() || DEFAULT_CSAT_QUESTION}&rdquo;
+                  </p>
+                  <p className="mt-2 text-[11px] text-dim">
+                    A pergunta sai uma vez por atendimento e a resposta vale por 24 horas.
+                  </p>
+                </div>
+
+                {statusExibido !== 'conectado' ? (
+                  <p className="flex items-start gap-1.5 rounded-xl border border-amber-line/50 bg-amber-soft/40 p-2.5 text-[11px] text-amber-text">
+                    <TriangleAlert className="mt-px size-3.5 shrink-0" />
+                    <span>
+                      Esta caixa está {statusExibido}. Enquanto ela não estiver conectada, a
+                      pesquisa é gravada na conversa e não chega ao cliente.
+                    </span>
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

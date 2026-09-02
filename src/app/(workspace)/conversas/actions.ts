@@ -7,7 +7,10 @@ import {
   CONVERSATION_ID_MAX_LENGTH,
   CONVERSATION_STATUSES,
   PRIORITIES,
+  currentProtocol,
+  type Protocol,
 } from '@/core/domain/conversation';
+import { hasVariables, interpolate } from '@/core/domain/message-variables';
 import { previewOfMessage, type Message, type MessageContent } from '@/core/domain/message';
 import {
   MAX_SCHEDULE_AHEAD_MS,
@@ -16,10 +19,10 @@ import {
 } from '@/core/domain/scheduled-message';
 import { groupInboxIds, type Contact } from '@/core/domain/contact';
 import { stageLabelIds } from '@/core/domain/pipeline';
-import { can, canSeeInbox, withSignature } from '@/core/domain/user';
+import { can, canSeeInbox, withSignature, type Session } from '@/core/domain/user';
 import { canSendFreeText, MAX_MESSAGE_LENGTH } from '@/core/use-cases/send-message';
 import { container } from '@/infrastructure/container';
-import { prisma } from '@/infrastructure/db/prisma';
+import { prisma, readJson } from '@/infrastructure/db/prisma';
 import { dispararAutomacoes } from '@/infrastructure/automations/dispatch';
 import type { DispatchResult } from '@/infrastructure/whatsapp/channel';
 import { getWhatsAppChannel } from '@/infrastructure/whatsapp/channel-provider';
@@ -31,11 +34,68 @@ import {
 } from '@/infrastructure/whatsapp/wa-store';
 import { waEventBus } from '@/infrastructure/whatsapp/whatsapp-events';
 import { writeAuditLog } from '@/infrastructure/audit/write-audit-log';
+import { createNotification } from '@/infrastructure/notifications/create-notification';
+import { abrirProtocolo, fecharProtocolo } from '@/infrastructure/conversations/protocols';
+import type { ClosingResult } from '@/infrastructure/whatsapp/inbox-auto-messages';
 
 export interface ActionResult {
   readonly ok: boolean;
   readonly error?: string;
 }
+
+/**
+ * O que a tela diz depois de resolver um atendimento.
+ *
+ * Resolver dispara duas coisas invisíveis — o encerramento automático e a
+ * pesquisa de satisfação — e as duas podiam não sair por motivos diferentes,
+ * todos silenciosos. Quem clicava em "resolver" via o mesmo nada em qualquer
+ * caso, e a conclusão natural era "o CSAT não funciona".
+ */
+export interface CsatAviso {
+  readonly tone: 'sucesso' | 'info' | 'alerta';
+  readonly text: string;
+}
+
+const MOTIVO_TEXTO: Readonly<Record<NonNullable<ClosingResult['motivo']>, CsatAviso>> = {
+  desligado: {
+    tone: 'info',
+    text: 'Atendimento resolvido. A pesquisa de satisfação está desligada nesta caixa de entrada.',
+  },
+  ja_perguntou: {
+    tone: 'info',
+    text: 'Atendimento resolvido. A pesquisa não foi enviada de novo: já perguntamos há menos de 24 horas.',
+  },
+  ja_respondeu: {
+    tone: 'info',
+    text: 'Atendimento resolvido. O cliente já avaliou este atendimento.',
+  },
+  canal: {
+    tone: 'alerta',
+    text: 'Atendimento resolvido, mas a pesquisa não saiu: a caixa de entrada está desconectada.',
+  },
+  sem_caixa: {
+    tone: 'alerta',
+    text: 'Atendimento resolvido, mas não foi possível ler a configuração da caixa de entrada.',
+  },
+};
+
+const avisoDeFechamento = (fechamento: ClosingResult): CsatAviso => {
+  if (fechamento.csatEnviado) {
+    return { tone: 'sucesso', text: 'Atendimento resolvido. Pesquisa de satisfação enviada.' };
+  }
+  if (fechamento.encerramentoFalhou) {
+    return {
+      tone: 'alerta',
+      text: 'Atendimento resolvido, mas a mensagem de encerramento não chegou ao cliente.',
+    };
+  }
+  return (
+    (fechamento.motivo && MOTIVO_TEXTO[fechamento.motivo]) ?? {
+      tone: 'sucesso',
+      text: 'Atendimento resolvido.',
+    }
+  );
+};
 
 export interface SendMessageResult extends ActionResult {
   /** Mensagem persistida — o cliente troca a bolha otimista por esta. */
@@ -80,6 +140,34 @@ async function applyDispatch(
 }
 
 /**
+ * Resolve `{{cliente.nome}}` e companhia para uma conversa.
+ *
+ * Só vai ao banco quando o texto de fato cita alguma variável: a esmagadora
+ * maioria das mensagens é digitada sem nenhuma, e uma consulta a mais em todo
+ * envio custaria uma travessia até o banco no caminho mais quente do produto.
+ */
+const interpolarParaConversa = async (
+  session: Session,
+  conversationId: string,
+  texto: string,
+): Promise<string> => {
+  if (!hasVariables(texto)) return texto;
+
+  const conversa = await prisma.conversation.findFirst({
+    where: { id: conversationId, accountId: session.account.id },
+    select: { protocols: true, contact: { select: { name: true } } },
+  });
+
+  return interpolate(texto, {
+    clienteNome: conversa?.contact?.name ?? '',
+    agenteNome: session.user.name,
+    empresa: session.account.name,
+    protocolo:
+      currentProtocol(readJson<readonly Protocol[]>(conversa?.protocols, []))?.code ?? '',
+  });
+};
+
+/**
  * Toda Server Action valida a entrada antes de tocar no dominio:
  * o cliente e sempre considerado não confiavel (REGRAS-GLOBAIS.md secao 6.1).
  */
@@ -100,6 +188,21 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
   const session = await container.session.getCurrentSession();
 
   /**
+   * As variáveis são resolvidas no servidor, e não só no compositor.
+   *
+   * O compositor já interpola ao inserir uma resposta rápida, para o atendente
+   * ver o texto final. Isso não basta: `{{cliente.nome}}` digitado à mão, uma
+   * mensagem agendada, uma macro ou a API pública nunca passaram por aquele
+   * caminho, e o cliente recebia a chave crua. Aqui é o funil por onde todo
+   * envio de texto passa, então é aqui que a garantia vale.
+   */
+  const interpolado = await interpolarParaConversa(
+    session,
+    parsed.data.conversationId,
+    parsed.data.text,
+  );
+
+  /**
    * A assinatura entra aqui, antes de gravar — não na hora de despachar.
    *
    * Gravar o texto sem ela e mandar com ela deixaria a timeline do CRM
@@ -111,10 +214,30 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
    * pela Meta e uma linha a mais o invalidaria.
    */
   const text = parsed.data.isPrivate
-    ? parsed.data.text
-    : withSignature(session.user, parsed.data.text);
+    ? interpolado
+    : withSignature(session.user, interpolado);
 
-  const result = await container.useCases.sendMessage({ session, ...parsed.data, text });
+  /**
+   * Os candidatos a menção são carregados só para nota interna.
+   *
+   * `settings.get` é a consulta mais cara do caminho, e mensagem pública não
+   * tem menção nenhuma a resolver: pedi-la em todo envio custaria a leitura do
+   * catálogo inteiro da conta para descartar o resultado.
+   */
+  const mentionCandidates =
+    parsed.data.isPrivate && parsed.data.text.includes('@')
+      ? (await container.settings.get(session.account.id)).members.map((membro) => ({
+          id: membro.id,
+          name: membro.name,
+        }))
+      : [];
+
+  const result = await container.useCases.sendMessage({
+    session,
+    ...parsed.data,
+    text,
+    mentionCandidates,
+  });
 
   if (!result.ok) {
     return { ok: false, error: result.error.message };
@@ -197,6 +320,25 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
       conversationId: parsed.data.conversationId,
       messageId: message.id,
       message,
+    });
+  }
+
+  /**
+   * Cada pessoa mencionada recebe um aviso, e só ela.
+   *
+   * Quem se menciona sozinho não é avisado: é a mesma razão da atribuição a si
+   * mesmo — a pessoa acabou de escrever a nota e sabe o que há nela.
+   */
+  for (const mencionadoId of result.value.message.mentions ?? []) {
+    if (mencionadoId === session.user.id) continue;
+    await createNotification({
+      accountId: session.account.id,
+      userId: mencionadoId,
+      kind: 'mencao',
+      text: `${session.user.name} mencionou você numa nota na conversa com ${conversation.contact.name}`,
+      href: `/conversas/${parsed.data.conversationId}`,
+      conversationId: parsed.data.conversationId,
+      inboxId: conversation.inboxId,
     });
   }
 
@@ -330,7 +472,14 @@ const changeStatusSchema = z.object({
   status: z.enum(CONVERSATION_STATUSES),
 });
 
-export async function changeConversationStatusAction(input: unknown): Promise<ActionResult> {
+export interface ChangeStatusResult extends ActionResult {
+  /** O que dizer sobre o encerramento automático e a pesquisa de satisfação. */
+  readonly aviso?: CsatAviso;
+}
+
+export async function changeConversationStatusAction(
+  input: unknown,
+): Promise<ChangeStatusResult> {
   const parsed = changeStatusSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: 'Status inválido.' };
@@ -344,15 +493,35 @@ export async function changeConversationStatusAction(input: unknown): Promise<Ac
   // A regra inteira mora em `inbox-auto-messages`, que é o mesmo caminho usado
   // pela ação `resolver_conversa` das automações — antes só o botão da tela
   // disparava o encerramento, e resolver por regra saía calado.
+  let csatAviso: CsatAviso | undefined;
   if (parsed.data.status === 'resolvida') {
     try {
       const { runClosingAutoReply } = await import(
         '@/infrastructure/whatsapp/inbox-auto-messages'
       );
-      await runClosingAutoReply(session.account.id, parsed.data.conversationId);
+      const fechamento = await runClosingAutoReply(
+        session.account.id,
+        parsed.data.conversationId,
+      );
+      csatAviso = avisoDeFechamento(fechamento);
     } catch (err) {
       console.warn('[conversas] Falha ao despachar mensagem automática de encerramento:', err);
+      csatAviso = { tone: 'alerta', text: 'O encerramento automático não pôde ser enviado.' };
     }
+
+    // O protocolo em aberto fecha junto com o atendimento. Antes ele nascia
+    // "Em andamento" e ficava assim para sempre, inclusive em conversa
+    // resolvida meses atrás.
+    await fecharProtocolo(session.account.id, parsed.data.conversationId).catch((err) => {
+      console.warn('[conversas] Falha ao fechar o protocolo:', err);
+    });
+  } else if (parsed.data.status === 'aberta') {
+    // Reabrir é um atendimento novo, e atendimento novo tem protocolo novo.
+    // `abrirProtocolo` é idempotente: se ainda houver um em aberto, ela o
+    // devolve em vez de emitir outro número.
+    await abrirProtocolo(session.account.id, parsed.data.conversationId).catch((err) => {
+      console.warn('[conversas] Falha ao abrir o protocolo:', err);
+    });
   }
 
   // Só dois dos status têm gatilho; os demais não disparam nada.
@@ -389,7 +558,7 @@ export async function changeConversationStatusAction(input: unknown): Promise<Ac
     metadata: { status: parsed.data.status },
   });
 
-  return { ok: true };
+  return { ok: true, ...(csatAviso ? { aviso: csatAviso } : {}) };
 }
 
 const conversationIdSchema = z.object({ conversationId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH) });
@@ -493,6 +662,27 @@ export async function assignConversationAction(input: unknown): Promise<ActionRe
     targetName: result.value.contact.name,
     metadata: assignee ? { assigneeId: assignee.id, assigneeName: assignee.name } : {},
   });
+
+  /**
+   * O aviso vai para quem recebeu a conversa, e só para ele.
+   *
+   * Quem **atribuiu a si mesmo** não é avisado: ele acabou de clicar, e um
+   * aviso sobre a própria ação é ruído que ensina a ignorar o sininho. Devolver
+   * para a fila também não avisa ninguém — não há destinatário, e a conversa
+   * volta a aparecer na lista de todos por si só.
+   */
+  if (assignee && assignee.id !== session.user.id) {
+    await createNotification({
+      accountId: session.account.id,
+      userId: assignee.id,
+      kind: 'atribuicao',
+      text: `${session.user.name} atribuiu a você a conversa com ${result.value.contact.name}`,
+      href: `/conversas/${parsed.data.conversationId}`,
+      conversationId: parsed.data.conversationId,
+      inboxId: result.value.inboxId,
+    });
+  }
+
   await broadcast(parsed.data.conversationId);
   return { ok: true };
 }

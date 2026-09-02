@@ -139,6 +139,15 @@ export interface Message {
    * mensagem de terceiro: a chave que o canal exige carrega o participante.
    */
   readonly senderJid?: string;
+  /**
+   * Ids das pessoas mencionadas com `@` nesta nota interna.
+   *
+   * Extraído no servidor a partir do texto, e nunca recebido do cliente: quem
+   * enviasse a lista poderia notificar qualquer pessoa da conta sem escrever o
+   * nome dela em lugar nenhum. Ausente fora de nota interna, onde menção não
+   * faz sentido — o cliente não é membro da equipe.
+   */
+  readonly mentions?: readonly Id[];
 }
 
 /** Uma mensagem apagada não mostra conteúdo, só o rastro de que existiu. */

@@ -47,6 +47,17 @@ model Account {
   plan     String
   document String?
 
+  /// Último número de protocolo emitido por esta conta.
+  ///
+  /// O código do atendimento era `#AT-<5 dígitos aleatórios>`, e aleatório sem
+  /// verificação colide: numa conta com 300 conversas por dia a colisão chega
+  /// em semanas, e dois atendimentos com o mesmo número tornam o protocolo
+  /// inútil para o que ele existe, que é o cliente citá-lo ao voltar.
+  ///
+  /// Incrementado com `UPDATE ... RETURNING`, que é atômico: duas conversas
+  /// nascendo no mesmo instante recebem números diferentes sem transação.
+  protocolSeq Int @default(0)
+
   createdAt DateTime @default(now())
 
   memberships      Membership[]
@@ -376,6 +387,15 @@ model Message {
   /// isoladamente e o WhatsApp permite **uma** por pessoa. Uma tabela custaria
   /// um `join` em toda leitura de timeline para modelar um campo.
   reactions      Json     @default("[]")
+  /// Ids dos usuários mencionados com `@` nesta nota interna.
+  ///
+  /// JSON: string[]. Coluna JSON pela regra do topo deste arquivo: a lista é
+  /// lida e gravada inteira com a mensagem e nunca consultada sozinha.
+  ///
+  /// Extraída no servidor a partir do texto, e nunca recebida do cliente: quem
+  /// enviasse a lista poderia notificar qualquer pessoa da conta sem escrever
+  /// o nome dela em lugar nenhum.
+  mentions       Json     @default("[]")
   /// JID de quem escreveu, quando a mensagem veio de um grupo.
   ///
   /// Fora de grupo é redundante (o autor é o dono da conversa) e fica nulo. Em

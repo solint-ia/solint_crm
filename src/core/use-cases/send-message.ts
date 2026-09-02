@@ -1,4 +1,5 @@
 import { isHsmWindowOpen, type Conversation } from '../domain/conversation';
+import { extractMentions, type MentionCandidate } from '../domain/mentions';
 import type { Message } from '../domain/message';
 import { DomainError, fail, ok, type Id, type Result } from '../domain/shared';
 import { can, type Session } from '../domain/user';
@@ -9,6 +10,15 @@ export interface SendMessageInput {
   readonly conversationId: Id;
   readonly text: string;
   readonly isPrivate: boolean;
+  /**
+   * Quem pode ser mencionado com `@` numa nota interna.
+   *
+   * A lista chega de fora — é a Server Action que conhece os membros da conta —
+   * e a resolução acontece **aqui**, nunca no cliente: quem enviasse a lista
+   * pronta poderia notificar qualquer pessoa da conta sem escrever o nome dela
+   * em lugar nenhum.
+   */
+  readonly mentionCandidates?: readonly MentionCandidate[];
 }
 
 export const MAX_MESSAGE_LENGTH = 4096;
@@ -43,6 +53,7 @@ export const createSendMessage =
     conversationId,
     text,
     isPrivate,
+    mentionCandidates = [],
   }: SendMessageInput): Promise<Result<SendMessageOutput>> => {
     if (!can(session, 'conversas:responder')) {
       return fail(new DomainError('Sem permissão para responder conversas.', 'FORBIDDEN'));
@@ -70,6 +81,18 @@ export const createSendMessage =
       );
     }
 
+    /**
+     * Menção só existe em nota interna.
+     *
+     * Numa mensagem pública, `@Ana` é texto que o **cliente** vai ler: tratá-lo
+     * como menção acenderia o sininho de alguém por causa de uma frase que não
+     * era dirigida à equipe.
+     */
+    const mentions =
+      isPrivate && mentionCandidates.length > 0
+        ? extractMentions(content, mentionCandidates)
+        : [];
+
     const message = await repository.appendMessage({
       accountId: session.account.id,
       conversationId,
@@ -77,6 +100,7 @@ export const createSendMessage =
       isPrivate,
       authorId: session.user.id,
       authorName: session.user.name,
+      ...(mentions.length > 0 ? { mentions } : {}),
     });
 
     return ok({ message, conversation });

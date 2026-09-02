@@ -11,6 +11,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { MESSAGE_VARIABLES } from '@/core/domain/message-variables';
 import type { CannedResponse } from '@/core/domain/settings';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
@@ -24,13 +25,6 @@ import {
 interface CannedResponsesSectionProps {
   readonly cannedResponses: readonly CannedResponse[];
 }
-
-const TEMPLATE_VARIABLES = [
-  { tag: '{{cliente.nome}}', label: 'Nome do cliente' },
-  { tag: '{{agente.nome}}', label: 'Nome do atendente' },
-  { tag: '{{empresa}}', label: 'Nome da empresa' },
-  { tag: '{{protocolo}}', label: 'Número de protocolo' },
-];
 
 export function CannedResponsesSection({ cannedResponses }: CannedResponsesSectionProps) {
   const router = useRouter();
@@ -266,20 +260,30 @@ export function CannedResponsesSection({ cannedResponses }: CannedResponsesSecti
               <span className="text-[11px] text-dim">Variáveis dinâmicas:</span>
             </div>
 
-            {/* Inserção de variáveis dinâmicas */}
+            {/* Inserção de variáveis dinâmicas.
+
+                A lista vem do domínio, e não de uma cópia local: era uma cópia,
+                e a cópia era a única coisa que existia — não havia
+                interpolador em lugar nenhum, e o cliente recebia
+                `Olá {{cliente.nome}}` escrito assim mesmo. */}
             <div className="mb-2 flex flex-wrap gap-1.5">
-              {TEMPLATE_VARIABLES.map((v) => (
+              {MESSAGE_VARIABLES.map((v) => (
                 <button
                   type="button"
                   key={v.tag}
                   onClick={() => insertVariable(v.tag)}
-                  title={`Inserir ${v.label}`}
+                  title={`${v.label}: ${v.hint}`}
                   className="rounded-lg border border-line bg-surface-2 px-2 py-0.5 text-[10px] font-mono text-muted hover:border-brand hover:text-brand transition-colors"
                 >
                   {v.tag}
                 </button>
               ))}
             </div>
+
+            <p className="mb-2 text-[11px] leading-relaxed text-dim">
+              Ao usar a resposta na conversa, cada variável é trocada pelo valor daquele
+              atendimento. Variável sem valor some do texto: o cliente nunca vê a chave.
+            </p>
 
             <textarea
               id="content-input"

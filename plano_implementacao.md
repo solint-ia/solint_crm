@@ -1614,15 +1614,34 @@ Etapas ordenadas por dependência. Cada uma é entregável e verificável isolad
 | 4 | Taxa de conversão ponderada | ✅ concluída |
 | 5 | Auditoria e sessões reais | ✅ concluída |
 | 6 | Workspaces | ✅ concluída |
-| 7 | Variáveis dinâmicas e protocolo | ⬜ pendente |
-| 8 | Notificações | ⬜ pendente |
-| 9 | CSAT: fechar o ciclo | ⬜ pendente |
+| 7 | Variáveis dinâmicas e protocolo | ✅ concluída |
+| 8 | Notificações | 🟡 parcial: E.1 a E.4 concluídas; **resumo diário (E.5) bloqueado** |
+| 9 | CSAT: fechar o ciclo | ✅ concluída |
 | 10 | Tipografia e formato de data | ✅ concluída |
 | 11 | Filtros do Kanban | ✅ concluída |
 
-**Verificação ao fim das etapas 6, 10 e 11:** `npx tsc --noEmit`,
-`npx next lint --max-warnings=0`, `npx next build --no-lint` e
-`node scripts/check-travessao.mjs` passaram limpos.
+**Verificação ao fim de cada onda:** `npx tsc --noEmit`,
+`npx next lint --max-warnings=0`, `npx next build --no-lint`,
+`node scripts/check-travessao.mjs` e `npm run worker:build` passaram limpos.
+
+### O resumo diário (E.5) está bloqueado, e por quê
+
+Duas coisas o impedem, e nenhuma é código:
+
+1. **A preferência não existe mais no produto.** A Etapa 1 removeu
+   `dailySummary` e `dailySummaryEmail` de `NotificationPreferences` junto com a
+   preferência de campanhas — mais do que o item 1.3 pedia. Reconstruí-la é
+   decisão de produto, não continuação de implementação.
+2. **A decisão D4 continua em aberto e tem custo externo.** O projeto não tem
+   nenhum provedor de e-mail: nenhuma dependência de envio, nenhuma variável
+   SMTP, nenhum módulo `mailer`. Implementar exige acrescentar uma dependência
+   (`resend`, na recomendação do plano), uma conta no provedor e uma
+   `RESEND_API_KEY` em produção.
+
+O que **não** está bloqueado, e ficaria pronto no dia em que a decisão sair: o
+agregador dos números do dia já existe inteiro em
+`analytics-repository.getDashboard()` com período "hoje", e o padrão de runner
+diário já está estabelecido por `audit-retention-runner`.
 
 ### Achados corrigidos durante a Etapa 6
 
@@ -1644,6 +1663,25 @@ Três defeitos que não estavam no plano e apareceram ao integrar:
    `accountId` como dependência do efeito, e `LiveNotificationsProvider` a
    esvaziar a lista de avisos vivos na troca — sem isso o sininho mostraria
    conversas do workspace anterior, com links que a pessoa não alcança mais.
+
+### Achados corrigidos durante as Etapas 7 a 9
+
+1. **`dispatchAutoMessage` engolia a falha de entrega.** A mensagem automática
+   era gravada e o `catch` do despacho só escrevia no console: ela aparecia na
+   timeline indistinguível de uma que saiu, e o cliente nunca a recebia. Era
+   exatamente o que tornava "finalizei o atendimento e a pesquisa não chegou"
+   impossível de diagnosticar de dentro do produto. Agora grava
+   `deliveryStatus: 'falha'` e devolve o motivo a quem chamou.
+2. **O protocolo nascia em dois lugares e nunca fechava.** `Math.random()` de
+   cinco dígitos (colisão esperada em semanas numa conta com 300 conversas/dia),
+   só no caminho do WhatsApp, e o status `'Em andamento'` valia para sempre.
+   Virou sequencial por conta (`#AT-26-000431`, `UPDATE ... RETURNING`, atômico),
+   com ponto único de abertura e fechamento ao resolver.
+3. **O SLA precisava de dois pontos de escrita, não um.** A entrada do WhatsApp
+   grava direto em `wa-store` e não passa por `persistMessage`: carimbar só num
+   deles deixaria metade das conversas sem prazo. O relógio também só corre
+   dentro do expediente — sem isso, toda conversa recebida às 18h nasceria
+   estourada às 9h do dia seguinte.
 
 ### Decisão tomada na Etapa 11 (§H.5.2)
 

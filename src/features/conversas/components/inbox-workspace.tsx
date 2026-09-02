@@ -28,6 +28,8 @@ interface InboxWorkspaceProps {
   readonly conversations: readonly Conversation[];
   readonly currentUserId: string;
   readonly currentUserName: string;
+  /** Nome da conta, para a variável `{{empresa}}` das respostas rápidas. */
+  readonly companyName: string;
   readonly sendMessage: (input: {
     conversationId: string;
     text: string;
@@ -419,6 +421,8 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
               inboxes={props.inboxes}
               onMoveInbox={inbox.moveInbox}
               cannedResponses={props.cannedResponses}
+              companyName={props.companyName}
+              currentUserName={props.currentUserName}
               onSend={inbox.send}
               onDeleteMessage={inbox.deleteMessage}
               onReactToMessage={inbox.reactToMessage}

@@ -62,6 +62,7 @@ export async function InboxData({
       conversations={conversations}
       currentUserId={session.user.id}
       currentUserName={session.user.name}
+      companyName={session.account.name}
       // Só as caixas que esta pessoa alcança. `settings.connections` traz todas
       // as da conta; oferecer no menu de mover uma caixa fora do alcance seria
       // propor uma ação que o servidor recusa.

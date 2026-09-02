@@ -14,6 +14,8 @@ import type {
   ConversationRepository,
   NewMessageInput,
 } from '@/core/ports/conversation-repository';
+import { normalizeBusinessHours } from '@/core/domain/business-hours';
+import { calcularSla } from '@/core/domain/sla';
 import { prisma, asJson } from '@/infrastructure/db/prisma';
 import { waEventBus } from '@/infrastructure/whatsapp/whatsapp-events';
 import { writeAuditLog } from '@/infrastructure/audit/write-audit-log';
@@ -93,6 +95,7 @@ export class PrismaConversationRepository implements ConversationRepository {
       isPrivate: input.isPrivate,
       origin: 'crm',
       ...(input.replyToId ? { replyToId: input.replyToId } : {}),
+      ...(input.mentions?.length ? { mentions: input.mentions } : {}),
       ...(input.isPrivate ? {} : { deliveryStatus: 'enviando' as const }),
     };
     return this.persistMessage(input.accountId, input.conversationId, message, input.authorId);
@@ -129,6 +132,7 @@ export class PrismaConversationRepository implements ConversationRepository {
         firstResponseAt: true,
         assigneeId: true,
         inboxId: true,
+        inbox: { select: { businessHours: true } },
       },
     });
     if (!exists) throw new NotFoundError('Conversa', conversationId);
@@ -179,6 +183,30 @@ export class PrismaConversationRepository implements ConversationRepository {
       }
     }
 
+    /**
+     * O relógio do prazo de resposta, no mesmo ponto único.
+     *
+     * Mensagem do **contato** arma o prazo; resposta pública do atendente o
+     * desarma. Nota interna não mexe em nada: o cliente não a recebe e continua
+     * esperando.
+     *
+     * Só o contato reinicia o relógio, e a primeira resposta de um atendimento
+     * tem prazo mais curto que as seguintes — quem ainda não foi atendido é
+     * quem mais corre risco de desistir.
+     */
+    let sla: {
+      slaDeadlineAt?: string | null;
+      slaLabel?: string | null;
+      slaBreached?: boolean | null;
+    } = {};
+
+    if (message.author === 'contact' && !message.isPrivate) {
+      const hours = normalizeBusinessHours(exists.inbox?.businessHours);
+      sla = calcularSla(agora, !exists.firstResponseAt, hours, agora);
+    } else if (message.author === 'agent' && !message.isPrivate) {
+      sla = { slaDeadlineAt: null, slaLabel: null, slaBreached: null };
+    }
+
     const assumiuAtendimento = await prisma.$transaction(async (tx) => {
       await tx.message.create({
         data: {
@@ -196,6 +224,7 @@ export class PrismaConversationRepository implements ConversationRepository {
           replyToId: message.replyToId ?? null,
           externalId: message.externalId ?? null,
           origin: message.origin ?? null,
+          mentions: asJson(message.mentions ?? []),
         },
       });
       await tx.conversation.update({
@@ -207,6 +236,7 @@ export class PrismaConversationRepository implements ConversationRepository {
           lastMessageAt: message.time,
           lastActivityAt: agora,
           ...primeiraResposta,
+          ...sla,
         },
       });
 

@@ -1,4 +1,6 @@
-import { prisma } from '@/infrastructure/db/prisma';
+import { currentProtocol, type Protocol } from '@/core/domain/conversation';
+import { hasVariables, interpolate } from '@/core/domain/message-variables';
+import { prisma, readJson } from '@/infrastructure/db/prisma';
 import { horaLabel } from '@/lib/datetime';
 
 /**
@@ -30,6 +32,38 @@ export interface AutoMessageOptions {
 }
 
 /**
+ * Preenche as variáveis com o que a conversa e a conta têm.
+ *
+ * `agente.nome` fica com o rótulo da própria automática ("Mensagem de
+ * saudação"): não há atendente por trás de uma automática, e inventar um nome
+ * de pessoa seria pior do que dizer o que de fato enviou.
+ */
+const interpolarParaConversa = async (
+  accountId: string,
+  conversationId: string,
+  texto: string,
+): Promise<string> => {
+  if (!hasVariables(texto)) return texto;
+
+  const conversa = await prisma.conversation.findFirst({
+    where: { id: conversationId, accountId },
+    select: {
+      protocols: true,
+      account: { select: { name: true } },
+      contact: { select: { name: true } },
+    },
+  });
+
+  return interpolate(texto, {
+    clienteNome: conversa?.contact?.name ?? '',
+    agenteNome: '',
+    empresa: conversa?.account?.name ?? '',
+    protocolo:
+      currentProtocol(readJson<readonly Protocol[]>(conversa?.protocols, []))?.code ?? '',
+  });
+};
+
+/**
  * Envia uma mensagem automática (saudação, ausência, encerramento ou automação de regra).
  *
  * A mensagem é registrada no banco como mensagem pública (visível na timeline do
@@ -47,7 +81,15 @@ export async function dispatchAutoMessage({
 }: AutoMessageOptions) {
   if (!text || !text.trim()) return null;
 
-  const cleanText = text.trim();
+  /**
+   * As automáticas também aceitam variáveis.
+   *
+   * Uma saudação com `{{empresa}}` ou um encerramento com `{{protocolo}}` são
+   * exatamente o uso que a tela de mensagens automáticas sugere, e sem isto o
+   * cliente recebia a chave crua — pior que na resposta rápida, porque aqui
+   * ninguém revisa o texto antes de sair.
+   */
+  const cleanText = await interpolarParaConversa(accountId, conversationId, text.trim());
   const messageId = `msg-auto-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   const time = horaLabel(new Date());
 
@@ -75,6 +117,7 @@ export async function dispatchAutoMessage({
   });
 
   // Despacho no canal WhatsApp
+  let falhaDeEntrega: string | undefined;
   try {
     if (process.env.SOLINT_WORKER === '1') {
       // Dentro do worker: enfileira o comando direto
@@ -121,6 +164,20 @@ export async function dispatchAutoMessage({
     }
   } catch (error) {
     console.warn('[auto-reply] Falha ao despachar mensagem automática para o WhatsApp:', error);
+    /**
+     * A mensagem já está gravada, e a falha precisa aparecer na timeline.
+     *
+     * Antes este `catch` só escrevia no console: a mensagem entrava no CRM com
+     * `deliveryStatus` nulo, indistinguível de uma que saiu, e o cliente nunca
+     * a recebia. Era o que tornava "finalizei o atendimento e a pesquisa não
+     * chegou" impossível de diagnosticar de dentro do produto.
+     */
+    falhaDeEntrega = error instanceof Error ? error.message : 'Falha ao despachar no canal.';
+    await prisma.message
+      .update({ where: { id: created.id }, data: { deliveryStatus: 'falha' } })
+      .catch(() => {
+        // Marcar a falha não pode virar uma segunda falha.
+      });
   }
 
   // Notificação para o barramento de eventos em tempo real
@@ -143,11 +200,12 @@ export async function dispatchAutoMessage({
         createdAt: created.createdAt,
         isPrivate: false,
         origin,
+        ...(falhaDeEntrega ? { deliveryStatus: 'falha' as const } : {}),
       },
     });
   } catch (error) {
     console.warn('[auto-reply] Falha ao emitir evento em tempo real:', error);
   }
 
-  return created;
+  return { ...created, ...(falhaDeEntrega ? { deliveryStatus: 'falha' } : {}), falhaDeEntrega };
 }

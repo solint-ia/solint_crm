@@ -38,11 +38,57 @@ export const CONVERSATION_ID_MAX_LENGTH = 128;
 export const PRIORITIES = ['baixa', 'media', 'alta', 'urgente'] as const;
 export type Priority = (typeof PRIORITIES)[number];
 
+export type ProtocolStatus = 'Resolvido' | 'Pendente' | 'Em andamento';
+
+/**
+ * Número de atendimento — o código que o cliente cita ao voltar.
+ *
+ * Uma conversa acumula vários: um por ciclo de atendimento. O de cima da pilha
+ * é o corrente enquanto não estiver `'Resolvido'`; resolver a conversa fecha o
+ * aberto, e a primeira mensagem depois disso abre outro.
+ */
 export interface Protocol {
   readonly code: string;
+  /** Rótulo curto para a tela ("27 ago."). Nunca use para ordenar. */
   readonly date: string;
-  readonly status: 'Resolvido' | 'Pendente' | 'Em andamento';
+  readonly status: ProtocolStatus;
+  /**
+   * Instante da abertura, em ISO.
+   *
+   * Opcional porque os protocolos gravados antes desta coluna não o têm, e um
+   * `date` como "27 ago." não dá para converter de volta sem inventar o ano.
+   */
+  readonly openedAt?: IsoDateTime;
 }
+
+/**
+ * O protocolo em aberto, ou o mais recente quando todos já foram fechados.
+ *
+ * É o que `{{protocolo}}` resolve. A busca vai do fim para o começo porque o
+ * último da lista é sempre o mais novo — é assim que `abrirProtocolo` os
+ * empilha.
+ */
+export const currentProtocol = (protocols: readonly Protocol[]): Protocol | undefined => {
+  for (let i = protocols.length - 1; i >= 0; i -= 1) {
+    const protocolo = protocols[i];
+    if (protocolo && protocolo.status !== 'Resolvido') return protocolo;
+  }
+  return protocols[protocols.length - 1];
+};
+
+/**
+ * O código no formato do produto: `#AT-26-000431`.
+ *
+ * Ano com dois dígitos mais um sequencial de seis, zero à esquerda. O ano entra
+ * para o número não crescer para sempre e para a leitura ("é de 2026") ser
+ * imediata; o sequencial é por conta, então duas empresas podem ter o mesmo
+ * código sem que isso signifique nada — o protocolo só é citado dentro de uma
+ * conversa, que já pertence a uma conta.
+ */
+export const formatProtocolCode = (sequencial: number, quando: Date = new Date()): string => {
+  const ano = String(quando.getFullYear()).slice(-2);
+  return `#AT-${ano}-${String(sequencial).padStart(6, '0')}`;
+};
 
 export interface Conversation {
   readonly id: Id;

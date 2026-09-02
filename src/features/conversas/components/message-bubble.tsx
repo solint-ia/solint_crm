@@ -15,6 +15,7 @@ import {
   SmilePlus,
   Trash2,
 } from 'lucide-react';
+import { splitByMentions, type MentionCandidate } from '@/core/domain/mentions';
 import {
   groupReactions,
   previewOfMessage,
@@ -43,10 +44,60 @@ interface MessageBubbleProps {
    * mesma chamada, porque é assim que o WhatsApp representa a remoção.
    */
   readonly onReact?: (message: Message, emoji: string) => void;
+  /**
+   * A equipe da conta, para desenhar as menções da nota.
+   *
+   * O realce é derivado do texto, e não da lista `message.mentions`: é o texto
+   * que o leitor vê, e é nele que o nome precisa aparecer marcado. A lista
+   * gravada serve para saber **quem notificar**, que é outra pergunta.
+   */
+  readonly mentionCandidates?: readonly MentionCandidate[];
+  /** Quem está lendo: a própria menção fica mais forte que as demais. */
+  readonly currentUserId?: string;
 }
 
 const isFrameless = (content: MessageContent): boolean =>
   content.type === 'sticker' || (content.type === 'video' && Boolean(content.gif));
+
+/**
+ * O texto da nota com as menções realçadas.
+ *
+ * Devolve pedaços em vez de HTML: quem escapa o conteúdo continua sendo o
+ * React, e um nome de contato com `<` no meio não vira marcação.
+ */
+function NoteText({
+  text,
+  candidates,
+  currentUserId,
+}: {
+  readonly text: string;
+  readonly candidates: readonly MentionCandidate[];
+  readonly currentUserId?: string;
+}) {
+  if (candidates.length === 0 || !text.includes('@')) return <WaText text={text} />;
+
+  return (
+    <>
+      {splitByMentions(text, candidates).map((pedaco, index) =>
+        pedaco.mentionOf ? (
+          <mark
+            key={index}
+            className={cn(
+              'rounded px-0.5 font-semibold',
+              pedaco.mentionOf === currentUserId
+                ? 'bg-amber-500/30 text-amber-800 dark:text-amber-200'
+                : 'bg-amber-500/12 text-amber-700 dark:text-amber-300',
+            )}
+          >
+            {pedaco.text}
+          </mark>
+        ) : (
+          <WaText key={index} text={pedaco.text} />
+        ),
+      )}
+    </>
+  );
+}
 
 export function MessageBubble({
   message,
@@ -56,6 +107,8 @@ export function MessageBubble({
   onReply,
   onDelete,
   onReact,
+  mentionCandidates = [],
+  currentUserId,
 }: MessageBubbleProps) {
   const [lightboxMedia, setLightboxMedia] = useState<LightboxMedia | null>(null);
 
@@ -88,7 +141,11 @@ export function MessageBubble({
               Esta nota foi apagada
             </>
           ) : message.content.type === 'text' ? (
-            <WaText text={message.content.text} />
+            <NoteText
+              text={message.content.text}
+              candidates={mentionCandidates}
+              {...(currentUserId ? { currentUserId } : {})}
+            />
           ) : (
             AUDIO_LABEL
           )}

@@ -1,0 +1,11 @@
+-- Contador de protocolo por conta.
+--
+-- O código do atendimento era `#AT-<5 dígitos aleatórios>`: numa conta com 300
+-- conversas por dia, a colisão de aniversário chega em poucas semanas, e dois
+-- atendimentos com o mesmo número tornam o protocolo inútil justamente para o
+-- que ele serve, que é o cliente citá-lo ao voltar.
+--
+-- O contador vive na conta e é incrementado com `UPDATE ... RETURNING`, que é
+-- atômico: duas conversas nascendo no mesmo instante recebem números
+-- diferentes sem transação explícita.
+ALTER TABLE "Account" ADD COLUMN "protocolSeq" INTEGER NOT NULL DEFAULT 0;

@@ -16,7 +16,9 @@ import {
 import type { ChatIdentity } from './wa-identity';
 import type { AdContext } from './wa-message-content';
 import { waEventBus } from './whatsapp-events';
-import { dataCurtaLabel } from '@/lib/datetime';
+import { normalizeBusinessHours } from '@/core/domain/business-hours';
+import { calcularSla } from '@/core/domain/sla';
+import { novoProtocolo } from '@/infrastructure/conversations/protocols';
 
 /**
  * Persistência das mensagens que chegam do WhatsApp.
@@ -243,6 +245,9 @@ interface ExistingConversation {
   readonly status: string;
   readonly lastInboundAt: string | null;
   readonly inboxId: string;
+  /** Nulo enquanto ninguém respondeu: decide qual dos dois prazos de SLA vale. */
+  readonly firstResponseAt: Date | null;
+  readonly inbox: { readonly businessHours: unknown } | null;
 }
 
 const CONVERSATION_STATE_SELECT = {
@@ -250,6 +255,9 @@ const CONVERSATION_STATE_SELECT = {
   status: true,
   lastInboundAt: true,
   inboxId: true,
+  firstResponseAt: true,
+  // O expediente da caixa é o relógio do prazo: fora dele o tempo não corre.
+  inbox: { select: { businessHours: true } },
 } as const;
 
 const findConversationByThread = (
@@ -268,7 +276,7 @@ const findConversationState = (
 ): Promise<ExistingConversation | null> =>
   prisma.conversation.findFirst({
     where: { id: conversationId, accountId },
-    select: { unreadCount: true, status: true, lastInboundAt: true, inboxId: true },
+    select: CONVERSATION_STATE_SELECT,
   });
 
 /**
@@ -392,13 +400,7 @@ const createConversationWith = async (input: CommitInput): Promise<void> => {
         lastActivityAt: at,
         lastInboundAt: fromMe ? null : nowIso(at),
         channelThreadId: chat.jid,
-        protocols: asJson([
-          {
-            code: `#AT-${Math.floor(10000 + Math.random() * 90000)}`,
-            date: dataCurtaLabel(at),
-            status: 'Em andamento',
-          },
-        ]),
+        protocols: asJson([await novoProtocolo(input.accountId, at)]),
         messages: {
           create: {
             id: message.id,
@@ -520,6 +522,22 @@ const attachToConversation = async (
             status: existing.status === 'resolvida' ? 'aberta' : existing.status,
             statusLabel: existing.status === 'resolvida' ? 'Em andamento' : undefined,
             channelThreadId: chat.jid,
+            /**
+             * Mensagem do contato arma o prazo de resposta.
+             *
+             * Este caminho não passa por `persistMessage` — a entrada do
+             * WhatsApp escreve direto —, então o carimbo precisa acontecer aqui
+             * também. Mensagem nossa (`fromMe`) não arma nada: quem está
+             * esperando, do lado de cá, é o cliente.
+             */
+            ...(fromMe
+              ? {}
+              : calcularSla(
+                  at,
+                  !existing.firstResponseAt,
+                  normalizeBusinessHours(existing.inbox?.businessHours),
+                  at,
+                )),
           },
         }),
       ]);
@@ -624,13 +642,7 @@ export const openOutboundConversation = async (input: {
         lastActivityAt: at,
         lastInboundAt: null,
         channelThreadId: jid,
-        protocols: asJson([
-          {
-            code: `#AT-${Math.floor(10000 + Math.random() * 90000)}`,
-            date: at.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }),
-            status: 'Em andamento',
-          },
-        ]),
+        protocols: asJson([await novoProtocolo(accountId, at)]),
       },
       select: { id: true },
     });

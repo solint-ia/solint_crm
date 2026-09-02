@@ -98,6 +98,7 @@ export default async function WorkspaceLayout({
       <LiveNotificationsProvider
         soundEnabled={session.user.notifications.sound}
         accountId={session.account.id}
+        currentUserId={session.user.id}
       >
         <ToastProvider>
           <DateFormatProvider value={dateFormat}>

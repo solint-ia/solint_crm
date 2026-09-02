@@ -59,11 +59,14 @@ const MAX_ITEMS = 20;
 export function LiveNotificationsProvider({
   soundEnabled,
   accountId,
+  currentUserId,
   children,
 }: {
   readonly soundEnabled: boolean;
   /** Conta ativa: trocar de workspace esvazia a lista acumulada. */
   readonly accountId: string;
+  /** Quem está olhando: decide quais avisos dirigidos são dele. */
+  readonly currentUserId: string;
   readonly children: ReactNode;
 }) {
   const [items, setItems] = useState<readonly AppNotification[]>([]);
@@ -99,9 +102,43 @@ export function LiveNotificationsProvider({
    */
   const conversaAberta = useRef<string | undefined>(undefined);
 
+  /**
+   * Quem está olhando, por `ref` pelo mesmo motivo dos anteriores.
+   *
+   * A conexão de tempo real é por caixa, não por pessoa: dois agentes da mesma
+   * equipe recebem os mesmos eventos. Sem esta comparação, o aviso de "a
+   * conversa foi atribuída a você" acenderia o sininho dos dois.
+   */
+  const usuarioAtual = useRef(currentUserId);
+  usuarioAtual.current = currentUserId;
+
   useConversationEvents((payload) => {
     // "Digitando" e recibo de entrega não são novidade para ninguém.
     if (payload.type === 'typing' || payload.type === 'message_updated') return;
+
+    /**
+     * Aviso gravado pelo servidor: atribuição, menção, prazo estourando.
+     *
+     * Diferente dos demais eventos, este já vem pronto — não há mensagem para
+     * inspecionar nem preview a montar. A rota de SSE já recortou por conta e
+     * por caixa; o que falta é o recorte por pessoa, porque um aviso pode ser
+     * de alguém específico e a conexão é compartilhada por todos que alcançam
+     * aquela caixa.
+     */
+    if (payload.type === 'notification') {
+      const destinatario = (payload as { userId?: string }).userId;
+      if (destinatario && destinatario !== usuarioAtual.current) return;
+
+      const aviso = (payload as { notification?: AppNotification }).notification;
+      if (!aviso) return;
+
+      setItems((current) => {
+        if (current.some((item) => item.id === aviso.id)) return current;
+        return [aviso, ...current].slice(0, MAX_ITEMS);
+      });
+      if (somLigado.current) playNotificationSound();
+      return;
+    }
 
     const conversation = payload.conversation as Conversation | undefined;
     const message =

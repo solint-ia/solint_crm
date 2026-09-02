@@ -15,6 +15,7 @@ import { previewOfMessage } from '@/core/domain/message';
 import { horaLabel } from '@/lib/datetime';
 import type { ComposerMode } from '../components/composer';
 import { useConversationEvents } from '@/features/realtime/conversation-events';
+import { useToast } from '@/components/ui/toast';
 
 export type StatusTab = ConversationStatus | 'todas';
 export type SortKey = 'recentes' | 'antigas' | 'prioridade';
@@ -42,7 +43,12 @@ interface UseInboxParams {
   readonly changeStatus: (input: {
     conversationId: string;
     status: ConversationStatus;
-  }) => Promise<{ ok: boolean; error?: string }>;
+  }) => Promise<{
+    ok: boolean;
+    error?: string;
+    /** O que o servidor tem a dizer sobre o encerramento e a pesquisa de CSAT. */
+    aviso?: { tone: 'sucesso' | 'info' | 'alerta'; text: string };
+  }>;
   readonly markAsRead?: (input: { conversationId: string }) => Promise<{ ok: boolean }>;
   readonly assign?: (input: {
     conversationId: string;
@@ -160,6 +166,7 @@ export function useInbox({
   }));
   const [error, setError] = useState<string | undefined>();
   const [pending, startTransition] = useTransition();
+  const { show } = useToast();
 
   /**
    * A conversa pedida pela URL passa a valer também depois da montagem.
@@ -681,10 +688,26 @@ export function useInbox({
 
       startTransition(async () => {
         const result = await changeStatus({ conversationId: selected.id, status });
-        if (!result.ok) setError(result.error);
+        if (!result.ok) {
+          setError(result.error);
+          return;
+        }
+        /**
+         * Resolver dispara duas coisas que o atendente não vê acontecer: a
+         * mensagem de encerramento e a pesquisa de satisfação. Antes as duas
+         * podiam não sair — CSAT desligado, caixa desconectada, janela de 24 h
+         * — e o silêncio era idêntico ao sucesso.
+         */
+        if (result.aviso) {
+          show({
+            tone: result.aviso.tone,
+            title: 'Atendimento resolvido',
+            description: result.aviso.text,
+          });
+        }
       });
     },
-    [selected, changeStatus],
+    [selected, changeStatus, show],
   );
 
   /**

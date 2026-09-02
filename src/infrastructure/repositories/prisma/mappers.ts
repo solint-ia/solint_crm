@@ -132,6 +132,11 @@ export const messageRow = (row: DbMessage): Message => ({
     return reactions.length > 0 ? { reactions } : {};
   })(),
   ...(row.senderJid ? { senderJid: row.senderJid } : {}),
+  // Mesma economia das reações: lista vazia não vira propriedade.
+  ...(() => {
+    const mentions = readJson<readonly string[]>(row.mentions, []);
+    return mentions.length > 0 ? { mentions } : {};
+  })(),
 });
 
 const DAY_MS = 86_400_000;

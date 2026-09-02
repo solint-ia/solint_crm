@@ -31,6 +31,8 @@ export interface NewMessageInput {
   readonly authorName: string;
   /** Mensagem citada, quando esta é uma resposta a uma anterior. */
   readonly replyToId?: Id;
+  /** Quem foi mencionado com `@`, já resolvido no servidor. */
+  readonly mentions?: readonly Id[];
 }
 
 /** Leitura de conversas (ISP: quem só lista não depende de escrita). */

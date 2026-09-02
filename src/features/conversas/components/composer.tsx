@@ -24,6 +24,12 @@ import {
   X,
 } from 'lucide-react';
 import type { CannedResponse } from '@/core/domain/settings';
+import {
+  filterMentionCandidates,
+  mentionQueryAt,
+  type MentionCandidate,
+} from '@/core/domain/mentions';
+import { interpolate, type VariableContext } from '@/core/domain/message-variables';
 import { MIN_SCHEDULE_LEAD_MS } from '@/core/domain/scheduled-message';
 import { MAX_MESSAGE_LENGTH } from '@/core/use-cases/send-message';
 import { EmojiPicker } from '@/components/ui/emoji-picker';
@@ -62,6 +68,24 @@ interface ComposerProps {
   readonly onSendMedia?: (form: FormData) => Promise<MediaResult>;
   readonly onTyping?: (isTyping: boolean) => void;
   readonly cannedResponses?: readonly CannedResponse[];
+  /**
+   * Com o que preencher `{{cliente.nome}}` e companhia.
+   *
+   * Chega montado de cima porque só a conversa aberta sabe o contato e o
+   * protocolo. A interpolação acontece **ao inserir**, e não ao enviar, para o
+   * atendente ver o texto final e poder corrigi-lo antes de mandar — o servidor
+   * ainda interpola de novo, como rede de segurança para o que for digitado à
+   * mão.
+   */
+  readonly variableContext?: VariableContext;
+  /**
+   * Quem pode ser mencionado com `@` numa nota interna.
+   *
+   * Só a nota abre a lista: numa mensagem pública, `@Ana` é texto que o cliente
+   * vai ler, e oferecer o autocomplete ali convidaria a mandar o nome de um
+   * colega para fora.
+   */
+  readonly mentionCandidates?: readonly MentionCandidate[];
   readonly pending?: boolean;
   /**
    * Agenda o texto escrito para sair depois.
@@ -119,6 +143,8 @@ export function Composer({
   onSendMedia,
   onTyping,
   cannedResponses = [],
+  variableContext,
+  mentionCandidates = [],
   pending,
   onSchedule,
 }: ComposerProps) {
@@ -131,6 +157,8 @@ export function Composer({
   const [uploading, setUploading] = useState(false);
   const [mediaError, setMediaError] = useState<string | undefined>();
   const [cannedIndex, setCannedIndex] = useState(0);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [cursor, setCursor] = useState(0);
   /**
    * Quantos "dragenter" estão abertos sem o "dragleave" correspondente.
    *
@@ -175,6 +203,20 @@ export function Composer({
   const isNote = mode === 'nota';
   const blocked = Boolean(disabledReason) && !isNote;
   const hasMedia = Boolean(attachment ?? recording);
+
+  /**
+   * O trecho digitado depois de um `@`, quando há um em andamento.
+   *
+   * Reaproveita a mecânica das respostas rápidas — a mesma lista, as mesmas
+   * teclas — em vez de inventar um segundo autocomplete. A diferença é a
+   * âncora: `/` só vale no começo do texto, `@` vale onde o cursor estiver.
+   */
+  const mentionQuery = isNote ? mentionQueryAt(text, cursor) : undefined;
+  const mentionMatches = useMemo(
+    () =>
+      mentionQuery === undefined ? [] : filterMentionCandidates(mentionQuery, mentionCandidates),
+    [mentionQuery, mentionCandidates],
+  );
 
   const cannedQuery = text.startsWith('/') && !text.includes('\n') ? text.slice(1) : undefined;
   const cannedMatches = useMemo(() => {
@@ -244,8 +286,32 @@ export function Composer({
     [],
   );
 
+  /**
+   * Troca o `@parcial` pelo nome inteiro e deixa o cursor depois dele.
+   *
+   * Insere um espaço ao final porque a menção quase nunca termina a frase, e
+   * sem ele a próxima palavra colaria no nome — o que faria a extração no
+   * servidor deixar de reconhecer a menção.
+   */
+  const applyMention = (candidato: MentionCandidate) => {
+    const antes = text.slice(0, cursor);
+    const arroba = antes.lastIndexOf('@');
+    if (arroba === -1) return;
+
+    const proximo = `${text.slice(0, arroba)}@${candidato.name} ${text.slice(cursor)}`;
+    const posicao = arroba + candidato.name.length + 2;
+
+    handleTextChange(proximo);
+    setMentionIndex(0);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(posicao, posicao);
+      setCursor(posicao);
+    });
+  };
+
   const applyCanned = (response: CannedResponse) => {
-    handleTextChange(response.content);
+    handleTextChange(interpolate(response.content, variableContext ?? {}));
     textareaRef.current?.focus();
   };
 
@@ -583,6 +649,34 @@ export function Composer({
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionMatches.length > 0) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        setMentionIndex((prev) => (prev + 1) % mentionMatches.length);
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        setMentionIndex((prev) => (prev - 1 + mentionMatches.length) % mentionMatches.length);
+        return;
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault();
+        const escolhido = mentionMatches[mentionIndex];
+        if (escolhido) applyMention(escolhido);
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        // Fecha a lista sem apagar o que foi escrito: mover o cursor para o
+        // fim faz `mentionQueryAt` deixar de encontrar o `@` em andamento.
+        const fim = text.length;
+        textareaRef.current?.setSelectionRange(fim, fim);
+        setCursor(fim);
+        return;
+      }
+    }
+
     if (cannedMatches.length > 0) {
       if (event.key === 'ArrowDown') {
         event.preventDefault();
@@ -651,6 +745,36 @@ export function Composer({
           </span>
         </div>
       ) : null}
+      {/* Menções em nota interna */}
+      {mentionMatches.length > 0 && (
+        <ul
+          role="listbox"
+          aria-label="Mencionar alguém da equipe"
+          className="absolute bottom-full left-0 z-20 mb-2 w-[min(20rem,100%)] overflow-hidden rounded-xl border border-line bg-surface shadow-2xl backdrop-blur-md"
+        >
+          {mentionMatches.map((candidato, index) => (
+            <li key={candidato.id}>
+              <button
+                type="button"
+                role="option"
+                aria-selected={index === mentionIndex}
+                onMouseEnter={() => setMentionIndex(index)}
+                onClick={() => applyMention(candidato)}
+                className={cn(
+                  'flex w-full items-center gap-2 border-b border-line-soft px-3.5 py-2 text-left text-xs transition-colors last:border-0',
+                  index === mentionIndex ? 'bg-brand/12 text-ink' : 'text-muted hover:bg-surface-2',
+                )}
+              >
+                <span className="font-semibold">@{candidato.name}</span>
+              </button>
+            </li>
+          ))}
+          <li className="bg-surface-2 px-3.5 py-1.5 font-mono text-[10px] text-muted">
+            ↑↓ navega · Enter menciona · Esc cancela
+          </li>
+        </ul>
+      )}
+
       {/* Respostas rápidas popup */}
       {cannedMatches.length > 0 && (
         <ul
@@ -841,7 +965,13 @@ export function Composer({
       <textarea
         ref={textareaRef}
         value={text}
-        onChange={(event) => handleTextChange(event.target.value)}
+        onChange={(event) => {
+          handleTextChange(event.target.value);
+          setCursor(event.target.selectionStart ?? event.target.value.length);
+        }}
+        // O `@` vale onde o cursor estiver, então mover o cursor sem digitar
+        // (clique, seta) também precisa reavaliar a lista.
+        onSelect={(event) => setCursor(event.currentTarget.selectionStart ?? 0)}
         onKeyDown={onKeyDown}
         onPaste={handlePaste}
         maxLength={MAX_MESSAGE_LENGTH}
