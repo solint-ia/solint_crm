@@ -220,6 +220,8 @@ export class WhatsAppSession {
   private readonly presenceByJid = new Map<string, string>();
   private readonly typingByConversation = new Map<string, boolean>();
   private readonly contactsStore = new Map<string, Partial<WAContact>>();
+  /** A agenda completa já passou por esta sessão ou ainda exige resync manual? */
+  private hasAddressBookSnapshot = false;
   /**
    * Nome já resolvido de cada participante de grupo.
    *
@@ -922,8 +924,9 @@ export class WhatsAppSession {
       this.guarded('messaging-history.set', async (history) => {
         if ('contacts' in history && Array.isArray(history.contacts)) {
           for (const contact of history.contacts) {
-            await this.handleContactSync(contact);
+            this.rememberContact(contact);
           }
+          if (history.contacts.length > 0) this.hasAddressBookSnapshot = true;
         }
       }),
     );
@@ -1078,7 +1081,7 @@ export class WhatsAppSession {
       'contacts.upsert',
       this.guarded('contacts.upsert', async (contacts) => {
         for (const contact of contacts) {
-          await this.handleContactSync(contact);
+          this.rememberContact(contact);
         }
       }),
     );
@@ -1087,7 +1090,7 @@ export class WhatsAppSession {
       'contacts.update',
       this.guarded('contacts.update', async (updates) => {
         for (const update of updates) {
-          await this.handleContactSync(update);
+          this.rememberContact(update);
         }
       }),
     );
@@ -1190,7 +1193,15 @@ export class WhatsAppSession {
     });
   }
 
-  private async handleContactSync(contact: Partial<WAContact>): Promise<void> {
+  /**
+   * Mantém o retrato recebido do WhatsApp apenas na memória da sessão.
+   *
+   * Os eventos de agenda chegam no pareamento, em reconexões e em alterações
+   * feitas no celular. Persistir daqui transformava todos esses eventos numa
+   * sincronização automática do CRM. A única rotina autorizada a gravar a
+   * agenda agora é `syncAllStoredContacts`, chamada pelo botão explícito.
+   */
+  private rememberContact(contact: Partial<WAContact>): void {
     const rawJid = contact.phoneNumber ?? contact.id;
     if (!rawJid || isJidGroup(rawJid) || rawJid.endsWith('@g.us') || rawJid.includes('@broadcast') || rawJid.includes('@newsletter')) return;
 
@@ -1199,84 +1210,6 @@ export class WhatsAppSession {
     const jid = jidNormalizedUser(rawJid);
     const existingStored = this.contactsStore.get(jid);
     this.contactsStore.set(jid, { ...existingStored, ...contact });
-
-    const phoneDigits = userOf(jid);
-    if (!phoneDigits) return;
-
-    const phone = PhoneNumber.normalize(`+${phoneDigits}`);
-    if (!PhoneNumber.isValid(phone)) return;
-
-    const addressBookName = nomeUtilizavel(contact.name);
-    const pushName = nomeUtilizavel(contact.notify) ?? nomeUtilizavel(contact.verifiedName);
-    const resolvedName = addressBookName || pushName || PhoneNumber.format(phone) || phone;
-    const avatarUrl =
-      typeof contact.imgUrl === 'string' && contact.imgUrl !== 'changed' ? contact.imgUrl : undefined;
-
-    try {
-      const existing = await prisma.contact.findFirst({
-        where: {
-          accountId: this.accountId,
-          kind: { not: 'grupo' },
-          OR: [
-            { phone },
-            { id: `ct-wa-${phoneDigits}` },
-            { id: `ct-wa-${this.accountId}-${phoneDigits}` },
-          ],
-        },
-      });
-
-      if (existing) {
-        const shouldUpdateName =
-          (addressBookName && existing.name !== addressBookName) ||
-          (pushName && !nomeUtilizavel(existing.name));
-
-        if (shouldUpdateName || (avatarUrl && !existing.avatarUrl)) {
-          await prisma.contact.update({
-            where: { id: existing.id, accountId: this.accountId },
-            data: {
-              ...(shouldUpdateName ? { name: addressBookName || pushName } : {}),
-              ...(avatarUrl && !existing.avatarUrl ? { avatarUrl } : {}),
-            },
-          });
-        }
-      } else {
-        // Se for um contato salvo na agenda do celular (tem contact.name),
-        // ou se já houver uma conversa direta existente com ele:
-        const hasDirectConversation = await prisma.conversation.findFirst({
-          where: {
-            accountId: this.accountId,
-            inboxId: this.inboxId,
-            channel: 'whatsapp',
-            channelThreadId: { not: { endsWith: '@g.us' } },
-            OR: [
-              { channelThreadId: jid },
-              { channelThreadId: `${phoneDigits}@s.whatsapp.net` },
-            ],
-          },
-          select: { id: true },
-        });
-
-        if (addressBookName || hasDirectConversation) {
-          const contactId = `ct-wa-${this.accountId}-${phoneDigits}`;
-          await prisma.contact.create({
-            data: {
-              id: contactId,
-              accountId: this.accountId,
-              name: resolvedName,
-              phone,
-              channel: 'whatsapp',
-              avatarTone: 'blue',
-              kind: 'pessoa',
-              avatarUrl: avatarUrl ?? null,
-              customFields: asJson([]),
-              timeline: asJson([]),
-            },
-          });
-        }
-      }
-    } catch {
-      // Ignora colisões concorrentes normais do Baileys
-    }
   }
 
   /**
@@ -1300,7 +1233,7 @@ export class WhatsAppSession {
    *
    * Apagar a versão é seguro: ela é um marcador de sincronização, não um
    * segredo. O pior caso é reprocessar mutações que já conhecíamos, e
-   * `handleContactSync` é idempotente.
+   * `syncAllStoredContacts` é idempotente.
    */
   private async pullAddressBook(): Promise<void> {
     const socket = this.socket;
@@ -1318,6 +1251,7 @@ export class WhatsAppSession {
 
     try {
       await socket.resyncAppState(colecoes, true);
+      this.hasAddressBookSnapshot = true;
     } catch (error) {
       console.warn(
         `[WhatsAppSession ${this.inboxId}] Falha ao repuxar a agenda do WhatsApp:`,
@@ -1327,9 +1261,10 @@ export class WhatsAppSession {
   }
 
   async syncAllStoredContacts(): Promise<{ synced: number; created: number }> {
-    // A agenda vem antes da varredura: sem isto o mapa varrido é o que sobrou
-    // da sessão, não o que existe no telefone.
-    await this.pullAddressBook();
+    // O resync completo pode gerar um alerta no WhatsApp Business. Ele só é
+    // necessário no primeiro clique de uma sessão que ainda não recebeu a
+    // agenda; depois disso os eventos `contacts.*` mantêm o cache atualizado.
+    if (!this.hasAddressBookSnapshot) await this.pullAddressBook();
 
     /**
      * Com quem já existe conversa direta nesta caixa.
@@ -1388,8 +1323,8 @@ export class WhatsAppSession {
        * do WhatsApp, que é a lista que se espera ver aqui.
        *
        * A conversa direta entra junto porque quem já foi atendido é contato
-       * por definição, tenha sido salvo na agenda ou não — é a mesma regra que
-       * `handleContactSync` aplica no caminho em tempo real.
+       * por definição, tenha sido salvo na agenda ou não — é a mesma regra
+       * aplicada por esta sincronização manual.
        */
       const daAgenda = Boolean(addressBookName) || conversasDiretas.has(phoneDigits);
       if (!daAgenda) continue;

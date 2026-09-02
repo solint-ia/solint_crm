@@ -131,6 +131,48 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
       throw new Error('Esta conta não tem caixa de entrada de WhatsApp configurada.');
     }
 
+    const connection = await prisma.whatsAppConnection.findUnique({
+      where: { inboxId },
+      select: {
+        status: true,
+        credsCipher: true,
+        lockOwner: true,
+        lockExpiresAt: true,
+        phoneJid: true,
+        profileName: true,
+      },
+    });
+
+    // Um clique em "conectar" não deve reiniciar uma sessão que já está viva.
+    // Além de ser desnecessário, reconstruir o socket pode fazer o aparelho
+    // interpretar a operação como um novo vínculo do WhatsApp Web.
+    if (connection?.credsCipher && connection.status === 'conectado' && travaViva(connection)) {
+      return {
+        inboxId,
+        status: 'conectado',
+        phone: connection.phoneJid ?? undefined,
+        name: connection.profileName ?? undefined,
+        owner,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+
+    // Reaproveita a tentativa já enfileirada em vez de criar vários comandos
+    // concorrentes para a mesma credencial/sessão.
+    const pendingConnect = await prisma.whatsAppCommand.findFirst({
+      where: { inboxId, kind: 'connect', status: { in: ['pending', 'processing'] } },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (pendingConnect) {
+      return {
+        inboxId,
+        status: 'conectando',
+        owner,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+
     // Recusar cedo é melhor do que enfileirar no vazio: sem worker, o comando
     // ficaria pendente e a tela esperaria por algo que nunca vem.
     if (!(await waitForWorker())) {

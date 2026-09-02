@@ -748,6 +748,9 @@ model WhatsAppConnection {
   qrExpiresAt     DateTime?
   /// Contador de tentativas — evita loop de reconexão infinito após ban.
   retryCount      Int       @default(0)
+  /// Início da última sincronização manual da agenda. Também funciona como
+  /// trava temporal contra cliques repetidos que forçariam novos app-state syncs.
+  lastContactsSyncAt DateTime?
 
   /// `creds.json` do Baileys, cifrado com AES-256-GCM.
   credsCipher Bytes?

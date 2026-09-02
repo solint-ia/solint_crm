@@ -110,6 +110,8 @@ export class WhatsAppService {
   >();
   private readonly typingByConversation = new Map<string, boolean>();
   private readonly contactsStore = new Map<string, Partial<WAContact>>();
+  /** A agenda completa já foi recebida ou ainda requer um resync manual? */
+  private hasAddressBookSnapshot = false;
   private readonly logger = pino({ level: 'silent' });
 
   constructor() {
@@ -359,8 +361,13 @@ export class WhatsAppService {
         void this.handleConnectionUpdate(sock, update);
       });
 
-      sock.ev.on('messaging-history.set', async () => {
-        // Ignora histórico antigo recebido do celular — apenas mensagens novas pós-conexão
+      sock.ev.on('messaging-history.set', async (history) => {
+        // Mensagens antigas continuam ignoradas. Os contatos são apenas
+        // memorizados para uma futura sincronização manual pelo botão.
+        if ('contacts' in history && Array.isArray(history.contacts)) {
+          for (const contact of history.contacts) this.rememberContact(contact);
+          if (history.contacts.length > 0) this.hasAddressBookSnapshot = true;
+        }
         console.log('[WhatsAppService] Histórico antigo ignorado (processando apenas novas mensagens privadas 1x1).');
       });
 
@@ -410,11 +417,11 @@ export class WhatsAppService {
       });
 
       sock.ev.on('contacts.update', (updates) => {
-        for (const update of updates) void this.applyContactUpdate(update);
+        for (const update of updates) this.rememberContact(update);
       });
 
       sock.ev.on('contacts.upsert', (contacts) => {
-        for (const contact of contacts) void this.applyContactUpdate(contact);
+        for (const contact of contacts) this.rememberContact(contact);
       });
 
       // Reações chegam por evento próprio: a mensagem de reação também aparece
@@ -988,91 +995,29 @@ export class WhatsAppService {
     await persistDeliveryUpdate(key.id, deliveryStatus);
   }
 
-  private async applyContactUpdate(update: Partial<WAContact>) {
+  /**
+   * Atualiza somente o cache volátil usado pela sincronização manual.
+   *
+   * Eventos de contato também são emitidos durante conexão e app-state sync;
+   * escrever no banco aqui fazia a agenda sincronizar sem clique do usuário.
+   */
+  private rememberContact(update: Partial<WAContact>): void {
     const jid = update.phoneNumber ?? update.id;
     if (!jid || isJidGroup(jid) || jid.endsWith('@g.us') || jid.includes('@broadcast') || jid.includes('@newsletter')) return;
 
     const normalized = jidNormalizedUser(jid);
     const existingStored = this.contactsStore.get(normalized);
     this.contactsStore.set(normalized, { ...existingStored, ...update });
-
-    const phoneDigits = userOf(normalized);
-    if (!phoneDigits) return;
-
-    const phone = PhoneNumber.normalize(`+${phoneDigits}`);
-    if (!PhoneNumber.isValid(phone)) return;
-
-    const addressBookName = update.name?.trim();
-    const pushName = update.notify?.trim() || update.verifiedName?.trim();
-    const resolvedName = addressBookName || pushName || PhoneNumber.format(phone) || phone;
     const imgUrl =
       typeof update.imgUrl === 'string' && update.imgUrl !== 'changed' ? update.imgUrl : undefined;
 
     if (imgUrl) this.avatarCache.set(normalized, { url: imgUrl, at: Date.now() });
-
-    const accountId = this.accountId();
-    const inboxId = await this.activeInboxId();
-    if (!accountId || !inboxId) return;
-
-    try {
-      const existing = await prisma.contact.findFirst({
-        where: {
-          accountId,
-          kind: { not: 'grupo' },
-          OR: [
-            { phone },
-            { id: `ct-wa-${phoneDigits}` },
-            { id: `ct-wa-${accountId}-${phoneDigits}` },
-          ],
-        },
-      });
-
-      if (existing) {
-        const shouldUpdateName =
-          (addressBookName && existing.name !== addressBookName) ||
-          (pushName && (existing.name.startsWith('+') || existing.name === phone));
-
-        if (shouldUpdateName || (imgUrl && !existing.avatarUrl)) {
-          await prisma.contact.update({
-            where: { id: existing.id, accountId },
-            data: {
-              ...(shouldUpdateName ? { name: addressBookName || pushName } : {}),
-              ...(imgUrl && !existing.avatarUrl ? { avatarUrl: imgUrl } : {}),
-            },
-          });
-        }
-      } else if (addressBookName) {
-        // Contato com nome salvo na agenda do celular
-        const contactId = `ct-wa-${accountId}-${phoneDigits}`;
-        await prisma.contact.create({
-          data: {
-            id: contactId,
-            accountId,
-            name: resolvedName,
-            phone,
-            channel: 'whatsapp',
-            avatarTone: 'blue',
-            kind: 'pessoa',
-            avatarUrl: imgUrl ?? null,
-            customFields: asJson([]),
-            timeline: asJson([]),
-          },
-        });
-      }
-    } catch {
-      // Ignora colisões concorrentes
-    }
-
-    await patchContactByThread(accountId, inboxId, normalized, {
-      ...(addressBookName || pushName ? { name: addressBookName || pushName } : {}),
-      ...(imgUrl ? { avatarUrl: imgUrl } : {}),
-    });
   }
 
   async syncAllStoredContacts(accountId: string): Promise<{ synced: number; created: number }> {
-    // A agenda vem antes da varredura: sem isto o mapa varrido é o que sobrou
-    // da sessão, não o que existe no telefone.
-    await this.pullAddressBook();
+    // Um snapshot completo é pedido somente no primeiro clique que precisar
+    // dele. Eventos seguintes atualizam o cache sem gravar automaticamente.
+    if (!this.hasAddressBookSnapshot) await this.pullAddressBook();
 
     // Com quem já existe conversa direta — lido de uma vez, e não por contato.
     // Ver a nota extensa no equivalente em `worker/session.ts`.
@@ -1560,6 +1505,8 @@ export class WhatsAppService {
     this.lastInboundKey.clear();
     this.presenceByJid.clear();
     this.typingByConversation.clear();
+    this.contactsStore.clear();
+    this.hasAddressBookSnapshot = false;
   }
 
   /**
@@ -1658,6 +1605,7 @@ export class WhatsAppService {
         'app-state-sync-version': Object.fromEntries(colecoes.map((nome) => [nome, null])),
       } as never);
       await socket.resyncAppState(colecoes, true);
+      this.hasAddressBookSnapshot = true;
     } catch (error) {
       console.warn('[WhatsAppService] Falha ao repuxar a agenda do WhatsApp:', error);
     }

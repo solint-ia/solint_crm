@@ -18,7 +18,18 @@ export async function POST(
     // 1. Confere se a caixa de entrada pertence à conta ativa
     const inbox = await prisma.inbox.findFirst({
       where: { id: inboxId, accountId: session.account.id },
-      select: { id: true, channel: true },
+      select: {
+        id: true,
+        channel: true,
+        waConnection: {
+          select: {
+            status: true,
+            credsCipher: true,
+            lockOwner: true,
+            lockExpiresAt: true,
+          },
+        },
+      },
     });
 
     if (!inbox) {
@@ -33,6 +44,36 @@ export async function POST(
         { ok: false, error: `Canal desta caixa é ${inbox.channel}, não whatsapp.` },
         { status: 400 },
       );
+    }
+
+    const lockVivo = Boolean(
+      inbox.waConnection?.lockOwner &&
+        inbox.waConnection.lockExpiresAt &&
+        inbox.waConnection.lockExpiresAt > new Date(),
+    );
+    if (
+      inbox.waConnection?.credsCipher &&
+      inbox.waConnection.status === 'conectado' &&
+      lockVivo
+    ) {
+      return NextResponse.json({ ok: true, status: 'conectado', reusedSession: true });
+    }
+
+    // Dois cliques, abas ou usuários não podem criar duas tentativas para a
+    // mesma sessão. O comando existente continuará reutilizando as credenciais
+    // cifradas; nenhum QR novo é necessário.
+    const pending = await prisma.whatsAppCommand.findFirst({
+      where: { inboxId, kind: 'connect', status: { in: ['pending', 'processing'] } },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (pending) {
+      return NextResponse.json({
+        ok: true,
+        commandId: pending.id,
+        status: 'conectando',
+        reusedSession: Boolean(inbox.waConnection?.credsCipher),
+      });
     }
 
     // 2. Cria o registro de conexão se não existir

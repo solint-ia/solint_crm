@@ -850,6 +850,13 @@ export async function syncWhatsAppContactsAction(): Promise<
       return { ok: false, error: 'Nenhuma caixa de WhatsApp foi configurada nesta conta.' };
     }
 
+    if (!targetInbox.waConnection?.credsCipher) {
+      return {
+        ok: false,
+        error: 'Conecte o WhatsApp antes de sincronizar a agenda de contatos.',
+      };
+    }
+
     /**
      * Reserva a sincronização de forma atômica.
      *
@@ -872,15 +879,21 @@ export async function syncWhatsAppContactsAction(): Promise<
         where: { inboxId: targetInbox.id },
         select: { lastContactsSyncAt: true },
       });
-      const proxima = ultima?.lastContactsSyncAt
-        ? new Date(
-            ultima.lastContactsSyncAt.getTime() + INTERVALO_SINCRONIZACAO_CONTATOS_MS,
-          ).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+      const minutosRestantes = ultima?.lastContactsSyncAt
+        ? Math.max(
+            1,
+            Math.ceil(
+              (ultima.lastContactsSyncAt.getTime() +
+                INTERVALO_SINCRONIZACAO_CONTATOS_MS -
+                Date.now()) /
+                60_000,
+            ),
+          )
         : undefined;
       return {
         ok: false,
-        error: proxima
-          ? `A agenda foi sincronizada recentemente. Tente novamente após ${proxima}.`
+        error: minutosRestantes
+          ? `A agenda foi sincronizada recentemente. Tente novamente em ${minutosRestantes} minuto${minutosRestantes === 1 ? '' : 's'}.`
           : 'Já existe uma sincronização recente desta agenda.',
       };
     }
