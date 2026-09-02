@@ -43,6 +43,25 @@ class PostgresPubSubManager {
   private listenerClient: pg.Client | null = null;
   private isConnecting = false;
 
+  /**
+   * Quantas tentativas seguidas falharam, para espaçar as próximas.
+   *
+   * Sem recuo, uma indisponibilidade de trinta segundos vira dez tentativas de
+   * conexão — e, no modo sessão do Supabase, tentativa de conexão é slot
+   * ocupado. O martelo transformava uma falha passageira em esgotamento do
+   * pooler, que derruba **tudo**: recibo de entrega, batida do worker e as
+   * travas de sessão do WhatsApp saem juntos no mesmo minuto.
+   */
+  private tentativasSeguidas = 0;
+
+  /**
+   * Fechamento pedido por nós.
+   *
+   * `end()` dispara o evento `end`, e o ouvinte de `end` chama `reconnect()`.
+   * Sem esta marca, toda reconexão agendava outra reconexão logo em seguida.
+   */
+  private fechandoDeProposito = false;
+
   private retryTimeout: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private listeners: Map<ChannelName, Set<(data: unknown) => void>> = new Map();
@@ -79,10 +98,25 @@ class PostgresPubSubManager {
 
     this.isConnecting = true;
 
+    /**
+     * Fora do `try` de propósito: é o que o `catch` precisa alcançar para
+     * fechar a conexão que já subiu.
+     *
+     * **O vazamento que isto conserta.** `connect()` podia dar certo e o
+     * `LISTEN` seguinte falhar — o caso comum quando o pooler está sob pressão.
+     * A conexão ficava aberta no Postgres, sem referência de ninguém, e a
+     * retentativa cinco segundos depois abria outra. Em pouco mais de um
+     * minuto os quinze slots do modo sessão estavam consumidos por conexões
+     * órfãs, e a partir dali nada mais funcionava: batida do worker, trava de
+     * sessão do WhatsApp e envio de mensagem falhavam todos com
+     * `EMAXCONNSESSION`.
+     */
+    let client: pg.Client | undefined;
+
     try {
       // `keepAlive` não é detalhe de afinação aqui: é o que impede a conexão de
       // escuta de ser silenciosamente descartada por ficar ociosa.
-      const client = new Client({
+      client = new Client({
         connectionString,
         keepAlive: true,
         keepAliveInitialDelayMillis: 10_000,
@@ -128,6 +162,8 @@ class PostgresPubSubManager {
       // — um pooler que encerra a sessão do outro lado sem avisar deixa o
       // socket local válido e o `pg` sem nada a reportar.
       client.on('end', () => {
+        // Fechamento nosso não é queda: `reconnect()` já vai agendar a volta.
+        if (this.fechandoDeProposito) return;
         console.warn('[PostgresPubSub] Conexão de escuta finalizada. Reconectando...');
         this.reconnect();
       });
@@ -139,12 +175,53 @@ class PostgresPubSubManager {
 
       this.listenerClient = client;
       this.isConnecting = false;
+      this.tentativasSeguidas = 0;
       this.startHeartbeat();
     } catch (err) {
       this.isConnecting = false;
-      console.warn('[PostgresPubSub] Falha ao conectar listener Postgres. Nova tentativa em 5s:', err);
-      this.scheduleReconnect(5000);
+
+      // A conexão órfã sai daqui, e sai antes de agendar qualquer retentativa.
+      if (client) await this.encerrarCliente(client);
+
+      const espera = this.proximaEspera();
+      console.warn(
+        `[PostgresPubSub] Falha ao conectar listener Postgres. Nova tentativa em ${Math.round(espera / 1000)}s:`,
+        err,
+      );
+      this.scheduleReconnect(espera);
     }
+  }
+
+  /**
+   * Fecha uma conexão de escuta sem deixar rastro.
+   *
+   * `end()` devolve promessa e pode rejeitar; sem `await` e sem `catch` a
+   * rejeição virava `unhandledRejection` e o socket podia sobreviver ao
+   * processo que o abandonou. A marca impede que o evento `end` que este
+   * fechamento dispara seja lido como queda e agende outra reconexão.
+   */
+  private async encerrarCliente(client: pg.Client): Promise<void> {
+    this.fechandoDeProposito = true;
+    try {
+      await client.end();
+    } catch {
+      // Conexão já morta do outro lado: não há o que fechar.
+    } finally {
+      this.fechandoDeProposito = false;
+    }
+  }
+
+  /**
+   * Recuo exponencial com teto e sorteio.
+   *
+   * O teto de trinta segundos evita que uma indisponibilidade longa vire espera
+   * eterna; o sorteio evita que várias instâncias, derrubadas pelo mesmo
+   * incidente, voltem todas no mesmo instante e derrubem o pooler de novo.
+   */
+  private proximaEspera(): number {
+    this.tentativasSeguidas = Math.min(this.tentativasSeguidas + 1, 6);
+    const base = Math.min(3000 * 2 ** (this.tentativasSeguidas - 1), 30_000);
+    return base + Math.floor(Math.random() * 1000);
   }
 
   /**
@@ -184,21 +261,30 @@ class PostgresPubSubManager {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
-    if (this.listenerClient) {
-      try {
-        this.listenerClient.end();
-      } catch {
-        // Ignora
-      }
-      this.listenerClient = null;
+
+    const anterior = this.listenerClient;
+    // Zerado **antes** do fechamento: `end()` é assíncrono, e enquanto ele não
+    // termina uma segunda queda entraria aqui e tentaria fechar o mesmo cliente.
+    this.listenerClient = null;
+
+    const espera = this.proximaEspera();
+    if (anterior) {
+      // Sem `await` porque `reconnect` é chamada de ouvintes de evento, que não
+      // esperam promessa. O fechamento acontece de qualquer forma, e o
+      // agendamento abaixo já respeita o recuo.
+      void this.encerrarCliente(anterior);
     }
-    this.scheduleReconnect(3000);
+    this.scheduleReconnect(espera);
   }
 
   private scheduleReconnect(delayMs: number): void {
     if (this.retryTimeout) clearTimeout(this.retryTimeout);
     this.retryTimeout = setTimeout(() => {
-      this.startListening();
+      // `startListening` trata os próprios erros; o `catch` existe para que uma
+      // rejeição inesperada não vire `unhandledRejection` e derrube o worker.
+      void this.startListening().catch((err: unknown) => {
+        console.warn('[PostgresPubSub] Falha inesperada ao reabrir a escuta:', err);
+      });
     }, delayMs);
   }
 
@@ -219,6 +305,37 @@ class PostgresPubSubManager {
     return () => {
       set?.delete(callback as (data: unknown) => void);
     };
+  }
+
+  /**
+   * Fecha a escuta quando não sobrou ninguém interessado.
+   *
+   * Existe por causa do serverless: uma instância que serviu uma conexão de SSE
+   * e a perdeu continuaria segurando um dos quinze slots de modo sessão do
+   * projeto até ser reciclada. Devolver o slot na hora é a diferença entre o
+   * teto ser alcançado em minutos ou nunca.
+   *
+   * Não faz nada quando ainda há assinante — o worker, por exemplo, escuta o
+   * tempo todo e não deve ser desligado por engano.
+   */
+  stopListeningIfIdle(): void {
+    for (const set of this.listeners.values()) {
+      if (set.size > 0) return;
+    }
+
+    if (this.retryTimeout) {
+      clearTimeout(this.retryTimeout);
+      this.retryTimeout = null;
+    }
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+
+    const anterior = this.listenerClient;
+    this.listenerClient = null;
+    this.tentativasSeguidas = 0;
+    if (anterior) void this.encerrarCliente(anterior);
   }
 
   /**

@@ -51,7 +51,16 @@ export type ConversationEventType =
    * um estado que sobrevive ao recarregamento da página descrevendo algo que
    * terminou há muito tempo.
    */
-  | 'typing';
+  | 'typing'
+  /**
+   * Um aviso do sininho, gravado pelo servidor.
+   *
+   * Diferente dos demais: não descreve mudança na conversa, e sim algo que
+   * alguém precisa ver agora — a conversa que lhe foi atribuída, a menção numa
+   * nota, o prazo estourando. Nasce em `createNotification` e existe para o
+   * sininho acender sem esperar o próximo carregamento de página.
+   */
+  | 'notification';
 
 export interface ConversationEventPayload {
   readonly type: ConversationEventType;
@@ -73,6 +82,23 @@ export interface ConversationEventPayload {
   readonly conversation?: unknown;
   /** Só em `type: 'typing'`: se o contato está escrevendo agora. */
   readonly isTyping?: boolean;
+  /**
+   * Só em `type: 'notification'`: para quem é o aviso.
+   *
+   * Ausente significa "para a conta inteira" — é o caso de uma conversa sem
+   * responsável cujo prazo estourou, que interessa a quem estiver disponível.
+   */
+  readonly userId?: string;
+  /** Só em `type: 'notification'`: o aviso já pronto para o sininho. */
+  readonly notification?: unknown;
+  /**
+   * Só em `type: 'notification'`: o id da linha gravada.
+   *
+   * O objeto do aviso não cabe no `NOTIFY`, que carrega só identificadores. O
+   * id cabe, e é por ele que o processo do site relê o aviso antes de entregá-lo
+   * ao sininho — o mesmo desenho que `messageId` usa para as mensagens.
+   */
+  readonly notificationId?: string;
 }
 
 /**
@@ -117,21 +143,76 @@ const thin = (payload: ConversationEventPayload) => ({
   // `isTyping` é o evento inteiro, não um enfeite dele: sem este campo o
   // "digitando" atravessaria o `NOTIFY` sem dizer se começou ou parou.
   ...(payload.type === 'typing' ? { isTyping: payload.isTyping === true } : {}),
+  // O aviso em si não cabe no `NOTIFY` junto com o resto, mas o destinatário
+  // cabe e é o que decide quem o recebe do outro lado.
+  ...(payload.userId ? { userId: payload.userId } : {}),
+  ...(payload.notificationId ? { notificationId: payload.notificationId } : {}),
 });
 
 class WhatsAppEventBus extends EventEmitter {
+  /** Cancelamentos das assinaturas de `LISTEN`, enquanto elas existirem. */
+  private inscricoes: (() => void)[] = [];
+
+  /**
+   * A escuta é **preguiçosa**: só abre quando alguém de fato ouve.
+   *
+   * **O problema que isto resolve.** O construtor assinava os canais na hora, e
+   * este módulo é importado por Server Actions, repositórios e adaptadores —
+   * quase todos apenas para **publicar**. Como `waEventBus` nasce no import do
+   * módulo, toda função serverless que tocasse uma dessas Server Actions abria
+   * uma conexão `LISTEN`, que exige **modo sessão** (porta 5432).
+   *
+   * O modo sessão do Supabase entrega quinze clientes para o projeto inteiro, e
+   * o worker sozinho já usa sete (seis do pool do Prisma mais a escuta dele).
+   * Bastavam oito instâncias do site atendendo requisições comuns para o teto
+   * estourar — e quando estoura, estoura para tudo ao mesmo tempo: batida do
+   * worker, trava de sessão do WhatsApp e envio de mensagem falham juntos com
+   * `EMAXCONNSESSION`, e as conexões de WhatsApp caem sem voltar.
+   *
+   * Publicar nunca precisou de `LISTEN`: `pg_notify` é comando isolado e viaja
+   * pelo pool do Prisma. Quem precisa de escuta é apenas quem registra ouvinte
+   * de longa duração — as rotas de SSE e os consumidores do worker —, e é
+   * exatamente isso que `newListener` detecta.
+   */
   constructor() {
     super();
     this.setMaxListeners(100);
 
-    // Escuta eventos broadcasted por outras instâncias/workers via PostgreSQL LISTEN
-    postgresPubSub.subscribe<ConversationEventPayload>(CHANNELS.CONVERSATIONS, (payload) => {
-      void this.receiveConversation(payload);
+    this.on('newListener', (evento: string) => {
+      if (evento !== 'conversation' && evento !== 'status') return;
+      if (this.inscricoes.length === 0) this.abrirEscuta();
     });
 
-    postgresPubSub.subscribe<WhatsAppStatusPayload>(CHANNELS.STATUS, (payload) => {
-      this.emitLocal('status', payload);
+    this.on('removeListener', (evento: string) => {
+      if (evento !== 'conversation' && evento !== 'status') return;
+      if (this.listenerCount('conversation') === 0 && this.listenerCount('status') === 0) {
+        this.fecharEscuta();
+      }
     });
+  }
+
+  private abrirEscuta(): void {
+    this.inscricoes = [
+      postgresPubSub.subscribe<ConversationEventPayload>(CHANNELS.CONVERSATIONS, (payload) => {
+        void this.receiveConversation(payload);
+      }),
+      postgresPubSub.subscribe<WhatsAppStatusPayload>(CHANNELS.STATUS, (payload) => {
+        this.emitLocal('status', payload);
+      }),
+    ];
+  }
+
+  /**
+   * Devolve o slot do pooler quando o último ouvinte vai embora.
+   *
+   * Numa função serverless isso acontece quando a conexão de SSE fecha. Sem
+   * este caminho, a instância continuaria segurando a conexão de sessão até ser
+   * reciclada — que é tempo demais quando os slots são quinze no total.
+   */
+  private fecharEscuta(): void {
+    for (const cancelar of this.inscricoes) cancelar();
+    this.inscricoes = [];
+    postgresPubSub.stopListeningIfIdle();
   }
 
   /**
@@ -152,6 +233,46 @@ class WhatsAppEventBus extends EventEmitter {
     // custaria uma consulta por tecla do contato para não acrescentar nada.
     if (payload.conversation || payload.message || payload.type === 'typing') {
       this.emitLocal('conversation', payload);
+      return;
+    }
+
+    /**
+     * Aviso vindo de outro processo: relê a linha em vez da conversa.
+     *
+     * É o caso do varredor de SLA, que roda no worker. O aviso já está gravado;
+     * o que atravessou o `NOTIFY` foi só o id, e sem esta releitura o sininho
+     * receberia um evento sem nada para mostrar.
+     */
+    if (payload.type === 'notification') {
+      if (!payload.notificationId) {
+        this.emitLocal('conversation', payload);
+        return;
+      }
+      try {
+        const { prisma } = await import('@/infrastructure/db/prisma');
+        const linha = await prisma.notification.findFirst({
+          where: { id: payload.notificationId, accountId: payload.accountId },
+        });
+        this.emitLocal('conversation', {
+          ...payload,
+          ...(linha
+            ? {
+                notification: {
+                  id: linha.id,
+                  accountId: linha.accountId,
+                  kind: linha.kind,
+                  text: linha.text,
+                  timeLabel: linha.timeLabel,
+                  read: linha.read,
+                  ...(linha.href ? { href: linha.href } : {}),
+                },
+              }
+            : {}),
+        });
+      } catch (err) {
+        waLog.warn('[WhatsAppEventBus] Falha ao reidratar aviso:', err);
+        this.emitLocal('conversation', payload);
+      }
       return;
     }
 
