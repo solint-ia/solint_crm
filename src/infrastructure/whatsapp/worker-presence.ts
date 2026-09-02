@@ -23,13 +23,48 @@ interface WorkerBeat {
 
 const state = { lastBeatAt: 0, workerId: undefined as string | undefined };
 
-let subscribed = false;
+let cancelar: (() => void) | null = null;
+let ociosidade: NodeJS.Timeout | null = null;
+
+/**
+ * Quanto tempo a escuta sobrevive sem ninguém perguntar pela presença.
+ *
+ * Bem acima do intervalo do SSE de status (15s), que é o consumidor de longa
+ * duração: enquanto uma tela de conexão estiver aberta, a escuta nunca expira.
+ * Uma requisição avulsa, ao contrário, devolve o slot em um minuto.
+ */
+const OCIOSIDADE_MS = 60_000;
+
+/**
+ * A escuta da batida custa um slot de **modo sessão**, e eles são quinze no
+ * projeto inteiro.
+ *
+ * Por isso ela não é mais permanente. Antes `subscribed` virava `true` e nunca
+ * mais voltava: numa função serverless a instância segurava a conexão até ser
+ * reciclada, e como `getWhatsAppChannel()` chamava `watchWorker()`, **toda
+ * mensagem enviada pelo site** abria uma. Era a mesma falha que derrubou o
+ * pooler pelo lado do `waEventBus`.
+ *
+ * No worker não expira: lá o processo é longo e a escuta é o trabalho dele.
+ */
+const renovarOciosidade = (): void => {
+  if (process.env.SOLINT_WORKER === '1') return;
+  if (ociosidade) clearTimeout(ociosidade);
+  ociosidade = setTimeout(() => {
+    ociosidade = null;
+    cancelar?.();
+    cancelar = null;
+    // Devolve a conexão de escuta se nenhum outro canal tiver assinante.
+    postgresPubSub.stopListeningIfIdle();
+  }, OCIOSIDADE_MS);
+  ociosidade.unref?.();
+};
 
 /** Começa a observar as batidas. Idempotente. */
 export const watchWorker = (): void => {
-  if (subscribed) return;
-  subscribed = true;
-  postgresPubSub.subscribe<WorkerBeat>(CHANNELS.WORKER, (beat) => {
+  renovarOciosidade();
+  if (cancelar) return;
+  cancelar = postgresPubSub.subscribe<WorkerBeat>(CHANNELS.WORKER, (beat) => {
     state.lastBeatAt = Date.now();
     state.workerId = beat?.workerId;
   });
