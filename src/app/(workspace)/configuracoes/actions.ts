@@ -9,7 +9,7 @@ import {
 } from '@/core/domain/automation';
 import { CHANNELS } from '@/core/domain/channel';
 import { ARTICLE_STATUSES } from '@/core/domain/knowledge';
-import { TONES } from '@/core/domain/label';
+import { isValidTone } from '@/core/domain/label';
 import type { ChannelConnection } from '@/core/domain/settings';
 import { can, type Permission } from '@/core/domain/user';
 import { ROLES_REQUIRING_TEAM } from '@/core/domain/system-roles';
@@ -1016,7 +1016,13 @@ export async function removeCollaboratorAction(input: unknown): Promise<ActionRe
 
 const labelSchema = z.object({
   name: z.string().trim().min(1).max(60),
-  tone: z.enum(TONES),
+  // Nome da paleta ou cor livre em hexadecimal — o seletor de cor emite a
+  // segunda forma. Ver `isValidTone`.
+  tone: z
+    .string()
+    .trim()
+    .max(24)
+    .refine(isValidTone, 'Escolha uma cor da paleta ou informe um hexadecimal.'),
   description: z.string().trim().max(200).optional(),
 });
 
