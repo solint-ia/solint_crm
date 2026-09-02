@@ -3,6 +3,7 @@
 // impede que ele vá parar num bundle de cliente.
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
+import { MIN_PASSWORD_LENGTH } from '@/core/domain/user';
 
 const scrypt = promisify(scryptCallback) as (
   password: string,
@@ -54,9 +55,14 @@ export const verifyPassword = async (password: string, stored: string): Promise<
  * Comprimento acima de tudo: uma frase longa resiste mais que oito caracteres
  * com símbolo obrigatório, e regras de composição só empurram as pessoas para
  * `Senha@123`.
+ *
+ * O mínimo vem de `MIN_PASSWORD_LENGTH`, no domínio, porque os formulários de
+ * cliente precisam do mesmo número e não podem importar este módulo.
  */
 export const passwordProblem = (password: string): string | undefined => {
-  if (password.length < 10) return 'A senha precisa de pelo menos 10 caracteres.';
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    return `A senha precisa de pelo menos ${MIN_PASSWORD_LENGTH} caracteres.`;
+  }
   if (password.length > 200) return 'A senha é longa demais.';
   if (!/[a-zA-Z]/.test(password)) return 'A senha precisa conter ao menos uma letra.';
   if (!/\d/.test(password)) return 'A senha precisa conter ao menos um número.';

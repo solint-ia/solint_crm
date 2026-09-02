@@ -17,7 +17,7 @@ import {
   Users,
 } from 'lucide-react';
 
-import type { Permission, Role, User } from '@/core/domain/user';
+import { MIN_PASSWORD_LENGTH, type Permission, type Role, type User } from '@/core/domain/user';
 import { PermissionGrid } from '@/features/configuracoes/components/permission-grid';
 import type { ChannelConnection, Team } from '@/core/domain/settings';
 import { Avatar } from '@/components/ui/avatar';
@@ -897,7 +897,11 @@ export function TeamSection({
                 type={mostrarSenha ? 'text' : 'password'}
                 required={!editando}
                 autoComplete="new-password"
-                placeholder={editando ? 'Deixe em branco para manter a atual' : 'Mínimo 10 caracteres'}
+                placeholder={
+                  editando
+                    ? 'Deixe em branco para manter a atual'
+                    : `Mínimo ${MIN_PASSWORD_LENGTH} caracteres`
+                }
                 value={colabSenha}
                 onChange={(e) => setColabSenha(e.target.value)}
                 className="h-10 w-full rounded-xl border border-line bg-surface pr-10 pl-9 text-xs text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 shadow-2xs"

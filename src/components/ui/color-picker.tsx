@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Pipette } from 'lucide-react';
+import { hexToHsv, hsvToHex } from '@/lib/color';
 import { cn } from '@/lib/cn';
 
 export interface ColorPickerProps {
@@ -62,6 +63,112 @@ export function normalizeToHex(color: string): string {
 export function ColorPicker({ value, onChange, label, className }: ColorPickerProps) {
   const currentHex = normalizeToHex(value);
   const [hexInput, setHexInput] = useState(currentHex);
+
+  const areaRef = useRef<HTMLDivElement>(null);
+  const matizRef = useRef<HTMLDivElement>(null);
+  const [arrastandoArea, setArrastandoArea] = useState(false);
+  const [arrastandoMatiz, setArrastandoMatiz] = useState(false);
+
+  /**
+   * A matiz é guardada aqui, e não derivada do hex a cada render.
+   *
+   * Cinza, preto e branco não têm matiz definida: `hexToHsv('#000000')` devolve
+   * 0 porque não há o que devolver. Sem esta memória, arrastar o brilho até o
+   * fundo do quadro jogaria o ponteiro da faixa de matiz para o vermelho, e
+   * subir de volta traria uma cor diferente da que a pessoa estava ajustando.
+   */
+  const [matiz, setMatiz] = useState(() => hexToHsv(currentHex).h);
+  // Memorizado porque os handlers dependem dele: recriado a cada render, cada
+  // `useCallback` abaixo também seria, e o `useCallback` deixaria de servir.
+  const hsv = useMemo(() => {
+    const derivado = hexToHsv(currentHex);
+    return { h: derivado.s === 0 ? matiz : derivado.h, s: derivado.s, v: derivado.v };
+  }, [currentHex, matiz]);
+
+  const aplicar = useCallback(
+    (proximo: { h: number; s: number; v: number }) => {
+      const hex = hsvToHex(proximo);
+      setMatiz(proximo.h);
+      setHexInput(hex);
+      onChange(hex);
+    },
+    [onChange],
+  );
+
+  const pararArrasto = useCallback(() => {
+    setArrastandoArea(false);
+    setArrastandoMatiz(false);
+  }, []);
+
+  /**
+   * O gesto usa Pointer Events, não Mouse Events.
+   *
+   * Um único caminho atende mouse, toque e caneta — e `setPointerCapture` é o
+   * que faz o arrasto continuar valendo quando o dedo sai do quadro, que é o
+   * caso comum ao buscar o canto de saturação máxima.
+   */
+  const aoArrastarArea = useCallback(
+    (evento: React.PointerEvent<HTMLDivElement>) => {
+      const caixa = areaRef.current?.getBoundingClientRect();
+      if (!caixa) return;
+      if (evento.type === 'pointerdown') {
+        setArrastandoArea(true);
+        areaRef.current?.setPointerCapture(evento.pointerId);
+      }
+      const s = Math.min(1, Math.max(0, (evento.clientX - caixa.left) / caixa.width));
+      const v = 1 - Math.min(1, Math.max(0, (evento.clientY - caixa.top) / caixa.height));
+      aplicar({ h: hsv.h, s, v });
+    },
+    [aplicar, hsv.h],
+  );
+
+  const aoArrastarMatiz = useCallback(
+    (evento: React.PointerEvent<HTMLDivElement>) => {
+      const caixa = matizRef.current?.getBoundingClientRect();
+      if (!caixa) return;
+      if (evento.type === 'pointerdown') {
+        setArrastandoMatiz(true);
+        matizRef.current?.setPointerCapture(evento.pointerId);
+      }
+      const proporcao = Math.min(1, Math.max(0, (evento.clientX - caixa.left) / caixa.width));
+      aplicar({ h: proporcao * 360, s: hsv.s, v: hsv.v });
+    },
+    [aplicar, hsv.s, hsv.v],
+  );
+
+  /** Setas ajustam sem mouse: os dois blocos são `role="slider"` e recebem foco. */
+  const aoTeclarNaArea = useCallback(
+    (evento: React.KeyboardEvent<HTMLDivElement>) => {
+      const passo = evento.shiftKey ? 0.1 : 0.02;
+      const mapa: Record<string, { s: number; v: number }> = {
+        ArrowRight: { s: passo, v: 0 },
+        ArrowLeft: { s: -passo, v: 0 },
+        ArrowUp: { s: 0, v: passo },
+        ArrowDown: { s: 0, v: -passo },
+      };
+      const delta = mapa[evento.key];
+      if (!delta) return;
+      evento.preventDefault();
+      aplicar({
+        h: hsv.h,
+        s: Math.min(1, Math.max(0, hsv.s + delta.s)),
+        v: Math.min(1, Math.max(0, hsv.v + delta.v)),
+      });
+    },
+    [aplicar, hsv],
+  );
+
+  const aoTeclarNaMatiz = useCallback(
+    (evento: React.KeyboardEvent<HTMLDivElement>) => {
+      const passo = evento.shiftKey ? 30 : 5;
+      const delta =
+        evento.key === 'ArrowRight' ? passo : evento.key === 'ArrowLeft' ? -passo : undefined;
+      if (delta === undefined) return;
+      evento.preventDefault();
+      aplicar({ h: (hsv.h + delta + 360) % 360, s: hsv.s, v: hsv.v });
+    },
+    [aplicar, hsv],
+  );
 
   useEffect(() => {
     setHexInput(normalizeToHex(value));
@@ -130,6 +237,74 @@ export function ColorPicker({ value, onChange, label, className }: ColorPickerPr
           }}
         >
           Exemplo
+        </div>
+      </div>
+
+      {/* Quadro de saturação e brilho, arrastável.
+
+          O `<input type="color">` acima abre o seletor do sistema operacional,
+          que muda de navegador para navegador e no Windows é uma caixa de
+          diálogo pobre. Este quadro é o mesmo gesto sem sair da página: arrastar
+          o ponto escolhe saturação (eixo X) e brilho (eixo Y), e a faixa
+          embaixo escolhe a matiz. */}
+      <div className="flex flex-col gap-2">
+        <div
+          ref={areaRef}
+          role="slider"
+          tabIndex={0}
+          aria-label="Saturação e brilho"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(hsv.s * 100)}
+          aria-valuetext={`Saturação ${Math.round(hsv.s * 100)}%, brilho ${Math.round(hsv.v * 100)}%`}
+          onPointerDown={aoArrastarArea}
+          onPointerMove={arrastandoArea ? aoArrastarArea : undefined}
+          onPointerUp={pararArrasto}
+          onKeyDown={aoTeclarNaArea}
+          className="relative h-28 w-full cursor-crosshair touch-none rounded-xl border border-line shadow-2xs outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+          style={{ backgroundColor: hsvToHex({ h: hsv.h, s: 1, v: 1 }) }}
+        >
+          {/* Branco na horizontal e preto na vertical: os dois gradientes
+              sobrepostos desenham exatamente o plano saturação × brilho. */}
+          <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-white to-transparent" />
+          <div className="absolute inset-0 rounded-xl bg-gradient-to-t from-black to-transparent" />
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute size-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-md ring-1 ring-black/30"
+            style={{
+              left: `${hsv.s * 100}%`,
+              top: `${(1 - hsv.v) * 100}%`,
+              backgroundColor: currentHex,
+            }}
+          />
+        </div>
+
+        <div
+          ref={matizRef}
+          role="slider"
+          tabIndex={0}
+          aria-label="Matiz"
+          aria-valuemin={0}
+          aria-valuemax={360}
+          aria-valuenow={Math.round(hsv.h)}
+          onPointerDown={aoArrastarMatiz}
+          onPointerMove={arrastandoMatiz ? aoArrastarMatiz : undefined}
+          onPointerUp={pararArrasto}
+          onKeyDown={aoTeclarNaMatiz}
+          className="relative h-3.5 w-full cursor-ew-resize touch-none rounded-full border border-line shadow-2xs outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+          style={{
+            background:
+              'linear-gradient(to right, #FF0000, #FFFF00, #00FF00, #00FFFF, #0000FF, #FF00FF, #FF0000)',
+          }}
+        >
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute top-1/2 size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-md ring-1 ring-black/30"
+            style={{
+              left: `${(hsv.h / 360) * 100}%`,
+              backgroundColor: hsvToHex({ h: hsv.h, s: 1, v: 1 }),
+            }}
+          />
         </div>
       </div>
 

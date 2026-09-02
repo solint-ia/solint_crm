@@ -1,5 +1,27 @@
 import type { Id } from './shared';
 
+/**
+ * Comprimento mínimo de senha.
+ *
+ * Mora no domínio, e não no módulo que valida, porque quem precisa dele são os
+ * dois lados: o servidor, que recusa, e os formulários de cliente, que avisam
+ * antes de o usuário enviar. `infrastructure/auth/password.ts` importa
+ * `node:crypto` e nunca poderia ser lido pelo navegador — então o número
+ * acabava repetido como literal em seis lugares (dois medidores de força, dois
+ * `minLength`, dois textos de ajuda), e mudá-lo exigia achar todos eles.
+ */
+export const MIN_PASSWORD_LENGTH = 8;
+
+/**
+ * A partir daqui o medidor das telas de cadastro chama a senha de "forte".
+ *
+ * Não é regra de aceitação — o servidor aceita a partir de `MIN_PASSWORD_LENGTH`.
+ * É só o incentivo visual, e ele existe porque comprimento é o que de fato
+ * protege: quatro caracteres a mais valem mais que qualquer exigência de
+ * símbolo.
+ */
+export const STRONG_PASSWORD_LENGTH = 12;
+
 export type AvailabilityStatus = 'disponivel' | 'ocupado' | 'ausente';
 
 export const PERMISSIONS = [

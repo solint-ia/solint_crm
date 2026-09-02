@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   User,
 } from 'lucide-react';
+import { MIN_PASSWORD_LENGTH, STRONG_PASSWORD_LENGTH } from '@/core/domain/user';
 import { signupAction } from '@/app/(auth)/actions';
 import { cn } from '@/lib/cn';
 
@@ -42,7 +43,7 @@ export function SignupForm() {
   const getStrength = (pwd: string) => {
     if (pwd.length === 0) return 0;
     if (pwd.length < 6) return 1;
-    if (pwd.length < 10) return 2;
+    if (pwd.length < STRONG_PASSWORD_LENGTH) return 2;
     return 3;
   };
 
@@ -173,8 +174,8 @@ export function SignupForm() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="new-password"
-              minLength={10}
-              placeholder="Mínimo 10 caracteres"
+              minLength={MIN_PASSWORD_LENGTH}
+              placeholder={`Mínimo ${MIN_PASSWORD_LENGTH} caracteres`}
               className="w-full rounded-xl border border-slate-200 bg-slate-50/50 py-2.5 pr-10 pl-9 text-sm text-slate-900 outline-none transition-all placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-600/10"
             />
             <button
