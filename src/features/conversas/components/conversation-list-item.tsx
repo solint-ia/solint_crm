@@ -4,7 +4,6 @@ import { Users } from 'lucide-react';
 import type { Conversation } from '@/core/domain/conversation';
 import { isGroupContact } from '@/core/domain/contact';
 import { Avatar } from '@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
 import { TONE_DOT_CLASSES } from '@/components/ui/tone';
 import { PRIORITY_LABEL, PRIORITY_TONE } from '@/components/domain/presentation-maps';
 import { LabelChips } from '@/components/domain/label-chip';
@@ -106,7 +105,7 @@ export function ConversationListItem({
 
             {/* A prioridade é cor, não texto.
                 Um selo escrito "Urgente" competia por largura com a fila, o
-                SLA e as etiquetas — que são o que muda de conversa para
+                as etiquetas — que são o que muda de conversa para
                 conversa — e empurrava tudo para a linha de baixo. A bolinha
                 diz a mesma coisa num quadrado de 6px; o nome continua
                 disponível para quem passa o mouse e para o leitor de tela, e
@@ -128,12 +127,14 @@ export function ConversationListItem({
               </span>
             )}
 
-            {conversation.slaLabel && (
-              <Badge tone={conversation.slaBreached ? 'red' : 'amber'}>
-                {conversation.slaLabel}
-              </Badge>
-            )}
-
+            {/* O selo de SLA saiu da lista.
+                Ele aparecia em quase toda conversa aberta, e um aviso que
+                aparece sempre deixa de ser aviso: competia por largura com a
+                fila e as etiquetas, que são o que de fato distingue uma
+                conversa da outra. O prazo continua no dado
+                (`slaDeadlineAt`/`slaBreached`) e o filtro "SLA estourado" da
+                barra lateral continua funcionando — quem procura por atraso
+                filtra por ele, em vez de varrer a lista atrás de selos. */}
             <LabelChips labels={conversation.labels} />
 
             {conversation.unreadCount > 0 && (
