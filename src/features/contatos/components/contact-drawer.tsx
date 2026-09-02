@@ -389,7 +389,7 @@ export function ContactDrawer({
         description={
           <span>
             Tem certeza que deseja excluir o contato{' '}
-            <strong className="text-ink">&ldquo;{contact.name}&rdquo;</strong>? O histórico de atendimentos, conversas e dados cadastrais serão removidos.
+            <strong className="text-ink">&ldquo;{contact.name}&rdquo;</strong>? Ele sai da agenda. Se já houver conversa com ele, o histórico de mensagens continua na caixa de entrada.
           </span>
         }
         confirmLabel="Excluir contato"

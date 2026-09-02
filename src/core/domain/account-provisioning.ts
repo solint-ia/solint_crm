@@ -3,30 +3,21 @@ import type { BillingInfo } from './settings';
 /**
  * O molde de um workspace recém-nascido.
  *
- * Existe porque agora há **dois** caminhos que criam conta: o cadastro público
- * (`signupAction`) e o botão "criar novo workspace" de quem já está dentro. As
- * duas contas precisam nascer iguais — mesmos papéis, mesma caixa, mesmo funil
- * com os mesmos pesos de conversão —, e a única forma de garantir isso é ter um
- * molde só. Duplicar as cem linhas de provisionamento faria os dois caminhos
- * divergirem na primeira etapa de funil nova, e a divergência só apareceria
- * quando alguém reclamasse que "no meu segundo workspace o Kanban está
- * diferente".
+ * Hoje há um caminho só que cria conta — o console da plataforma, em
+ * `createAccountAction`. Houve dois (o cadastro público e o botão "criar novo
+ * workspace" de dentro do CRM), e os dois foram fechados: cada conta aqui é um
+ * cliente com contrato, não um autoatendimento.
+ *
+ * O molde continua valendo a pena mesmo com um chamador só, porque é ele que
+ * garante que toda conta nasça igual — mesmos papéis, mesma caixa, mesmo funil
+ * com os mesmos pesos de conversão. Quando o segundo caminho voltar a existir
+ * (uma importação, um provisionamento por API), ele não vai divergir na
+ * primeira etapa de funil nova.
  *
  * Aqui mora o **que** nasce (puro, sem I/O). O **como** grava mora em
  * `infrastructure/provisioning/provision-account.ts`, porque escrever é
  * assunto de adaptador. Ver REGRAS-GLOBAIS §3.
  */
-
-/**
- * Teto de workspaces que uma pessoa pode criar.
- *
- * Não é regra de plano nem de cobrança: é o freio de um formulário aberto.
- * Sem ele, "criar workspace" é um botão que insere linhas em `Account`,
- * `Role`, `Inbox` e `Pipeline` quantas vezes alguém tiver paciência de clicar.
- * Conta em que a pessoa **entrou por convite** não conta para o teto: o limite
- * é sobre criar, não sobre participar.
- */
-export const MAX_WORKSPACES_POR_USUARIO = 5;
 
 export const WORKSPACE_NAME_MIN = 2;
 export const WORKSPACE_NAME_MAX = 60;

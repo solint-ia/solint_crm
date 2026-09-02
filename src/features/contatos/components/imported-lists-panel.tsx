@@ -1,9 +1,24 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { ArrowLeft, Building2, CalendarDays, FolderOpen, Users } from 'lucide-react';
+import { useMemo, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import {
+  ArrowLeft,
+  Building2,
+  CalendarDays,
+  FolderOpen,
+  Loader2,
+  Trash2,
+  Users,
+  X,
+} from 'lucide-react';
 import type { Contact, ContactImportBatchSummary } from '@/core/domain/contact';
 import { PhoneNumber } from '@/core/domain/contact';
+import {
+  deleteImportBatchAction,
+  removeContactFromBatchAction,
+} from '@/app/(workspace)/contatos/actions';
+import { useToast } from '@/components/ui/toast';
 import { StartConversationButton } from './start-conversation-button';
 
 interface ImportedListsPanelProps {
@@ -14,6 +29,12 @@ interface ImportedListsPanelProps {
 
 export function ImportedListsPanel({ batches, contacts, onImport }: ImportedListsPanelProps) {
   const [selectedId, setSelectedId] = useState<string>();
+  const [confirmando, setConfirmando] = useState<string>();
+  const [pendente, setPendente] = useState<string>();
+  const [, startTransition] = useTransition();
+  const router = useRouter();
+  const { show } = useToast();
+
   const selected = batches.find((batch) => batch.id === selectedId);
   const contactsById = useMemo(
     () => new Map(contacts.map((contact) => [contact.id, contact])),
@@ -24,6 +45,59 @@ export function ImportedListsPanel({ batches, contacts, onImport }: ImportedList
         .map((id) => contactsById.get(id))
         .filter((contact): contact is Contact => Boolean(contact))
     : [];
+
+  /**
+   * Apagar a lista devolve à galeria antes de recarregar.
+   *
+   * Sem isso a tela ficaria olhando para um lote que o servidor acabou de
+   * apagar, e o `router.refresh()` a esvaziaria por baixo — o usuário veria uma
+   * tabela vazia com o nome da lista no topo, sem entender se deu certo.
+   */
+  const apagarLista = (batchId: string, nome: string) => {
+    setPendente(batchId);
+    startTransition(async () => {
+      const resultado = await deleteImportBatchAction({ batchId });
+      setPendente(undefined);
+      setConfirmando(undefined);
+      if (!resultado.ok) {
+        show({
+          tone: 'erro',
+          title: 'Não foi possível excluir',
+          description: resultado.error ?? 'Tente de novo em instantes.',
+        });
+        return;
+      }
+      setSelectedId(undefined);
+      show({
+        tone: 'sucesso',
+        title: `Lista “${nome}” excluída`,
+        description: 'Os contatos continuam na aba de contatos individuais.',
+      });
+      router.refresh();
+    });
+  };
+
+  const removerEmpresa = (batchId: string, contactId: string, nome: string) => {
+    setPendente(contactId);
+    startTransition(async () => {
+      const resultado = await removeContactFromBatchAction({ batchId, contactId });
+      setPendente(undefined);
+      if (!resultado.ok) {
+        show({
+          tone: 'erro',
+          title: 'Não foi possível remover',
+          description: resultado.error ?? 'Tente de novo em instantes.',
+        });
+        return;
+      }
+      show({
+        tone: 'sucesso',
+        title: `${nome} saiu da lista`,
+        description: 'O contato continua na aba de contatos individuais.',
+      });
+      router.refresh();
+    });
+  };
 
   if (!selected) {
     return batches.length === 0 ? (
@@ -46,30 +120,79 @@ export function ImportedListsPanel({ batches, contacts, onImport }: ImportedList
     ) : (
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {batches.map((batch) => (
-          <button
+          <div
             key={batch.id}
-            type="button"
-            onClick={() => setSelectedId(batch.id)}
-            className="group rounded-2xl border border-line bg-surface p-5 text-left shadow-xs transition-all hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-md"
+            className="group relative rounded-2xl border border-line bg-surface shadow-xs transition-all hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-md"
           >
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex size-11 items-center justify-center rounded-xl bg-brand/10 text-brand">
-                <Building2 className="size-5" />
+            <button
+              type="button"
+              onClick={() => setSelectedId(batch.id)}
+              className="w-full p-5 text-left"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex size-11 items-center justify-center rounded-xl bg-brand/10 text-brand">
+                  <Building2 className="size-5" />
+                </div>
+                {/* O contador cede o canto ao botão de excluir no hover: os dois
+                    disputam o mesmo lugar, e o número é a informação que já foi
+                    lida quando a mão chega ali. */}
+                <span className="inline-flex items-center gap-1 rounded-full border border-line-soft bg-surface-2 px-2 py-1 text-[11px] font-semibold text-muted transition-opacity group-hover:opacity-0">
+                  <Users className="size-3" /> {batch.contactCount}
+                </span>
               </div>
-              <span className="inline-flex items-center gap-1 rounded-full border border-line-soft bg-surface-2 px-2 py-1 text-[11px] font-semibold text-muted">
-                <Users className="size-3" /> {batch.contactCount}
-              </span>
-            </div>
-            <h3 className="mt-4 truncate font-display text-base font-bold text-ink group-hover:text-brand">
-              {batch.name}
-            </h3>
-            <p className="mt-1 flex items-center gap-1.5 text-xs text-muted">
-              <CalendarDays className="size-3.5" />
-              {new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium', timeStyle: 'short' }).format(
-                new Date(batch.createdAt),
-              )}
-            </p>
-          </button>
+              <h3 className="mt-4 truncate font-display text-base font-bold text-ink group-hover:text-brand">
+                {batch.name}
+              </h3>
+              <p className="mt-1 flex items-center gap-1.5 text-xs text-muted">
+                <CalendarDays className="size-3.5" />
+                {new Intl.DateTimeFormat('pt-BR', {
+                  dateStyle: 'medium',
+                  timeStyle: 'short',
+                }).format(new Date(batch.createdAt))}
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setConfirmando(batch.id)}
+              aria-label={`Excluir a lista ${batch.name}`}
+              className="absolute right-4 top-4 rounded-lg p-2 text-dim opacity-0 transition-all hover:bg-rose-500/10 hover:text-rose-600 focus-visible:opacity-100 group-hover:opacity-100"
+            >
+              <Trash2 className="size-4" />
+            </button>
+
+            {confirmando === batch.id ? (
+              <div className="absolute inset-0 flex flex-col justify-center gap-3 rounded-2xl border border-rose-500/40 bg-surface p-5">
+                <p className="text-xs text-ink">
+                  Excluir <strong>{batch.name}</strong>?
+                </p>
+                {/* A frase existe porque o botão mente sem ela: "excluir lista"
+                    soa como excluir o que está dentro dela. */}
+                <p className="text-[11px] leading-relaxed text-muted">
+                  Some só o agrupamento. As {batch.contactCount} empresas continuam na aba de
+                  contatos individuais, com as conversas delas.
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={pendente === batch.id}
+                    onClick={() => apagarLista(batch.id, batch.name)}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                  >
+                    {pendente === batch.id ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                    Excluir lista
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmando(undefined)}
+                    className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-muted hover:text-ink"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
         ))}
       </div>
     );
@@ -97,11 +220,42 @@ export function ImportedListsPanel({ batches, contacts, onImport }: ImportedList
             </p>
           </div>
         </div>
+
+        {confirmando === selected.id ? (
+          <div className="flex items-center gap-2 rounded-xl border border-rose-500/40 bg-rose-500/5 px-3 py-2">
+            <span className="text-xs text-ink">Excluir a lista? Os contatos permanecem.</span>
+            <button
+              type="button"
+              disabled={pendente === selected.id}
+              onClick={() => apagarLista(selected.id, selected.name)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+            >
+              {pendente === selected.id ? <Loader2 className="size-3.5 animate-spin" /> : null}
+              Confirmar
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmando(undefined)}
+              className="rounded-lg px-2 py-1.5 text-xs font-semibold text-muted hover:text-ink"
+            >
+              Cancelar
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirmando(selected.id)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-line px-3 py-2 text-xs font-semibold text-muted transition-colors hover:border-rose-500/40 hover:text-rose-600"
+          >
+            <Trash2 className="size-3.5" />
+            Excluir lista
+          </button>
+        )}
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-xs">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1180px] text-left text-xs">
+          <table className="w-full min-w-[1240px] text-left text-xs">
             <thead className="border-b border-line bg-surface-2/70 uppercase tracking-wider text-dim">
               <tr>
                 <th className="px-4 py-3">Empresa</th>
@@ -152,13 +306,38 @@ export function ImportedListsPanel({ batches, contacts, onImport }: ImportedList
                       '—'
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right">
-                    <StartConversationButton
-                      contact={contact}
-                      className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 font-semibold text-emerald-600 hover:bg-emerald-500/10"
-                    >
-                      <span>Iniciar conversa</span>
-                    </StartConversationButton>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-1">
+                      <StartConversationButton
+                        contact={contact}
+                        className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 font-semibold text-emerald-600 hover:bg-emerald-500/10"
+                      >
+                        <span>Iniciar conversa</span>
+                      </StartConversationButton>
+                      {/* Um clique só, e sem confirmação: tirar da lista não
+                          destrói nada — o contato fica na aba individual, e
+                          reimportar a planilha o traz de volta. */}
+                      <button
+                        type="button"
+                        disabled={pendente === contact.id}
+                        onClick={() =>
+                          removerEmpresa(
+                            selected.id,
+                            contact.id,
+                            contact.company ?? contact.name,
+                          )
+                        }
+                        aria-label={`Tirar ${contact.company ?? contact.name} desta lista`}
+                        title="Tirar desta lista (o contato continua no CRM)"
+                        className="rounded-lg p-1.5 text-dim transition-colors hover:bg-rose-500/10 hover:text-rose-600 disabled:opacity-50"
+                      >
+                        {pendente === contact.id ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <X className="size-3.5" />
+                        )}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

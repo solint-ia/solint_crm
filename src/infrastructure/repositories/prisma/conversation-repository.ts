@@ -260,7 +260,7 @@ export class PrismaConversationRepository implements ConversationRepository {
         accountId,
         actorId: authorId,
         actorName: message.authorName ?? 'Atendente',
-        action: 'conversa.assumida',
+        action: 'conversa.responsavel',
         targetType: 'conversa',
         targetId: conversationId,
       });

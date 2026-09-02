@@ -108,9 +108,9 @@ export async function logoutAllSessionsAction(): Promise<never> {
     accountId: session.account.id,
     actorId: session.user.id,
     actorName: session.user.name,
-    action: 'sessao.encerrada_todas',
+    action: 'sessao.encerrada',
     targetType: 'sessao',
-    metadata: { count },
+    metadata: { detalhe: 'todas as sessões', count },
   });
   await destroyCurrentSession();
   redirect('/login');

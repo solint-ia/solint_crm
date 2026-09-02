@@ -51,6 +51,16 @@ interface TeamSectionProps {
    * Action, que reconfere a cada gravação.
    */
   readonly canEditRoles: boolean;
+  /**
+   * Quem está olhando pode conceder acesso de administrador?
+   *
+   * Só a atuação de plataforma pode. Dentro do CRM, o administrador cadastra
+   * supervisores e colaboradores — quem decide que existe mais um acesso total
+   * a uma conta de cliente é quem responde pela plataforma. A trava de verdade
+   * mora em `papelForaDoAlcance`, na Server Action; aqui a opção some do
+   * seletor para ninguém preencher um formulário que será recusado.
+   */
+  readonly canGrantAdmin: boolean;
   /** Permissões efetivas de cada pessoa, já com os overrides aplicados. */
   readonly memberPermissions: Readonly<Record<string, readonly Permission[]>>;
 }
@@ -63,8 +73,14 @@ export function TeamSection({
   teams,
   inboxes,
   canEditRoles,
+  canGrantAdmin,
   memberPermissions,
 }: TeamSectionProps) {
+  // O papel de administrador continua na lista de papéis (a aba "Papéis" o
+  // exibe), mas some do seletor de cadastro para quem não pode concedê-lo.
+  const rolesConcediveis = canGrantAdmin
+    ? roles
+    : roles.filter((role) => role.slug !== 'administrador');
   const inboxNameOf = (inboxId: string): string =>
     inboxes.find((inbox) => inbox.id === inboxId)?.name ?? inboxId;
   const router = useRouter();
@@ -96,7 +112,9 @@ export function TeamSection({
   const [colabEmail, setColabEmail] = useState('');
   const [colabSenha, setColabSenha] = useState('');
   const [mostrarSenha, setMostrarSenha] = useState(false);
-  const [colabRole, setColabRole] = useState(roles[0]?.slug ?? 'colaborador');
+  const [colabRole, setColabRole] = useState(
+    roles.find((role) => role.slug === 'colaborador')?.slug ?? 'colaborador',
+  );
   const [colabTeamIds, setColabTeamIds] = useState<readonly string[]>([]);
 
   /**
@@ -939,7 +957,7 @@ export function TeamSection({
               onChange={(e) => setColabRole(e.target.value)}
               className="h-10 w-full rounded-xl border border-line bg-surface px-3 text-xs text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 shadow-2xs"
             >
-              {roles.map((role) => (
+              {rolesConcediveis.map((role) => (
                 <option key={role.slug} value={role.slug}>
                   {role.name}
                 </option>

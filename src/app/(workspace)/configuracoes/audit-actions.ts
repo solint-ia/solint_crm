@@ -37,7 +37,7 @@ export async function auditLogExportAction(input: unknown) {
     accountId: session.account.id,
     actorId: session.user.id,
     actorName: session.user.name,
-    action: 'relatorio.exportado',
+    action: 'dados.exportados',
     targetType: 'relatorio',
     targetName: 'Auditoria',
     metadata: { count: parsed.data.count, format: 'csv' },

@@ -155,7 +155,7 @@ export async function GET(request: Request) {
     accountId: session.account.id,
     actorId: session.user.id,
     actorName: session.user.name,
-    action: 'relatorio.exportado',
+    action: 'dados.exportados',
     targetType: 'relatorio',
     targetName: TAB_FILE_LABEL[tab],
     metadata: { tab, period },

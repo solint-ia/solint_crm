@@ -12,6 +12,9 @@ export class PrismaContactRepository implements ContactRepository {
     const rows = await prisma.contact.findMany({
       where: {
         accountId,
+        // A agenda mostra os vivos. Contato arquivado continua existindo para
+        // que a conversa dele tenha nome, mas some daqui — ver `delete`.
+        deletedAt: null,
         ...(filter?.kind ? { kind: filter.kind } : {}),
         ...(filter?.ownerName ? { ownerName: filter.ownerName } : {}),
         ...(filter?.labelId ? { labels: { some: { id: filter.labelId } } } : {}),
@@ -159,15 +162,40 @@ export class PrismaContactRepository implements ContactRepository {
     return contactRow(row);
   }
 
-  async delete(accountId: Id, contactId: Id): Promise<void> {
-    const exists = await prisma.contact.findFirst({
+  /**
+   * Tira o contato da agenda sem destruir o atendimento.
+   *
+   * `Conversation.contactId` cai em cascata, então um `DELETE` aqui levava
+   * junto todas as conversas daquela pessoa e, com elas, todas as mensagens.
+   * Quem exclui um contato quer limpar a lista, não apagar o histórico do que
+   * já foi conversado — e essa segunda leitura não tinha volta.
+   *
+   * Duas saídas, decididas pelo que existe a perder:
+   *
+   *  - **Sem conversa**: apaga de verdade. Não há histórico, e deixar a linha
+   *    marcada só encheria a tabela de lixo invisível.
+   *  - **Com conversa**: marca `deletedAt`. Some da agenda, a conversa continua
+   *    aberta com o nome e o telefone certos, e o dado volta se precisar.
+   *
+   * Devolve o que aconteceu para que a tela possa dizer a verdade a quem
+   * clicou — "excluído" e "arquivado" são coisas diferentes.
+   */
+  async delete(accountId: Id, contactId: Id): Promise<'apagado' | 'arquivado'> {
+    const existente = await prisma.contact.findFirst({
       where: { id: contactId, accountId },
-      select: { id: true },
+      select: { id: true, _count: { select: { conversations: true } } },
     });
-    if (!exists) throw new NotFoundError('Contato', contactId);
+    if (!existente) throw new NotFoundError('Contato', contactId);
 
-    await prisma.contact.delete({
+    if (existente._count.conversations === 0) {
+      await prisma.contact.delete({ where: { id: contactId, accountId } });
+      return 'apagado';
+    }
+
+    await prisma.contact.update({
       where: { id: contactId, accountId },
+      data: { deletedAt: new Date() },
     });
+    return 'arquivado';
   }
 }

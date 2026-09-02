@@ -188,6 +188,16 @@ export const ensureContact = async (
     name: data.name,
     avatarUrl: data.avatarUrl,
     participantCount: data.participantCount,
+    /**
+     * Quem volta a escrever volta para a agenda.
+     *
+     * `deletedAt` tira o contato da lista sem apagar a conversa. Se ele mandar
+     * mensagem depois disso, a conversa reaparece na caixa de entrada — e um
+     * contato invisível ali seria alguém que ninguém consegue abrir nem
+     * responder pelo cadastro. O arquivamento é sobre a agenda parada, não
+     * sobre ignorar quem procurou a empresa.
+     */
+    deletedAt: null,
   };
 
   try {

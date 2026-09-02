@@ -46,7 +46,7 @@ export default async function PlatformLayout({
               Plataforma Solint
             </span>
             <span className="block truncate text-[11px] text-muted">
-              Webhooks e tokens de API de todas as contas
+              Contas, acessos e integrações de todos os clientes
             </span>
           </div>
         </Link>

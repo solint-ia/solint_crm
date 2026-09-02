@@ -1,5 +1,6 @@
 'use server';
 
+import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { CHANNELS } from '@/core/domain/channel';
 import { can } from '@/core/domain/user';
@@ -100,13 +101,15 @@ const deleteContactSchema = z.object({
   contactId: z.string().min(1),
 });
 
-export async function deleteContactAction(input: unknown): Promise<ActionResult> {
+export async function deleteContactAction(
+  input: unknown,
+): Promise<ActionResult<{ destino: 'apagado' | 'arquivado' }>> {
   const parsed = deleteContactSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Contato inválido.' };
 
   try {
     const session = await assertCanWrite();
-    await container.contacts.delete(session.account.id, parsed.data.contactId);
+    const destino = await container.contacts.delete(session.account.id, parsed.data.contactId);
     await writeAuditLog({
       accountId: session.account.id,
       actorId: session.user.id,
@@ -114,35 +117,74 @@ export async function deleteContactAction(input: unknown): Promise<ActionResult>
       action: 'contatos.excluidos',
       targetType: 'contato',
       targetId: parsed.data.contactId,
-      metadata: { count: 1 },
+      metadata: {
+        detalhe: destino === 'arquivado' ? '1 contato (histórico mantido)' : '1 contato',
+        count: 1,
+        destino,
+      },
     });
-    return { ok: true };
+    return { ok: true, data: { destino } };
   } catch (error) {
     return failureOf(error, 'Erro ao excluir contato.');
   }
 }
 
+/**
+ * A mesma regra da exclusão individual, em lote.
+ *
+ * Uma consulta separa os dois grupos antes de escrever: quem tem conversa é
+ * arquivado, quem não tem é apagado. Era um `deleteMany` só, e nele cada
+ * contato com histórico levava as conversas e as mensagens dele embora —
+ * cinquenta de uma vez, com um clique e sem volta.
+ */
 export async function deleteContactsAction(
   input: unknown,
-): Promise<ActionResult<{ count: number }>> {
+): Promise<ActionResult<{ count: number; arquivados: number }>> {
   const parsed = z
     .object({ contactIds: z.array(z.string().min(1)).min(1).max(500) })
     .safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Contatos inválidos.' };
   try {
     const session = await assertCanWrite();
-    const result = await prisma.contact.deleteMany({
-      where: { accountId: session.account.id, id: { in: parsed.data.contactIds } },
+    const accountId = session.account.id;
+    const ids = parsed.data.contactIds;
+
+    const comHistorico = await prisma.contact.findMany({
+      where: { accountId, id: { in: ids }, conversations: { some: {} } },
+      select: { id: true },
     });
+    const arquivar = new Set(comHistorico.map((row) => row.id));
+    const apagar = ids.filter((id) => !arquivar.has(id));
+
+    const [arquivados, apagados] = await Promise.all([
+      arquivar.size > 0
+        ? prisma.contact.updateMany({
+            where: { accountId, id: { in: [...arquivar] }, deletedAt: null },
+            data: { deletedAt: new Date() },
+          })
+        : Promise.resolve({ count: 0 }),
+      apagar.length > 0
+        ? prisma.contact.deleteMany({ where: { accountId, id: { in: apagar } } })
+        : Promise.resolve({ count: 0 }),
+    ]);
+
+    const count = arquivados.count + apagados.count;
     await writeAuditLog({
-      accountId: session.account.id,
+      accountId,
       actorId: session.user.id,
       actorName: session.user.name,
       action: 'contatos.excluidos',
       targetType: 'contato',
-      metadata: { count: result.count },
+      metadata: {
+        detalhe:
+          arquivados.count > 0
+            ? `${count} contatos (${arquivados.count} com histórico mantido)`
+            : `${count} contatos`,
+        count,
+        arquivados: arquivados.count,
+      },
     });
-    return { ok: true, data: { count: result.count } };
+    return { ok: true, data: { count, arquivados: arquivados.count } };
   } catch (error) {
     return failureOf(error, 'Erro ao excluir contatos.');
   }
@@ -331,9 +373,10 @@ export async function auditContactsExportAction(input: unknown): Promise<ActionR
       accountId: session.account.id,
       actorId: session.user.id,
       actorName: session.user.name,
-      action: 'contatos.exportados',
+      action: 'dados.exportados',
       targetType: 'contato',
-      metadata: { count: parsed.data.count, format: 'csv' },
+      targetName: 'Contatos',
+      metadata: { detalhe: `${parsed.data.count} contatos`, count: parsed.data.count, format: 'csv' },
     });
     return { ok: true };
   } catch (error) {
@@ -625,6 +668,103 @@ export async function importContactsCsvAction(
   }
 }
 
+/* ==========================================================================
+   Listas importadas — apagar a lista, ou tirar uma empresa dela.
+   ========================================================================== */
+
+const batchSchema = z.object({ batchId: z.string().min(1).max(64) });
+
+/**
+ * Apaga a lista, e só a lista.
+ *
+ * O lote é um agrupamento — "a prospecção de setembro" —, não o dono dos
+ * contatos. Apagá-lo junto com os contatos destruiria gente que a essa altura
+ * já pode ter conversa aberta, e que talvez tenha entrado na base por outro
+ * caminho antes desta importação. Some a etiqueta do agrupamento; os contatos
+ * seguem na aba individual, de onde podem ser excluídos um a um se for o caso.
+ *
+ * O `accountId` no `where` não é redundante: `batchId` chega do navegador, e
+ * sem ele bastaria um id de outra empresa para apagar a lista dela.
+ */
+export async function deleteImportBatchAction(
+  input: unknown,
+): Promise<ActionResult<{ name: string }>> {
+  const parsed = batchSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Lista inválida.' };
+
+  try {
+    const session = await assertCanWrite();
+    const accountId = session.account.id;
+
+    const lote = await prisma.contactImportBatch.findFirst({
+      where: { id: parsed.data.batchId, accountId },
+      select: { id: true, name: true, _count: { select: { contacts: true } } },
+    });
+    if (!lote) return { ok: false, error: 'Lista não encontrada.' };
+
+    // O vínculo cai por cascata (`ContactImportBatchContact.batch`), os
+    // contatos não têm relação de posse com o lote e ficam onde estão.
+    await prisma.contactImportBatch.delete({ where: { id: lote.id, accountId } });
+
+    await writeAuditLog({
+      accountId,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'configuracao.alterada',
+      targetType: 'contato',
+      targetId: lote.id,
+      targetName: lote.name,
+      metadata: {
+        detalhe: `lista importada excluída (${lote._count.contacts} empresas, contatos mantidos)`,
+      },
+    });
+
+    revalidatePath('/contatos');
+    return { ok: true, data: { name: lote.name } };
+  } catch (error) {
+    return failureOf(error, 'Erro ao excluir a lista.');
+  }
+}
+
+const batchContactSchema = batchSchema.extend({
+  contactId: z.string().min(1).max(64),
+});
+
+/**
+ * Tira uma empresa da lista sem excluí-la do CRM.
+ *
+ * É desvincular, não apagar: a linha some da tabela daquela lista e o contato
+ * continua na aba individual, com as conversas dele. Quem quiser mesmo apagá-lo
+ * faz isso de lá, onde a ação diz o que é.
+ */
+export async function removeContactFromBatchAction(input: unknown): Promise<ActionResult> {
+  const parsed = batchContactSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Dados inválidos.' };
+
+  try {
+    const session = await assertCanWrite();
+    const accountId = session.account.id;
+
+    // A conta entra pelo lote: `ContactImportBatchContact` não tem `accountId`
+    // próprio, e é o pai que diz de quem ele é. Ver `check:tenant`.
+    const removidos = await prisma.contactImportBatchContact.deleteMany({
+      where: {
+        batchId: parsed.data.batchId,
+        contactId: parsed.data.contactId,
+        batch: { accountId },
+      },
+    });
+    if (removidos.count === 0) {
+      return { ok: false, error: 'Esta empresa não está nesta lista.' };
+    }
+
+    revalidatePath('/contatos');
+    return { ok: true };
+  } catch (error) {
+    return failureOf(error, 'Erro ao remover a empresa da lista.');
+  }
+}
+
 /**
  * Espera o worker concluir o comando, dentro de um teto.
  *
@@ -639,6 +779,8 @@ export async function importContactsCsvAction(
  * no worker, e a lista mostra o resultado no próximo carregamento.
  */
 const ESPERA_MAX_MS = 20_000;
+/** Intervalo mínimo entre duas sincronizações completas da mesma caixa. */
+const INTERVALO_SINCRONIZACAO_CONTATOS_MS = 15 * 60 * 1000;
 
 const aguardarComando = async (commandId: string): Promise<'concluido' | 'em_andamento'> => {
   const inicio = Date.now();
@@ -704,38 +846,75 @@ export async function syncWhatsAppContactsAction(): Promise<
     const pareada = inboxes.find((i) => Boolean(i.waConnection?.credsCipher));
     const targetInbox = conectada ?? pareada ?? inboxes[0];
 
-    if (targetInbox) {
-      if (WA_ENGINE === 'inprocess') {
-        /**
-         * Sem worker não há fila, e sem fila o comando ficaria pendente para
-         * sempre.
-         *
-         * O caminho abaixo enfileirava um `sync_contacts` **em qualquer
-         * motor** — mas quem consome essa fila é o worker. Com o motor
-         * in-process (o padrão de `npm run dev`), o botão sempre terminava
-         * dizendo "sincronizado" sem ter sincronizado nada: o comando ficava
-         * `pending` no banco e o contador voltava igual.
-         */
-        const { whatsappService } = await import('@/infrastructure/whatsapp/whatsapp-service');
-        await whatsappService.syncAllStoredContacts(accountId);
-      } else {
-        const cmd = await prisma.whatsAppCommand.create({
-          data: {
-            inboxId: targetInbox.id,
-            kind: 'sync_contacts',
-            payload: { accountId },
-            status: 'pending',
-          },
-        });
+    if (!targetInbox) {
+      return { ok: false, error: 'Nenhuma caixa de WhatsApp foi configurada nesta conta.' };
+    }
 
-        await postgresPubSub.publish(DB_CHANNELS.COMMANDS, {
+    /**
+     * Reserva a sincronização de forma atômica.
+     *
+     * Desabilitar só o botão não basta: duas abas, dois usuários ou uma chamada
+     * direta à Server Action ainda poderiam iniciar dois app-state syncs. A
+     * coluna no banco torna a proteção comum a todas as instâncias do site.
+     */
+    const agora = new Date();
+    const limite = new Date(agora.getTime() - INTERVALO_SINCRONIZACAO_CONTATOS_MS);
+    const reserva = await prisma.whatsAppConnection.updateMany({
+      where: {
+        inboxId: targetInbox.id,
+        OR: [{ lastContactsSyncAt: null }, { lastContactsSyncAt: { lte: limite } }],
+      },
+      data: { lastContactsSyncAt: agora },
+    });
+
+    if (reserva.count === 0) {
+      const ultima = await prisma.whatsAppConnection.findUnique({
+        where: { inboxId: targetInbox.id },
+        select: { lastContactsSyncAt: true },
+      });
+      const proxima = ultima?.lastContactsSyncAt
+        ? new Date(
+            ultima.lastContactsSyncAt.getTime() + INTERVALO_SINCRONIZACAO_CONTATOS_MS,
+          ).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+        : undefined;
+      return {
+        ok: false,
+        error: proxima
+          ? `A agenda foi sincronizada recentemente. Tente novamente após ${proxima}.`
+          : 'Já existe uma sincronização recente desta agenda.',
+      };
+    }
+
+    if (WA_ENGINE === 'inprocess') {
+      /**
+       * Sem worker não há fila, e sem fila o comando ficaria pendente para
+       * sempre.
+       *
+       * O caminho abaixo enfileirava um `sync_contacts` **em qualquer
+       * motor** — mas quem consome essa fila é o worker. Com o motor
+       * in-process (o padrão de `npm run dev`), o botão sempre terminava
+       * dizendo "sincronizado" sem ter sincronizado nada: o comando ficava
+       * `pending` no banco e o contador voltava igual.
+       */
+      const { whatsappService } = await import('@/infrastructure/whatsapp/whatsapp-service');
+      await whatsappService.syncAllStoredContacts(accountId);
+    } else {
+      const cmd = await prisma.whatsAppCommand.create({
+        data: {
           inboxId: targetInbox.id,
           kind: 'sync_contacts',
-          id: cmd.id,
-        });
+          payload: { accountId },
+          status: 'pending',
+        },
+      });
 
-        await aguardarComando(cmd.id);
-      }
+      await postgresPubSub.publish(DB_CHANNELS.COMMANDS, {
+        inboxId: targetInbox.id,
+        kind: 'sync_contacts',
+        id: cmd.id,
+      });
+
+      await aguardarComando(cmd.id);
     }
 
     const currentContacts = await prisma.contact.count({

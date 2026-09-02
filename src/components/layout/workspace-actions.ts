@@ -4,19 +4,11 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { landingRouteFor } from '@/config/navigation';
-import {
-  MAX_WORKSPACES_POR_USUARIO,
-  WORKSPACE_NAME_MAX,
-  WORKSPACE_NAME_MIN,
-  workspaceNameProblem,
-} from '@/core/domain/account-provisioning';
 import type { Permission, PermissionOverrides } from '@/core/domain/user';
 import { effectivePermissions } from '@/core/domain/user';
-import { writeAuditLog } from '@/infrastructure/audit/write-audit-log';
 import { reissueSessionToken } from '@/infrastructure/auth/session';
 import { container } from '@/infrastructure/container';
 import { prisma, readJson } from '@/infrastructure/db/prisma';
-import { provisionAccount } from '@/infrastructure/provisioning/provision-account';
 
 export interface WorkspaceActionResult {
   readonly ok: boolean;
@@ -57,6 +49,11 @@ const switchSchema = z.object({ accountId: z.string().min(1).max(64) });
  * aqui: `accountId` chega do navegador, e confiar nele seria deixar qualquer
  * pessoa assinar um token para a conta de qualquer outra empresa. Só existe
  * troca para conta em que a pessoa tem `Membership`.
+ *
+ * A troca **não** vira linha de auditoria. Era `workspace.trocado`, e registrava
+ * o movimento de quem já estava autorizado a fazê-lo — o que o administrador da
+ * conta de destino precisa saber é o que a pessoa fez lá dentro, e isso as
+ * outras linhas já contam.
  */
 export async function switchWorkspaceAction(input: unknown): Promise<WorkspaceActionResult> {
   const parsed = switchSchema.safeParse(input);
@@ -68,26 +65,20 @@ export async function switchWorkspaceAction(input: unknown): Promise<WorkspaceAc
 
   const vinculo = await prisma.membership.findUnique({
     where: { userId_accountId: { userId: session.user.id, accountId } },
-    include: { account: { select: { id: true, name: true } } },
+    include: { account: { select: { id: true, name: true, status: true } } },
   });
   if (!vinculo) {
     return { ok: false, error: 'Você não participa deste workspace.' };
   }
+  // O seletor já não oferece conta suspensa, mas `accountId` chega do navegador
+  // e o seletor não é a autorização — sem esta linha, um id digitado à mão
+  // assinaria um token para uma conta que `readSession()` recusa, e a pessoa
+  // cairia num laço de redirecionamento para o login.
+  if (vinculo.account.status !== 'ativa') {
+    return { ok: false, error: 'Este workspace está suspenso.' };
+  }
 
   await reissueSessionToken(session.user.id, session.tokenId, accountId);
-
-  // Registrado na conta de **destino**: é lá que a presença desta pessoa passa
-  // a valer, e é lá que o administrador procura por quem entrou.
-  await writeAuditLog({
-    accountId,
-    actorId: session.user.id,
-    actorName: session.user.name,
-    action: 'workspace.trocado',
-    targetType: 'workspace',
-    targetId: accountId,
-    targetName: vinculo.account.name,
-    metadata: { de: session.account.id, deNome: session.account.name },
-  });
 
   // A conta ativa atravessa o layout inteiro (rail, topbar, seletor), então o
   // alvo é o layout e não a rota atual.
@@ -95,74 +86,12 @@ export async function switchWorkspaceAction(input: unknown): Promise<WorkspaceAc
   redirect(await rotaDeEntrada(session.user.id, accountId, vinculo.roleSlug));
 }
 
-const createSchema = z.object({
-  name: z.string().trim().min(WORKSPACE_NAME_MIN).max(WORKSPACE_NAME_MAX),
-  document: z.union([z.literal(''), z.string().trim().max(24)]).optional(),
-});
-
 /**
- * Cria um workspace novo e entra nele.
+ * Criar workspace saiu daqui.
  *
- * Quem cria é administrador do que criou — mesma regra do cadastro público, que
- * qualquer pessoa já pode usar com outro e-mail. O que existe aqui e não lá é a
- * **quota**: um formulário de criação sem teto é um botão que insere linhas em
- * cinco tabelas quantas vezes alguém quiser clicar. Contam só as contas que a
- * pessoa administra; participar de dez workspaces por convite não a impede de
- * criar o primeiro dela.
+ * Era o mesmo buraco do cadastro público por outra porta: qualquer pessoa
+ * logada provisionava contas novas e nascia administradora delas, com uma quota
+ * como único freio. Agora quem cria conta é o superadministrador, em
+ * `/plataforma/nova`, que é onde existe a informação que falta a um botão
+ * dentro do CRM — quem é o cliente, e quem responde por ele.
  */
-export async function createWorkspaceAction(input: unknown): Promise<WorkspaceActionResult> {
-  const parsed = createSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: 'Dados inválidos.' };
-
-  const problema = workspaceNameProblem(parsed.data.name);
-  if (problema) return { ok: false, error: problema };
-
-  const session = await container.session.getCurrentSession();
-
-  // tenant-ok: a quota é da pessoa e atravessa contas de propósito. Escopar por
-  // `accountId` aqui contaria sempre 1 e o teto nunca valeria para nada.
-  const criados = await prisma.membership.count({
-    where: { userId: session.user.id, roleSlug: 'administrador' },
-  });
-  if (criados >= MAX_WORKSPACES_POR_USUARIO) {
-    return {
-      ok: false,
-      error: `Você já administra ${MAX_WORKSPACES_POR_USUARIO} workspaces, que é o limite por conta.`,
-    };
-  }
-
-  const name = parsed.data.name.trim();
-  const document = parsed.data.document?.trim();
-  const accountId = `acc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-
-  try {
-    await prisma.$transaction((tx) =>
-      provisionAccount(tx, {
-        accountId,
-        name,
-        ownerUserId: session.user.id,
-        ...(document ? { document } : {}),
-      }),
-    );
-  } catch (error) {
-    console.error('[workspace] Falha ao criar o workspace:', error);
-    return { ok: false, error: 'Não foi possível criar o workspace. Tente de novo.' };
-  }
-
-  await reissueSessionToken(session.user.id, session.tokenId, accountId);
-
-  await writeAuditLog({
-    accountId,
-    actorId: session.user.id,
-    actorName: session.user.name,
-    action: 'workspace.criado',
-    targetType: 'workspace',
-    targetId: accountId,
-    targetName: name,
-  });
-
-  revalidatePath('/', 'layout');
-  // Cai onde ele precisa agir: um workspace novo não atende ninguém enquanto o
-  // WhatsApp não estiver pareado.
-  redirect('/configuracoes?secao=caixas');
-}

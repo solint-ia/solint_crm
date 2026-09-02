@@ -5,6 +5,8 @@ import { AlertTriangle, Download, Search, Shield } from 'lucide-react';
 import {
   AUDIT_ACTION_LABELS,
   AUDIT_CRITICAL_ACTIONS,
+  auditDetailOf,
+  auditLabelOf,
   auditGroupOf,
   type AuditRecord,
 } from '@/core/domain/audit';
@@ -110,7 +112,7 @@ export function AuditLogPanel({ records }: { readonly records: readonly AuditRec
     const csv = toCsv(filtered, [
       { header: 'Data', value: (row) => new Date(row.createdAt).toLocaleString('pt-BR') },
       { header: 'Pessoa', value: (row) => row.actorName },
-      { header: 'Ação', value: (row) => AUDIT_ACTION_LABELS[row.action] },
+      { header: 'Ação', value: (row) => auditLabelOf(row.action) },
       { header: 'Alvo', value: (row) => row.targetName ?? row.targetId },
       { header: 'IP', value: (row) => row.ip },
     ]);
@@ -127,7 +129,9 @@ export function AuditLogPanel({ records }: { readonly records: readonly AuditRec
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-4">
         <div>
           <h3 className="font-display text-base font-bold text-ink">Registro de auditoria</h3>
-          <p className="text-xs text-muted">Ações da equipe nos últimos 7 dias.</p>
+          <p className="text-xs text-muted">
+            Acessos, mudanças de permissão e movimentação de dados nos últimos 7 dias.
+          </p>
         </div>
         <Button
           variant="secondary"
@@ -211,6 +215,7 @@ export function AuditLogPanel({ records }: { readonly records: readonly AuditRec
         ) : (
           filtered.map((record) => {
             const critical = AUDIT_CRITICAL_ACTIONS.includes(record.action);
+            const detalhe = auditDetailOf(record);
             return (
               <div
                 key={record.id}
@@ -231,8 +236,12 @@ export function AuditLogPanel({ records }: { readonly records: readonly AuditRec
                     <strong>{record.actorName}</strong>{' '}
                     {record.count && record.count > 1
                       ? `enviou ${record.count} mensagens em`
-                      : AUDIT_ACTION_LABELS[record.action]}{' '}
+                      : auditLabelOf(record.action)}{' '}
                     <strong>{record.targetName ?? record.targetId ?? record.targetType}</strong>
+                    {/* O complemento é o que salva o rótulo genérico: sem ele a
+                        linha diria "alterou configurações" sem dizer o quê, que
+                        é a informação pela qual a tela foi aberta. */}
+                    {detalhe ? <span className="text-muted"> · {detalhe}</span> : null}
                   </p>
                   <p className="mt-1 text-[11px] text-dim">
                     {dayLabelCom(record.createdAt, formatarData)} ·{' '}

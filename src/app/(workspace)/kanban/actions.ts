@@ -222,8 +222,8 @@ export async function updateStagesAction(
       accountId: session.account.id,
       actorId: session.user.id,
       actorName: session.user.name,
-      action: 'funil.etapas',
-      targetType: 'funil',
+      action: 'configuracao.alterada',
+      targetType: 'configuracao',
       targetId: pipelineId,
       metadata: { stages: parsed.data.stages.length },
     });

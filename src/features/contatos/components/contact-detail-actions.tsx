@@ -152,7 +152,7 @@ export function ContactDetailActions({ contact }: ContactDetailActionsProps) {
         title="Excluir contato"
         description={
           <span>
-            Tem certeza que deseja excluir o contato <strong className="text-ink">{contact.name}</strong>? Todo o histórico de mensagens, notas e negócios vinculados serão permanentemente apagados.
+            Tem certeza que deseja excluir o contato <strong className="text-ink">{contact.name}</strong>? Ele sai da agenda. Se já houver conversa com ele, o histórico de mensagens continua na caixa de entrada.
           </span>
         }
         confirmLabel="Excluir contato"

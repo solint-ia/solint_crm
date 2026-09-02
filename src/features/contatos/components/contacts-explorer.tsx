@@ -69,7 +69,7 @@ interface ContactsExplorerProps {
 }
 
 /** Quantos contatos a tabela desenha por vez. */
-const CONTACTS_PER_PAGE = 50;
+const CONTACTS_PER_PAGE = 100;
 
 export function ContactsExplorer({ contacts, importBatches, canExport }: ContactsExplorerProps) {
   const router = useRouter();
@@ -174,11 +174,11 @@ export function ContactsExplorer({ contacts, importBatches, canExport }: Contact
   }, [filteredContacts, sortField, sortOrder]);
 
   /**
-   * Paginação: a tabela desenha 50 por vez.
+   * Paginação: a tabela desenha 100 por vez.
    *
    * A lista inteira continua vindo do servidor de uma vez — o filtro, a busca e
    * a ordenação precisam dela toda para responder certo, e paginar no banco
-   * faria "ordenar por último contato" ordenar só os 50 da página atual. O que
+   * faria "ordenar por último contato" ordenar só os 100 da página atual. O que
    * muda é quantas linhas o navegador desenha: uma base de milhares de contatos
    * montava milhares de `<tr>`, e era isso que travava a rolagem.
    */
@@ -233,10 +233,16 @@ export function ContactsExplorer({ contacts, importBatches, canExport }: Contact
     startTransition(async () => {
       const res = await deleteContactAction({ contactId: contact.id });
       if (res.ok) {
+        // A mensagem diz o que de fato aconteceu. "Excluído" para quem tinha
+        // conversa seria mentira — o histórico continua lá, e a pessoa
+        // precisaria saber disso justamente se a intenção era apagá-lo.
+        const arquivado = res.data?.destino === 'arquivado';
         show({
           tone: 'sucesso',
-          title: 'Contato excluído',
-          description: `${contact.name} foi removido da base.`,
+          title: arquivado ? 'Contato removido da agenda' : 'Contato excluído',
+          description: arquivado
+            ? `${contact.name} saiu da lista. As conversas e mensagens dele continuam na caixa de entrada.`
+            : `${contact.name} foi removido da base.`,
         });
         setSelected((prev) => prev.filter((id) => id !== contact.id));
         if (selectedDrawerContact?.id === contact.id) {
@@ -262,11 +268,16 @@ export function ContactsExplorer({ contacts, importBatches, canExport }: Contact
     startTransition(async () => {
       const result = await deleteContactsAction({ contactIds: toDeleteIds });
       const count = result.data?.count ?? 0;
+      const arquivados = result.data?.arquivados ?? 0;
 
       show({
         tone: result.ok ? 'sucesso' : 'erro',
-        title: result.ok ? 'Contatos excluídos' : 'Erro ao excluir contatos',
-        description: result.ok ? `${count} contato(s) foram excluídos da base.` : result.error,
+        title: result.ok ? 'Contatos removidos da agenda' : 'Erro ao excluir contatos',
+        description: result.ok
+          ? arquivados > 0
+            ? `${count} contato(s) saíram da lista. ${arquivados} tinham conversa, e o histórico deles foi mantido.`
+            : `${count} contato(s) foram excluídos da base.`
+          : result.error,
       });
       router.refresh();
     });
@@ -347,6 +358,11 @@ export function ContactsExplorer({ contacts, importBatches, canExport }: Contact
   const [isSyncingWa, setIsSyncingWa] = useState(false);
 
   const handleSyncWhatsApp = async () => {
+    const confirmed = window.confirm(
+      'Sincronizar agora pode exibir uma notificação de segurança no WhatsApp Business. A agenda não é sincronizada automaticamente. Deseja continuar?',
+    );
+    if (!confirmed) return;
+
     setIsSyncingWa(true);
     try {
       const res = await syncWhatsAppContactsAction();
@@ -629,7 +645,7 @@ export function ContactsExplorer({ contacts, importBatches, canExport }: Contact
                   }
                   onClick={handleSyncWhatsApp}
                   disabled={isSyncingWa}
-                  title="Importar e sincronizar contatos de todos os canais de WhatsApp conectados"
+                  title="Sincronização manual da agenda do WhatsApp (intervalo mínimo de 15 minutos)"
                 >
                   <span className="hidden lg:inline">
                     {isSyncingWa ? 'Sincronizando...' : 'Sincronizar WhatsApp'}
@@ -1310,9 +1326,9 @@ export function ContactsExplorer({ contacts, importBatches, canExport }: Contact
         description={
           <span>
             Tem certeza que deseja excluir o contato{' '}
-            <strong className="text-ink">&ldquo;{contactToDelete?.name}&rdquo;</strong>? O histórico
-            de atendimentos, conversas e oportunidades comerciais vinculadas serão removidos
-            permanentemente.
+            <strong className="text-ink">&ldquo;{contactToDelete?.name}&rdquo;</strong>? Ele sai da
+            agenda. Se já houver conversa com ele, o histórico de mensagens continua na caixa de
+            entrada.
           </span>
         }
         confirmLabel="Excluir contato"
@@ -1328,9 +1344,10 @@ export function ContactsExplorer({ contacts, importBatches, canExport }: Contact
         title="Excluir contatos selecionados"
         description={
           <span>
-            Tem certeza que deseja excluir permanentemente os{' '}
-            <strong className="text-ink">{selected.length} contatos selecionados</strong>? Esta ação
-            é irreversível e removerá todas as informações comerciais associadas.
+            Tem certeza que deseja excluir os{' '}
+            <strong className="text-ink">{selected.length} contatos selecionados</strong>? Eles saem
+            da agenda. Os que já tiverem conversa mantêm o histórico de mensagens na caixa de
+            entrada.
           </span>
         }
         confirmLabel={`Excluir ${selected.length} contatos`}

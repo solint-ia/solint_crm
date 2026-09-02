@@ -192,6 +192,7 @@ export default async function ConfiguracoesPage({
               teams={settings.teams}
               inboxes={settings.connections}
               canEditRoles={podeEditarPapeis}
+              canGrantAdmin={Boolean(session.platformActor)}
               memberPermissions={memberPermissions}
             />
           ) : null}

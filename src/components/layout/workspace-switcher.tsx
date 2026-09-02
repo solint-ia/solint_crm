@@ -1,12 +1,11 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { Check, ChevronDown, Loader2, Plus } from 'lucide-react';
+import { Check, ChevronDown, Loader2 } from 'lucide-react';
 import type { Account } from '@/core/domain/user';
 import { Avatar } from '@/components/ui/avatar';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/cn';
-import { CreateWorkspaceModal } from './create-workspace-modal';
 import { switchWorkspaceAction } from './workspace-actions';
 
 interface WorkspaceSwitcherProps {
@@ -38,7 +37,6 @@ const marcaDe = (account: Account) => ({
  */
 export function WorkspaceSwitcher({ current, accounts }: WorkspaceSwitcherProps) {
   const [open, setOpen] = useState(false);
-  const [criando, setCriando] = useState(false);
   const [trocando, setTrocando] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const { show } = useToast();
@@ -122,26 +120,9 @@ export function WorkspaceSwitcher({ current, accounts }: WorkspaceSwitcherProps)
                 );
               })}
             </ul>
-
-            <div className="mt-1 border-t border-line-soft pt-1">
-              <button
-                type="button"
-                disabled={pending}
-                onClick={() => {
-                  setOpen(false);
-                  setCriando(true);
-                }}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-body font-semibold text-muted transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-60"
-              >
-                <Plus className="size-3.5" />
-                Criar novo workspace
-              </button>
-            </div>
           </div>
         </>
       ) : null}
-
-      <CreateWorkspaceModal open={criando} onClose={() => setCriando(false)} />
     </div>
   );
 }

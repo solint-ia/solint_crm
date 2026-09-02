@@ -300,6 +300,10 @@ const platformSession = async (claims: SessionClaims): Promise<Session | null> =
     return null;
   }
   if (!user?.isSuperAdmin || !account) return null;
+  // Nem a atuação de plataforma entra numa conta excluída. Suspensa ele entra:
+  // suspender é medida administrativa dele, e ter de reativar a conta para
+  // conferir por que a suspendeu inverteria o sentido da medida.
+  if (account.status === 'excluida') return null;
 
   const domainAccount = toDomainAccount(account);
 
@@ -380,7 +384,9 @@ export const readSession = cache(async (): Promise<Session | null> => {
     // tenant-ok: deliberadamente entre contas — e a lista de workspaces da pessoa
     // que alimenta o seletor. Escopar por conta aqui devolveria sempre uma opcao.
     prisma.membership.findMany({
-      where: { userId: claims.sub },
+      // Só as ativas: uma conta suspensa no seletor é uma opção que, ao ser
+      // escolhida, devolve a pessoa para o login sem explicação.
+      where: { userId: claims.sub, account: { status: 'ativa' } },
       include: { account: { include: { settings: { select: { company: true } } } } },
       orderBy: { createdAt: 'asc' },
     }),
@@ -406,6 +412,19 @@ export const readSession = cache(async (): Promise<Session | null> => {
   // autoriza. Sem ele a pessoa não atende mais naquele workspace, e o token
   // deixa de valer ali — mesmo com assinatura boa e sessão não revogada.
   if (!membership) return null;
+
+  /**
+   * Conta suspensa não resolve sessão.
+   *
+   * A checagem mora aqui porque este é o único ponto por onde toda requisição
+   * do CRM passa — página, Server Action e rota de API. Espalhá-la pelas telas
+   * significaria que a próxima rota criada nasceria sem ela, e suspender uma
+   * conta deixaria de valer justamente para o caminho que ninguém lembrou.
+   *
+   * Vale na requisição seguinte à suspensão, sem depender de expirar cookie: o
+   * `cache()` do React vive dentro de uma requisição só.
+   */
+  if (membership.account.status !== 'ativa') return null;
 
   const role: Role | null = await prisma.role
     .findUnique({

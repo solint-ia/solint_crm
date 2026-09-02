@@ -537,17 +537,9 @@ export async function changeConversationStatusAction(input: unknown): Promise<Ch
     conversation: result.value,
   });
 
-  await writeAuditLog({
-    accountId: session.account.id,
-    actorId: session.user.id,
-    actorName: session.user.name,
-    action: 'conversa.status',
-    targetType: 'conversa',
-    targetId: parsed.data.conversationId,
-    targetName: result.value.contact.name,
-    metadata: { status: parsed.data.status },
-  });
-
+  // Mudar o status não vira linha de auditoria: resolver e reabrir é o trabalho
+  // normal do atendimento, aparece na própria conversa e enchia o registro com
+  // dezenas de linhas por dia, empurrando para fora da tela as que importam.
   return { ok: true, ...(csatAviso ? { aviso: csatAviso } : {}) };
 }
 
@@ -648,11 +640,13 @@ export async function assignConversationAction(input: unknown): Promise<ActionRe
     accountId: session.account.id,
     actorId: session.user.id,
     actorName: session.user.name,
-    action: assignee ? 'conversa.atribuida' : 'conversa.liberada',
+    action: 'conversa.responsavel',
     targetType: 'conversa',
     targetId: parsed.data.conversationId,
     targetName: result.value.contact.name,
-    metadata: assignee ? { assigneeId: assignee.id, assigneeName: assignee.name } : {},
+    metadata: assignee
+      ? { detalhe: `atribuída a ${assignee.name}`, assigneeId: assignee.id, assigneeName: assignee.name }
+      : { detalhe: 'devolvida para a fila' },
   });
 
   /**
@@ -692,16 +686,7 @@ export async function changeConversationPriorityAction(input: unknown): Promise<
   const result = await container.useCases.changeConversationPriority({ session, ...parsed.data });
   if (!result.ok) return { ok: false, error: result.error.message };
 
-  await writeAuditLog({
-    accountId: session.account.id,
-    actorId: session.user.id,
-    actorName: session.user.name,
-    action: 'conversa.prioridade',
-    targetType: 'conversa',
-    targetId: parsed.data.conversationId,
-    targetName: result.value.contact.name,
-    metadata: { priority: parsed.data.priority },
-  });
+  // Sem auditoria, pela mesma razão do status: é operação de fila, não acesso.
   await broadcast(parsed.data.conversationId);
   return { ok: true };
 }
@@ -1090,6 +1075,37 @@ export async function startContactConversationAction(
     text: parsed.data.text,
     isPrivate: false,
   });
+
+  /**
+   * Quem abriu a conversa com este cliente, e por qual número.
+   *
+   * É a pergunta que o histórico não respondia. Conversa recebida nasce de um
+   * cliente que procurou a empresa; esta nasce de alguém aqui dentro decidindo
+   * abordar alguém lá fora — numa base de prospecção, é a linha que diz quem
+   * usou a lista e para qual telefone. `mensagem.enviada` registra o conteúdo,
+   * mas não distingue a primeira mensagem da centésima.
+   *
+   * Depois do envio, e só quando ele deu certo: uma conversa aberta cuja
+   * mensagem falhou não é abordagem nenhuma. `void` porque auditoria não
+   * atrasa a resposta da tela.
+   */
+  if (enviado.ok) {
+    void writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'conversa.iniciada',
+      targetType: 'conversa',
+      targetId: conversationId,
+      targetName: contact.name,
+      metadata: {
+        detalhe: `para ${parsed.data.recipientPhone ?? contact.phone}`,
+        contactId: contact.id,
+        inboxId: parsed.data.inboxId,
+        ...(contact.company ? { empresa: contact.company } : {}),
+      },
+    });
+  }
 
   revalidatePath('/conversas');
   revalidatePath('/contatos');

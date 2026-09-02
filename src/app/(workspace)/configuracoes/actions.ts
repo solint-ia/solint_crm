@@ -55,22 +55,36 @@ const assertCanWrite = async (permission: Permission = 'config.caixas:escrever')
 };
 
 /**
- * Um supervisor com "gerenciar membros" delegado não alcança administradores.
+ * Quem pode conceder qual papel.
  *
- * Nem para promover alguém a administrador, nem para editar ou rebaixar um que
- * já existe. Sem esta trava, delegar a aba de membros seria delegar a conta
- * inteira por um caminho indireto: bastaria o supervisor promover a si mesmo.
- * Só quem já é administrador mexe em administrador.
+ * Duas travas, em degraus:
+ *
+ *  1. **Um supervisor com "gerenciar membros" delegado não alcança
+ *     administradores** — nem para promover, nem para editar ou rebaixar um que
+ *     já existe. Sem isso, delegar a aba de membros seria delegar a conta
+ *     inteira por um caminho indireto: bastaria o supervisor promover a si
+ *     mesmo.
+ *  2. **Nem o administrador cria outro administrador.** Quem decide que existe
+ *     mais um acesso total a uma conta de cliente é quem responde pela
+ *     plataforma, e é lá que a conta nasceu. Dentro do CRM o administrador
+ *     cadastra supervisores e colaboradores, que é o time dele.
+ *
+ * A exceção é a atuação de plataforma: o superadministrador operando dentro da
+ * conta é justamente a autoridade que a segunda trava reserva, e barrá-lo aqui
+ * o obrigaria a mexer no banco para fazer o que a tela existe para fazer.
  */
-const supervisorNaoAlcancaAdmin = (
+const papelForaDoAlcance = (
   atorRoleSlug: string,
+  ehPlataforma: boolean,
   alvoRoleSlugAtual: string | undefined,
   alvoRoleSlugNovo: string,
 ): string | undefined => {
-  if (atorRoleSlug === 'administrador') return undefined;
-  if (alvoRoleSlugNovo === 'administrador') {
-    return 'Só um administrador pode conceder acesso de administrador.';
+  if (ehPlataforma) return undefined;
+
+  if (alvoRoleSlugNovo === 'administrador' && alvoRoleSlugAtual !== 'administrador') {
+    return 'Só a Solint concede acesso de administrador. Fale com o suporte.';
   }
+  if (atorRoleSlug === 'administrador') return undefined;
   if (alvoRoleSlugAtual === 'administrador') {
     return 'Só um administrador pode editar outro administrador.';
   }
@@ -151,10 +165,11 @@ export async function saveAutomationAction(input: unknown): Promise<ActionResult
       accountId: session.account.id,
       actorId: session.user.id,
       actorName: session.user.name,
-      action: parsed.data.id ? 'automacao.editada' : 'automacao.criada',
-      targetType: 'automacao',
+      action: 'configuracao.alterada',
+      targetType: 'configuracao',
       targetId: automation.id,
       targetName: automation.name,
+      metadata: { detalhe: parsed.data.id ? 'automação editada' : 'automação criada' },
     });
     return { ok: true };
   } catch (error) {
@@ -175,9 +190,10 @@ export async function deleteAutomationAction(input: unknown): Promise<ActionResu
       accountId: session.account.id,
       actorId: session.user.id,
       actorName: session.user.name,
-      action: 'automacao.excluida',
-      targetType: 'automacao',
+      action: 'configuracao.alterada',
+      targetType: 'configuracao',
       targetId: parsed.data.automationId,
+      metadata: { detalhe: 'automação excluída' },
     });
     return { ok: true };
   } catch (error) {
@@ -252,10 +268,11 @@ export async function createInboxAction(
       accountId: session.account.id,
       actorId: session.user.id,
       actorName: session.user.name,
-      action: 'caixa.criada',
-      targetType: 'caixa',
+      action: 'configuracao.alterada',
+      targetType: 'configuracao',
       targetId: connection.id,
       targetName: connection.name,
+      metadata: { detalhe: 'caixa de entrada criada' },
     });
     revalidatePath('/configuracoes');
     return { ok: true, connection };
@@ -336,10 +353,10 @@ export async function updateInboxAction(input: unknown): Promise<ActionResult> {
       accountId: session.account.id,
       actorId: session.user.id,
       actorName: session.user.name,
-      action: 'caixa.configurada',
-      targetType: 'caixa',
+      action: 'configuracao.alterada',
+      targetType: 'configuracao',
       targetId: connectionId,
-      metadata: { fields: Object.keys(patch) },
+      metadata: { detalhe: 'caixa de entrada configurada', fields: Object.keys(patch) },
     });
     return { ok: true };
   } catch (error) {
@@ -414,10 +431,11 @@ export async function deleteInboxAction(input: unknown): Promise<ActionResult> {
       accountId: session.account.id,
       actorId: session.user.id,
       actorName: session.user.name,
-      action: 'caixa.excluida',
-      targetType: 'caixa',
+      action: 'configuracao.alterada',
+      targetType: 'configuracao',
       targetId: parsed.data.connectionId,
       targetName: parsed.data.confirmName,
+      metadata: { detalhe: 'caixa de entrada excluída' },
     });
     revalidatePath('/configuracoes');
     revalidatePath('/conversas');
@@ -714,8 +732,9 @@ export async function createCollaboratorAction(input: unknown): Promise<ActionRe
       return { ok: false, error: 'Seu papel não permite criar acessos.' };
     }
 
-    const barrado = supervisorNaoAlcancaAdmin(
+    const barrado = papelForaDoAlcance(
       session.user.roleSlug,
+      Boolean(session.platformActor),
       undefined,
       parsed.data.roleSlug,
     );
@@ -778,7 +797,7 @@ export async function createCollaboratorAction(input: unknown): Promise<ActionRe
       accountId: session.account.id,
       actorId: session.user.id,
       actorName: session.user.name,
-      action: 'membro.convidado',
+      action: 'membro.adicionado',
       targetType: 'membro',
       targetId: userId,
       targetName: parsed.data.name,
@@ -835,8 +854,9 @@ export async function updateCollaboratorAction(input: unknown): Promise<ActionRe
     });
     if (!vinculo) return { ok: false, error: 'Colaborador não encontrado nesta conta.' };
 
-    const barrado = supervisorNaoAlcancaAdmin(
+    const barrado = papelForaDoAlcance(
       session.user.roleSlug,
+      Boolean(session.platformActor),
       vinculo.roleSlug,
       parsed.data.roleSlug,
     );
@@ -906,11 +926,18 @@ export async function updateCollaboratorAction(input: unknown): Promise<ActionRe
       accountId: session.account.id,
       actorId: session.user.id,
       actorName: session.user.name,
-      action: vinculo.roleSlug === parsed.data.roleSlug ? 'membro.permissoes' : 'membro.papel',
+      action: 'acesso.alterado',
       targetType: 'membro',
       targetId: parsed.data.userId,
       targetName: parsed.data.name,
-      metadata: { roleSlug: parsed.data.roleSlug, teamIds },
+      metadata: {
+        roleSlug: parsed.data.roleSlug,
+        teamIds,
+        detalhe:
+          vinculo.roleSlug === parsed.data.roleSlug
+            ? 'permissões individuais'
+            : `papel: ${vinculo.roleSlug} para ${parsed.data.roleSlug}`,
+      },
     });
 
     revalidatePath('/configuracoes');
@@ -1081,7 +1108,7 @@ export async function terminateOtherSessionsAction(): Promise<ActionResult> {
       accountId: session.account.id,
       actorId: session.user.id,
       actorName: session.user.name,
-      action: 'sessao.encerrada_todas',
+      action: 'sessao.encerrada',
       targetType: 'sessao',
       metadata: { count },
     });
@@ -1130,10 +1157,11 @@ export async function saveCompanyProfileAction(input: unknown): Promise<ActionRe
       accountId: session.account.id,
       actorId: session.user.id,
       actorName: session.user.name,
-      action: 'empresa.alterada',
-      targetType: 'empresa',
+      action: 'configuracao.alterada',
+      targetType: 'configuracao',
       targetId: session.account.id,
       targetName: parsed.data.tradeName,
+      metadata: { detalhe: 'dados da empresa' },
     });
     revalidatePath('/configuracoes');
     return { ok: true };
@@ -1274,10 +1302,11 @@ export async function updateRolePermissionsAction(input: unknown): Promise<Actio
       accountId: session.account.id,
       actorId: session.user.id,
       actorName: session.user.name,
-      action: 'papel.editado',
-      targetType: 'papel',
+      action: 'acesso.alterado',
+      targetType: 'membro',
       targetId: papel.id,
       targetName: parsed.data.roleSlug,
+      metadata: { detalhe: `permissões do papel ${parsed.data.roleSlug}` },
     });
 
     revalidatePath('/configuracoes');
@@ -1367,10 +1396,10 @@ export async function updateMemberOverridesAction(input: unknown): Promise<Actio
       accountId: session.account.id,
       actorId: session.user.id,
       actorName: session.user.name,
-      action: 'membro.permissoes',
+      action: 'acesso.alterado',
       targetType: 'membro',
       targetId: parsed.data.userId,
-      metadata: { add, remove },
+      metadata: { detalhe: 'permissões individuais', add, remove },
     });
 
     revalidatePath('/configuracoes');

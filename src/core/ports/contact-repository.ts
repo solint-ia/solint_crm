@@ -17,7 +17,12 @@ export interface ContactWriter {
   create(accountId: Id, contact: Omit<Contact, 'id' | 'accountId'>): Promise<Contact>;
   update(accountId: Id, contactId: Id, patch: Partial<Contact>): Promise<Contact>;
   merge(accountId: Id, primaryId: Id, duplicateId: Id): Promise<Contact>;
-  delete(accountId: Id, contactId: Id): Promise<void>;
+  /**
+   * Tira o contato da agenda. Devolve o que de fato aconteceu: `apagado` quando
+   * não havia histórico a perder, `arquivado` quando havia conversa e a linha
+   * foi só marcada. Ver a implementação em `PrismaContactRepository`.
+   */
+  delete(accountId: Id, contactId: Id): Promise<'apagado' | 'arquivado'>;
 }
 
 export interface ContactRepository extends ContactReader, ContactWriter {}

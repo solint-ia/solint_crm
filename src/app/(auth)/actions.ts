@@ -6,14 +6,8 @@ import { z } from 'zod';
 import { landingRouteFor } from '@/config/navigation';
 import type { Permission, PermissionOverrides } from '@/core/domain/user';
 import { effectivePermissions } from '@/core/domain/user';
-import { hashPassword, passwordProblem, verifyPassword } from '@/infrastructure/auth/password';
-import { provisionAccount } from '@/infrastructure/provisioning/provision-account';
-import {
-  createSession,
-  destroyCurrentSession,
-  readSession,
-  touchUser,
-} from '@/infrastructure/auth/session';
+import { verifyPassword } from '@/infrastructure/auth/password';
+import { createSession, destroyCurrentSession, touchUser } from '@/infrastructure/auth/session';
 import { prisma, readJson } from '@/infrastructure/db/prisma';
 import { writeAuditLog } from '@/infrastructure/audit/write-audit-log';
 
@@ -76,10 +70,13 @@ export async function loginAction(input: unknown): Promise<AuthActionResult> {
 
   // Em qual workspace abrir. O mais antigo é o padrão razoável; trocar de conta
   // é uma ação depois de entrar, não uma escolha na tela de login.
+  // Contas suspensas ou excluídas ficam de fora da escolha: entrar numa delas
+  // acabaria em `readSession()` devolvendo `null` e no laço de redirecionamento
+  // para o login, sem nunca dizer por quê. Ver a nota de `account.status`.
   // tenant-ok: entre contas por necessidade — no login ainda nao ha conta ativa,
   // e e justamente esta consulta que decide qual sera.
   const membership = await prisma.membership.findFirst({
-    where: { userId: user.id },
+    where: { userId: user.id, account: { status: 'ativa' } },
     orderBy: { createdAt: 'asc' },
   });
 
@@ -119,6 +116,25 @@ export async function loginAction(input: unknown): Promise<AuthActionResult> {
   if (!membership) {
     // Aqui a senha já está certa, então não há mais o que proteger contra
     // enumeração: vale dizer a verdade em vez de repetir "e-mail ou senha".
+    //
+    // As duas verdades são diferentes, e confundi-las manda a pessoa procurar a
+    // pessoa errada: "sem workspace" é assunto do administrador dela;
+    // "suspenso" é assunto de quem administra a plataforma, e o administrador
+    // dela não tem como resolver.
+    // tenant-ok: mesma razao da consulta acima — nao ha conta ativa no login, e
+    // esta pergunta e justamente sobre o estado das contas desta pessoa.
+    const suspenso = await prisma.membership.findFirst({
+      where: { userId: user.id },
+      select: { account: { select: { status: true, suspendedReason: true } } },
+    });
+    if (suspenso && suspenso.account.status !== 'ativa') {
+      return settle(started, {
+        ok: false,
+        error:
+          suspenso.account.suspendedReason?.trim() ||
+          'O acesso desta empresa está suspenso. Fale com o suporte Solint.',
+      });
+    }
     return settle(started, {
       ok: false,
       error: 'Sua conta não está vinculada a nenhum workspace. Fale com o administrador.',
@@ -153,83 +169,33 @@ export async function loginAction(input: unknown): Promise<AuthActionResult> {
   return { ok: true, destino: landingRouteFor(permissions) };
 }
 
+/**
+ * Sair não vira linha de auditoria.
+ *
+ * Era `sessao.logout`, e não respondia pergunta nenhuma: quem tem o login já
+ * registrado não precisa da confirmação de que fechou a aba, e o par
+ * entra/sai dobrava o volume do registro sem dobrar a informação. O que importa
+ * de saída de sessão é a **forçada** — `sessao.encerrada` —, porque essa alguém
+ * fez em outra pessoa.
+ */
 export async function logoutAction(): Promise<never> {
-  const session = await readSession();
-  if (session) {
-    await writeAuditLog({
-      accountId: session.account.id,
-      actorId: session.user.id,
-      actorName: session.user.name,
-      action: 'sessao.logout',
-      targetType: 'sessao',
-      targetId: session.tokenId,
-    });
-  }
   await destroyCurrentSession();
   redirect('/login');
 }
 
-const signupSchema = z.object({
-  name: z.string().trim().min(2, 'Nome muito curto.'),
-  email: z.string().trim().toLowerCase().email('Informe um e-mail válido.'),
-  company: z.string().trim().min(2, 'Informe o nome da empresa.'),
-  password: z.string(),
-});
-
 /**
- * Cadastro: cria a conta, o papel de administrador e o primeiro usuário.
+ * O cadastro público não existe mais.
  *
- * Os três nascem juntos numa transação. Uma conta sem administrador seria
- * inacessível, e um usuário sem papel não teria permissão nenhuma — meio
- * cadastro é pior que nenhum.
+ * `signupAction` criava conta, papel de administrador e usuário para qualquer
+ * um que preenchesse o formulário — o que faz sentido num produto de
+ * autoatendimento e nenhum aqui, onde cada conta é um cliente com contrato. Na
+ * prática era um botão para encher o banco de workspaces vazios, e mais uma
+ * porta de entrada que ninguém revisava.
+ *
+ * Quem cria conta agora é o superadministrador, em `/plataforma/nova`. Ver
+ * `createAccountAction` — mesmo provisionamento, com um dono definido por quem
+ * responde pela plataforma.
  */
-export async function signupAction(input: unknown): Promise<AuthActionResult> {
-  const parsed = signupSchema.safeParse(input);
-  if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
-  }
-
-  const weak = passwordProblem(parsed.data.password);
-  if (weak) return { ok: false, error: weak };
-
-  const taken = await prisma.user.findUnique({
-    where: { email: parsed.data.email },
-    select: { id: true },
-  });
-  if (taken) return { ok: false, error: 'Já existe uma conta com este e-mail.' };
-
-  const accountId = `acc-${Date.now().toString(36)}`;
-  const userId = `user-${Date.now().toString(36)}`;
-  const passwordHash = await hashPassword(parsed.data.password);
-
-  await prisma.$transaction(async (tx) => {
-    // A pessoa primeiro: `provisionAccount` cria o vínculo de administrador, e
-    // um vínculo aponta para um usuário que precisa existir.
-    await tx.user.create({
-      data: {
-        id: userId,
-        name: parsed.data.name,
-        email: parsed.data.email,
-        passwordHash,
-        avatarTone: 'var(--color-brand-deep)',
-      },
-    });
-
-    // O molde é o mesmo que o botão "criar novo workspace" usa. Ver
-    // `infrastructure/provisioning/provision-account.ts`: as cem linhas que
-    // moravam aqui divergiriam da outra cópia na primeira etapa de funil nova.
-    await provisionAccount(tx, {
-      accountId,
-      name: parsed.data.company,
-      ownerUserId: userId,
-    });
-  });
-
-  const meta = await requestMeta();
-  await createSession(userId, accountId, meta);
-
-  return { ok: true };
-}
 
 const recoverSchema = z.object({
   email: z.string().trim().toLowerCase().email('Informe um e-mail válido.'),
