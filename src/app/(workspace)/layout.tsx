@@ -1,5 +1,6 @@
 import { DateFormatProvider } from '@/components/layout/date-format-provider';
 import { NavigationRail } from '@/components/layout/navigation-rail';
+import { PlatformBanner } from '@/components/layout/platform-banner';
 import { ToastProvider } from '@/components/ui/toast';
 import { NAV_ITEMS, reachesNavItem } from '@/config/navigation';
 import { can, canSeeInbox } from '@/core/domain/user';
@@ -102,7 +103,16 @@ export default async function WorkspaceLayout({
       >
         <ToastProvider>
           <DateFormatProvider value={dateFormat}>
-            <div className="flex h-screen w-screen flex-col overflow-hidden bg-app md:flex-row">
+            <div className="flex h-screen w-screen flex-col overflow-hidden bg-app">
+              {/* Acima de tudo, inclusive da rail: o contexto que ela dá vale
+                  para a tela inteira, não para uma área dela. */}
+              {session.platformActor ? (
+                <PlatformBanner
+                  accountName={session.account.name}
+                  actorName={session.platformActor.name}
+                />
+              ) : null}
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
               <NavigationRail
                 items={items}
                 unreadCount={unreadCount}
@@ -122,6 +132,7 @@ export default async function WorkspaceLayout({
                 roleName={role?.name ?? session.user.roleSlug}
               />
               <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
+              </div>
             </div>
           </DateFormatProvider>
         </ToastProvider>

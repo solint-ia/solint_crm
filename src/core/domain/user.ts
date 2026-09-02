@@ -273,6 +273,20 @@ export interface Account {
  */
 export type InboxAccess = 'todas' | readonly Id[];
 
+/**
+ * Quem administra a plataforma, quando a sessão é uma atuação dele.
+ *
+ * É a identidade **real** por trás de uma sessão que, para todo o resto do
+ * sistema, se parece com a de um administrador da conta. Sem guardá-la, a
+ * auditoria atribuiria a ação a alguém da conta que não a praticou, e a tela
+ * não teria como avisar em nome de quem está agindo.
+ */
+export interface PlatformActor {
+  readonly id: Id;
+  readonly name: string;
+  readonly email: string;
+}
+
 /** Sessão do usuário autenticado no contexto de uma conta. */
 export interface Session {
   /** `jti` do acesso atual, usado para trocar workspace e identificar esta sessão. */
@@ -282,7 +296,27 @@ export interface Session {
   readonly permissions: readonly Permission[];
   readonly availableAccounts: readonly Account[];
   readonly inboxAccess: InboxAccess;
+  /**
+   * Presente **só** quando o superadministrador está operando dentro desta
+   * conta. Ausente é o caso normal, e é o que quase todo código pode assumir.
+   */
+  readonly platformActor?: PlatformActor;
 }
+
+/**
+ * O que o superadministrador pode dentro de uma conta: tudo.
+ *
+ * A lista inteira, e não um papel de sistema com permissões escolhidas a dedo.
+ * Um papel seria um segundo lugar para manter sincronizado: toda permissão nova
+ * teria que ser lembrada aqui também, e o dia em que alguém esquecesse, quem
+ * administra a plataforma descobriria pela tela de acesso negado.
+ *
+ * Inclui as duas que nenhum papel oferece como caixinha —
+ * `config.equipe.papeis:escrever`, que é conceder tudo, e
+ * `config.caixas:excluir` — porque para esta identidade elas são justamente o
+ * ponto.
+ */
+export const SUPERADMIN_PERMISSIONS: readonly Permission[] = PERMISSIONS;
 
 /** Autorização é decidida sempre aqui — nunca espalhada por componentes. */
 export const can = (session: Session, permission: Permission): boolean =>

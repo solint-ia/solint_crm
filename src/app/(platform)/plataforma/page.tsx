@@ -3,6 +3,7 @@ import Link from 'next/link';
 import type { Route } from 'next';
 import { ChevronRight, Search } from 'lucide-react';
 import { prisma } from '@/infrastructure/db/prisma';
+import { EnterAccountButton } from '@/features/plataforma/components/enter-account-button';
 
 export const metadata: Metadata = { title: 'Contas' };
 
@@ -44,7 +45,7 @@ export default async function PlataformaPage({
       <div>
         <h1 className="font-display text-xl font-bold text-ink">Contas</h1>
         <p className="text-xs text-muted">
-          Escolha uma conta para administrar os webhooks e tokens de API dela.
+          Abra a ficha para administrar integrações, ou entre na conta para operar o CRM dela.
         </p>
       </div>
 
@@ -69,14 +70,19 @@ export default async function PlataformaPage({
       ) : (
         <ul className="flex flex-col gap-2">
           {contas.map((conta) => (
-            <li key={conta.id}>
+            <li
+              key={conta.id}
+              className="flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-surface p-4 shadow-2xs"
+            >
+              {/* Dois destinos de peso diferente, e por isso separados: a ficha
+                  só lê, entrar na conta passa a agir nos dados do cliente. */}
               <Link
                 href={`/plataforma/${conta.id}` as Route}
-                className="flex items-center gap-3 rounded-2xl border border-line bg-surface p-4 shadow-2xs transition-colors hover:border-brand/40 hover:bg-surface-2"
+                className="group flex min-w-0 flex-1 items-center gap-3"
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="truncate font-display text-sm font-bold text-ink">
+                    <span className="truncate font-display text-sm font-bold text-ink group-hover:text-brand">
                       {conta.name}
                     </span>
                     <span className="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-semibold text-muted uppercase">
@@ -91,6 +97,7 @@ export default async function PlataformaPage({
                 </div>
                 <ChevronRight className="size-4 shrink-0 text-dim" />
               </Link>
+              <EnterAccountButton accountId={conta.id} accountName={conta.name} />
             </li>
           ))}
         </ul>

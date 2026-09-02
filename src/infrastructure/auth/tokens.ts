@@ -24,6 +24,20 @@ export interface SessionClaims {
   readonly act: string;
   /** Identificador do token, conferido contra a tabela de sessões. */
   readonly jti: string;
+  /**
+   * Atuação de plataforma: esta sessão é o superadministrador operando dentro
+   * da conta `act`, sem vínculo com ela.
+   *
+   * **A reivindicação diz em qual conta, nunca se pode.** Ela é só o endereço;
+   * a autoridade vem de `readSession()` reler `User.isSuperAdmin` do banco a
+   * cada requisição. Um token forjado com este campo preenchido é inútil contra
+   * um usuário sem a marca, e tirar a marca corta o acesso no mesmo instante,
+   * sem esperar a sessão expirar.
+   *
+   * Opcional para que todo token já emitido continue valendo: campo ausente
+   * significa sessão comum, que é o que eles são.
+   */
+  readonly sa?: true;
 }
 
 const encoder = new TextEncoder();
@@ -49,7 +63,7 @@ const secretKey = (): Uint8Array => {
 };
 
 export const signSessionToken = async (claims: SessionClaims): Promise<string> =>
-  new SignJWT({ act: claims.act })
+  new SignJWT({ act: claims.act, ...(claims.sa ? { sa: true } : {}) })
     .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
     .setSubject(claims.sub)
     .setJti(claims.jti)
@@ -68,11 +82,14 @@ export const verifySessionToken = async (token: string): Promise<SessionClaims |
       algorithms: ['HS256'],
     });
 
-    const { sub, jti, act } = payload;
+    const { sub, jti, act, sa } = payload;
     if (typeof sub !== 'string' || typeof jti !== 'string' || typeof act !== 'string') {
       return null;
     }
-    return { sub, jti, act };
+    // Só o literal `true` conta. Qualquer outro valor no lugar (uma string, um
+    // número, um objeto) é token adulterado, e o tratamento é ignorá-lo: a
+    // sessão vira comum, que é o modo sem privilégio.
+    return { sub, jti, act, ...(sa === true ? { sa: true as const } : {}) };
   } catch {
     // Assinatura inválida, expirado, emissor errado: tudo é "não autenticado".
     return null;

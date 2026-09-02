@@ -11,7 +11,12 @@ import type {
 } from '@/core/domain/user';
 import type { ActiveSession, CompanyProfile } from '@/core/domain/settings';
 import type { Prisma } from '@/generated/prisma';
-import { effectivePermissions } from '@/core/domain/user';
+import {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  effectivePermissions,
+  SUPERADMIN_PERMISSIONS,
+  type NotificationPreferences,
+} from '@/core/domain/user';
 import { prisma, readJson } from '@/infrastructure/db/prisma';
 import { userRow } from '@/infrastructure/repositories/prisma/mappers';
 import {
@@ -19,6 +24,7 @@ import {
   SESSION_TTL_SECONDS,
   signSessionToken,
   verifySessionToken,
+  type SessionClaims,
 } from './tokens';
 
 const cookieOptions = {
@@ -86,6 +92,46 @@ export const reissueSessionToken = async (
   const token = await signSessionToken({ sub: userId, act: accountId, jti: tokenId });
   const jar = await cookies();
   jar.set(SESSION_COOKIE, token, cookieOptions);
+};
+
+/**
+ * Põe o superadministrador dentro de uma conta, ou o traz de volta.
+ *
+ * `accountId` nomeia a conta a operar; `null` encerra a atuação e devolve a
+ * sessão ao estado comum, que para quem administra a plataforma é uma sessão
+ * sem conta nenhuma — ele volta para `/plataforma`.
+ *
+ * **A autorização é conferida aqui, não em quem chama.** Reassinar o cookie é
+ * exatamente o poder que esta fase concede, e deixar a checagem do lado de fora
+ * significaria que qualquer caminho novo até esta função precisaria lembrar de
+ * repeti-la. O `jti` é preservado pelo mesmo motivo de `reissueSessionToken`: é
+ * o mesmo navegador, e a revogação continua valendo para o acesso da pessoa.
+ *
+ * Devolve `false` sem tocar no cookie quando não há sessão, o token não vale, ou
+ * o usuário não é (ou deixou de ser) superadministrador.
+ */
+export const setPlatformActuation = async (accountId: string | null): Promise<boolean> => {
+  const jar = await cookies();
+  const token = jar.get(SESSION_COOKIE)?.value;
+  if (!token) return false;
+
+  const claims = await verifySessionToken(token);
+  if (!claims) return false;
+
+  const user = await prisma.user.findUnique({
+    where: { id: claims.sub },
+    select: { isSuperAdmin: true },
+  });
+  if (!user?.isSuperAdmin) return false;
+
+  const novo = await signSessionToken({
+    sub: claims.sub,
+    jti: claims.jti,
+    act: accountId ?? '',
+    ...(accountId ? { sa: true as const } : {}),
+  });
+  jar.set(SESSION_COOKIE, novo, cookieOptions);
+  return true;
 };
 
 /** Encerra a sessão atual: revoga no banco e apaga o cookie. */
@@ -222,6 +268,87 @@ const toDomainAccount = (row: {
  * Dentro da função, o que não depende de nada vai junto (ver abaixo): eram
  * quatro idas ao banco em série, hoje são duas.
  */
+/**
+ * A sessão do superadministrador operando dentro de uma conta.
+ *
+ * O caminho comum de `readSession()` exige `Membership` e devolve `null` sem
+ * ele. Quem administra a plataforma não é membro de conta nenhuma, e criar um
+ * vínculo de mentira para ele resolveria o problema sujando o dado do
+ * inquilino: apareceria na lista de membros do cliente, viraria destinatário de
+ * atribuição e entraria na contagem de assentos do plano.
+ *
+ * **Três guardas, e as três precisam passar.** A sessão não pode estar revogada
+ * nem expirada; o usuário precisa existir e ainda ter `isSuperAdmin`; e a conta
+ * alvo precisa existir. Reler a marca aqui, e não confiar no token, é o que faz
+ * a revogação valer no mesmo instante — desligar `isSuperAdmin` no banco
+ * derruba a atuação na requisição seguinte.
+ */
+const platformSession = async (claims: SessionClaims): Promise<Session | null> => {
+  const [authSession, user, account] = await Promise.all([
+    prisma.authSession.findUnique({ where: { tokenId: claims.jti } }),
+    prisma.user.findUnique({ where: { id: claims.sub } }),
+    // tenant-ok: a atuação de plataforma escolhe a conta de propósito — é
+    // exatamente o que ela existe para fazer. Quem pode escolher é decidido
+    // logo abaixo, por `isSuperAdmin`. Ver REGRAS-GLOBAIS.md §4.4.
+    prisma.account.findUnique({
+      where: { id: claims.act },
+      include: { settings: { select: { company: true } } },
+    }),
+  ]);
+
+  if (!authSession || authSession.revokedAt || authSession.expiresAt.getTime() < Date.now()) {
+    return null;
+  }
+  if (!user?.isSuperAdmin || !account) return null;
+
+  const domainAccount = toDomainAccount(account);
+
+  return {
+    tokenId: claims.jti,
+    /**
+     * O `User` do domínio exige `accountId` e `roleSlug`, que vêm do vínculo.
+     * Sem vínculo, os dois são sintetizados: a conta é a que ele está operando,
+     * e o papel é `administrador` porque é o que descreve o que ele pode fazer
+     * ali — toda tela que decide por papel vai ler exatamente isso.
+     */
+    user: {
+      id: user.id,
+      accountId: domainAccount.id,
+      name: user.name,
+      email: user.email,
+      roleSlug: 'administrador',
+      avatarTone: user.avatarTone,
+      ...(user.avatarUrl ? { avatarUrl: user.avatarUrl } : {}),
+      availability: 'disponivel',
+      teams: [],
+      signatureEnabled: user.signatureEnabled,
+      notifications: {
+        ...DEFAULT_NOTIFICATION_PREFERENCES,
+        ...readJson<Partial<NotificationPreferences>>(user.notificationPrefs, {}),
+      },
+      twoFactorEnabled: user.twoFactorEnabled,
+      ...(user.signature ? { signature: user.signature } : {}),
+      ...(user.lastActiveAt ? { lastActiveAt: user.lastActiveAt } : {}),
+    },
+    account: domainAccount,
+    permissions: SUPERADMIN_PERMISSIONS,
+    /**
+     * Uma opção só no seletor, e não todas as contas do sistema.
+     *
+     * O seletor de workspace é do usuário comum e troca entre workspaces em que
+     * ele atende. Enchê-lo com as contas de todos os clientes transformaria um
+     * menu de duas linhas numa lista de centenas, e daria dois caminhos
+     * diferentes para a mesma coisa. Quem administra a plataforma navega pelo
+     * console, que é onde a escolha de conta tem contexto.
+     */
+    availableAccounts: [domainAccount],
+    // A restrição por caixa é organizacional, e esta identidade está fora da
+    // organização: não há equipe que a limite.
+    inboxAccess: 'todas',
+    platformActor: { id: user.id, name: user.name, email: user.email },
+  };
+};
+
 export const readSession = cache(async (): Promise<Session | null> => {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
@@ -229,6 +356,10 @@ export const readSession = cache(async (): Promise<Session | null> => {
 
   const claims = await verifySessionToken(token);
   if (!claims) return null;
+
+  // Dois caminhos, e só a reivindicação do token separa os dois. O de
+  // plataforma dispensa o vínculo; o comum o exige. Ver `platformSession`.
+  if (claims.sa) return platformSession(claims);
 
   // As três consultas partem do mesmo token e não dependem entre si: a linha de
   // revogação vem de `jti`, o vínculo de `sub`+`act`, e a lista de workspaces de
