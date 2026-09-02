@@ -157,6 +157,43 @@ export interface ImportPartner {
   readonly phones: readonly ImportPartnerPhone[];
 }
 
+/**
+ * Da melhor para a pior classificação encontrada no arquivo de prospecção.
+ *
+ * A ordem é explícita porque uma comparação alfabética colocaria `A` antes de
+ * `A0` e `D2` antes de `D`. Valores desconhecidos continuam sendo preservados,
+ * mas nunca vencem uma classificação conhecida.
+ */
+export const CONTACT_CLASSIFICATION_ORDER = [
+  'A0',
+  'A1',
+  'A2',
+  'A',
+  'B',
+  'C',
+  'C2',
+  'D',
+  'D1',
+  'D2',
+] as const;
+
+const classificationRank = (classification: string): number => {
+  const normalized = classification.trim().toUpperCase();
+  const rank = CONTACT_CLASSIFICATION_ORDER.indexOf(
+    normalized as (typeof CONTACT_CLASSIFICATION_ORDER)[number],
+  );
+  return rank === -1 ? Number.MAX_SAFE_INTEGER : rank;
+};
+
+/** Retorna a classificação mais alta, ignorando células vazias. */
+export const highestClassification = (classifications: readonly string[]): string => {
+  const populated = classifications.map((value) => value.trim()).filter(Boolean);
+  return populated.reduce<string>((best, current) => {
+    if (!best) return current;
+    return classificationRank(current) < classificationRank(best) ? current : best;
+  }, '');
+};
+
 export interface ImportContact {
   readonly name: string;
   /** Todos os números da empresa, em E.164, sem repetir. O primeiro vira `phone`. */
@@ -175,7 +212,7 @@ export interface ImportContact {
 
 export interface ImportPreparation {
   readonly contacts: readonly ImportContact[];
-  /** Telefones de sócio descartados porque `WhatsApp` não era exatamente `Sim`. */
+  /** Linhas descartadas porque `WhatsApp` não era exatamente `Sim`. */
   readonly semWhatsapp: number;
   /** Linhas descartadas por não ter nome ou por telefone irrecuperável. */
   readonly invalidas: number;
@@ -230,16 +267,17 @@ export const prepareImport = (rows: readonly ImportRow[]): ImportPreparation => 
   let agrupadas = 0;
 
   for (const row of rows) {
+    // A regra vale para a linha inteira. Antes, apenas o telefone do sócio era
+    // removido e o telefone da empresa mantinha a empresa na importação — por
+    // isso linhas marcadas como "Não" apareciam na lista final.
+    if (row.whatsappFlag !== 'Sim') {
+      semWhatsapp += 1;
+      continue;
+    }
+
     const empresa = row.company.trim().replace(/\s+/g, ' ');
     const telefoneEmpresa = normalizeImportedPhone(row.companyPhone);
-
-    // Regra deliberadamente literal: `sim`, `SIM`, `1` e qualquer outro valor
-    // não autorizam importar o telefone pessoal do sócio. Um fixo marcado como
-    // "Não" não vira destinatário — e mostrá-lo na lista de escolha seria
-    // oferecer um número que não recebe mensagem.
-    const telefoneSocio =
-      row.whatsappFlag === 'Sim' ? normalizeImportedPhone(row.partnerPhone) : null;
-    if (row.partnerPhone.trim() && row.whatsappFlag !== 'Sim') semWhatsapp += 1;
+    const telefoneSocio = normalizeImportedPhone(row.partnerPhone);
 
     const numeros = [telefoneEmpresa, telefoneSocio].filter(
       (numero): numero is string => numero !== null,
@@ -309,11 +347,14 @@ export const prepareImport = (rows: readonly ImportRow[]): ImportPreparation => 
       phones: socio.telefones,
     }));
 
-    // O primeiro telefone de sócio da planilha é o que a coluna da tabela
-    // mostra. Não há como saber qual é o preferido da pessoa, e a ordem da
-    // planilha é a única informação disponível — os outros ficam em `partners`,
-    // à vista de quem for escolher.
-    const principal = partners[0]?.phones[0];
+    // O telefone principal do sócio acompanha a melhor classificação da
+    // empresa. Isso mantém as duas colunas coerentes na visão principal e não
+    // deixa a primeira linha do CSV mascarar um A0 encontrado depois.
+    const telefonesSocios = partners.flatMap((partner) => partner.phones);
+    const principal = [...telefonesSocios].sort(
+      (left, right) =>
+        classificationRank(left.classification) - classificationRank(right.classification),
+    )[0];
 
     contacts.push({
       name: entrada.empresa,
@@ -323,7 +364,10 @@ export const prepareImport = (rows: readonly ImportRow[]): ImportPreparation => 
       companyAddress: entrada.endereco,
       companyPhone: entrada.telefoneEmpresa,
       partnerPhone: principal?.phone ?? '',
-      classification: principal?.classification ?? '',
+      classification:
+        highestClassification(telefonesSocios.map((phone) => phone.classification)) ||
+        principal?.classification ||
+        '',
       partners,
     });
 

@@ -275,13 +275,7 @@ export function ImportCsvModal({
     reader.readAsText(file);
   };
 
-  /**
-   * O filtro por WhatsApp só existe quando há uma coluna dizendo isso.
-   *
-   * Numa planilha comum, sem essa coluna, filtrar descartaria tudo — o padrão
-   * precisa ser "importa tudo", e o filtro é o caso especial que a presença da
-   * coluna liga.
-   */
+  /** A coluna é obrigatória: só uma confirmação literal autoriza a linha. */
   const temColunaWhatsapp = Object.values(mapping).includes('whatsappFlag');
 
   /**
@@ -357,6 +351,10 @@ export function ImportCsvModal({
       setErrorMsg('Informe um nome para a lista de importação.');
       return;
     }
+    if (!temColunaWhatsapp) {
+      setErrorMsg('A coluna WhatsApp é obrigatória e precisa estar presente no CSV.');
+      return;
+    }
     if (!hasCompany || !hasPhone) {
       setErrorMsg('É necessário mapear Empresa e ao menos uma coluna de telefone.');
       return;
@@ -391,7 +389,7 @@ export function ImportCsvModal({
           if (targetField === 'companyAddress') companyAddress = val;
           if (targetField === 'companyPhone') companyPhone = val;
           if (targetField === 'partnerName') partnerName = val;
-        if (targetField === 'partnerPhone') partnerPhone = val;
+          if (targetField === 'partnerPhone') partnerPhone = val;
           if (targetField === 'classification') classification = val;
           if (targetField === 'whatsappFlag') whatsappFlag = val;
         });
@@ -416,7 +414,10 @@ export function ImportCsvModal({
         companyAddress: contato.companyAddress,
         companyPhone: contato.companyPhone,
         partnerPhone: contato.partnerPhone,
-        whatsappFlag: contato.partnerPhone ? 'Sim' : '',
+        // `prepareImport` só produz contatos a partir de linhas cujo valor é
+        // literalmente "Sim". Mantemos a prova no payload para a validação do
+        // servidor não depender apenas do código executado no navegador.
+        whatsappFlag: 'Sim' as const,
         classification: contato.classification,
         // A estrutura de sócios vai inteira. `partnerPhone` acima é só o
         // primeiro deles, que a coluna da tabela mostra — quem precisa saber de
@@ -426,9 +427,7 @@ export function ImportCsvModal({
 
       if (contactsToImport.length === 0) {
         setErrorMsg(
-          preparo.semWhatsapp > 0
-            ? `Nenhum contato com empresa e telefone válidos foi encontrado.`
-            : 'Nenhum contato com empresa e telefone válidos foi encontrado.',
+          'Nenhuma linha com WhatsApp exatamente “Sim” e telefone válido foi encontrada.',
         );
         setLoading(false);
         return;
@@ -612,11 +611,13 @@ export function ImportCsvModal({
               <ul className="mt-1.5 flex flex-col gap-0.5">
                 {temColunaWhatsapp ? (
                   <li>
-                    <strong className="text-ink">{previa.semWhatsapp}</strong> telefone(s) de sócio
-                    descartado(s) porque WhatsApp não era exatamente “Sim”.
+                    <strong className="text-ink">{previa.semWhatsapp}</strong> linha(s)
+                    descartada(s) porque WhatsApp não era exatamente “Sim”.
                   </li>
                 ) : (
-                  <li>Sem coluna WhatsApp: telefones de sócio não serão armazenados.</li>
+                  <li className="text-red-600 dark:text-red-300">
+                    A coluna WhatsApp é obrigatória para esta importação.
+                  </li>
                 )}
                 {previa.agrupadas > 0 ? (
                   <li>
@@ -652,7 +653,9 @@ export function ImportCsvModal({
                       <span key={socio.name}>
                         {socio.name}:{' '}
                         {socio.phones
-                          .map((t) => (t.classification ? `${t.phone} (${t.classification})` : t.phone))
+                          .map((t) =>
+                            t.classification ? `${t.phone} (${t.classification})` : t.phone,
+                          )
                           .join(', ')}
                       </span>
                     ))}
@@ -707,8 +710,8 @@ export function ImportCsvModal({
             <div className="rounded-xl border border-line-soft bg-surface-2/40 p-3 text-[11px]">
               {colunaWhatsapp ? (
                 <p className="text-muted">
-                  <strong className="text-ink">{colunaWhatsapp}</strong> é usada como filtro: o
-                  telefone do sócio só entra nas linhas marcadas “Sim”.
+                  <strong className="text-ink">{colunaWhatsapp}</strong> é usada como filtro: a
+                  linha inteira só entra quando o valor é exatamente “Sim”.
                 </p>
               ) : null}
 

@@ -5,7 +5,11 @@ import { CHANNELS } from '@/core/domain/channel';
 import { can } from '@/core/domain/user';
 import { container } from '@/infrastructure/container';
 import { prisma, asJson } from '@/infrastructure/db/prisma';
-import { foldText, normalizeImportedPhone } from '@/core/domain/contact-import';
+import {
+  foldText,
+  highestClassification,
+  normalizeImportedPhone,
+} from '@/core/domain/contact-import';
 import type { ContactPartner, ContactPartnerPhone } from '@/core/domain/contact';
 import { postgresPubSub, CHANNELS as DB_CHANNELS } from '@/infrastructure/db/postgres-pubsub';
 import { WA_ENGINE } from '@/infrastructure/whatsapp/channel';
@@ -218,7 +222,9 @@ const importContactsCsvSchema = z.object({
         companyAddress: z.string().trim().max(500).optional().or(z.literal('')),
         companyPhone: z.string().trim().max(30).optional().or(z.literal('')),
         partnerPhone: z.string().trim().max(30).optional().or(z.literal('')),
-        whatsappFlag: z.string().trim().max(20).optional().or(z.literal('')),
+        // Defesa em profundidade: a tela já descarta essas linhas, mas a
+        // Server Action também recusa payloads que tentem contornar a regra.
+        whatsappFlag: z.literal('Sim'),
         classification: z.string().trim().max(120).optional().or(z.literal('')),
         /**
          * Os sócios e os telefones de cada um.
@@ -270,8 +276,8 @@ const readSocios = (bruto: unknown): readonly ContactPartner[] => {
  * números logo acima, um nível abaixo.
  *
  * A chave é o nome dobrado, e o telefone é o desempate dentro do sócio: um
- * número que já estava lá não é duplicado, e a classificação que chega só
- * preenche o que estava vazio, sem sobrescrever uma anterior.
+ * número que já estava lá não é duplicado. Se a classificação mudou, fica a
+ * mais alta conhecida para esse mesmo telefone.
  */
 const fundirSocios = (
   atuais: readonly ContactPartner[],
@@ -284,13 +290,13 @@ const fundirSocios = (
     const entrada = porNome.get(chave) ?? { name: socio.name, phones: new Map() };
     for (const telefone of socio.phones) {
       const existente = entrada.phones.get(telefone.phone);
-      // A classificação que chega só preenche o que estava vazio: uma
-      // reimportação não sobrescreve o que já se sabia sobre o número.
+      const classificacaoMaisAlta = highestClassification([
+        existente?.classification ?? '',
+        telefone.classification ?? '',
+      ]);
       entrada.phones.set(telefone.phone, {
         phone: telefone.phone,
-        ...(existente?.classification || telefone.classification
-          ? { classification: existente?.classification || telefone.classification }
-          : {}),
+        ...(classificacaoMaisAlta ? { classification: classificacaoMaisAlta } : {}),
       });
     }
     porNome.set(chave, entrada);
@@ -414,6 +420,10 @@ export async function importContactsCsvAction(
         }))
         .filter((socio) => socio.phones.length > 0);
 
+      const classificacaoDosSocios = highestClassification(
+        socios.flatMap((socio) => socio.phones.map((telefone) => telefone.classification ?? '')),
+      );
+
       /**
        * **Todos** os números da empresa, e não só os dois primeiros.
        *
@@ -479,6 +489,22 @@ export async function importContactsCsvAction(
           }
         }
 
+        const sociosFundidos = fundirSocios(readSocios(existing.partners), socios);
+        const classificacaoMaisAlta = highestClassification([
+          existing.classification ?? '',
+          item.classification ?? '',
+          classificacaoDosSocios,
+          ...sociosFundidos.flatMap((socio) =>
+            socio.phones.map((telefone) => telefone.classification ?? ''),
+          ),
+        ]);
+        const telefonesSociosFundidos = sociosFundidos.flatMap((socio) => socio.phones);
+        const telefoneDaClassificacaoMaisAlta = telefonesSociosFundidos.find(
+          (telefone) =>
+            telefone.classification?.trim().toUpperCase() ===
+            classificacaoMaisAlta.trim().toUpperCase(),
+        )?.phone;
+
         await prisma.contact.update({
           where: { id: existing.id, accountId },
           data: {
@@ -503,20 +529,28 @@ export async function importContactsCsvAction(
              * destruir o que já se sabia — e o comentário logo acima já diz que
              * nesta importação os números se somam, não se substituem.
              */
-            partnerPhone: telefoneSocio ?? existing.partnerPhone ?? undefined,
-            classification: item.classification || existing.classification || undefined,
+            partnerPhone:
+              telefoneDaClassificacaoMaisAlta ??
+              existing.partnerPhone ??
+              telefoneSocio ??
+              undefined,
+            classification: classificacaoMaisAlta || undefined,
             // Mesma regra dos números: a lista nova se soma à conhecida em vez
             // de substituí-la. Uma planilha que só traz um dos sócios não pode
             // apagar os outros, que foram importados corretamente antes.
-            ...(socios.length > 0
-              ? { partners: asJson(fundirSocios(readSocios(existing.partners), socios)) }
-              : {}),
+            ...(socios.length > 0 ? { partners: asJson(sociosFundidos) } : {}),
             origin: 'csv',
           },
         });
         contactId = existing.id;
         updatedCount += 1;
       } else {
+        const telefonesDosSocios = socios.flatMap((socio) => socio.phones);
+        const telefoneDaClassificacaoMaisAlta = telefonesDosSocios.find(
+          (telefone) =>
+            telefone.classification?.trim().toUpperCase() ===
+            classificacaoDosSocios.trim().toUpperCase(),
+        )?.phone;
         contactId = `ct-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
         await prisma.contact.create({
           data: {
@@ -529,8 +563,8 @@ export async function importContactsCsvAction(
             cnpj: item.cnpj || null,
             companyAddress: item.companyAddress || null,
             companyPhone: telefoneEmpresa,
-            partnerPhone: telefoneSocio,
-            classification: item.classification || null,
+            partnerPhone: telefoneDaClassificacaoMaisAlta ?? telefoneSocio,
+            classification: classificacaoDosSocios || item.classification || null,
             partners: socios.length > 0 ? asJson(socios) : undefined,
             origin: 'csv',
             channel: 'whatsapp',
