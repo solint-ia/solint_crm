@@ -110,7 +110,6 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
       };
     }
 
-
     return {
       ...(inboxId ? { inboxId } : {}),
       status: (conn?.status as WhatsAppStatusPayload['status']) ?? 'desconectado',
@@ -292,7 +291,11 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
   async sendReaction(
     context: DispatchContext,
     target: DispatchTarget,
-    message: { readonly externalId: string; readonly fromMe: boolean; readonly participant?: string },
+    message: {
+      readonly externalId: string;
+      readonly fromMe: boolean;
+      readonly participant?: string;
+    },
     emoji: string,
   ): Promise<DispatchResult> {
     // Raia de envio: reagir é uma escrita no mesmo chat, e sair antes da

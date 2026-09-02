@@ -4,10 +4,7 @@ import { prisma } from '@/infrastructure/db/prisma';
 
 export const dynamic = 'force-dynamic';
 
-export async function POST(
-  _request: Request,
-  props: { params: Promise<{ inboxId: string }> },
-) {
+export async function POST(_request: Request, props: { params: Promise<{ inboxId: string }> }) {
   try {
     const { inboxId } = await props.params;
     const session = await container.session.getSession();
@@ -48,14 +45,10 @@ export async function POST(
 
     const lockVivo = Boolean(
       inbox.waConnection?.lockOwner &&
-        inbox.waConnection.lockExpiresAt &&
-        inbox.waConnection.lockExpiresAt > new Date(),
+      inbox.waConnection.lockExpiresAt &&
+      inbox.waConnection.lockExpiresAt > new Date(),
     );
-    if (
-      inbox.waConnection?.credsCipher &&
-      inbox.waConnection.status === 'conectado' &&
-      lockVivo
-    ) {
+    if (inbox.waConnection?.credsCipher && inbox.waConnection.status === 'conectado' && lockVivo) {
       return NextResponse.json({ ok: true, status: 'conectado', reusedSession: true });
     }
 

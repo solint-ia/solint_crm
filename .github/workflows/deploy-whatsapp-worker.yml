@@ -1,0 +1,61 @@
+name: Deploy WhatsApp worker
+
+# O site pode continuar com deploy automático próprio. Este workflow só toca
+# no worker quando um arquivo que faz parte do processo persistente muda.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/worker.mts'
+      - 'src/core/**'
+      - 'src/infrastructure/automations/**'
+      - 'src/infrastructure/conversations/**'
+      - 'src/infrastructure/db/**'
+      - 'src/infrastructure/notifications/**'
+      - 'src/infrastructure/scheduling/**'
+      - 'src/infrastructure/storage/**'
+      - 'src/infrastructure/webhooks/**'
+      - 'src/infrastructure/whatsapp/**'
+      - 'src/lib/datetime.ts'
+      - 'prisma/**'
+      - 'scripts/build-worker.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - '.github/workflows/deploy-whatsapp-worker.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-whatsapp-worker
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Validar build do worker
+        run: npm run worker:build
+
+      - name: Solicitar deploy no Render
+        env:
+          DEPLOY_HOOK_URL: ${{ secrets.RENDER_WHATSAPP_WORKER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$DEPLOY_HOOK_URL" ]; then
+            echo "::error::Cadastre o secret RENDER_WHATSAPP_WORKER_DEPLOY_HOOK no GitHub."
+            exit 1
+          fi
+          curl --fail --silent --show-error --retry 3 --request POST "$DEPLOY_HOOK_URL"

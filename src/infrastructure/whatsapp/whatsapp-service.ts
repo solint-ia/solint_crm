@@ -140,7 +140,7 @@ export class WhatsAppService {
         if (saved.length > 1) {
           console.warn(
             `[WhatsAppService] ${saved.length} conexoes salvas e este servico atende uma so. ` +
-            'Restaurando a mais recente; para atender todas, use o worker.',
+              'Restaurando a mais recente; para atender todas, use o worker.',
           );
         }
 
@@ -153,10 +153,10 @@ export class WhatsAppService {
             this.owner?.accountId === accountId
               ? this.owner
               : {
-                userId: conn.pairedByUserId ?? 'system',
-                userName: conn.profileName ?? 'Administrador',
-                accountId,
-              };
+                  userId: conn.pairedByUserId ?? 'system',
+                  userName: conn.profileName ?? 'Administrador',
+                  accountId,
+                };
           await this.startSession({ owner: this.owner, resetAttempts: false });
         }
       } catch (err) {
@@ -350,7 +350,6 @@ export class WhatsAppService {
         defaultQueryTimeoutMs: 60000,
         keepAliveIntervalMs: 25000,
         qrTimeout: 60000,
-
       });
 
       this.socket = sock;
@@ -368,9 +367,10 @@ export class WhatsAppService {
           for (const contact of history.contacts) this.rememberContact(contact);
           if (history.contacts.length > 0) this.hasAddressBookSnapshot = true;
         }
-        console.log('[WhatsAppService] Histórico antigo ignorado (processando apenas novas mensagens privadas 1x1).');
+        console.log(
+          '[WhatsAppService] Histórico antigo ignorado (processando apenas novas mensagens privadas 1x1).',
+        );
       });
-
 
       sock.ev.on('messages.upsert', ({ messages, type }) => {
         if (type !== 'notify' && type !== 'append') return;
@@ -580,7 +580,11 @@ export class WhatsAppService {
         this.reconnectTimer = setTimeout(() => {
           this.startSession({ resetAttempts: false }).catch(console.error);
         }, 3000);
-      } else if (statusCode === 428 || statusCode === 515 || statusCode === DisconnectReason.restartRequired) {
+      } else if (
+        statusCode === 428 ||
+        statusCode === 515 ||
+        statusCode === DisconnectReason.restartRequired
+      ) {
         // Handshake transitório do WebSocket WhatsApp: reconecta automaticamente para obter o QR
         this.updateStatus({ status: 'gerando_qr' });
         this.reconnectTimer = setTimeout(() => {
@@ -621,7 +625,11 @@ export class WhatsAppService {
    */
   private watchPresence(
     jid: string,
-    scope: { readonly accountId: string; readonly inboxId: string; readonly conversationId: string },
+    scope: {
+      readonly accountId: string;
+      readonly inboxId: string;
+      readonly conversationId: string;
+    },
   ): void {
     const novo = !this.presenceByJid.has(jid);
     this.presenceByJid.set(jid, scope);
@@ -703,8 +711,7 @@ export class WhatsAppService {
     // informação que `composing`: o contato está respondendo agora.
     const typing = Object.values(presences).some(
       (presence) =>
-        presence?.lastKnownPresence === 'composing' ||
-        presence?.lastKnownPresence === 'recording',
+        presence?.lastKnownPresence === 'composing' || presence?.lastKnownPresence === 'recording',
     );
 
     if (this.typingByConversation.get(scope.conversationId) === typing) return;
@@ -816,7 +823,14 @@ export class WhatsAppService {
     // A midia do WhatsApp e criptografada: sem decifrar e gravar localmente,
     // o navegador não tem como exibir foto, figurinha, GIF ou áudio.
     const content = decoded.media
-      ? await this.materializeMedia(accountId, inboxId, msg, messageId, decoded.media, decoded.content)
+      ? await this.materializeMedia(
+          accountId,
+          inboxId,
+          msg,
+          messageId,
+          decoded.media,
+          decoded.content,
+        )
       : decoded.content;
 
     const appMessage: Message = {
@@ -847,7 +861,12 @@ export class WhatsAppService {
       at,
       fromMe,
       // Ver a nota equivalente em `worker/session.ts`.
-      ...(fromMe ? {} : (() => { const a = adContextOf(msg); return a ? { anuncio: a } : {}; })()),
+      ...(fromMe
+        ? {}
+        : (() => {
+            const a = adContextOf(msg);
+            return a ? { anuncio: a } : {};
+          })()),
     });
 
     console.log(`[WhatsAppService] Conversa ${chat.conversationId} persistida com sucesso!`);
@@ -940,15 +959,10 @@ export class WhatsAppService {
       };
     }
 
-    const inboundName = fromMe
-      ? undefined
-      : msg.pushName?.trim() || msg.verifiedBizName?.trim();
+    const inboundName = fromMe ? undefined : msg.pushName?.trim() || msg.verifiedBizName?.trim();
     const storedName = this.contactsStore.get(jidNormalizedUser(chat.jid))?.name?.trim();
     const name =
-      inboundName ||
-      storedName ||
-      existing?.name ||
-      fallbackPersonName(chat.phone, chat.jid);
+      inboundName || storedName || existing?.name || fallbackPersonName(chat.phone, chat.jid);
 
     return {
       ...base,
@@ -1003,7 +1017,14 @@ export class WhatsAppService {
    */
   private rememberContact(update: Partial<WAContact>): void {
     const jid = update.phoneNumber ?? update.id;
-    if (!jid || isJidGroup(jid) || jid.endsWith('@g.us') || jid.includes('@broadcast') || jid.includes('@newsletter')) return;
+    if (
+      !jid ||
+      isJidGroup(jid) ||
+      jid.endsWith('@g.us') ||
+      jid.includes('@broadcast') ||
+      jid.includes('@newsletter')
+    )
+      return;
 
     const normalized = jidNormalizedUser(jid);
     const existingStored = this.contactsStore.get(normalized);
@@ -1038,8 +1059,19 @@ export class WhatsAppService {
     let created = 0;
 
     for (const [rawJid, contact] of this.contactsStore.entries()) {
-      if (!rawJid || isJidGroup(rawJid) || rawJid.endsWith('@g.us') || rawJid.includes('@broadcast') || rawJid.includes('@newsletter')) continue;
-      if (this.socket?.user?.id && jidNormalizedUser(rawJid) === jidNormalizedUser(this.socket.user.id)) continue;
+      if (
+        !rawJid ||
+        isJidGroup(rawJid) ||
+        rawJid.endsWith('@g.us') ||
+        rawJid.includes('@broadcast') ||
+        rawJid.includes('@newsletter')
+      )
+        continue;
+      if (
+        this.socket?.user?.id &&
+        jidNormalizedUser(rawJid) === jidNormalizedUser(this.socket.user.id)
+      )
+        continue;
 
       const phoneDigits = userOf(rawJid);
       if (!phoneDigits) continue;
@@ -1049,7 +1081,10 @@ export class WhatsAppService {
       const addressBookName = contact.name?.trim();
       const pushName = contact.notify?.trim() || contact.verifiedName?.trim();
       const resolvedName = addressBookName || pushName || PhoneNumber.format(phone) || phone;
-      const avatarUrl = typeof contact.imgUrl === 'string' && contact.imgUrl !== 'changed' ? contact.imgUrl : undefined;
+      const avatarUrl =
+        typeof contact.imgUrl === 'string' && contact.imgUrl !== 'changed'
+          ? contact.imgUrl
+          : undefined;
 
       // Só a agenda de verdade. `name` é o nome salvo no aparelho; `notify` é o
       // nome que a própria pessoa escolheu, e todo participante de grupo tem um.
@@ -1075,7 +1110,10 @@ export class WhatsAppService {
           if (addressBookName && existing.name !== addressBookName) {
             await prisma.contact.update({
               where: { id: existing.id, accountId },
-              data: { name: addressBookName, ...(avatarUrl && !existing.avatarUrl ? { avatarUrl } : {}) },
+              data: {
+                name: addressBookName,
+                ...(avatarUrl && !existing.avatarUrl ? { avatarUrl } : {}),
+              },
             });
           }
         } else {
@@ -1142,7 +1180,8 @@ export class WhatsAppService {
             where: { id: existing.id, accountId },
             data: {
               name: group.subject || existing.name,
-              participantCount: group.size ?? group.participants?.length ?? existing.participantCount,
+              participantCount:
+                group.size ?? group.participants?.length ?? existing.participantCount,
             },
           });
         }
@@ -1346,7 +1385,11 @@ export class WhatsAppService {
       readonly fileName?: string;
       readonly caption?: string;
       readonly voice?: boolean;
-      readonly quote?: { readonly externalId: string; readonly fromMe: boolean; readonly text: string };
+      readonly quote?: {
+        readonly externalId: string;
+        readonly fromMe: boolean;
+        readonly text: string;
+      };
     },
   ): Promise<{ ok: boolean; externalId?: string; error?: string }> {
     const socket = this.socket;
@@ -1369,11 +1412,11 @@ export class WhatsAppService {
           : media.kind === 'audio'
             ? { audio: media.data, mimetype: media.mimeType, ptt: media.voice === true }
             : {
-              document: media.data,
-              mimetype: media.mimeType,
-              fileName: media.fileName ?? 'arquivo',
-              ...(caption ? { caption } : {}),
-            };
+                document: media.data,
+                mimetype: media.mimeType,
+                fileName: media.fileName ?? 'arquivo',
+                ...(caption ? { caption } : {}),
+              };
 
     try {
       const sent = await socket.sendMessage(
@@ -1535,7 +1578,9 @@ export class WhatsAppService {
     const actorId =
       sender?.phone || sender?.jid || autorKey?.participant || autorKey?.remoteJid || 'contato';
     const nome =
-      (sender?.jid ? this.contactsStore.get(jidNormalizedUser(sender.jid))?.name?.trim() : undefined) ??
+      (sender?.jid
+        ? this.contactsStore.get(jidNormalizedUser(sender.jid))?.name?.trim()
+        : undefined) ??
       (sender?.phone ? PhoneNumber.format(sender.phone) || sender.phone : undefined);
 
     await applyReaction(alvo, {
@@ -1553,7 +1598,11 @@ export class WhatsAppService {
    */
   async sendReaction(
     target: { readonly channelThreadId?: string; readonly phone?: string },
-    message: { readonly externalId: string; readonly fromMe: boolean; readonly participant?: string },
+    message: {
+      readonly externalId: string;
+      readonly fromMe: boolean;
+      readonly participant?: string;
+    },
     emoji: string,
   ): Promise<{ ok: boolean; externalId?: string; error?: string }> {
     const socket = this.socket;
@@ -1574,9 +1623,7 @@ export class WhatsAppService {
             remoteJid: jid,
             id: message.externalId,
             fromMe: message.fromMe,
-            ...(message.participant && !message.fromMe
-              ? { participant: message.participant }
-              : {}),
+            ...(message.participant && !message.fromMe ? { participant: message.participant } : {}),
           },
         },
       });

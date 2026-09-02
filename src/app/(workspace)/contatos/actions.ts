@@ -376,7 +376,11 @@ export async function auditContactsExportAction(input: unknown): Promise<ActionR
       action: 'dados.exportados',
       targetType: 'contato',
       targetName: 'Contatos',
-      metadata: { detalhe: `${parsed.data.count} contatos`, count: parsed.data.count, format: 'csv' },
+      metadata: {
+        detalhe: `${parsed.data.count} contatos`,
+        count: parsed.data.count,
+        format: 'csv',
+      },
     });
     return { ok: true };
   } catch (error) {

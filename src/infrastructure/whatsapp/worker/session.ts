@@ -74,7 +74,6 @@ import {
   toneFor,
 } from '../wa-format';
 
-
 /**
  * Teto da janela de silêncio da drenagem.
  *
@@ -265,14 +264,14 @@ export class WhatsAppSession {
     timer: NodeJS.Timeout | null;
     idle: NodeJS.Timeout | null;
   } = {
-      active: false,
-      closing: false,
-      count: 0,
-      startedAt: 0,
-      touched: new Set(),
-      timer: null,
-      idle: null,
-    };
+    active: false,
+    closing: false,
+    count: 0,
+    startedAt: 0,
+    touched: new Set(),
+    timer: null,
+    idle: null,
+  };
 
   /**
    * O servidor já avisou que terminou de entregar a fila represada?
@@ -597,7 +596,6 @@ export class WhatsAppSession {
         keepAliveIntervalMs: 25_000,
         qrTimeout: 60_000,
 
-
         getMessage: async (key) => findSentMessage(this.inboxId, key),
         cachedGroupMetadata: async (jid) => {
           const cached = this.groupCache.get(jid);
@@ -668,7 +666,7 @@ export class WhatsAppSession {
           if (this.qrCycles > MAX_QR_CYCLES) {
             console.log(
               `[WhatsAppSession ${this.inboxId}] ${MAX_QR_CYCLES} QR Codes emitidos sem leitura. ` +
-              'Encerrando a tentativa de pareamento.',
+                'Encerrando a tentativa de pareamento.',
             );
             this.teardownSocket();
             this.qrCycles = 0;
@@ -797,7 +795,12 @@ export class WhatsAppSession {
           // O servidor WhatsApp rotineiramente encerra o primeiro socket (código 428/515)
           // antes de despachar o QR. Reconectamos automaticamente para receber o código.
           if (!this.isPaired && !this.isAuthenticated) {
-            if ((statusCode === 428 || statusCode === 515 || statusCode === DisconnectReason.restartRequired) && this.qrAttempts < 8) {
+            if (
+              (statusCode === 428 ||
+                statusCode === 515 ||
+                statusCode === DisconnectReason.restartRequired) &&
+              this.qrAttempts < 8
+            ) {
               this.qrAttempts += 1;
               console.log(
                 `[WhatsAppSession ${this.inboxId}] Handshake transitório (${statusCode}). Tentativa ${this.qrAttempts}/8 gerando QR...`,
@@ -822,7 +825,9 @@ export class WhatsAppSession {
           if (shouldReconnect) {
             this.retryCount += 1;
             const delays = [3000, 8000, 20000, 60000];
-            const delay = (delays[Math.min(this.retryCount - 1, delays.length - 1)] ?? 60000) + Math.random() * 1000;
+            const delay =
+              (delays[Math.min(this.retryCount - 1, delays.length - 1)] ?? 60000) +
+              Math.random() * 1000;
 
             // Armado antes da gravação, e não depois: ver `agendarReconexao`.
             // Era exatamente aqui que uma falha de banco deixava a sessão sem
@@ -866,9 +871,12 @@ export class WhatsAppSession {
           // dependência que a queda mostrou ser frágil.
           this.liberarEspera(true);
 
-          const userJid = this.socket?.user?.id ? jidNormalizedUser(this.socket.user.id) : undefined;
+          const userJid = this.socket?.user?.id
+            ? jidNormalizedUser(this.socket.user.id)
+            : undefined;
 
-          const ownerName = this.socket?.user?.name ?? (userJid ? PhoneNumber.format(userOf(userJid)) : 'WhatsApp');
+          const ownerName =
+            this.socket?.user?.name ?? (userJid ? PhoneNumber.format(userOf(userJid)) : 'WhatsApp');
 
           await this.registrarEstado({
             status: 'conectado',
@@ -918,7 +926,6 @@ export class WhatsAppSession {
       }),
     );
 
-
     this.socket.ev.on(
       'messaging-history.set',
       this.guarded('messaging-history.set', async (history) => {
@@ -930,7 +937,6 @@ export class WhatsAppSession {
         }
       }),
     );
-
 
     this.socket.ev.on(
       'messages.upsert',
@@ -952,7 +958,7 @@ export class WhatsAppSession {
             } catch (error) {
               console.error(
                 `[WhatsAppSession ${this.inboxId}] Falha ao processar a mensagem ` +
-                `${msg.key.id ?? '(sem id)'} de ${msg.key.remoteJid ?? '(sem jid)'}:`,
+                  `${msg.key.id ?? '(sem id)'} de ${msg.key.remoteJid ?? '(sem jid)'}:`,
                 error,
               );
             } finally {
@@ -1203,9 +1209,20 @@ export class WhatsAppSession {
    */
   private rememberContact(contact: Partial<WAContact>): void {
     const rawJid = contact.phoneNumber ?? contact.id;
-    if (!rawJid || isJidGroup(rawJid) || rawJid.endsWith('@g.us') || rawJid.includes('@broadcast') || rawJid.includes('@newsletter')) return;
+    if (
+      !rawJid ||
+      isJidGroup(rawJid) ||
+      rawJid.endsWith('@g.us') ||
+      rawJid.includes('@broadcast') ||
+      rawJid.includes('@newsletter')
+    )
+      return;
 
-    if (this.socket?.user?.id && jidNormalizedUser(rawJid) === jidNormalizedUser(this.socket.user.id)) return;
+    if (
+      this.socket?.user?.id &&
+      jidNormalizedUser(rawJid) === jidNormalizedUser(this.socket.user.id)
+    )
+      return;
 
     const jid = jidNormalizedUser(rawJid);
     const existingStored = this.contactsStore.get(jid);
@@ -1291,8 +1308,19 @@ export class WhatsAppSession {
     let created = 0;
 
     for (const [rawJid, contact] of this.contactsStore.entries()) {
-      if (!rawJid || isJidGroup(rawJid) || rawJid.endsWith('@g.us') || rawJid.includes('@broadcast') || rawJid.includes('@newsletter')) continue;
-      if (this.socket?.user?.id && jidNormalizedUser(rawJid) === jidNormalizedUser(this.socket.user.id)) continue;
+      if (
+        !rawJid ||
+        isJidGroup(rawJid) ||
+        rawJid.endsWith('@g.us') ||
+        rawJid.includes('@broadcast') ||
+        rawJid.includes('@newsletter')
+      )
+        continue;
+      if (
+        this.socket?.user?.id &&
+        jidNormalizedUser(rawJid) === jidNormalizedUser(this.socket.user.id)
+      )
+        continue;
 
       const phoneDigits = userOf(rawJid);
       if (!phoneDigits) continue;
@@ -1302,7 +1330,10 @@ export class WhatsAppSession {
       const addressBookName = nomeUtilizavel(contact.name);
       const pushName = nomeUtilizavel(contact.notify) ?? nomeUtilizavel(contact.verifiedName);
       const resolvedName = addressBookName || pushName || PhoneNumber.format(phone) || phone;
-      const avatarUrl = typeof contact.imgUrl === 'string' && contact.imgUrl !== 'changed' ? contact.imgUrl : undefined;
+      const avatarUrl =
+        typeof contact.imgUrl === 'string' && contact.imgUrl !== 'changed'
+          ? contact.imgUrl
+          : undefined;
 
       /**
        * O que separa a agenda de quem só passou pelo caminho.
@@ -1347,7 +1378,10 @@ export class WhatsAppSession {
           if (addressBookName && existing.name !== addressBookName) {
             await prisma.contact.update({
               where: { id: existing.id, accountId: this.accountId },
-              data: { name: addressBookName, ...(avatarUrl && !existing.avatarUrl ? { avatarUrl } : {}) },
+              data: {
+                name: addressBookName,
+                ...(avatarUrl && !existing.avatarUrl ? { avatarUrl } : {}),
+              },
             });
           }
         } else {
@@ -1427,9 +1461,7 @@ export class WhatsAppSession {
           const anteriores = Array.isArray(existing.customFields)
             ? (existing.customFields as unknown as CustomField[])
             : [];
-          const caixas = new Set(
-            groupInboxIds({ customFields: anteriores }).concat(this.inboxId),
-          );
+          const caixas = new Set(groupInboxIds({ customFields: anteriores }).concat(this.inboxId));
           const customFields = [
             ...anteriores.filter((campo) => campo?.label !== GROUP_INBOXES_FIELD_LABEL),
             { label: GROUP_INBOXES_FIELD_LABEL, value: [...caixas].join(',') },
@@ -1439,7 +1471,8 @@ export class WhatsAppSession {
             where: { id: existing.id, accountId },
             data: {
               name: group.subject || existing.name,
-              participantCount: group.size ?? group.participants?.length ?? existing.participantCount,
+              participantCount:
+                group.size ?? group.participants?.length ?? existing.participantCount,
               customFields: asJson(customFields),
             },
           });
@@ -1513,7 +1546,10 @@ export class WhatsAppSession {
       await this.socket.presenceSubscribe(targetJid);
       await this.socket.sendPresenceUpdate(status, targetJid);
     } catch (error) {
-      waLog.debug(`[sessão ${this.inboxId}] Falha ao emitir presença ${status} para ${targetJid}:`, error);
+      waLog.debug(
+        `[sessão ${this.inboxId}] Falha ao emitir presença ${status} para ${targetJid}:`,
+        error,
+      );
     }
   }
 
@@ -1606,7 +1642,7 @@ export class WhatsAppSession {
     if (count > 0) {
       console.log(
         `[WhatsAppSession ${this.inboxId}] Fila represada drenada: ${count} mensagem(ns) em ` +
-        `${touched.size} conversa(s), ${Date.now() - startedAt}ms (${motivo}).`,
+          `${touched.size} conversa(s), ${Date.now() - startedAt}ms (${motivo}).`,
       );
     } else {
       waLog.debug(`[sessão ${this.inboxId}] Nenhuma mensagem represada (${motivo}).`);
@@ -1797,7 +1833,12 @@ export class WhatsAppSession {
       fromMe,
       // So faz sentido no que o contato enviou: o eco do que nos mandamos
       // carrega o mesmo bloco e nao significa clique nenhum.
-      ...(fromMe ? {} : (() => { const a = adContextOf(msg); return a ? { anuncio: a } : {}; })()),
+      ...(fromMe
+        ? {}
+        : (() => {
+            const a = adContextOf(msg);
+            return a ? { anuncio: a } : {};
+          })()),
       ...(draining ? { silent: true } : {}),
     });
     medir(`${fromMe ? 'saída' : 'entrada'} em ${chat.conversationId}`);
@@ -1848,15 +1889,10 @@ export class WhatsAppSession {
 
     const inboundName = fromMe
       ? undefined
-      : nomeUtilizavel(msg.pushName) ?? nomeUtilizavel(msg.verifiedBizName);
-    const storedName = nomeUtilizavel(
-      this.contactsStore.get(jidNormalizedUser(chat.jid))?.name,
-    );
+      : (nomeUtilizavel(msg.pushName) ?? nomeUtilizavel(msg.verifiedBizName));
+    const storedName = nomeUtilizavel(this.contactsStore.get(jidNormalizedUser(chat.jid))?.name);
     const name =
-      inboundName ||
-      storedName ||
-      existing?.name ||
-      fallbackPersonName(chat.phone, chat.jid);
+      inboundName || storedName || existing?.name || fallbackPersonName(chat.phone, chat.jid);
 
     return {
       ...base,
@@ -2060,11 +2096,11 @@ export class WhatsAppSession {
       const response = await fetch(remoteUrl);
       const ownUrl = response.ok
         ? await mediaStore.save(
-          mediaId,
-          Buffer.from(await response.arrayBuffer()),
-          { mimeType: response.headers.get('content-type') ?? 'image/jpeg' },
-          { accountId: this.accountId, kind: 'avatar' },
-        )
+            mediaId,
+            Buffer.from(await response.arrayBuffer()),
+            { mimeType: response.headers.get('content-type') ?? 'image/jpeg' },
+            { accountId: this.accountId, kind: 'avatar' },
+          )
         : undefined;
 
       // Pela mesma razao, a falha da copia nao cai para `remoteUrl`: seria
@@ -2218,7 +2254,6 @@ export class WhatsAppSession {
       throw new Error('Destinatário inválido: forneça telefone ou JID.');
     }
 
-
     const caption = media.caption?.trim() || undefined;
     const payload =
       media.kind === 'image'
@@ -2228,11 +2263,11 @@ export class WhatsAppSession {
           : media.kind === 'audio'
             ? { audio: media.data, mimetype: media.mimeType, ptt: media.voice === true }
             : {
-              document: media.data,
-              mimetype: media.mimeType,
-              fileName: media.fileName ?? 'arquivo',
-              ...(caption ? { caption } : {}),
-            };
+                document: media.data,
+                mimetype: media.mimeType,
+                fileName: media.fileName ?? 'arquivo',
+                ...(caption ? { caption } : {}),
+              };
 
     const medir = waLog.timer(`[sessão ${this.inboxId}] socket.sendMessage (anexo)`);
     const result = await this.socket.sendMessage(
