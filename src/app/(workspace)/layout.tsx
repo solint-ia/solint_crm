@@ -1,4 +1,4 @@
-import { DateFormatProvider } from '@/components/layout/date-format-provider';
+import { RegionalProvider } from '@/components/layout/regional-provider';
 import { NavigationRail } from '@/components/layout/navigation-rail';
 import { PlatformBanner } from '@/components/layout/platform-banner';
 import { ToastProvider } from '@/components/ui/toast';
@@ -9,6 +9,12 @@ import { LiveNotificationsProvider } from '@/features/realtime/live-notification
 import { container } from '@/infrastructure/container';
 import { prisma, readJson } from '@/infrastructure/db/prisma';
 import { asDateFormat } from '@/lib/datetime';
+import {
+  asCurrency,
+  asFirstDayOfWeek,
+  asLanguage,
+  asTimezone,
+} from '@/core/domain/regional-preferences';
 
 /**
  * Shell das telas autenticadas: rail global + area de conteúdo.
@@ -47,9 +53,29 @@ export default async function WorkspaceLayout({
     }),
   ]);
 
-  const dateFormat = asDateFormat(
-    readJson<{ dateFormat?: string }>(settings?.company, {}).dateFormat,
-  );
+  /**
+   * As cinco preferências regionais, lidas de uma vez.
+   *
+   * Só o formato de data era lido daqui — as outras quatro eram gravadas pela
+   * tela de Empresa e não chegavam a lugar nenhum. Cada uma passa pelo seu
+   * `as*`, que devolve o padrão quando o banco traz um valor que o produto não
+   * conhece: a coluna é JSON e versões anteriores aceitavam string livre.
+   */
+  const preferencias = readJson<{
+    dateFormat?: string;
+    language?: string;
+    timezone?: string;
+    currency?: string;
+    firstDayOfWeek?: string;
+  }>(settings?.company, {});
+
+  const regional = {
+    dateFormat: asDateFormat(preferencias.dateFormat),
+    language: asLanguage(preferencias.language),
+    timezone: asTimezone(preferencias.timezone),
+    currency: asCurrency(preferencias.currency),
+    firstDayOfWeek: asFirstDayOfWeek(preferencias.firstDayOfWeek),
+  };
 
   /**
    * O selo conta **conversas**, não mensagens.
@@ -91,18 +117,24 @@ export default async function WorkspaceLayout({
 
   return (
     <ConversationEventsProvider accountId={session.account.id}>
-      {/* Mensagem nova vira aviso no sininho, e não mais cartão flutuante no
-          canto: o cartão sumia sozinho em sete segundos e quem estivesse longe
-          da tela nesse intervalo nunca soube que algo chegou. O provider mora
-          aqui, no layout, porque o sininho é remontado a cada navegação e o
-          que ele guardasse morreria na primeira troca de tela. */}
-      <LiveNotificationsProvider
-        soundEnabled={session.user.notifications.sound}
-        accountId={session.account.id}
-        currentUserId={session.user.id}
-      >
-        <ToastProvider>
-          <DateFormatProvider value={dateFormat}>
+      {/* As preferências regionais ficam por fora dos demais: o provider de
+          avisos carimba a hora de cada mensagem que chega, e ele precisa do
+          fuso da conta para isso. Dentro, ele leria o padrão do contexto e
+          escreveria "14:32" numa conta cujo relógio marca 13:32 — errado, e sem
+          nada na tela denunciando. */}
+      <RegionalProvider value={regional}>
+        {/* Mensagem nova vira aviso no sininho, e não mais cartão flutuante no
+            canto: o cartão sumia sozinho em sete segundos e quem estivesse
+            longe da tela nesse intervalo nunca soube que algo chegou. O
+            provider mora aqui, no layout, porque o sininho é remontado a cada
+            navegação e o que ele guardasse morreria na primeira troca de
+            tela. */}
+        <LiveNotificationsProvider
+          soundEnabled={session.user.notifications.sound}
+          accountId={session.account.id}
+          currentUserId={session.user.id}
+        >
+          <ToastProvider>
             <div className="flex h-screen w-screen flex-col overflow-hidden bg-app">
               {/* Acima de tudo, inclusive da rail: o contexto que ela dá vale
                   para a tela inteira, não para uma área dela. */}
@@ -134,9 +166,9 @@ export default async function WorkspaceLayout({
               <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
               </div>
             </div>
-          </DateFormatProvider>
-        </ToastProvider>
-      </LiveNotificationsProvider>
+          </ToastProvider>
+        </LiveNotificationsProvider>
+      </RegionalProvider>
     </ConversationEventsProvider>
   );
 }

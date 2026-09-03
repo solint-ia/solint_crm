@@ -21,36 +21,69 @@
  */
 export const APP_TIMEZONE = process.env.NEXT_PUBLIC_APP_TIMEZONE?.trim() || 'America/Sao_Paulo';
 
+/**
+ * O fuso deixou de ser só a constante — passou a ser um parâmetro com ela como
+ * padrão.
+ *
+ * A tela de Empresa sempre ofereceu "Fuso horário oficial" com quatro opções, e
+ * a escolha era gravada e nunca lida: uma clínica em Manaus configurava
+ * `America/Manaus` e seguia vendo todas as horas do atendimento em Brasília,
+ * uma hora adiantadas. O raciocínio do bloco acima continua valendo inteiro — o
+ * fuso é **do atendimento**, não de quem olha; o que muda é de onde ele vem: da
+ * conta, e não de uma variável de ambiente igual para todos os inquilinos.
+ *
+ * A variável segue como padrão para quem formata fora da árvore do provider —
+ * gravações no servidor, worker e repositórios, onde o rótulo é reserva do
+ * `createdAt` e não o que a tela mostra.
+ */
+export type TimeZone = string;
+
 /** Rótulo de hora ("14:32") no fuso de exibição. */
-export const horaLabel = (date: Date): string =>
+export const horaLabel = (date: Date, timeZone: TimeZone = APP_TIMEZONE): string =>
   date.toLocaleTimeString('pt-BR', {
-    timeZone: APP_TIMEZONE,
+    timeZone,
     hour: '2-digit',
     minute: '2-digit',
   });
 
 /** Rótulo curto de data ("27 de ago." → "27 ago.") no fuso de exibição. */
-export const dataCurtaLabel = (date: Date): string =>
+export const dataCurtaLabel = (date: Date, timeZone: TimeZone = APP_TIMEZONE): string =>
   date.toLocaleDateString('pt-BR', {
-    timeZone: APP_TIMEZONE,
+    timeZone,
     day: '2-digit',
     month: 'short',
   });
 
 /** Data e hora juntas — usado onde a tela mostra "27/08/2026 14:32". */
-export const dataHoraLabel = (date: Date): string =>
+export const dataHoraLabel = (date: Date, timeZone: TimeZone = APP_TIMEZONE): string =>
   date.toLocaleString('pt-BR', {
-    timeZone: APP_TIMEZONE,
+    timeZone,
     dateStyle: 'short',
     timeStyle: 'short',
   });
 
-const DIA_CIVIL = new Intl.DateTimeFormat('en-CA', {
-  timeZone: APP_TIMEZONE,
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-});
+/**
+ * Um `Intl.DateTimeFormat` por fuso, construído uma vez.
+ *
+ * Era uma constante de módulo, e o motivo era bom: construir o formatador é a
+ * parte cara. Com o fuso vindo da conta a constante não serve mais, mas o
+ * motivo continua — daí o cache em vez de um `new` por chamada, que rodaria a
+ * cada divisor de dia de uma timeline inteira.
+ */
+const diaCivilCache = new Map<string, Intl.DateTimeFormat>();
+const diaCivilDe = (timeZone: TimeZone): Intl.DateTimeFormat => {
+  let fmt = diaCivilCache.get(timeZone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    diaCivilCache.set(timeZone, fmt);
+  }
+  return fmt;
+};
 
 /**
  * Início do dia civil **no fuso de exibição**, como epoch comparável.
@@ -61,8 +94,8 @@ const DIA_CIVIL = new Intl.DateTimeFormat('en-CA', {
  * de ontem. Aqui o dia é extraído pelo `Intl` no fuso certo e só então virá
  * número.
  */
-export const inicioDoDia = (date: Date): number => {
-  const partes = DIA_CIVIL.formatToParts(date);
+export const inicioDoDia = (date: Date, timeZone: TimeZone = APP_TIMEZONE): number => {
+  const partes = diaCivilDe(timeZone).formatToParts(date);
   const parte = (tipo: Intl.DateTimeFormatPartTypes): string =>
     partes.find((p) => p.type === tipo)?.value ?? '';
   return Date.parse(`${parte('year')}-${parte('month')}-${parte('day')}T00:00:00Z`);
@@ -77,10 +110,14 @@ export const inicioDoDia = (date: Date): number => {
  * nenhuma no banco. O `time` fica como reserva para mensagens otimistas, que
  * existem na tela antes de o servidor responder.
  */
-export const horaDaMensagem = (mensagem: {
-  readonly createdAt?: string;
-  readonly time: string;
-}): string => (mensagem.createdAt ? horaLabel(new Date(mensagem.createdAt)) : mensagem.time);
+export const horaDaMensagem = (
+  mensagem: {
+    readonly createdAt?: string;
+    readonly time: string;
+  },
+  timeZone: TimeZone = APP_TIMEZONE,
+): string =>
+  mensagem.createdAt ? horaLabel(new Date(mensagem.createdAt), timeZone) : mensagem.time;
 
 /**
  * Partes de um instante no fuso de exibição, para converter nos dois sentidos.
@@ -167,13 +204,15 @@ export const dataHoraLocalDe = (date: Date): string => {
  * alguém faz olhando a lista — *quando isso sai?* — sem precisar comparar com o
  * calendário.
  */
-export const agendamentoLabel = (date: Date): string => {
-  const dias = Math.round((inicioDoDia(date) - inicioDoDia(new Date())) / 86_400_000);
-  const hora = horaLabel(date);
+export const agendamentoLabel = (date: Date, timeZone: TimeZone = APP_TIMEZONE): string => {
+  const dias = Math.round(
+    (inicioDoDia(date, timeZone) - inicioDoDia(new Date(), timeZone)) / 86_400_000,
+  );
+  const hora = horaLabel(date, timeZone);
   if (dias === 0) return `hoje às ${hora}`;
   if (dias === 1) return `amanhã às ${hora}`;
   if (dias === -1) return `ontem às ${hora}`;
-  return `${dataCurtaLabel(date)} às ${hora}`;
+  return `${dataCurtaLabel(date, timeZone)} às ${hora}`;
 };
 
 /* ==========================================================================
@@ -224,7 +263,8 @@ const OPCOES: Readonly<
 export const formatarData = (
   date: Date,
   formato: DateFormatPreference = DEFAULT_DATE_FORMAT,
+  timeZone: TimeZone = APP_TIMEZONE,
 ): string => {
   const { locale, options } = OPCOES[formato];
-  return date.toLocaleDateString(locale, { timeZone: APP_TIMEZONE, ...options });
+  return date.toLocaleDateString(locale, { timeZone, ...options });
 };

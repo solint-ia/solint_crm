@@ -179,17 +179,56 @@ export const dayOf = (hours: BusinessHours, day: Weekday): BusinessHoursDay | un
   hours.days.find((entry) => entry.day === day);
 
 /**
+ * Dia da semana e minuto do dia **no fuso do expediente**.
+ *
+ * `now.getDay()` e `now.getHours()` leem o relógio do processo, e o processo é
+ * UTC em produção (Vercel, Render) — o mesmo defeito de origem que o topo de
+ * `lib/datetime.ts` documenta, sobrevivendo aqui. Um expediente de 8h às 18h em
+ * São Paulo era avaliado como 8h às 18h UTC: entre 18h e 21h de Brasília o
+ * sistema ainda se achava aberto e engolia a mensagem de ausência; entre 5h e
+ * 8h da manhã ele a disparava com o atendimento já começando.
+ *
+ * O fuso é o do próprio `BusinessHours` — que a tela sempre mostrou ao lado da
+ * tabela e ninguém lia.
+ */
+const momentoNoFuso = (now: Date, timezone: string): { dia: number; minutos: number } => {
+  try {
+    const partes = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      hourCycle: 'h23',
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).formatToParts(now);
+
+    const valor = (tipo: Intl.DateTimeFormatPartTypes): string =>
+      partes.find((parte) => parte.type === tipo)?.value ?? '';
+
+    const SEMANA = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const dia = SEMANA.indexOf(valor('weekday'));
+    if (dia < 0) throw new Error('dia da semana ilegível');
+
+    return { dia, minutos: Number(valor('hour')) * 60 + Number(valor('minute')) };
+  } catch {
+    // Fuso inválido gravado no banco não pode derrubar o atendimento: o relógio
+    // do processo volta a valer, que é exatamente o comportamento anterior.
+    return { dia: now.getDay(), minutos: now.getHours() * 60 + now.getMinutes() };
+  }
+};
+
+/**
  * `now` entra por parâmetro de propósito: uma função que lê o relógio sozinha
  * não é testável, e o domínio não conhece o relógio.
  */
 export const isWithinBusinessHours = (hours: BusinessHours, now: Date): boolean => {
-  const weekday = WEEKDAYS[now.getDay()];
+  const momento = momentoNoFuso(now, hours.timezone);
+  const weekday = WEEKDAYS[momento.dia];
   if (!weekday) return false;
 
   const today = dayOf(hours, weekday);
   if (!today || !today.enabled) return false;
 
-  const current = now.getHours() * 60 + now.getMinutes();
+  const current = momento.minutos;
   const opens = minutesOf(today.opensAt);
   const closes = minutesOf(today.closesAt);
 

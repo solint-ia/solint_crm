@@ -43,10 +43,14 @@ export const ADMIN_ONLY_PERMISSIONS: readonly Permission[] = [
  * caixinha para uma tela que ninguém consegue abrir só confunde quem monta o
  * papel. Voltam sozinhas ao catálogo no dia em que a flag for religada.
  */
-const HIDDEN_FEATURE_PERMISSIONS: readonly Permission[] = [
+export const HIDDEN_FEATURE_PERMISSIONS: readonly Permission[] = [
   ...(FEATURES.campanhas ? [] : (['campanhas:ler', 'campanhas:disparar'] as const)),
   ...(FEATURES.agentesIA ? [] : (['agentes-ia:ler', 'agentes-ia:escrever'] as const)),
 ];
+
+/** A permissão existe, mas pertence a funcionalidade desligada em `FEATURES`. */
+export const ehPermissaoDeFeatureDesligada = (permissao: string): boolean =>
+  HIDDEN_FEATURE_PERMISSIONS.includes(permissao as Permission);
 
 const GRUPOS: readonly PermissionGroup[] = [
   {
@@ -203,3 +207,22 @@ export const GRANTABLE_PERMISSIONS: readonly Permission[] = PERMISSION_GROUPS.fl
  */
 export const permissoesForaDoCatalogo = (pedidas: readonly string[]): readonly string[] =>
   pedidas.filter((p) => !GRANTABLE_PERMISSIONS.includes(p as Permission));
+
+/**
+ * O que a gravação deve **recusar** — que não é a mesma coisa que estar fora do
+ * catálogo.
+ *
+ * Fora do catálogo caem dois grupos com naturezas opostas. Um é a escalada de
+ * privilégio (`config.equipe.papeis:*`) e o lixo desconhecido: isso é recusa. O
+ * outro é a permissão de funcionalidade desligada em `FEATURES`, que **existe
+ * gravada** nos papéis semeados — `supervisor` nasce com `agentes-ia:ler` — e
+ * some da grade só porque a tela dela não abre hoje.
+ *
+ * Tratar os dois como intrusos foi o que quebrou a personalização por pessoa: a
+ * tela abre marcando as permissões efetivas do colaborador, o supervisor tem
+ * `agentes-ia:ler` desde o seed, e salvar devolvia "Permissão não reconhecida:
+ * agentes-ia:ler." para um administrador que não tinha tocado naquilo — nem
+ * podia, porque a caixinha nem estava na tela.
+ */
+export const permissoesRecusadas = (pedidas: readonly string[]): readonly string[] =>
+  permissoesForaDoCatalogo(pedidas).filter((p) => !ehPermissaoDeFeatureDesligada(p));

@@ -25,7 +25,7 @@ import {
   deleteDealTaskAction,
   toggleDealTaskAction,
 } from '@/app/(workspace)/kanban/actions';
-import { formatMoneyFromCents } from '@/lib/format';
+import { useFormatarMoeda } from '@/components/layout/regional-provider';
 import { cn } from '@/lib/cn';
 
 interface DealDetailPanelProps {
@@ -45,6 +45,7 @@ export function DealDetailPanel({
   onDelete,
   onMoveStage,
 }: DealDetailPanelProps) {
+  const formatarMoeda = useFormatarMoeda();
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
   const currentStageIndex = stages.findIndex((s) => s.id === deal.stageId);
   const currentStage = stages[currentStageIndex] ?? stages[0];
@@ -185,7 +186,7 @@ export function DealDetailPanel({
                 Valor da Oportunidade
               </span>
               <span className="font-display text-metric font-bold text-ink tracking-tight tabular-nums">
-                {formatMoneyFromCents(deal.amountInCents)}
+                {formatarMoeda(deal.amountInCents)}
               </span>
             </div>
 

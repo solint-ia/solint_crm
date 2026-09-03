@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { useWhatsAppConnection } from '../hooks/use-whatsapp-connection';
-import { dataHoraLabel } from '@/lib/datetime';
+import { useDatasDaConta } from '@/components/layout/regional-provider';
 
 interface WhatsAppConnectionCardProps {
   readonly user: User;
@@ -25,8 +25,8 @@ interface WhatsAppConnectionCardProps {
   readonly onOpenPairing?: () => void;
 }
 
-const formatDateTime = (iso?: string): string =>
-  iso ? dataHoraLabel(new Date(iso)) : '—';
+const formatDateTime = (iso: string | undefined, dataHora: (date: Date) => string): string =>
+  iso ? dataHora(new Date(iso)) : '—';
 
 /**
  * Vinculo entre o perfil do usuário do CRM e o número de WhatsApp pareado.
@@ -41,6 +41,7 @@ export function WhatsAppConnectionCard({
 }: WhatsAppConnectionCardProps) {
   const { statusData, errorMessage, isPending, isConnected, isConnecting, connect, disconnect } =
     useWhatsAppConnection(true, inboxId);
+  const { dataHora } = useDatasDaConta();
 
   const ownedByOther = Boolean(statusData.owner && statusData.owner.userId !== user.id);
 
@@ -98,7 +99,7 @@ export function WhatsAppConnectionCard({
               </p>
               <p className="mt-1 text-meta text-muted">
                 Pareado por {statusData.owner?.userName ?? user.name} ·{' '}
-                {formatDateTime(statusData.connectedAt)}
+                {formatDateTime(statusData.connectedAt, dataHora)}
               </p>
             </div>
           </div>

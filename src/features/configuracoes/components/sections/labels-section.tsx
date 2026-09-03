@@ -88,6 +88,18 @@ export function LabelsSection({ labels: initialLabels }: LabelsSectionProps) {
     const name = labelName.trim();
     if (!name) return;
 
+    // A conferência que vale é a do servidor — esta só evita a ida ao banco e
+    // responde na hora. Mesma régua dos dois lados: caixa e espaços das pontas
+    // não distinguem uma etiqueta de outra.
+    const duplicada = labels.some(
+      (lbl) =>
+        lbl.id !== editingLabel?.id && lbl.name.trim().toLowerCase() === name.toLowerCase(),
+    );
+    if (duplicada) {
+      setError(`Já existe uma etiqueta chamada "${name}".`);
+      return;
+    }
+
     setError(undefined);
     const draft = {
       name,

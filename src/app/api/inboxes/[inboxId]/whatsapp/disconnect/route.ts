@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { container } from '@/infrastructure/container';
 import { prisma } from '@/infrastructure/db/prisma';
+import { CHANNELS, postgresPubSub } from '@/infrastructure/db/postgres-pubsub';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,7 +27,7 @@ export async function POST(_request: Request, props: { params: Promise<{ inboxId
     }
 
     // 2. Enfileira o comando disconnect para o worker
-    await prisma.whatsAppCommand.create({
+    const command = await prisma.whatsAppCommand.create({
       data: {
         inboxId,
         kind: 'disconnect',
@@ -34,6 +35,21 @@ export async function POST(_request: Request, props: { params: Promise<{ inboxId
         status: 'pending',
       },
     });
+
+    /**
+     * O aviso que faltava — a causa da demora em "desconectada".
+     *
+     * Sem `NOTIFY`, o comando esperava a varredura do worker (15 s) para ser
+     * sequer lido. Só então o socket caía, o status virava `desconectado` no
+     * banco e o evento chegava à tela. Quem clicava via o botão responder e o
+     * cartão continuar dizendo "conectado" por um tempo que não tinha
+     * explicação nenhuma na interface.
+     */
+    await postgresPubSub
+      .publish(CHANNELS.COMMANDS, { inboxId, kind: 'disconnect', id: command.id })
+      .catch(() => {
+        // Aviso perdido não desfaz o comando: a varredura ainda o encontra.
+      });
 
     return NextResponse.json({ ok: true });
   } catch (error) {

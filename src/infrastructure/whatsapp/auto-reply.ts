@@ -99,8 +99,14 @@ export async function dispatchAutoMessage({
       conversationId,
       author: 'system',
       authorName,
-      contentType: 'texto',
-      content: { type: 'texto', text: cleanText },
+      // `text`, e nao `texto`. O resto do produto grava `'text'` — e a uniao
+      // `MessageContent` so conhece esse. Com `'texto'` a bolha caia no
+      // `default` do renderizador e toda automatica (saudacao, ausencia,
+      // encerramento, espera, CSAT) aparecia no chat como "Midia nao
+      // suportada", mesmo tendo chegado como texto normal no aparelho do
+      // cliente. A coluna `content` e JSON, entao o compilador nao pegava.
+      contentType: 'text',
+      content: { type: 'text', text: cleanText },
       time,
       isPrivate: false,
       origin,
@@ -148,7 +154,7 @@ export async function dispatchAutoMessage({
       // Dentro do servidor Next.js
       const { getWhatsAppChannel } = await import('./channel-provider');
       const channel = await getWhatsAppChannel();
-      await channel.sendText(
+      const resultado = await channel.sendText(
         {
           accountId,
           conversationId,
@@ -161,6 +167,21 @@ export async function dispatchAutoMessage({
         },
         cleanText,
       );
+
+      /**
+       * A recusa do canal **não** é exceção, e era por isso que sumia.
+       *
+       * `sendText` devolve `{ ok: false, error }` — não lança. O `await` solto
+       * aqui descartava esse retorno, o `catch` abaixo nunca via nada, e
+       * `falhaDeEntrega` ficava indefinida: a mensagem entrava no CRM com
+       * aparência de enviada e nunca era despachada. Era exatamente o sintoma
+       * de "ativei a mensagem de encerramento, finalizei o atendimento e o
+       * cliente não recebeu" — sem erro em lugar nenhum, porque o único que
+       * existiu foi jogado fora nesta linha.
+       */
+      if (!resultado.ok) {
+        throw new Error(resultado.error ?? 'O canal recusou o envio da mensagem automática.');
+      }
     }
   } catch (error) {
     console.warn('[auto-reply] Falha ao despachar mensagem automática para o WhatsApp:', error);
@@ -194,8 +215,8 @@ export async function dispatchAutoMessage({
         conversationId,
         author: 'system',
         authorName,
-        contentType: 'texto',
-        content: { type: 'texto', text: cleanText },
+        contentType: 'text',
+        content: { type: 'text', text: cleanText },
         time,
         createdAt: created.createdAt,
         isPrivate: false,

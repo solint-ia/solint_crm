@@ -10,10 +10,32 @@ import {
 import { CHANNELS } from '@/core/domain/channel';
 import { ARTICLE_STATUSES } from '@/core/domain/knowledge';
 import { isValidTone } from '@/core/domain/label';
+import {
+  DOCUMENT_ERROR,
+  EMAIL_ERROR,
+  PHONE_ERROR,
+  formatCompanyDocument,
+  isValidCompanyDocument,
+  isValidCompanyEmail,
+  isValidCompanyPhone,
+  normalizeCompanyEmail,
+  normalizeCompanyPhone,
+} from '@/core/domain/company-identity';
+import {
+  CURRENCIES,
+  FIRST_DAYS_OF_WEEK,
+  LANGUAGES,
+  TIMEZONES,
+} from '@/core/domain/regional-preferences';
+import { DATE_FORMATS } from '@/lib/datetime';
 import type { ChannelConnection } from '@/core/domain/settings';
 import { can, type Permission } from '@/core/domain/user';
 import { ROLES_REQUIRING_TEAM } from '@/core/domain/system-roles';
-import { permissoesForaDoCatalogo } from '@/core/domain/permissions';
+import {
+  ehPermissaoDeFeatureDesligada,
+  GRANTABLE_PERMISSIONS,
+  permissoesRecusadas,
+} from '@/core/domain/permissions';
 import {
   ALLOWED_LOGO_MIME_TYPES,
   MAX_LOGO_BYTES,
@@ -1130,23 +1152,61 @@ export async function terminateOtherSessionsAction(): Promise<ActionResult> {
 /** Campo de texto opcional: string vazia significa "apagar", não "manter". */
 const opcional = (max: number) => z.string().trim().max(max).optional();
 
+/**
+ * Os três campos de identificação chegam conferidos **e** normalizados.
+ *
+ * Antes eram `opcional(24)`, `opcional(32)` e um `z.string().email()`: "abc"
+ * virava CNPJ, "(11) 9" virava telefone corporativo e `a@b` passava por e-mail.
+ * O `transform` grava a forma canônica — documento com pontuação, telefone em
+ * E.164 como o resto do produto, e-mail em minúsculas — para o mesmo dado não
+ * ter três aparências no banco conforme quem digitou.
+ *
+ * Vazio continua valendo: são campos opcionais, e "apagar o telefone" é uma
+ * edição legítima. O que não vale mais é preencher com lixo.
+ */
+const documentoSchema = z
+  .string()
+  .trim()
+  .max(24)
+  .refine((valor) => !valor || isValidCompanyDocument(valor), DOCUMENT_ERROR)
+  .transform((valor) => (valor ? formatCompanyDocument(valor) : ''))
+  .optional();
+
+const telefoneSchema = z
+  .string()
+  .trim()
+  .max(32)
+  .refine(isValidCompanyPhone, PHONE_ERROR)
+  .transform(normalizeCompanyPhone)
+  .optional();
+
+const emailSchema = z
+  .string()
+  .trim()
+  .max(160)
+  .refine(isValidCompanyEmail, EMAIL_ERROR)
+  .transform(normalizeCompanyEmail)
+  .optional();
+
 const companySchema = z.object({
   tradeName: z.string().trim().min(2, 'O nome fantasia precisa de ao menos 2 caracteres.').max(120),
   legalName: opcional(160),
-  document: opcional(24),
+  document: documentoSchema,
   website: z
     .union([z.literal(''), z.string().trim().url('Informe uma URL válida.').max(200)])
     .optional(),
   address: opcional(240),
-  phone: opcional(32),
-  email: z
-    .union([z.literal(''), z.string().trim().email('Informe um e-mail válido.').max(160)])
-    .optional(),
-  language: opcional(16),
-  timezone: opcional(64),
-  currency: opcional(8),
-  dateFormat: opcional(16),
-  firstDayOfWeek: opcional(16),
+  phone: telefoneSchema,
+  email: emailSchema,
+  // As regionais entram por lista fechada, não por `string` de tamanho máximo:
+  // um `dateFormat` de 16 caracteres quaisquer é gravado e depois ignorado pelo
+  // `asDateFormat`, que só reconhece quatro valores. Recusar na entrada é o que
+  // impede a preferência de existir no banco sem existir no produto.
+  language: z.enum(LANGUAGES).optional(),
+  timezone: z.enum(TIMEZONES).optional(),
+  currency: z.enum(CURRENCIES).optional(),
+  dateFormat: z.enum(DATE_FORMATS).optional(),
+  firstDayOfWeek: z.enum(FIRST_DAYS_OF_WEEK).optional(),
   brandColor: opcional(16),
 });
 
@@ -1252,8 +1312,10 @@ export async function uploadCompanyLogoAction(formData: FormData): Promise<Actio
    Dois pontos de gravação, uma única trava conceitual: quem edita permissões
    pode dar a si mesmo qualquer outra. Por isso as duas exigem
    `config.equipe.papeis:escrever`, que só o administrador tem — e por isso as
-   duas recusam qualquer permissão fora de `GRANTABLE_PERMISSIONS`, mesmo vinda
-   de quem tem o direito de gravar.
+   duas recusam qualquer permissão de `permissoesRecusadas` — escalada de
+   privilégio e lixo desconhecido — mesmo vinda de quem tem o direito de gravar.
+   O que a grade não desenha por estar atrás de flag desligada não é recusado
+   nem concedido: fica exatamente como estava.
    ========================================================================== */
 
 const permissionListSchema = z.array(z.string().min(1).max(64)).max(80);
@@ -1288,20 +1350,34 @@ export async function updateRolePermissionsAction(input: unknown): Promise<Actio
       };
     }
 
-    const intrusas = permissoesForaDoCatalogo(parsed.data.permissions);
+    const intrusas = permissoesRecusadas(parsed.data.permissions);
     if (intrusas.length > 0) {
       return { ok: false, error: `Permissão não reconhecida: ${intrusas[0]}.` };
     }
 
     const papel = await prisma.role.findUnique({
       where: { accountId_slug: { accountId: session.account.id, slug: parsed.data.roleSlug } },
-      select: { id: true },
+      select: { id: true, permissions: true },
     });
     if (!papel) return { ok: false, error: 'Papel não encontrado nesta conta.' };
 
+    // A grade só desenha o catálogo, então ela só pode decidir sobre o
+    // catálogo. O que o papel tem de funcionalidade desligada é preservado como
+    // está: salvar a tela de permissões não é o lugar de apagar em silêncio o
+    // `campanhas:ler` que o papel ganhou no seed e volta a valer no dia em que a
+    // flag for religada.
+    const preservadas = ((Array.isArray(papel.permissions) ? papel.permissions : []) as string[])
+      .filter(ehPermissaoDeFeatureDesligada);
+    const finais = [
+      ...new Set([
+        ...parsed.data.permissions.filter((p) => GRANTABLE_PERMISSIONS.includes(p as never)),
+        ...preservadas,
+      ]),
+    ];
+
     await prisma.role.update({
       where: { id: papel.id },
-      data: { permissions: asJson(parsed.data.permissions) },
+      data: { permissions: asJson(finais) },
     });
 
     await writeAuditLog({
@@ -1351,7 +1427,7 @@ export async function updateMemberOverridesAction(input: unknown): Promise<Actio
       return { ok: false, error: 'Só um administrador personaliza permissões.' };
     }
 
-    const intrusas = permissoesForaDoCatalogo(parsed.data.permissions);
+    const intrusas = permissoesRecusadas(parsed.data.permissions);
     if (intrusas.length > 0) {
       return { ok: false, error: `Permissão não reconhecida: ${intrusas[0]}.` };
     }
@@ -1378,13 +1454,14 @@ export async function updateMemberOverridesAction(input: unknown): Promise<Actio
     );
     const desejadas = new Set(parsed.data.permissions);
 
-    const add = [...desejadas].filter((p) => !doPapel.has(p));
-    // Só conta como "tirada" o que o papel de fato dá — e só dentro do
-    // catálogo: uma permissão que a pessoa nunca teria não precisa de uma linha
-    // no override dizendo que ela não a tem.
-    const remove = [...doPapel].filter(
-      (p) => !desejadas.has(p) && !permissoesForaDoCatalogo([p]).length,
-    );
+    // O diff só existe dentro do catálogo, nos dois sentidos: a grade desenha o
+    // catálogo, logo é só sobre ele que a pessoa se manifestou. Uma permissão de
+    // funcionalidade desligada continua acompanhando o papel — nem entra no
+    // `add` (a tela não pôde pedi-la) nem no `remove` (a tela não pôde
+    // desmarcá-la, e "não veio na lista" não é "tire de mim").
+    const naGrade = (p: string) => GRANTABLE_PERMISSIONS.includes(p as never);
+    const add = [...desejadas].filter((p) => naGrade(p) && !doPapel.has(p));
+    const remove = [...doPapel].filter((p) => naGrade(p) && !desejadas.has(p));
 
     await prisma.membership.update({
       where: { id: vinculo.id },

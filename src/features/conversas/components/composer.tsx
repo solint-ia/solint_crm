@@ -34,7 +34,8 @@ import { MIN_SCHEDULE_LEAD_MS } from '@/core/domain/scheduled-message';
 import { MAX_MESSAGE_LENGTH } from '@/core/use-cases/send-message';
 import { EmojiPicker } from '@/components/ui/emoji-picker';
 import { cn } from '@/lib/cn';
-import { agendamentoLabel, dataHoraLocalDe, isoDeDataHoraLocal } from '@/lib/datetime';
+import { dataHoraLocalDe, isoDeDataHoraLocal } from '@/lib/datetime';
+import { useDatasDaConta } from '@/components/layout/regional-provider';
 
 export type ComposerMode = 'publica' | 'nota';
 
@@ -148,6 +149,7 @@ export function Composer({
   pending,
   onSchedule,
 }: ComposerProps) {
+  const { agendamento } = useDatasDaConta();
   const [mode, setMode] = useState<ComposerMode>('publica');
   const [text, setText] = useState('');
   const [attachment, setAttachment] = useState<File | undefined>();
@@ -1089,7 +1091,7 @@ export function Composer({
                       leu na tela. */}
                   {agendaQuando && isoDeDataHoraLocal(agendaQuando) ? (
                     <p className="mt-1.5 text-[11px] text-muted">
-                      Sai {agendamentoLabel(new Date(isoDeDataHoraLocal(agendaQuando) as string))}.
+                      Sai {agendamento(new Date(isoDeDataHoraLocal(agendaQuando) as string))}.
                     </p>
                   ) : null}
 

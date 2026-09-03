@@ -1,3 +1,4 @@
+import { prisma } from '../db/prisma';
 import { CHANNELS, postgresPubSub } from '../db/postgres-pubsub';
 
 /**
@@ -100,4 +101,72 @@ export const publishWorkerBeat = async (workerId: string): Promise<void> => {
   await postgresPubSub
     .publish<WorkerBeat>(CHANNELS.WORKER, { workerId, at: Date.now() })
     .catch(() => undefined);
+};
+
+/* ==========================================================================
+   Corroboração no banco — porque a batida sozinha erra para o lado errado.
+   ========================================================================== */
+
+/**
+ * Existe worker operando **alguma** caixa desta instalação?
+ *
+ * A trava de posse é renovada a cada 15 s e vale 30 s. Diferente da batida, ela
+ * não exige que *este* processo tenha uma escuta aberta nem que ele estivesse
+ * acordado no instante do `NOTIFY` — está gravada, e uma consulta a lê.
+ *
+ * É global de propósito. `travaViva` responde "esta caixa tem sessão"; esta
+ * responde "existe worker no ar", que é outra pergunta e a única que interessa
+ * quando a caixa em questão está justamente desconectada, esperando um QR.
+ */
+export const algumaTravaViva = async (): Promise<boolean> => {
+  const vivas = await prisma.whatsAppConnection.count({
+    where: { lockOwner: { not: null }, lockExpiresAt: { gt: new Date() } },
+  });
+  return vivas > 0;
+};
+
+/**
+ * Quanto um comando pode ficar `pending` antes de a fila contar como parada.
+ *
+ * Mais que a varredura do worker (`SWEEP_INTERVAL_MS`, 15 s), que é a rede de
+ * segurança para quando o `NOTIFY` se perde. Um comando mais velho que isso não
+ * foi pego nem pelo aviso nem pela varredura: não há quem o pegue.
+ */
+const FILA_PARADA_MS = 20_000;
+
+/**
+ * A fila desta caixa está parada — prova de ausência, não suspeita.
+ *
+ * Esta é a diferença que faltava. Não ter ouvido batida em 1,5 s **não** é
+ * prova de nada: a batida sai a cada 5 s (`WORKER_BEAT_INTERVAL_MS`), então um
+ * processo recém-acordado quase sempre chega antes da primeira. Era isso que
+ * fazia a tela de conexão abrir com "O worker de WhatsApp não está em execução"
+ * e, segundos depois, exibir o QR que o worker — que sempre esteve no ar —
+ * acabara de gerar.
+ */
+export const filaParada = async (inboxId: string): Promise<boolean> => {
+  const parado = await prisma.whatsAppCommand.findFirst({
+    where: {
+      inboxId,
+      status: 'pending',
+      createdAt: { lt: new Date(Date.now() - FILA_PARADA_MS) },
+    },
+    select: { id: true },
+  });
+  return Boolean(parado);
+};
+
+/**
+ * O worker está ausente, e dá para afirmar isso?
+ *
+ * Só devolve `true` com prova positiva: nenhuma batida, nenhuma trava viva em
+ * caixa nenhuma, e um comando desta caixa apodrecendo na fila. Na dúvida
+ * devolve `false` — "não sei" é mais honesto que um erro que se desmente
+ * sozinho três segundos depois.
+ */
+export const workerComprovadamenteAusente = async (inboxId?: string): Promise<boolean> => {
+  if (workerPresence().online) return false;
+  if (await algumaTravaViva()) return false;
+  if (await waitForWorker(1_500)) return false;
+  return inboxId ? filaParada(inboxId) : false;
 };

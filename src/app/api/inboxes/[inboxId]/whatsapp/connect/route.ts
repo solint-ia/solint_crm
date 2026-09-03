@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { container } from '@/infrastructure/container';
 import { prisma } from '@/infrastructure/db/prisma';
+import { CHANNELS, postgresPubSub } from '@/infrastructure/db/postgres-pubsub';
 
 export const dynamic = 'force-dynamic';
 
@@ -97,6 +98,26 @@ export async function POST(_request: Request, props: { params: Promise<{ inboxId
         status: 'pending',
       },
     });
+
+    /**
+     * O aviso é o mecanismo; a varredura é só a rede de segurança.
+     *
+     * Esta rota criava a linha na fila e devolvia — sem `NOTIFY`. O worker só
+     * descobria o comando na varredura seguinte, que roda a cada 15 s
+     * (`SWEEP_INTERVAL_MS`), então o QR aparecia alguns segundos depois do
+     * clique e a tela ficava nesse meio-tempo mostrando o estado anterior. O
+     * `enqueue` do `QueueWhatsAppChannel` sempre publicou; esta rota e a de
+     * desconectar eram as duas que enfileiravam no silêncio.
+     *
+     * Esperado, e não disparado ao vento, pelo mesmo motivo documentado lá:
+     * numa função serverless a instância congela ao responder, e uma promessa
+     * solta que ainda precisava abrir conexão morre junto.
+     */
+    await postgresPubSub
+      .publish(CHANNELS.COMMANDS, { inboxId, kind: 'connect', id: command.id })
+      .catch(() => {
+        // Aviso perdido não é falha da conexão: a varredura ainda pega.
+      });
 
     return NextResponse.json({
       ok: true,

@@ -24,6 +24,8 @@ import {
   WEEKDAYS,
 } from '@/core/domain/business-hours';
 import { describeChannel } from '@/core/domain/channel';
+import { firstWeekdayIndex } from '@/core/domain/regional-preferences';
+import { useRegional } from '@/components/layout/regional-provider';
 import { DEFAULT_CSAT_QUESTION } from '@/core/domain/csat';
 import type { ChannelConnection } from '@/core/domain/settings';
 import { Badge } from '@/components/ui/badge';
@@ -627,6 +629,12 @@ function InboxDetail({
   const isWhatsApp = connection.channel === 'whatsapp';
   const { statusData } = useWhatsAppConnection(isWhatsApp, connection.id);
 
+  const { firstDayOfWeek } = useRegional();
+  const diasDaSemana = useMemo(() => {
+    const inicio = firstWeekdayIndex(firstDayOfWeek);
+    return WEEKDAYS.map((_, indice) => WEEKDAYS[(indice + inicio) % 7] as (typeof WEEKDAYS)[number]);
+  }, [firstDayOfWeek]);
+
   /**
    * O status que a tela desenha: o do fluxo quando ele já falou, o do servidor
    * enquanto não. `updatedAt` do zero é a marca do estado inicial do hook —
@@ -884,15 +892,21 @@ function InboxDetail({
           <div className="flex items-center gap-2">
             <span className="inline-flex items-center gap-1 text-xs text-muted">
               <Globe className="size-3.5 text-dim" />
-              <span className="font-mono font-medium">America/Sao_Paulo</span>
+              {/* O fuso do próprio expediente. Era o literal `America/Sao_Paulo`
+                  ao lado de um `Fuso: {hours.timezone}` na mesma caixa: uma
+                  caixa configurada em Manaus exibia os dois valores brigando. */}
+              <span className="font-mono font-medium">{hours.timezone}</span>
             </span>
           </div>
         </div>
 
-        {/* Tabela semanal */}
+        {/* Tabela semanal, começando no dia que a conta escolheu em Empresa ›
+            Preferências regionais. A lista sempre abriu no domingo porque
+            `WEEKDAYS` está na ordem de `Date.getDay()`, e "Início da semana"
+            era uma preferência sem consumidor nenhum. */}
         <div className="mt-4 overflow-hidden rounded-xl border border-line bg-surface">
           <ul className="divide-y divide-line-soft">
-            {WEEKDAYS.map((day) => {
+            {diasDaSemana.map((day) => {
               const entry = hours.days.find((item) => item.day === day);
               if (!entry) return null;
               return (

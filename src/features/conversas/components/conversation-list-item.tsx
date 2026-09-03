@@ -8,15 +8,21 @@ import { TONE_DOT_CLASSES } from '@/components/ui/tone';
 import { PRIORITY_LABEL, PRIORITY_TONE } from '@/components/domain/presentation-maps';
 import { LabelChips } from '@/components/domain/label-chip';
 import { cn } from '@/lib/cn';
-import { horaLabel } from '@/lib/datetime';
+import { useDatasDaConta } from '@/components/layout/regional-provider';
 
 /**
  * Mesma regra da bolha: o instante real manda, o rótulo gravado é reserva.
  * `lastMessageAt` é texto escrito no servidor, e em UTC no histórico antigo.
+ *
+ * O fuso deixou de ser constante de módulo e passou a vir da conta, então a
+ * função virou parâmetro: quem chama já tem o gancho e o repassa.
  */
-const horaDaConversa = (conversation: Conversation): string =>
+const horaDaConversa = (
+  conversation: Conversation,
+  hora: (date: Date) => string,
+): string =>
   conversation.lastActivityAt
-    ? horaLabel(new Date(conversation.lastActivityAt))
+    ? hora(new Date(conversation.lastActivityAt))
     : conversation.lastMessageAt;
 
 interface ConversationListItemProps {
@@ -30,6 +36,7 @@ export function ConversationListItem({
   selected,
   onSelect,
 }: ConversationListItemProps) {
+  const { hora } = useDatasDaConta();
   const isGroup = isGroupContact(conversation.contact);
 
   return (
@@ -82,7 +89,7 @@ export function ConversationListItem({
             </div>
 
             <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted">
-              {horaDaConversa(conversation)}
+              {horaDaConversa(conversation, hora)}
             </span>
           </div>
 

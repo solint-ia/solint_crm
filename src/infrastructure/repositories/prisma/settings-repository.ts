@@ -1010,7 +1010,34 @@ export class PrismaSettingsRepository implements SettingsRepository {
   // criava a etiqueta em estado do React, mostrava o aviso de sucesso e perdia
   // tudo no primeiro recarregamento.
 
+  /**
+   * Recusa um nome que outra etiqueta da conta já usa.
+   *
+   * A comparação ignora caixa e espaços das pontas porque é assim que quem
+   * etiqueta enxerga: "VIP", "vip" e "Vip " são a mesma etiqueta na cabeça de
+   * quem filtra uma conversa, e ter as três na lista não organiza nada — só
+   * divide o mesmo grupo em três montes e faz o filtro de contatos devolver um
+   * terço do que deveria.
+   *
+   * `excetoId` existe para a edição: renomear uma etiqueta sem trocar o nome
+   * (mexendo só na cor) não pode colidir consigo mesma.
+   */
+  private async assertLabelNameLivre(accountId: Id, name: string, excetoId?: Id): Promise<void> {
+    const conflito = await prisma.label.findFirst({
+      where: {
+        accountId,
+        name: { equals: name.trim(), mode: 'insensitive' },
+        ...(excetoId ? { id: { not: excetoId } } : {}),
+      },
+      select: { name: true },
+    });
+    if (conflito) {
+      throw new ConflictError(`Já existe uma etiqueta chamada "${conflito.name}".`);
+    }
+  }
+
   async createLabel(accountId: Id, draft: LabelDraft): Promise<Label> {
+    await this.assertLabelNameLivre(accountId, draft.name);
     // `Label.id` não tem `@default` no schema, então o id sai daqui — no mesmo
     // formato que as demais tabelas de id explícito deste projeto.
     const id = `lbl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -1028,6 +1055,7 @@ export class PrismaSettingsRepository implements SettingsRepository {
 
   async updateLabel(accountId: Id, labelId: Id, draft: LabelDraft): Promise<Label> {
     await this.assertLabel(accountId, labelId);
+    await this.assertLabelNameLivre(accountId, draft.name, labelId);
     const row = await prisma.label.update({
       where: { id: labelId, accountId },
       data: {

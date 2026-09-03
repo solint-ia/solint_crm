@@ -13,7 +13,7 @@ import type { Conversation } from '@/core/domain/conversation';
 import type { Message } from '@/core/domain/message';
 import { previewOfMessage } from '@/core/domain/message';
 import type { AppNotification } from '@/core/domain/notification';
-import { horaLabel } from '@/lib/datetime';
+import { useDatasDaConta } from '@/components/layout/regional-provider';
 import { useConversationEvents } from './conversation-events';
 import { playNotificationSound } from './notification-sound';
 
@@ -69,6 +69,7 @@ export function LiveNotificationsProvider({
   readonly currentUserId: string;
   readonly children: ReactNode;
 }) {
+  const { hora } = useDatasDaConta();
   const [items, setItems] = useState<readonly AppNotification[]>([]);
 
   /**
@@ -183,7 +184,7 @@ export function LiveNotificationsProvider({
         accountId: payload.accountId,
         kind: 'mensagem',
         text: nova ? `${quem} iniciou uma conversa` : `${quem}: ${previewOfMessage(message)}`,
-        timeLabel: horaLabel(new Date()),
+        timeLabel: hora(new Date()),
         read: false,
         href: `/conversas/${payload.conversationId}`,
       };

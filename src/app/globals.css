@@ -33,9 +33,17 @@
   --note-text: #78350f;
   --note-meta: #92400e;
 
-  /* pares soft/text para badges e tags */
+  /* trios soft/text/border para badges e tags.
+
+     Os seis `*-border` que faltavam nao eram omissao de design: `TONE_CLASSES`
+     ja pedia `border-amber-line/40` e companhia, o token nao existia, a classe
+     nao era gerada e o `border` da base caia no `currentColor` do Tailwind v4.
+     Resultado visivel: VIP, Recorrente e Proposta ganhavam uma borda cheia na
+     cor do texto enquanto Urgente e Novo Cliente — os dois tons que ja tinham
+     token — ficavam com a borda discreta que o design pedia. */
   --amber-soft: #fef3c7;
   --amber-text: #92400e;
+  --amber-border: #fcd34d;
   --green-soft: #dcfce7;
   --green-text: #166534;
   --green-border: #86efac;
@@ -44,17 +52,22 @@
   --red-border: #fca5a5;
   --violet-soft: #ede9fe;
   --violet-text: #5b21b6;
+  --violet-border: #c4b5fd;
   --blue-soft: #dbeafe;
   --blue-text: #1e40af;
+  --blue-border: #93c5fd;
   --cyan-soft: #cffafe;
   --cyan-text: #155e75;
   --cyan-border: #67e8f9;
   --slate-soft: #f1f5f9;
   --slate-text: #334155;
+  --slate-border: #cbd5e1;
   --pink-soft: #fce7f3;
   --pink-text: #9d174d;
+  --pink-border: #f9a8d4;
   --indigo-soft: #e0e7ff;
   --indigo-text: #3730a3;
+  --indigo-border: #a5b4fc;
 
   /* ------------------------------------------------------------------
      Séries de gráfico — categóricas, na ordem fixa em que são atribuídas.
@@ -112,6 +125,7 @@
 
   --amber-soft: rgba(245, 158, 11, 0.15);
   --amber-text: #fbbf24;
+  --amber-border: rgba(245, 158, 11, 0.3);
   --green-soft: rgba(16, 185, 129, 0.15);
   --green-text: #34d399;
   --green-border: rgba(16, 185, 129, 0.3);
@@ -120,17 +134,22 @@
   --red-border: rgba(239, 68, 68, 0.3);
   --violet-soft: rgba(139, 92, 246, 0.15);
   --violet-text: #a78bfa;
+  --violet-border: rgba(139, 92, 246, 0.3);
   --blue-soft: rgba(59, 130, 246, 0.15);
   --blue-text: #60a5fa;
+  --blue-border: rgba(59, 130, 246, 0.3);
   --cyan-soft: rgba(6, 182, 212, 0.15);
   --cyan-text: #38bdf8;
   --cyan-border: rgba(6, 182, 212, 0.3);
   --slate-soft: rgba(148, 163, 184, 0.12);
   --slate-text: #cbd5e1;
+  --slate-border: rgba(148, 163, 184, 0.3);
   --pink-soft: rgba(236, 72, 153, 0.15);
   --pink-text: #f472b6;
+  --pink-border: rgba(236, 72, 153, 0.3);
   --indigo-soft: rgba(99, 102, 241, 0.15);
   --indigo-text: #818cf8;
+  --indigo-border: rgba(99, 102, 241, 0.3);
 }
 
 @theme inline {
@@ -188,6 +207,7 @@
 
   --color-amber-soft: var(--amber-soft);
   --color-amber-text: var(--amber-text);
+  --color-amber-line: var(--amber-border);
   --color-green-soft: var(--green-soft);
   --color-green-text: var(--green-text);
   --color-green-line: var(--green-border);
@@ -196,17 +216,22 @@
   --color-red-line: var(--red-border);
   --color-violet-soft: var(--violet-soft);
   --color-violet-text: var(--violet-text);
+  --color-violet-line: var(--violet-border);
   --color-blue-soft: var(--blue-soft);
   --color-blue-text: var(--blue-text);
+  --color-blue-line: var(--blue-border);
   --color-cyan-soft: var(--cyan-soft);
   --color-cyan-text: var(--cyan-text);
   --color-cyan-line: var(--cyan-border);
   --color-slate-soft: var(--slate-soft);
   --color-slate-text: var(--slate-text);
+  --color-slate-line: var(--slate-border);
   --color-pink-soft: var(--pink-soft);
   --color-pink-text: var(--pink-text);
+  --color-pink-line: var(--pink-border);
   --color-indigo-soft: var(--indigo-soft);
   --color-indigo-text: var(--indigo-text);
+  --color-indigo-line: var(--indigo-border);
 
   /*
    * Escala tipografica fechada.
@@ -318,6 +343,77 @@
 @layer utilities {
   .tabular-nums {
     font-variant-numeric: tabular-nums;
+  }
+}
+
+/* ==========================================================================
+   Etiqueta de cor livre — a mesma receita dos tons da paleta.
+
+   Os tons nomeados (`amber`, `blue`, …) tem tres tokens escolhidos a mao: fundo
+   pastel, texto escuro e borda intermediaria. A cor livre do seletor nao tem
+   token nenhum, e o `Badge` a pintava com `hex18` de fundo, `hex40` de borda e
+   o proprio hex no texto — um chip lavado, de contraste baixo, visivelmente
+   mais leve que os da paleta ao lado. Era o que fazia a etiqueta recem-criada
+   "nao ter o mesmo tamanho e proporcao" das que ja existiam: a caixa media
+   igual, o peso visual nao.
+
+   Aqui a receita e reproduzida em CSS a partir de uma cor so (`--chip`), o que
+   a torna valida para qualquer hexadecimal. As proporcoes sao as medidas dos
+   proprios tokens da paleta: ~18% de cor no fundo claro, borda em ~45%, texto
+   escurecido o bastante para passar de 4.5:1 sobre o pastel.
+   ========================================================================== */
+/* A cor chega por `--chip`, entao nenhuma das tres derivadas pode ser
+   pre-calculada na compilacao. O fallback e declarado a mao de proposito: sem
+   ele o compilador emite `background-color: var(--chip)` ao lado de
+   `color: var(--chip)` para quem nao tem `color-mix`, e o texto desaparece
+   dentro do proprio fundo. Chip solido com texto branco e legivel em qualquer
+   cor. */
+.chip-tone {
+  background-color: var(--chip);
+  border-color: var(--chip);
+  color: #ffffff;
+}
+
+@supports (color: color-mix(in srgb, red, red)) {
+  .chip-tone {
+    background-color: color-mix(in srgb, var(--chip) 18%, var(--surface));
+    border-color: color-mix(in srgb, var(--chip) 45%, var(--surface));
+    color: color-mix(in srgb, var(--chip) 55%, #10131a);
+  }
+
+  /* No tema escuro a direcao inverte: fundo translucido sobre a superficie
+     escura e texto clareado, que e exatamente o que os tokens `*-text` do
+     escuro fazem (`--blue-text: #60a5fa` e o azul clareado, nao o
+     escurecido). */
+  :root[data-theme='dark'] .chip-tone {
+    background-color: color-mix(in srgb, var(--chip) 15%, transparent);
+    border-color: color-mix(in srgb, var(--chip) 30%, transparent);
+    color: color-mix(in srgb, var(--chip) 78%, #ffffff);
+  }
+}
+
+/* Terceira camada: o texto com a luminosidade **presa** numa faixa legivel.
+
+   A mistura acima e proporcional, e proporcional falha nos extremos. Um chip
+   grafite (`#1E293B`) no tema escuro dava 2.68:1 — texto quase preto sobre
+   fundo quase preto — porque 78% de uma cor escura continua escuro. Aqui a
+   regra deixa de ser "clareia um tanto" e passa a ser "clareia ate `l` chegar
+   em 0.78", o que corrige o grafite sem lavar o azul: cor que ja esta clara o
+   bastante nao e tocada pelo `max`.
+
+   E o mesmo motivo do lado claro, na direcao oposta: o ambar livre parava em
+   4.83:1, no limite do minimo, e o `min(l, 0.45)` o leva a 6.69:1.
+
+   Sintaxe de cor relativa: Chrome 119, Safari 16.4, Firefox 128. Quem nao
+   tiver fica com a mistura proporcional do bloco acima, que ja e legivel em
+   toda a paleta sugerida — a faixa so cobre as pontas. */
+@supports (color: oklch(from red l c h)) {
+  .chip-tone {
+    color: oklch(from var(--chip) min(l, 0.45) c h);
+  }
+
+  :root[data-theme='dark'] .chip-tone {
+    color: oklch(from var(--chip) max(l, 0.78) c h);
   }
 }
 

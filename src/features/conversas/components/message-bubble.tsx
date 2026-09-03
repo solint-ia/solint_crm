@@ -26,7 +26,7 @@ import { WaText } from '@/components/domain/wa-text';
 import { EmojiPicker, QUICK_REACTIONS } from '@/components/ui/emoji-picker';
 import { MediaLightbox, type LightboxMedia } from '@/components/ui/media-lightbox';
 import { cn } from '@/lib/cn';
-import { horaDaMensagem } from '@/lib/datetime';
+import { useDatasDaConta } from '@/components/layout/regional-provider';
 import { DeliveryTicks } from './delivery-ticks';
 
 const AUDIO_LABEL = 'Mensagem de áudio';
@@ -111,6 +111,7 @@ export function MessageBubble({
   currentUserId,
 }: MessageBubbleProps) {
   const [lightboxMedia, setLightboxMedia] = useState<LightboxMedia | null>(null);
+  const { horaDaMensagem } = useDatasDaConta();
 
   if (message.content.type === 'system') {
     return (

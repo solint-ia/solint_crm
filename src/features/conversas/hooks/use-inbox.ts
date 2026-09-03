@@ -12,7 +12,7 @@ import { activityTimeOf, matchesScope, PRIORITY_WEIGHT } from '@/core/domain/con
 import type { Label } from '@/core/domain/label';
 import type { Message, MessageReaction } from '@/core/domain/message';
 import { previewOfMessage } from '@/core/domain/message';
-import { horaLabel } from '@/lib/datetime';
+import { useDatasDaConta } from '@/components/layout/regional-provider';
 import type { ComposerMode } from '../components/composer';
 import { useConversationEvents } from '@/features/realtime/conversation-events';
 import { useToast } from '@/components/ui/toast';
@@ -146,6 +146,7 @@ export function useInbox({
   initialScope,
   initialUnread,
 }: UseInboxParams) {
+  const { hora } = useDatasDaConta();
   const [conversations, setConversations] = useState<readonly Conversation[]>(initialConversations);
   const [selectedId, setSelectedId] = useState<string | undefined>(
     initialSelectedId ?? initialConversations[0]?.id,
@@ -496,7 +497,7 @@ export function useInbox({
         origin: 'crm',
         ...(replyToId ? { replyToId } : {}),
         content: { type: 'text', text },
-        time: horaLabel(new Date()),
+        time: hora(new Date()),
         // A mensagem otimista já nasce com o instante real: assim a hora na tela
         // não muda quando a versão do servidor chegar e substituí-la.
         createdAt: new Date().toISOString(),
@@ -520,7 +521,7 @@ export function useInbox({
 
       return message.id;
     },
-    [currentUserName],
+    [currentUserName, hora],
   );
 
   /** Remove a bolha otimista quando o envio falha antes de virar mensagem real. */

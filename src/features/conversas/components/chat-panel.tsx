@@ -47,7 +47,7 @@ import { MessageBubble } from './message-bubble';
 import { TemplatePicker } from './template-picker';
 import { TransferModal } from './transfer-modal';
 import { cn } from '@/lib/cn';
-import { agendamentoLabel } from '@/lib/datetime';
+import { useDatasDaConta } from '@/components/layout/regional-provider';
 import { useConversationEvents } from '@/features/realtime/conversation-events';
 
 /** O que as ações de agendamento devolvem: a lista já no estado novo. */
@@ -146,6 +146,7 @@ export function ChatPanel({
   isContextOpen = false,
   onToggleContext,
 }: ChatPanelProps) {
+  const { agendamento } = useDatasDaConta();
   const [transferOpen, setTransferOpen] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
   const [replyTo, setReplyTo] = useState<Message | undefined>();
@@ -664,7 +665,7 @@ export function ChatPanel({
                   <p className="text-[11px] font-semibold text-ink">
                     {item.isPrivate ? 'Nota interna agendada' : 'Envio agendado'} ·{' '}
                     <span className="font-normal text-muted">
-                      {agendamentoLabel(new Date(item.scheduledFor))}
+                      {agendamento(new Date(item.scheduledFor))}
                     </span>
                   </p>
                   <p className="line-clamp-2 text-xs text-muted">{item.text}</p>

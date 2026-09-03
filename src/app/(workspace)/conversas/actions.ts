@@ -80,14 +80,26 @@ const MOTIVO_TEXTO: Readonly<Record<NonNullable<ClosingResult['motivo']>, CsatAv
 };
 
 const avisoDeFechamento = (fechamento: ClosingResult): CsatAviso => {
-  if (fechamento.csatEnviado) {
-    return { tone: 'sucesso', text: 'Atendimento resolvido. Pesquisa de satisfação enviada.' };
-  }
+  /**
+   * A falha vem antes do sucesso, e a ordem é a correção.
+   *
+   * `csatEnviado` era conferido primeiro, então os dois disparos numa mesma
+   * resolução — encerramento que falhou, pesquisa que saiu — produziam
+   * "Pesquisa de satisfação enviada" e nem uma palavra sobre a mensagem que o
+   * cliente não recebeu. É justamente a combinação mais provável: o
+   * encerramento é o primeiro despacho da requisição, e é ele que paga a
+   * espera pelo worker.
+   */
   if (fechamento.encerramentoFalhou) {
     return {
       tone: 'alerta',
-      text: 'Atendimento resolvido, mas a mensagem de encerramento não chegou ao cliente.',
+      text: fechamento.csatEnviado
+        ? 'Atendimento resolvido e pesquisa enviada, mas a mensagem de encerramento não chegou ao cliente.'
+        : 'Atendimento resolvido, mas a mensagem de encerramento não chegou ao cliente.',
     };
+  }
+  if (fechamento.csatEnviado) {
+    return { tone: 'sucesso', text: 'Atendimento resolvido. Pesquisa de satisfação enviada.' };
   }
   return (
     (fechamento.motivo && MOTIVO_TEXTO[fechamento.motivo]) ?? {

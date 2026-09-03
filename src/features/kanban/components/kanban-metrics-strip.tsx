@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import type { PipelineSummary } from '@/core/domain/pipeline';
 import { InfoTooltip } from '@/components/ui/info-tooltip';
-import { formatMoneyFromCents } from '@/lib/format';
+import { useFormatarMoeda } from '@/components/layout/regional-provider';
 
 
 interface KanbanMetricsStripProps {
@@ -20,6 +20,7 @@ interface KanbanMetricsStripProps {
 }
 
 export function KanbanMetricsStrip({ summary, isFiltered = false }: KanbanMetricsStripProps) {
+  const formatarMoeda = useFormatarMoeda();
   const [collapsed, setCollapsed] = useState(false);
 
   return (
@@ -72,7 +73,7 @@ export function KanbanMetricsStrip({ summary, isFiltered = false }: KanbanMetric
             <div className="min-w-0">
               <p className="truncate text-micro font-medium text-dim uppercase">Valor Total</p>
               <p className="font-display text-title font-bold text-ink tracking-tight tabular-nums">
-                {formatMoneyFromCents(summary.totalValueInCents)}
+                {formatarMoeda(summary.totalValueInCents)}
               </p>
             </div>
           </div>
@@ -85,7 +86,7 @@ export function KanbanMetricsStrip({ summary, isFiltered = false }: KanbanMetric
             <div className="min-w-0">
               <p className="truncate text-micro font-medium text-dim uppercase">Em Negociação</p>
               <p className="font-display text-title font-bold text-ink tracking-tight tabular-nums">
-                {formatMoneyFromCents(summary.inNegotiationValueInCents)}{' '}
+                {formatarMoeda(summary.inNegotiationValueInCents)}{' '}
                 <span className="text-micro font-normal text-muted">
                   ({summary.inNegotiationCount})
                 </span>

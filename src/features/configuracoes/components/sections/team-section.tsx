@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 
 import { MIN_PASSWORD_LENGTH, type Permission, type Role, type User } from '@/core/domain/user';
+import { GRANTABLE_PERMISSIONS } from '@/core/domain/permissions';
 import { PermissionGrid } from '@/features/configuracoes/components/permission-grid';
 import type { ChannelConnection, Team } from '@/core/domain/settings';
 import { Avatar } from '@/components/ui/avatar';
@@ -130,15 +131,28 @@ export function TeamSection({
   const [permMarcadas, setPermMarcadas] = useState<readonly Permission[]>([]);
   const [permErro, setPermErro] = useState<string | null>(null);
 
+  /**
+   * Só o catálogo entra no editor.
+   *
+   * O papel guarda mais do que a grade desenha: `config.equipe.papeis:*`, que
+   * nenhuma tela oferece, e as permissões de funcionalidade desligada em
+   * `FEATURES` — `supervisor` nasce do seed com `agentes-ia:ler`. Levar isso
+   * para o estado do editor fazia o contador mentir ("18 marcadas" com 16
+   * caixinhas na tela) e mandava de volta ao servidor uma permissão que ninguém
+   * clicou. O que fica de fora daqui é preservado no servidor, não descartado.
+   */
+  const doCatalogo = (permissoes: readonly Permission[]): readonly Permission[] =>
+    permissoes.filter((p) => GRANTABLE_PERMISSIONS.includes(p));
+
   const abrirPermissoesDoPapel = (role: Role) => {
     setPermAlvo({ tipo: 'papel', role });
-    setPermMarcadas(role.permissions);
+    setPermMarcadas(doCatalogo(role.permissions));
     setPermErro(null);
   };
 
   const abrirPermissoesDaPessoa = (member: User) => {
     setPermAlvo({ tipo: 'pessoa', member });
-    setPermMarcadas(memberPermissions[member.id] ?? []);
+    setPermMarcadas(doCatalogo(memberPermissions[member.id] ?? []));
     setPermErro(null);
   };
 
@@ -1080,7 +1094,7 @@ export function TeamSection({
               onToggle={alternarPermissao}
               disabled={isPending}
               {...(permAlvo?.tipo === 'pessoa'
-                ? { roleBaseline: papelDoAlvo?.permissions ?? [] }
+                ? { roleBaseline: doCatalogo(papelDoAlvo?.permissions ?? []) }
                 : {})}
             />
           </div>

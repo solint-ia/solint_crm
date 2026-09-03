@@ -5,7 +5,7 @@ import { DEFAULT_NOTIFICATION_PREFERENCES, PERMISSIONS } from '@/core/domain/use
 export const ACCOUNT_ID = 'acc-solint';
 
 export const ACCOUNTS: readonly Account[] = [
-  { id: ACCOUNT_ID, name: 'Solint Tech', plan: 'profissional', document: '12.345.678/0001-90' },
+  { id: ACCOUNT_ID, name: 'Solint Tech', plan: 'profissional', document: '12.345.678/0001-95' },
   { id: 'acc-solint-labs', name: 'Solint Labs', plan: 'starter' },
 ];
 

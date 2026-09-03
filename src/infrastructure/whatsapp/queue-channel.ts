@@ -9,7 +9,12 @@ import type {
   WhatsAppChannel,
 } from './channel';
 import type { WhatsAppOwner, WhatsAppStatusPayload } from './whatsapp-events';
-import { waitForWorker, workerPresence } from './worker-presence';
+import {
+  algumaTravaViva,
+  filaParada,
+  waitForWorker,
+  workerPresence,
+} from './worker-presence';
 
 /**
  * Trava viva no banco: prova de que existe um worker operando aquela caixa.
@@ -94,16 +99,31 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     const presence = workerPresence();
     const updatedAt = conn?.updatedAt.toISOString() ?? new Date().toISOString();
 
-    // A ordem importa, e é a mesma de `workerOnline`: a trava já está em `conn`,
-    // que acabou de ser lido, então conferi-la é de graça. Esperar 1,5s por uma
-    // batida antes disso era pagar essa espera em toda requisição de instância
-    // fria — que numa função serverless é boa parte delas.
-    const isOnline = presence.online || travaViva(conn) || (await waitForWorker(1500));
+    /**
+     * Ausência precisa ser **provada**, e antes não era.
+     *
+     * A conta era `presence.online || travaViva(conn) || waitForWorker(1500)`, e
+     * qualquer falso nesses três virava a tela dizendo "O worker de WhatsApp não
+     * está em execução". Só que a batida sai a cada 5 s: um processo Next
+     * recém-acordado — instância fria, ou a primeira leitura depois de o modal
+     * abrir — quase nunca ouve uma dentro de 1,5 s, e a caixa que está
+     * justamente esperando o QR não tem trava para exibir. O resultado era o
+     * erro aparecendo no clique e o QR chegando logo atrás, desmentindo-o.
+     *
+     * Agora entram dois sinais gravados, que não dependem de este processo ter
+     * escutado coisa alguma: uma trava viva em qualquer caixa prova que existe
+     * worker no ar, e um comando desta caixa parado na fila prova que não
+     * existe. Sem prova de ausência, o status gravado responde sozinho.
+     */
+    const isOnline =
+      presence.online ||
+      travaViva(conn) ||
+      (await algumaTravaViva()) ||
+      (await waitForWorker(1500));
 
-    // Worker comprovadamente ausente é reportado como desconexão
-    if (!isOnline) {
+    if (!isOnline && inboxId && (await filaParada(inboxId))) {
       return {
-        ...(inboxId ? { inboxId } : {}),
+        inboxId,
         status: 'desconectado',
         error: 'O worker de WhatsApp não está em execução. Inicie com `npm run worker`.',
         updatedAt,
@@ -228,7 +248,23 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     });
     if (travaViva(conn)) return true;
 
-    return waitForWorker(1500);
+    // Quarto sinal, gravado: a trava de outra caixa também prova que existe
+    // worker. Uma conta com duas caixas, uma pareada e outra não, recusava
+    // envios pela segunda enquanto a primeira estava viva no mesmo processo.
+    if (await algumaTravaViva()) return true;
+
+    if (await waitForWorker(1500)) return true;
+
+    /**
+     * Na dúvida, enfileira.
+     *
+     * Este método guarda o **envio**, não a conexão, e a assimetria importa:
+     * recusar um `connect` deixa a pessoa olhando para uma tela que explica o
+     * que fazer, enquanto recusar um `send` joga fora a mensagem. Sem prova de
+     * ausência — um comando desta caixa parado na fila —, o comando entra: a
+     * fila é durável, e o worker a drena quando voltar.
+     */
+    return !(await filaParada(inboxId));
   }
 
   private async dispatch(

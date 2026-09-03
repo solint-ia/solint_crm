@@ -120,11 +120,32 @@ export const contactRow = (row: ContactWithLabels): Contact => ({
   ...(row.participantCount === null ? {} : { participantCount: row.participantCount }),
 });
 
+/**
+ * Conserta na leitura o que foi gravado errado na escrita.
+ *
+ * As mensagens automáticas passaram um tempo sendo gravadas com
+ * `{ type: 'texto' }` — o português no lugar do `'text'` que a união
+ * `MessageContent` define. A coluna é JSON, então nada reclamou, e a bolha caía
+ * no `default` do renderizador: toda saudação, ausência, encerramento e
+ * pesquisa de satisfação já gravada aparece no chat como "Mídia não suportada".
+ *
+ * A gravação já foi corrigida em `auto-reply.ts`. Isto aqui é pelas linhas que
+ * ficaram para trás: elas são histórico de atendimento e continuam sendo
+ * abertas todo dia. Uma migração resolveria as de hoje e deixaria a próxima
+ * réplica velha sem cobertura — a leitura cobre as duas.
+ */
+const contentRow = (raw: DbMessage['content']): MessageContent => {
+  const content = readJson<MessageContent>(raw, { type: 'text', text: '' });
+  return (content as { type?: string }).type === 'texto'
+    ? ({ ...content, type: 'text' } as MessageContent)
+    : content;
+};
+
 export const messageRow = (row: DbMessage): Message => ({
   id: row.id,
   conversationId: row.conversationId,
   author: row.author as Message['author'],
-  content: readJson<MessageContent>(row.content, { type: 'text', text: '' }),
+  content: contentRow(row.content),
   time: row.time,
   // O instante real vai junto para a tela formatar a hora no fuso de exibição.
   // Sem ele a bolha só teria o rótulo gravado, que nasceu em UTC no servidor.

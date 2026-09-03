@@ -11,7 +11,7 @@ import {
   type AuditRecord,
 } from '@/core/domain/audit';
 import { auditLogExportAction } from '@/app/(workspace)/configuracoes/audit-actions';
-import { useFormatarData } from '@/components/layout/date-format-provider';
+import { useFormatarData } from '@/components/layout/regional-provider';
 import { Button } from '@/components/ui/button';
 import { toCsv, csvFileName } from '@/lib/csv';
 import { cn } from '@/lib/cn';

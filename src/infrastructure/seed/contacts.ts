@@ -62,7 +62,7 @@ export const CONTACTS: readonly Contact[] = [
     lastContactLabel: 'Hoje, 13:40',
     labels: [LABEL.urgente],
     customFields: [
-      { label: 'CNPJ', value: '12.345.678/0001-90' },
+      { label: 'CNPJ', value: '12.345.678/0001-95' },
       { label: 'Código ERP', value: 'CRM-00587' },
       { label: 'Valor de Lead', value: '—' },
       { label: 'Venc. Fatura', value: '18/08/2026' },

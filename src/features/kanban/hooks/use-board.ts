@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState, useTransition } from 'react'
 import type { Deal, PipelineStage, PipelineSummary } from '@/core/domain/pipeline';
 import { calculatePipelineSummary, isDealStale, sumDeals } from '@/core/domain/pipeline';
 import { inicioDoDia } from '@/lib/datetime';
+import { useRegional } from '@/components/layout/regional-provider';
+import { firstWeekdayIndex } from '@/core/domain/regional-preferences';
 import type { BoardFilters, SortOption } from '../components/kanban-toolbar';
 
 interface UseBoardParams {
@@ -24,18 +26,35 @@ const INITIAL_FILTERS: BoardFilters = {
   valueRange: null,
 };
 
-const inicioDoPeriodo = (periodo: string, agora: Date = new Date()): number | null => {
-  const hoje = inicioDoDia(agora);
+/**
+ * O corte de um período, no fuso e na semana que a conta configurou.
+ *
+ * Os dois parâmetros novos vinham fixos: o fuso era o da variável de ambiente e
+ * a semana começava sempre na segunda. A tela de Empresa oferece as duas
+ * escolhas desde sempre — "Fuso horário oficial" e "Início da semana" — e
+ * nenhuma delas chegava aqui, que é justamente onde "esta semana" no Kanban é
+ * decidido.
+ */
+const inicioDoPeriodo = (
+  periodo: string,
+  timeZone: string,
+  primeiroDia: 0 | 1,
+  agora: Date = new Date(),
+): number | null => {
+  const hoje = inicioDoDia(agora, timeZone);
   const dataCivil = new Date(hoje);
 
   switch (periodo) {
     case 'hoje':
       return hoje;
     case 'semana': {
-      // Semana comercial começa na segunda-feira. `getUTCDay()` é seguro aqui:
-      // `inicioDoDia` representa o dia civil do produto como meia-noite UTC.
+      // `getUTCDay()` é seguro aqui: `inicioDoDia` representa o dia civil do
+      // produto como meia-noite UTC.
       const dia = dataCivil.getUTCDay();
-      return hoje - ((dia + 6) % 7) * 86_400_000;
+      // Quantos dias voltar até o primeiro da semana escolhida. Com domingo
+      // (`0`) o resto é o próprio dia; com segunda (`1`), o deslocamento de um.
+      const recuo = (dia - primeiroDia + 7) % 7;
+      return hoje - recuo * 86_400_000;
     }
     case 'mes':
       return Date.UTC(dataCivil.getUTCFullYear(), dataCivil.getUTCMonth(), 1);
@@ -47,6 +66,8 @@ const inicioDoPeriodo = (periodo: string, agora: Date = new Date()): number | nu
 };
 
 export function useBoard({ initialDeals, stages: initialStages, moveDeal }: UseBoardParams) {
+  const { timezone, firstDayOfWeek } = useRegional();
+  const primeiroDia = firstWeekdayIndex(firstDayOfWeek);
   const [deals, setDeals] = useState<readonly Deal[]>(initialDeals);
   const [stages, setStages] = useState<readonly PipelineStage[]>(initialStages);
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -127,16 +148,20 @@ export function useBoard({ initialDeals, stages: initialStages, moveDeal }: UseB
       // hoje". `Deal.createdAt` existe desde a Etapa 11 e responde a pergunta
       // que a barra de fato faz.
       if (filters.period && filters.period !== 'todos') {
-        const corte = inicioDoPeriodo(filters.period);
+        const corte = inicioDoPeriodo(filters.period, timezone, primeiroDia);
         const criacao = new Date(deal.createdAt);
-        if (corte !== null && !Number.isNaN(criacao.getTime()) && inicioDoDia(criacao) < corte) {
+        if (
+          corte !== null &&
+          !Number.isNaN(criacao.getTime()) &&
+          inicioDoDia(criacao, timezone) < corte
+        ) {
           return false;
         }
       }
 
       return true;
     });
-  }, [deals, filters]);
+  }, [deals, filters, timezone, primeiroDia]);
 
   // Ordenação
   const visibleDeals = useMemo(() => {

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { MoreHorizontal, Plus, TrendingUp } from 'lucide-react';
 import type { Deal, PipelineStage } from '@/core/domain/pipeline';
-import { formatMoneyFromCents } from '@/lib/format';
+import { useFormatarMoeda } from '@/components/layout/regional-provider';
 import { cn } from '@/lib/cn';
 import { DealCard } from './deal-card';
 
@@ -47,6 +47,7 @@ export function KanbanColumn({
   onAddDealToStage,
   onOpenStagesModal,
 }: KanbanColumnProps) {
+  const formatarMoeda = useFormatarMoeda();
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
@@ -129,7 +130,7 @@ export function KanbanColumn({
         {/* Valor Total da Etapa */}
         <div className="border-t border-line-soft pt-1.5 text-meta text-muted">
           <span className="font-display font-bold text-ink tracking-tight tabular-nums">
-            {formatMoneyFromCents(total)}
+            {formatarMoeda(total)}
           </span>
         </div>
       </header>

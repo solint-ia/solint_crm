@@ -21,7 +21,7 @@ import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { ConfirmModal } from '@/components/ui/confirm-modal';
 import { PRIORITY_LABEL, PRIORITY_TONE } from '@/components/domain/presentation-maps';
-import { formatMoneyFromCents } from '@/lib/format';
+import { useFormatarMoeda } from '@/components/layout/regional-provider';
 import { cn } from '@/lib/cn';
 
 interface DealCardProps {
@@ -55,6 +55,7 @@ export function DealCard({
   onEdit,
   onDelete,
 }: DealCardProps) {
+  const formatarMoeda = useFormatarMoeda();
   const [showMenu, setShowMenu] = useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
 
@@ -208,7 +209,7 @@ export function DealCard({
         <div className="mt-2.5 border-t border-line-soft pt-2">
           <span className="block text-[10px] font-medium uppercase text-dim">Valor Estimado</span>
           <span className="font-display text-title font-bold text-ink tracking-tight tabular-nums">
-            {formatMoneyFromCents(deal.amountInCents)}
+            {formatarMoeda(deal.amountInCents)}
           </span>
         </div>
 

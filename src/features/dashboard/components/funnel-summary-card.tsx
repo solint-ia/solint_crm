@@ -1,7 +1,13 @@
+'use client';
+
+// Componente de cliente por causa de uma linha: a moeda do valor exibido vem
+// da preferência da conta, que vive num contexto. Ele não faz nada de
+// servidor — recebe `stages` pronto e desenha — então a fronteira só desce um
+// nível na árvore do painel.
 import Link from 'next/link';
 import { ArrowUpRight, Kanban } from 'lucide-react';
 import type { FunnelStageSummary } from '@/core/domain/analytics';
-import { formatMoneyFromCents } from '@/lib/format';
+import { useFormatarMoeda } from '@/components/layout/regional-provider';
 
 interface FunnelSummaryCardProps {
   readonly stages: readonly FunnelStageSummary[];
@@ -21,6 +27,7 @@ interface FunnelSummaryCardProps {
  * some no arredondamento.
  */
 export function FunnelSummaryCard({ stages }: FunnelSummaryCardProps) {
+  const formatarMoeda = useFormatarMoeda();
   const valorTotal = stages.reduce((total, stage) => total + stage.amountInCents, 0);
   const negocios = stages.reduce((total, stage) => total + stage.count, 0);
   const maior = Math.max(1, ...stages.map((stage) => stage.count));
@@ -51,7 +58,7 @@ export function FunnelSummaryCard({ stages }: FunnelSummaryCardProps) {
         <div>
           <span className="text-[11px] font-medium text-muted">Pipeline ativo</span>
           <p className="font-display text-base font-bold text-ink tabular-nums">
-            {formatMoneyFromCents(valorTotal)}
+            {formatarMoeda(valorTotal)}
           </p>
         </div>
         <div className="text-right">
@@ -91,7 +98,7 @@ export function FunnelSummaryCard({ stages }: FunnelSummaryCardProps) {
                       ) : null}
                     </span>
                     <span className="shrink-0 font-mono text-[11px] font-bold text-ink tabular-nums">
-                      {formatMoneyFromCents(stage.amountInCents)}
+                      {formatarMoeda(stage.amountInCents)}
                     </span>
                   </div>
 
