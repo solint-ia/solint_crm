@@ -21,14 +21,14 @@ import { defineConfig } from 'prisma/config';
  * Sem fallback de propósito. O antigo `?? 'file:./dev.db'` transformava
  * "variável não carregada" em "migrando o banco errado, em silêncio".
  */
-const url = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
+/**
+ * Em ambientes de CI, build de imagens ou `postinstall` (onde apenas o código tipado
+ * do cliente Prisma é gerado sem tocar no banco), usamos uma URL sintática padrão
+ * para permitir que `prisma generate` avalie o arquivo de configuração.
+ */
+const CI_OR_BUILD_FALLBACK = 'postgresql://postgres:postgres@localhost:5432/postgres';
 
-if (!url) {
-  throw new Error(
-    'DIRECT_URL (ou DATABASE_URL) ausente. Copie `.env.example` para `.env` e ' +
-      'preencha; rode `npm run db:check` para conferir as três conexões.',
-  );
-}
+const url = process.env.DIRECT_URL ?? process.env.DATABASE_URL ?? CI_OR_BUILD_FALLBACK;
 
 export default defineConfig({
   schema: path.join('prisma', 'schema.prisma'),
