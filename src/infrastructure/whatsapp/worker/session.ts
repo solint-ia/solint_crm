@@ -2,6 +2,7 @@ import {
   DisconnectReason,
   downloadMediaMessage,
   isJidGroup,
+  isLidUser,
   jidNormalizedUser,
   makeCacheableSignalKeyStore,
   makeWASocket,
@@ -979,13 +980,13 @@ export class WhatsAppSession {
           // `messages.upsert`, mas `markMessageRevoked` é idempotente e cobrir
           // os dois protege contra o Baileys mudar por qual caminho o entrega.
           if (update.update.message === null && update.key.id) {
-            await markMessageRevoked(update.key.id);
+            await markMessageRevoked(update.key.id, this.inboxId);
             continue;
           }
           if (update.update.status && update.key.id) {
             const status = deliveryStatusFrom(update.update.status);
             if (status) {
-              await applyDeliveryUpdate(update.key.id, status);
+              await applyDeliveryUpdate(update.key.id, status, this.inboxId);
             }
           }
         }
@@ -1017,8 +1018,8 @@ export class WhatsAppSession {
         for (const { key, receipt } of updates) {
           if (!key.id) continue;
           // A ordem não importa: `applyDeliveryUpdate` nunca rebaixa um status.
-          if (receipt.receiptTimestamp) await applyDeliveryUpdate(key.id, 'entregue');
-          if (receipt.readTimestamp) await applyDeliveryUpdate(key.id, 'lido');
+          if (receipt.receiptTimestamp) await applyDeliveryUpdate(key.id, 'entregue', this.inboxId);
+          if (receipt.readTimestamp) await applyDeliveryUpdate(key.id, 'lido', this.inboxId);
         }
       }),
     );
@@ -1140,7 +1141,7 @@ export class WhatsAppSession {
     const emoji = (item.reaction?.text ?? '').trim();
 
     if (fromMe) {
-      await applyReaction(alvo, { emoji, actorId: 'me', by: 'agent' });
+      await applyReaction(alvo, { emoji, actorId: 'me', by: 'agent' }, this.inboxId);
       return;
     }
 
@@ -1155,12 +1156,16 @@ export class WhatsAppSession {
       (jid ? this.contactsStore.get(jid)?.name?.trim() : undefined) ??
       (sender?.phone ? PhoneNumber.format(sender.phone) || sender.phone : undefined);
 
-    await applyReaction(alvo, {
-      emoji,
-      actorId,
-      by: 'contact',
-      ...(nome ? { authorName: nome } : {}),
-    });
+    await applyReaction(
+      alvo,
+      {
+        emoji,
+        actorId,
+        by: 'contact',
+        ...(nome ? { authorName: nome } : {}),
+      },
+      this.inboxId,
+    );
   }
 
   /**
@@ -1311,6 +1316,8 @@ export class WhatsAppSession {
       if (
         !rawJid ||
         isJidGroup(rawJid) ||
+        isLidUser(rawJid) ||
+        rawJid.endsWith('@lid') ||
         rawJid.endsWith('@g.us') ||
         rawJid.includes('@broadcast') ||
         rawJid.includes('@newsletter')
@@ -1681,7 +1688,7 @@ export class WhatsAppSession {
     // engoliria o aviso.
     const revogada = revokedMessageId(msg);
     if (revogada) {
-      await markMessageRevoked(revogada);
+      await markMessageRevoked(revogada, this.inboxId);
       return;
     }
 
@@ -1793,8 +1800,10 @@ export class WhatsAppSession {
       ? await this.materializeMedia(msg, messageId, decoded.media, decoded.content)
       : decoded.content;
 
+    const appMessageId = `msg-wa-${chat.conversationId}-${messageId}`;
+
     const appMessage: Message = {
-      id: messageId,
+      id: appMessageId,
       externalId: messageId,
       conversationId: chat.conversationId,
       author: fromMe ? 'agent' : 'contact',

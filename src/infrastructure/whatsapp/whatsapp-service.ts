@@ -6,6 +6,7 @@ import makeWASocket, {
   makeCacheableSignalKeyStore,
   downloadMediaMessage,
   isJidGroup,
+  isLidUser,
   jidNormalizedUser,
   type Contact as WAContact,
   type WASocket,
@@ -833,8 +834,10 @@ export class WhatsAppService {
         )
       : decoded.content;
 
+    const appMessageId = `msg-wa-${chat.conversationId}-${messageId}`;
+
     const appMessage: Message = {
-      id: messageId,
+      id: appMessageId,
       externalId: messageId,
       conversationId: chat.conversationId,
       author: fromMe ? 'agent' : 'contact',
@@ -1006,7 +1009,8 @@ export class WhatsAppService {
   private async applyDeliveryUpdate(key: WAMessageKey, status: number | null | undefined) {
     const deliveryStatus = deliveryStatusFrom(status);
     if (!deliveryStatus || !key.id) return;
-    await persistDeliveryUpdate(key.id, deliveryStatus);
+    const inboxId = await this.activeInboxId();
+    await persistDeliveryUpdate(key.id, deliveryStatus, inboxId);
   }
 
   /**
@@ -1020,6 +1024,8 @@ export class WhatsAppService {
     if (
       !jid ||
       isJidGroup(jid) ||
+      isLidUser(jid) ||
+      jid.endsWith('@lid') ||
       jid.endsWith('@g.us') ||
       jid.includes('@broadcast') ||
       jid.includes('@newsletter')
@@ -1568,8 +1574,10 @@ export class WhatsAppService {
     const autorKey = item.reaction?.key ?? undefined;
     const emoji = (item.reaction?.text ?? '').trim();
 
+    const inboxId = await this.activeInboxId();
+
     if (autorKey?.fromMe) {
-      await applyReaction(alvo, { emoji, actorId: 'me', by: 'agent' });
+      await applyReaction(alvo, { emoji, actorId: 'me', by: 'agent' }, inboxId);
       return;
     }
 
@@ -1583,12 +1591,16 @@ export class WhatsAppService {
         : undefined) ??
       (sender?.phone ? PhoneNumber.format(sender.phone) || sender.phone : undefined);
 
-    await applyReaction(alvo, {
-      emoji,
-      actorId,
-      by: 'contact',
-      ...(nome ? { authorName: nome } : {}),
-    });
+    await applyReaction(
+      alvo,
+      {
+        emoji,
+        actorId,
+        by: 'contact',
+        ...(nome ? { authorName: nome } : {}),
+      },
+      inboxId,
+    );
   }
 
   /**

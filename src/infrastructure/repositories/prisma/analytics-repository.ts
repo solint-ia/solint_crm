@@ -41,9 +41,8 @@ import { prisma } from '@/infrastructure/db/prisma';
  *
  * **O que ele faz agora.** Uma consulta recortada pela janela do período (mais
  * a janela anterior, para a comparação), e todo indicador derivado das colunas
- * que o atendimento agora carimba: `createdAt`, `firstResponseSecs`,
- * `resolutionSecs` e `csatScore`. Onde não há dado, o valor é `—` e a legenda
- * diz que não há — nunca um número inventado que pareça bom.
+ * que o atendimento carimba. Onde não há dado, o valor é `—` e a legenda diz
+ * que não há — nunca um número inventado que pareça bom.
  */
 
 /** Uma conversa, reduzida ao que qualquer indicador precisa dela. */
@@ -58,8 +57,6 @@ interface Linha {
   readonly slaBreached: boolean | null;
   readonly createdAt: Date;
   readonly firstResponseSecs: number | null;
-  readonly resolutionSecs: number | null;
-  readonly resolvedAt: Date | null;
   readonly csatScore: number | null;
   readonly csatComment: string | null;
   readonly lastActivityAt: Date | null;
@@ -78,8 +75,6 @@ const LINHA_SELECT = {
   slaBreached: true,
   createdAt: true,
   firstResponseSecs: true,
-  resolutionSecs: true,
-  resolvedAt: true,
   csatScore: true,
   csatComment: true,
   lastActivityAt: true,
@@ -180,6 +175,36 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
       );
   }
 
+  /**
+   * Quantas conversas foram encerradas em cada janela.
+   *
+   * A data relevante é `resolvedAt`, não `createdAt`: uma conversa aberta na
+   * semana passada e resolvida hoje pertence à produção de hoje.
+   */
+  private async contarResolvidas(
+    accountId: Id,
+    inboxAccess: InboxAccess,
+    window: PeriodWindow,
+  ): Promise<{ readonly atual: number; readonly anterior: number }> {
+    const scope =
+      inboxAccess === 'todas' ? {} : { inboxId: { in: [...inboxAccess] } };
+
+    const [atual, anterior] = await Promise.all([
+      prisma.conversation.count({
+        where: { accountId, ...scope, resolvedAt: { gte: window.from, lte: window.to } },
+      }),
+      prisma.conversation.count({
+        where: {
+          accountId,
+          ...scope,
+          resolvedAt: { gte: window.previousFrom, lte: window.previousTo },
+        },
+      }),
+    ]);
+
+    return { atual, anterior };
+  }
+
   async getOverview(
     accountId: Id,
     period: PeriodKey,
@@ -203,13 +228,13 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
      * filtro sem trazer o histórico junto.
      */
     const filaBase = {
-      accountId,
       ...(inboxAccess === 'todas' ? {} : { inboxId: { in: [...inboxAccess] } }),
       status: { in: ['aberta', 'pendente', 'espera'] },
     };
 
     const [
       { atual, anterior },
+      resolvidas,
       members,
       defaultPipeline,
       naFila,
@@ -220,18 +245,23 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
       candidatas,
     ] = await Promise.all([
       this.carregar(accountId, inboxAccess, window),
+      this.contarResolvidas(accountId, inboxAccess, window),
       prisma.membership.findMany({
         where: { accountId },
         include: { user: { include: { teamMemberships: { include: { team: true } } } } },
       }),
       this.funilDaConta(accountId),
-      prisma.conversation.count({ where: filaBase }),
-      prisma.conversation.count({ where: { ...filaBase, status: 'aberta' } }),
-      prisma.conversation.count({ where: { ...filaBase, assigneeId: null } }),
-      prisma.conversation.aggregate({ where: filaBase, _sum: { unreadCount: true } }),
-      prisma.conversation.count({ where: { ...filaBase, unreadCount: { gt: 0 } } }),
+      prisma.conversation.count({ where: { accountId, ...filaBase } }),
+      prisma.conversation.count({ where: { accountId, ...filaBase, status: 'aberta' } }),
+      prisma.conversation.count({ where: { accountId, ...filaBase, assigneeId: null } }),
+      prisma.conversation.aggregate({
+        where: { accountId, ...filaBase },
+        _sum: { unreadCount: true },
+      }),
+      prisma.conversation.count({ where: { accountId, ...filaBase, unreadCount: { gt: 0 } } }),
       prisma.conversation.findMany({
         where: {
+          accountId,
           ...filaBase,
           // Só quem de fato precisa de atenção: sem dono, com mensagem não lida,
           // com SLA estourado, ou parada em espera.
@@ -250,14 +280,6 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
 
     const totalNaoLidas = naoLidas._sum.unreadCount ?? 0;
 
-    const resolvidasAtual = atual.filter((linha) => linha.status === 'resolvida');
-    const resolvidasAnterior = anterior.filter((linha) => linha.status === 'resolvida');
-
-    const tprAtual = averageOf(defined(atual.map((linha) => linha.firstResponseSecs)));
-    const tprAnterior = averageOf(defined(anterior.map((linha) => linha.firstResponseSecs)));
-    const tmrAtual = averageOf(defined(resolvidasAtual.map((linha) => linha.resolutionSecs)));
-    const tmrAnterior = averageOf(defined(resolvidasAnterior.map((linha) => linha.resolutionSecs)));
-
     const notasAtual = defined(atual.map((linha) => linha.csatScore));
     const csatAtual = averageOf(notasAtual);
     const satisfeitos = notasAtual.filter((nota) => nota >= 4).length;
@@ -267,10 +289,7 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
         id: 'abertas',
         label: 'Conversas abertas',
         value: String(abertas),
-        delta:
-          naFila === abertas
-            ? 'toda a fila está aberta'
-            : `${naFila} na fila ao todo`,
+        delta: naFila === abertas ? 'toda a fila está aberta' : `${naFila} na fila ao todo`,
         deltaDirection: abertas > 0 ? 'neutro' : 'positivo',
         description:
           'Atendimentos com status "aberta" neste exato momento, somando todas as caixas que você alcança. Não depende do período selecionado: é o estado atual da fila.',
@@ -300,20 +319,20 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
           'Total de mensagens enviadas por clientes que ninguém abriu ainda. Zera conforme a equipe lê as conversas.',
       },
       {
-        id: 'tpr',
-        label: 'Tempo 1ª resposta',
-        value: durationLabel(tprAtual),
-        ...variacao(tprAtual, tprAnterior, true),
+        id: 'recebidas',
+        label: 'Conversas recebidas',
+        value: String(atual.length),
+        ...variacao(atual.length, anterior.length),
         description:
-          'Média do intervalo entre a abertura da conversa e a primeira resposta de um atendente humano, dentro do período. Saudação e demais mensagens automáticas não contam, porque sairiam em segundos e mascarariam o indicador.',
+          'Conversas que começaram no período selecionado, comparadas com a janela imediatamente anterior. Mede o volume novo que chegou para a equipe.',
       },
       {
-        id: 'tmr',
-        label: 'Tempo de resolução',
-        value: durationLabel(tmrAtual),
-        ...variacao(tmrAtual, tmrAnterior, true),
+        id: 'resolvidas',
+        label: 'Resolvidas no período',
+        value: String(resolvidas.atual),
+        ...variacao(resolvidas.atual, resolvidas.anterior),
         description:
-          'Média do tempo entre a abertura e o encerramento das conversas resolvidas no período. Conversas ainda abertas não entram na conta.',
+          'Conversas efetivamente encerradas no período, mesmo que tenham sido abertas antes dele. Mede quanto trabalho a equipe concluiu.',
       },
       {
         id: 'csat',
@@ -334,32 +353,30 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
     /* Conversas que precisam de atenção — as mais paradas primeiro.     */
     /* ---------------------------------------------------------------- */
     const agora = Date.now();
-    const pendings: PendingConversation[] = candidatas
-      .slice(0, 8)
-      .map((linha) => {
-        const parado = linha.lastActivityAt
-          ? Math.round((agora - linha.lastActivityAt.getTime()) / 1000)
-          : undefined;
-        const priority = (linha.priority as PendingConversation['priority']) || 'baixa';
+    const pendings: PendingConversation[] = candidatas.slice(0, 8).map((linha) => {
+      const parado = linha.lastActivityAt
+        ? Math.round((agora - linha.lastActivityAt.getTime()) / 1000)
+        : undefined;
+      const priority = (linha.priority as PendingConversation['priority']) || 'baixa';
 
-        return {
-          conversationId: linha.id,
-          contactName: linha.contact.name || 'Contato sem nome',
-          ...(linha.contact.phone ? { phone: linha.contact.phone } : {}),
-          channel: linha.channel,
-          ...(linha.assigneeName ? { assigneeName: linha.assigneeName } : {}),
-          priority,
-          // O rótulo era `lastMessageAt` — a hora do relógio ("14:32"), que não
-          // responde "há quanto tempo isto está parado?".
-          waitingLabel: parado === undefined ? 'agora' : `há ${durationLabel(parado)}`,
-          ...(parado === undefined ? {} : { waitingMinutes: Math.round(parado / 60) }),
-          tone: !linha.assigneeId
-            ? ('amber' as const)
-            : linha.slaBreached || priority === 'urgente'
-              ? ('red' as const)
-              : ('blue' as const),
-        };
-      });
+      return {
+        conversationId: linha.id,
+        contactName: linha.contact.name || 'Contato sem nome',
+        ...(linha.contact.phone ? { phone: linha.contact.phone } : {}),
+        channel: linha.channel,
+        ...(linha.assigneeName ? { assigneeName: linha.assigneeName } : {}),
+        priority,
+        // O rótulo era `lastMessageAt` — a hora do relógio ("14:32"), que não
+        // responde "há quanto tempo isto está parado?".
+        waitingLabel: parado === undefined ? 'agora' : `há ${durationLabel(parado)}`,
+        ...(parado === undefined ? {} : { waitingMinutes: Math.round(parado / 60) }),
+        tone: !linha.assigneeId
+          ? ('amber' as const)
+          : linha.slaBreached || priority === 'urgente'
+            ? ('red' as const)
+            : ('blue' as const),
+      };
+    });
 
     /* ---------------------------------------------------------------- */
     /* Desempenho por agente — no período, com os tempos reais dele.     */
@@ -369,23 +386,25 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
     /* ---------------------------------------------------------------- */
     /* Funil comercial.                                                  */
     /* ---------------------------------------------------------------- */
-    const funnel: FunnelStageSummary[] = (defaultPipeline?.stages ?? []).map((stage, index, todos) => {
-      const proxima = todos[index + 1];
-      // A conversão é quanto do que chegou aqui seguiu adiante. Sem próxima
-      // etapa não há conversão a medir — a última etapa é o destino.
-      const taxa =
-        proxima && stage.deals.length > 0
-          ? `${Math.round((proxima.deals.length / stage.deals.length) * 100)}%`
-          : undefined;
+    const funnel: FunnelStageSummary[] = (defaultPipeline?.stages ?? []).map(
+      (stage, index, todos) => {
+        const proxima = todos[index + 1];
+        // A conversão é quanto do que chegou aqui seguiu adiante. Sem próxima
+        // etapa não há conversão a medir — a última etapa é o destino.
+        const taxa =
+          proxima && stage.deals.length > 0
+            ? `${Math.round((proxima.deals.length / stage.deals.length) * 100)}%`
+            : undefined;
 
-      return {
-        stage: stage.name,
-        count: stage.deals.length,
-        amountInCents: stage.deals.reduce((total, deal) => total + deal.amountInCents, 0),
-        colorVar: stage.color || 'var(--color-blue-text)',
-        ...(taxa ? { conversionRate: taxa } : {}),
-      };
-    });
+        return {
+          stage: stage.name,
+          count: stage.deals.length,
+          amountInCents: stage.deals.reduce((total, deal) => total + deal.amountInCents, 0),
+          colorVar: stage.color || 'var(--color-blue-text)',
+          ...(taxa ? { conversionRate: taxa } : {}),
+        };
+      },
+    );
 
     /* ---------------------------------------------------------------- */
     /* Série temporal — contagem real por balde.                         */
@@ -434,7 +453,9 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
       readonly user: {
         readonly name: string;
         readonly avatarTone: string | null;
-        readonly teamMemberships: readonly { readonly team: { readonly accountId: string; readonly name: string } }[];
+        readonly teamMemberships: readonly {
+          readonly team: { readonly accountId: string; readonly name: string };
+        }[];
       };
     }[],
     linhas: readonly Linha[],
@@ -459,9 +480,6 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
           avatarTone: member.user.avatarTone || 'var(--color-brand)',
           handled: minhas.length,
           resolved: resolvidas.length,
-          // A média era `'1m 20s'` para todo mundo — o ranking existia e não
-          // rankeava nada.
-          averageResponse: durationLabel(averageOf(defined(minhas.map((l) => l.firstResponseSecs)))),
           csat: csatLabel(media),
           csatTone: csatTone(media),
         };
@@ -475,8 +493,9 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
     inboxAccess: InboxAccess,
   ): Promise<AnalyticsReport> {
     const window = periodWindow(period);
-    const [{ atual, anterior }, members, defaultPipeline] = await Promise.all([
+    const [{ atual, anterior }, resolvidas, members, defaultPipeline] = await Promise.all([
       this.carregar(accountId, inboxAccess, window),
+      this.contarResolvidas(accountId, inboxAccess, window),
       prisma.membership.findMany({
         where: { accountId },
         include: { user: { include: { teamMemberships: { include: { team: true } } } } },
@@ -497,13 +516,13 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
       to: window.previousTo,
       buckets: window.buckets.map((bucket) => ({
         label: bucket.label,
-        from: new Date(bucket.from.getTime() - (window.from.getTime() - window.previousFrom.getTime())),
+        from: new Date(
+          bucket.from.getTime() - (window.from.getTime() - window.previousFrom.getTime()),
+        ),
         to: new Date(bucket.to.getTime() - (window.from.getTime() - window.previousFrom.getTime())),
       })),
     };
 
-    const resolvidasAtual = atual.filter((linha) => linha.status === 'resolvida');
-    const resolvidasAnterior = anterior.filter((linha) => linha.status === 'resolvida');
     const notasAtual = defined(atual.map((linha) => linha.csatScore));
     const notasAnterior = defined(anterior.map((linha) => linha.csatScore));
 
@@ -517,24 +536,8 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
       {
         id: 'resolvidas',
         label: 'Conversas resolvidas',
-        current: resolvidasAtual.length,
-        previous: resolvidasAnterior.length,
-      },
-      {
-        id: 'primeira_resposta',
-        label: 'Tempo de 1ª resposta',
-        current: Math.round(averageOf(defined(atual.map((l) => l.firstResponseSecs))) ?? 0),
-        previous: Math.round(averageOf(defined(anterior.map((l) => l.firstResponseSecs))) ?? 0),
-        unit: 's',
-        lowerIsBetter: true,
-      },
-      {
-        id: 'resolucao',
-        label: 'Tempo de resolução',
-        current: Math.round((averageOf(defined(resolvidasAtual.map((l) => l.resolutionSecs))) ?? 0) / 60),
-        previous: Math.round((averageOf(defined(resolvidasAnterior.map((l) => l.resolutionSecs))) ?? 0) / 60),
-        unit: 'min',
-        lowerIsBetter: true,
+        current: resolvidas.atual,
+        previous: resolvidas.anterior,
       },
       {
         id: 'csat',
@@ -558,7 +561,8 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
     const etapas = defaultPipeline?.stages ?? [];
     const conversions: ConversionRate[] = etapas.slice(0, -1).map((stage, index) => {
       const proxima = etapas[index + 1];
-      const taxa = stage.deals.length > 0 ? ((proxima?.deals.length ?? 0) / stage.deals.length) * 100 : 0;
+      const taxa =
+        stage.deals.length > 0 ? ((proxima?.deals.length ?? 0) / stage.deals.length) * 100 : 0;
 
       // O tempo médio parado na etapa sai do próprio negócio: quanto faz que
       // ele entrou nela e ainda não saiu. `enteredStageAt` é texto ISO gravado
@@ -574,7 +578,10 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
       return {
         stage: `${stage.name} → ${proxima?.name ?? 'fim'}`,
         rate: stage.deals.length === 0 ? '—' : `${Math.round(taxa)}%`,
-        average: dias === undefined ? '—' : `${dias.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} dias`,
+        average:
+          dias === undefined
+            ? '—'
+            : `${dias.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} dias`,
       };
     });
 

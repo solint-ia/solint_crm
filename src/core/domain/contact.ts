@@ -78,7 +78,7 @@ export interface Contact {
   readonly companyPhone?: string;
   /** Telefone do sócio principal — o primeiro da planilha. Ver `partners`. */
   readonly partnerPhone?: string;
-  /** Classificação de `partnerPhone`. Cada número tem a sua, em `partners`. */
+  /** Classificação geral quando há um só contato de sócio. Ver `partners`. */
   readonly classification?: string;
   /** Sócios da empresa e os telefones de cada um. Vazio fora da importação B2B. */
   readonly partners?: readonly ContactPartner[];

@@ -10,6 +10,7 @@ import {
   foldText,
   highestClassification,
   normalizeImportedPhone,
+  normalizeImportedPhones,
 } from '@/core/domain/contact-import';
 import type { ContactPartner, ContactPartnerPhone } from '@/core/domain/contact';
 import { postgresPubSub, CHANNELS as DB_CHANNELS } from '@/infrastructure/db/postgres-pubsub';
@@ -263,6 +264,7 @@ const importContactsCsvSchema = z.object({
         cnpj: z.string().trim().max(32).optional().or(z.literal('')),
         companyAddress: z.string().trim().max(500).optional().or(z.literal('')),
         companyPhone: z.string().trim().max(30).optional().or(z.literal('')),
+        companyPhones: z.array(z.string().trim().max(30)).max(20).optional(),
         partnerPhone: z.string().trim().max(30).optional().or(z.literal('')),
         // Defesa em profundidade: a tela já descarta essas linhas, mas a
         // Server Action também recusa payloads que tentem contornar a regra.
@@ -439,7 +441,13 @@ export async function importContactsCsvAction(
        * — que compara o telefone escolhido com estes campos para rotular
        * "Empresa" ou "Sócio" — nunca casa, e o rótulo some.
        */
-      const telefoneEmpresa = normalizeImportedPhone(item.companyPhone ?? '');
+      const telefonesEmpresa = [
+        ...new Set([
+          ...(item.companyPhones ?? []).flatMap((phone) => normalizeImportedPhones(phone)),
+          ...normalizeImportedPhones(item.companyPhone ?? ''),
+        ]),
+      ];
+      const telefoneEmpresa = telefonesEmpresa[0] ?? null;
       const telefoneSocio =
         item.whatsappFlag === 'Sim' ? normalizeImportedPhone(item.partnerPhone ?? '') : null;
 
@@ -486,7 +494,7 @@ export async function importContactsCsvAction(
       const numeros = [
         ...new Set(
           [
-            telefoneEmpresa,
+            ...telefonesEmpresa,
             telefoneSocio,
             ...socios.flatMap((socio) => socio.phones.map((telefone) => telefone.phone)),
           ].filter((numero): numero is string => numero !== null),
@@ -537,9 +545,7 @@ export async function importContactsCsvAction(
         }
 
         const sociosFundidos = fundirSocios(readSocios(existing.partners), socios);
-        const classificacaoMaisAlta = highestClassification([
-          existing.classification ?? '',
-          item.classification ?? '',
+        const classificacaoPrincipal = highestClassification([
           classificacaoDosSocios,
           ...sociosFundidos.flatMap((socio) =>
             socio.phones.map((telefone) => telefone.classification ?? ''),
@@ -549,8 +555,19 @@ export async function importContactsCsvAction(
         const telefoneDaClassificacaoMaisAlta = telefonesSociosFundidos.find(
           (telefone) =>
             telefone.classification?.trim().toUpperCase() ===
-            classificacaoMaisAlta.trim().toUpperCase(),
+            classificacaoPrincipal.trim().toUpperCase(),
         )?.phone;
+        const classificacaoUnica =
+          telefonesSociosFundidos.length === 1
+            ? (telefonesSociosFundidos[0]?.classification?.trim() ?? '')
+            : '';
+        const classificacaoDaEmpresa =
+          telefonesSociosFundidos.length > 1
+            ? null
+            : classificacaoUnica ||
+              (existing.partnerPhone || telefoneSocio
+                ? existing.classification || item.classification || null
+                : null);
 
         await prisma.contact.update({
           where: { id: existing.id, accountId },
@@ -581,7 +598,9 @@ export async function importContactsCsvAction(
               existing.partnerPhone ??
               telefoneSocio ??
               undefined,
-            classification: classificacaoMaisAlta || undefined,
+            // A classificação geral só existe quando há um único contato
+            // de sócio. Com vários, cada número conserva a sua em `partners`.
+            classification: classificacaoDaEmpresa,
             // Mesma regra dos números: a lista nova se soma à conhecida em vez
             // de substituí-la. Uma planilha que só traz um dos sócios não pode
             // apagar os outros, que foram importados corretamente antes.
@@ -598,6 +617,10 @@ export async function importContactsCsvAction(
             telefone.classification?.trim().toUpperCase() ===
             classificacaoDosSocios.trim().toUpperCase(),
         )?.phone;
+        const classificacaoUnica =
+          telefonesDosSocios.length === 1
+            ? (telefonesDosSocios[0]?.classification?.trim() ?? '')
+            : '';
         contactId = `ct-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
         await prisma.contact.create({
           data: {
@@ -611,7 +634,11 @@ export async function importContactsCsvAction(
             companyAddress: item.companyAddress || null,
             companyPhone: telefoneEmpresa,
             partnerPhone: telefoneDaClassificacaoMaisAlta ?? telefoneSocio,
-            classification: classificacaoDosSocios || item.classification || null,
+            classification:
+              classificacaoUnica ||
+              (telefonesDosSocios.length === 0 && telefoneSocio
+                ? item.classification || null
+                : null),
             partners: socios.length > 0 ? asJson(socios) : undefined,
             origin: 'csv',
             channel: 'whatsapp',

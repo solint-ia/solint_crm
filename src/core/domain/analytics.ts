@@ -31,7 +31,7 @@ export interface ComparisonRow {
   readonly current: number;
   readonly previous: number;
   readonly unit?: string;
-  /** Métrica em que diminuir é melhor (tempo de resposta, abandono). */
+  /** Métrica em que diminuir é melhor (por exemplo, abandono). */
   readonly lowerIsBetter?: boolean;
   readonly decimals?: number;
 }
@@ -106,7 +106,6 @@ export interface AgentPerformance {
   readonly avatarTone: string;
   readonly handled: number;
   readonly resolved?: number;
-  readonly averageResponse: string;
   readonly csat: string;
   readonly csatTone: Tone;
 }
@@ -130,7 +129,6 @@ export interface PendingConversation {
   readonly waitingMinutes?: number;
   readonly tone: Tone;
 }
-
 
 export interface ConversionRate {
   readonly stage: string;

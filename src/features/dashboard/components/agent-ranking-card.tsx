@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Award, Clock, MessageSquare, Star } from 'lucide-react';
+import { Award, MessageSquare, Star } from 'lucide-react';
 import type { AgentPerformance } from '@/core/domain/analytics';
 import { Avatar } from '@/components/ui/avatar';
 import { cn } from '@/lib/cn';
@@ -10,7 +10,7 @@ interface AgentRankingCardProps {
   readonly agents: readonly AgentPerformance[];
 }
 
-type RankingMetric = 'atendidas' | 'resolvidas' | 'tpr' | 'csat';
+type RankingMetric = 'atendidas' | 'resolvidas' | 'csat';
 
 const METRICAS: readonly {
   readonly id: RankingMetric;
@@ -21,7 +21,6 @@ const METRICAS: readonly {
 }[] = [
   { id: 'atendidas', label: 'Atendidas', icon: MessageSquare, maiorEhMelhor: true },
   { id: 'resolvidas', label: 'Resolvidas', icon: Award, maiorEhMelhor: true },
-  { id: 'tpr', label: '1ª resposta', icon: Clock, maiorEhMelhor: false },
   { id: 'csat', label: 'CSAT', icon: Star, maiorEhMelhor: true },
 ];
 
@@ -37,30 +36,12 @@ const numeroDe = (texto: string): number | undefined => {
   return Number.isFinite(valor) ? valor : undefined;
 };
 
-/** "1m 20s" → 80. O rótulo já vem formatado; a ordenação precisa do número. */
-const segundosDe = (texto: string): number | undefined => {
-  if (!/\d/.test(texto)) return undefined;
-  const dias = /(\d+)\s*d/.exec(texto);
-  const horas = /(\d+)\s*h/.exec(texto);
-  const minutos = /(\d+)\s*m(?!s)/.exec(texto);
-  const segundos = /(\d+)\s*s/.exec(texto);
-  return (
-    Number(dias?.[1] ?? 0) * 86400 +
-    Number(horas?.[1] ?? 0) * 3600 +
-    Number(minutos?.[1] ?? 0) * 60 +
-    Number(segundos?.[1] ?? 0)
-  );
-};
-
 /**
  * O ranking da equipe.
  *
- * **O que mudou.** A aba "TMR" mostrava `averageResponse` — que é tempo de
- * **primeira resposta**, não de resolução — e, ao ser escolhida, ordenava por
- * atendimentos mesmo assim: os três botões produziam duas ordens. A aba
- * "Resolvidas" existia no tipo e não existia na tela. E o rodapé afirmava uma
- * meta ("< 2 min e CSAT > 4,8") que o sistema não guarda em lugar nenhum e
- * contra a qual nada era comparado.
+ * O painel prioriza volume concluído e satisfação. Tempo de primeira resposta
+ * saiu daqui junto com os relatórios, para a mesma métrica não reaparecer com
+ * outro formato logo abaixo dos indicadores principais.
  *
  * A barra ao lado de cada linha é a comparação que uma lista de números não dá:
  * quem lê descobre num relance se o primeiro colocado está à frente por pouco
@@ -77,8 +58,6 @@ export function AgentRankingCard({ agents }: AgentRankingCardProps) {
           return agent.handled;
         case 'resolvidas':
           return agent.resolved ?? 0;
-        case 'tpr':
-          return segundosDe(agent.averageResponse);
         case 'csat':
           return numeroDe(agent.csat);
       }
@@ -90,8 +69,6 @@ export function AgentRankingCard({ agents }: AgentRankingCardProps) {
           return String(agent.handled);
         case 'resolvidas':
           return String(agent.resolved ?? 0);
-        case 'tpr':
-          return agent.averageResponse;
         case 'csat':
           return agent.csat;
       }
@@ -153,8 +130,6 @@ export function AgentRankingCard({ agents }: AgentRankingCardProps) {
         <ul className="mt-3.5 flex flex-1 flex-col gap-2.5">
           {linhas.map((linha, index) => {
             const lider = index === 0 && !semDados && linha.valor !== undefined;
-            // Na métrica de tempo, a barra mais longa é o **pior** — inverter
-            // faz a barra continuar significando "melhor" nas quatro abas.
             const fracao =
               linha.valor === undefined || maior === 0
                 ? 0

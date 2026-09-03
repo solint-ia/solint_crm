@@ -9,7 +9,7 @@ export function AgentRanking({ agents }: { readonly agents: readonly AgentPerfor
           <Avatar name={agent.name} tone={agent.avatarTone} size="sm" />
           <div className="min-w-0 flex-1">
             <p className="truncate text-body font-medium text-ink">{agent.name}</p>
-            <p className="text-meta text-dim">TMR {agent.averageResponse}</p>
+            <p className="text-meta text-dim">{agent.resolved ?? 0} resolvidas</p>
           </div>
           <span className="font-display text-ui font-semibold text-ink">{agent.handled}</span>
         </li>

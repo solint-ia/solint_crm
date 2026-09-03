@@ -10,6 +10,8 @@ export interface SendMessageInput {
   readonly conversationId: Id;
   readonly text: string;
   readonly isPrivate: boolean;
+  /** Mensagem da mesma conversa que esta resposta cita. */
+  readonly replyToId?: Id;
   /**
    * Quem pode ser mencionado com `@` numa nota interna.
    *
@@ -37,6 +39,7 @@ export const MAX_MESSAGE_LENGTH = 4096;
 export interface SendMessageOutput {
   readonly message: Message;
   readonly conversation: Conversation;
+  readonly quotedMessage?: Message;
 }
 
 /**
@@ -53,6 +56,7 @@ export const createSendMessage =
     conversationId,
     text,
     isPrivate,
+    replyToId,
     mentionCandidates = [],
   }: SendMessageInput): Promise<Result<SendMessageOutput>> => {
     if (!can(session, 'conversas:responder')) {
@@ -67,7 +71,11 @@ export const createSendMessage =
       return fail(new DomainError('A mensagem excede o limite de caracteres.', 'MESSAGE_TOO_LONG'));
     }
 
-    const conversation = await repository.findById(session.account.id, conversationId, session.inboxAccess);
+    const conversation = await repository.findById(
+      session.account.id,
+      conversationId,
+      session.inboxAccess,
+    );
     if (!conversation) {
       return fail(new DomainError('Conversa não encontrada.', 'NOT_FOUND'));
     }
@@ -81,6 +89,18 @@ export const createSendMessage =
       );
     }
 
+    const quotedMessage = replyToId
+      ? await repository.findMessage(session.account.id, conversationId, replyToId)
+      : null;
+    if (replyToId && !quotedMessage) {
+      return fail(
+        new DomainError(
+          'A mensagem que você tentou responder não está nesta conversa.',
+          'NOT_FOUND',
+        ),
+      );
+    }
+
     /**
      * Menção só existe em nota interna.
      *
@@ -89,9 +109,7 @@ export const createSendMessage =
      * era dirigida à equipe.
      */
     const mentions =
-      isPrivate && mentionCandidates.length > 0
-        ? extractMentions(content, mentionCandidates)
-        : [];
+      isPrivate && mentionCandidates.length > 0 ? extractMentions(content, mentionCandidates) : [];
 
     const message = await repository.appendMessage({
       accountId: session.account.id,
@@ -100,10 +118,15 @@ export const createSendMessage =
       isPrivate,
       authorId: session.user.id,
       authorName: session.user.name,
+      ...(replyToId ? { replyToId } : {}),
       ...(mentions.length > 0 ? { mentions } : {}),
     });
 
-    return ok({ message, conversation });
+    return ok({
+      message,
+      conversation,
+      ...(quotedMessage ? { quotedMessage } : {}),
+    });
   };
 
 export const canSendFreeText = (conversation: Conversation): boolean =>

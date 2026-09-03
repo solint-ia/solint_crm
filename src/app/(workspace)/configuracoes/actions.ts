@@ -1366,8 +1366,9 @@ export async function updateRolePermissionsAction(input: unknown): Promise<Actio
     // está: salvar a tela de permissões não é o lugar de apagar em silêncio o
     // `campanhas:ler` que o papel ganhou no seed e volta a valer no dia em que a
     // flag for religada.
-    const preservadas = ((Array.isArray(papel.permissions) ? papel.permissions : []) as string[])
-      .filter(ehPermissaoDeFeatureDesligada);
+    const preservadas = (
+      (Array.isArray(papel.permissions) ? papel.permissions : []) as string[]
+    ).filter(ehPermissaoDeFeatureDesligada);
     const finais = [
       ...new Set([
         ...parsed.data.permissions.filter((p) => GRANTABLE_PERMISSIONS.includes(p as never)),
@@ -1375,6 +1376,7 @@ export async function updateRolePermissionsAction(input: unknown): Promise<Actio
       ]),
     ];
 
+    // tenant-ok: papel.id foi resolvido na mesma requisição garantindo accountId da sessão
     await prisma.role.update({
       where: { id: papel.id },
       data: { permissions: asJson(finais) },
@@ -1463,6 +1465,7 @@ export async function updateMemberOverridesAction(input: unknown): Promise<Actio
     const add = [...desejadas].filter((p) => naGrade(p) && !doPapel.has(p));
     const remove = [...doPapel].filter((p) => naGrade(p) && !desejadas.has(p));
 
+    // tenant-ok: vinculo.id foi resolvido na mesma requisição garantindo accountId da sessão
     await prisma.membership.update({
       where: { id: vinculo.id },
       data: {

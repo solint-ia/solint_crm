@@ -16,8 +16,8 @@ const format = (row: ComparisonRow, value: number): string =>
  * total: é a única leitura que responde "isso subiu ou desceu, e quanto?" sem
  * o leitor fazer a conta de cabeça.
  *
- * `lowerIsBetter` existe porque metade destes indicadores melhora ao cair —
- * pintar toda queda de vermelho ensinaria a ler tempo de resposta ao contrário.
+ * `lowerIsBetter` existe para indicadores como conversas sem resposta, que
+ * melhoram ao cair.
  */
 export function ComparisonTable({
   rows,
@@ -90,10 +90,7 @@ export function ComparisonTable({
                     </span>
 
                     {/* Duas barras na mesma escala: a comparação vira forma. */}
-                    <span
-                      aria-hidden="true"
-                      className="flex min-w-16 flex-1 flex-col gap-0.5"
-                    >
+                    <span aria-hidden="true" className="flex min-w-16 flex-1 flex-col gap-0.5">
                       <span className="h-1 rounded-full bg-surface-2">
                         <span
                           className="block h-full rounded-full bg-brand"

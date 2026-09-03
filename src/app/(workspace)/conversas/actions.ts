@@ -280,13 +280,7 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
          * e responder a uma mais antiga — o caso em que citar é mais útil —
          * cairia fora dela sem aviso nenhum.
          */
-        const quotedMessage = parsed.data.replyToId
-          ? await container.conversations.findMessage(
-              session.account.id,
-              conversation.id,
-              parsed.data.replyToId,
-            )
-          : null;
+        const quotedMessage = result.value.quotedMessage;
 
         const sent = await channel.sendText(
           {
@@ -657,7 +651,11 @@ export async function assignConversationAction(input: unknown): Promise<ActionRe
     targetId: parsed.data.conversationId,
     targetName: result.value.contact.name,
     metadata: assignee
-      ? { detalhe: `atribuída a ${assignee.name}`, assigneeId: assignee.id, assigneeName: assignee.name }
+      ? {
+          detalhe: `atribuída a ${assignee.name}`,
+          assigneeId: assignee.id,
+          assigneeName: assignee.name,
+        }
       : { detalhe: 'devolvida para a fila' },
   });
 
@@ -1669,12 +1667,16 @@ export async function reactToMessageAction(input: unknown): Promise<ActionResult
    * instante do clique, em vez de depois da ida e volta ao servidor do
    * WhatsApp.
    */
-  await applyReaction(message.externalId ?? message.id, {
-    emoji,
-    actorId: 'me',
-    by: 'agent',
-    authorName: session.user.name,
-  });
+  await applyReaction(
+    message.externalId ?? message.id,
+    {
+      emoji,
+      actorId: 'me',
+      by: 'agent',
+      authorName: session.user.name,
+    },
+    conversation.inboxId,
+  );
 
   return { ok: true };
 }

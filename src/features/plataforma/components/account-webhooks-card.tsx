@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus, Trash2, Webhook as WebhookIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { ConfirmModal } from '@/components/ui/confirm-modal';
 import type { WebhookEvent } from '@/infrastructure/webhooks/webhook-dispatch';
 import {
   platformCreateWebhookAction,
@@ -38,6 +39,7 @@ export function AccountWebhooksCard({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [erro, setErro] = useState<string | null>(null);
+  const [webhookToDelete, setWebhookToDelete] = useState<PlatformWebhook | null>(null);
 
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
@@ -45,13 +47,17 @@ export function AccountWebhooksCard({
   const [events, setEvents] = useState<readonly string[]>(['mensagem.recebida']);
 
   const toggleEvento = (id: string) =>
-    setEvents((atual) =>
-      atual.includes(id) ? atual.filter((e) => e !== id) : [...atual, id],
-    );
+    setEvents((atual) => (atual.includes(id) ? atual.filter((e) => e !== id) : [...atual, id]));
 
   const criar = async () => {
     setErro(null);
-    const res = await platformCreateWebhookAction({ accountId, name, url, events, secret: secret || undefined });
+    const res = await platformCreateWebhookAction({
+      accountId,
+      name,
+      url,
+      events,
+      secret: secret || undefined,
+    });
     if (!res.ok) {
       setErro(res.error ?? 'Erro ao criar webhook.');
       return;
@@ -60,6 +66,21 @@ export function AccountWebhooksCard({
     setUrl('');
     setSecret('');
     setEvents(['mensagem.recebida']);
+    router.refresh();
+  };
+
+  const excluir = async () => {
+    if (!webhookToDelete) return;
+    setErro(null);
+    const res = await platformDeleteWebhookAction({
+      accountId,
+      webhookId: webhookToDelete.id,
+    });
+    if (!res.ok) {
+      setErro(res.error ?? 'Erro ao excluir webhook.');
+      return;
+    }
+    setWebhookToDelete(null);
     router.refresh();
   };
 
@@ -121,12 +142,7 @@ export function AccountWebhooksCard({
                 type="button"
                 disabled={pending}
                 aria-label={`Excluir webhook ${hook.name}`}
-                onClick={() =>
-                  startTransition(async () => {
-                    await platformDeleteWebhookAction({ accountId, webhookId: hook.id });
-                    router.refresh();
-                  })
-                }
+                onClick={() => setWebhookToDelete(hook)}
                 className="shrink-0 rounded-lg p-1.5 text-dim transition-colors hover:bg-red-soft hover:text-red-text"
               >
                 <Trash2 className="size-3.5" />
@@ -189,6 +205,21 @@ export function AccountWebhooksCard({
           Adicionar webhook
         </Button>
       </div>
+
+      <ConfirmModal
+        open={webhookToDelete !== null}
+        title="Excluir webhook"
+        description={
+          <span>
+            Excluir o webhook <strong className="text-ink">{webhookToDelete?.name}</strong>? Ele
+            deixará de receber eventos desta conta imediatamente.
+          </span>
+        }
+        confirmLabel="Excluir webhook"
+        variant="danger"
+        onClose={() => setWebhookToDelete(null)}
+        onConfirm={excluir}
+      />
     </section>
   );
 }

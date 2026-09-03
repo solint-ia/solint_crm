@@ -412,6 +412,7 @@ export function ImportCsvModal({
         company: contato.company,
         cnpj: contato.cnpj,
         companyAddress: contato.companyAddress,
+        companyPhones: contato.companyPhones,
         companyPhone: contato.companyPhone,
         partnerPhone: contato.partnerPhone,
         // `prepareImport` só produz contatos a partir de linhas cujo valor é

@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { KeyRound, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { ConfirmModal } from '@/components/ui/confirm-modal';
 import {
   platformCreateApiTokenAction,
   platformDeleteApiTokenAction,
@@ -28,6 +29,7 @@ export function AccountApiTokensCard({
   const [pending, startTransition] = useTransition();
   const [name, setName] = useState('');
   const [erro, setErro] = useState<string | null>(null);
+  const [tokenToRevoke, setTokenToRevoke] = useState<PlatformApiToken | null>(null);
   /**
    * O segredo em claro só existe nesta tela, nesta vez.
    *
@@ -47,6 +49,18 @@ export function AccountApiTokensCard({
     }
     setSegredo(res.rawSecret ?? null);
     setName('');
+    router.refresh();
+  };
+
+  const revogar = async () => {
+    if (!tokenToRevoke) return;
+    setErro(null);
+    const res = await platformDeleteApiTokenAction({ accountId, tokenId: tokenToRevoke.id });
+    if (!res.ok) {
+      setErro(res.error ?? 'Erro ao revogar token de API.');
+      return;
+    }
+    setTokenToRevoke(null);
     router.refresh();
   };
 
@@ -84,12 +98,7 @@ export function AccountApiTokensCard({
                 type="button"
                 disabled={pending}
                 aria-label={`Revogar token ${token.name}`}
-                onClick={() =>
-                  startTransition(async () => {
-                    await platformDeleteApiTokenAction({ accountId, tokenId: token.id });
-                    router.refresh();
-                  })
-                }
+                onClick={() => setTokenToRevoke(token)}
                 className="shrink-0 rounded-lg p-1.5 text-dim transition-colors hover:bg-red-soft hover:text-red-text"
               >
                 <Trash2 className="size-3.5" />
@@ -135,6 +144,22 @@ export function AccountApiTokensCard({
       </div>
 
       {erro ? <p className="mt-1.5 text-[11px] text-red-text">{erro}</p> : null}
+
+      <ConfirmModal
+        open={tokenToRevoke !== null}
+        title="Revogar token de API"
+        description={
+          <span>
+            Revogar o token <strong className="text-ink">{tokenToRevoke?.name}</strong>? Sistemas
+            que usam esta credencial perderão o acesso imediatamente.
+          </span>
+        }
+        confirmLabel="Revogar token"
+        variant="danger"
+        icon="warning"
+        onClose={() => setTokenToRevoke(null)}
+        onConfirm={revogar}
+      />
     </section>
   );
 }

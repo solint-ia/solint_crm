@@ -43,7 +43,11 @@ export async function GET(request: Request) {
   const period = parsePeriod(url.searchParams.get('periodo') ?? undefined);
   const tab: ExportTab = parseOneOf(url.searchParams.get('aba') ?? undefined, TABS, 'conversas');
 
-  const report = await container.analytics.getReport(session.account.id, period, session.inboxAccess);
+  const report = await container.analytics.getReport(
+    session.account.id,
+    period,
+    session.inboxAccess,
+  );
 
   let csv: string;
 
@@ -69,7 +73,7 @@ export async function GET(request: Request) {
       csv = toCsv(report.agents, [
         { header: 'Agente', value: (agent) => agent.name },
         { header: 'Atendimentos', value: (agent) => agent.handled },
-        { header: 'Tempo médio de resposta', value: (agent) => agent.averageResponse },
+        { header: 'Resolvidas', value: (agent) => agent.resolved ?? 0 },
         { header: 'CSAT', value: (agent) => agent.csat },
       ]);
       break;

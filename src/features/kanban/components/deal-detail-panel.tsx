@@ -53,6 +53,7 @@ export function DealDetailPanel({
   // O checklist vem do banco. O estado local só existe para refletir a
   // resposta da action sem esperar o quadro inteiro recarregar.
   const [tasks, setTasks] = useState<readonly DealTask[]>(deal.tasks ?? []);
+  const [taskToDelete, setTaskToDelete] = useState<DealTask | null>(null);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [isAddingTask, setIsAddingTask] = useState(false);
   const [isSavingTask, startTaskTransition] = useTransition();
@@ -93,20 +94,26 @@ export function DealDetailPanel({
   const handleToggleTask = (taskId: string) => {
     // Vira na hora e é corrigido pela resposta: esperar o banco para riscar um
     // item de checklist faria a interface parecer travada.
-    setTasks((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, completed: !t.completed } : t)),
-    );
+    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, completed: !t.completed } : t)));
     aplicar(
       () => toggleDealTaskAction({ dealId: deal.id, taskId }),
       'Não foi possível atualizar a tarefa',
     );
   };
 
-  const handleDeleteTask = (taskId: string) => {
-    aplicar(
-      () => deleteDealTaskAction({ dealId: deal.id, taskId }),
-      'Não foi possível excluir a tarefa',
-    );
+  const handleDeleteTask = async () => {
+    if (!taskToDelete) return;
+    const result = await deleteDealTaskAction({ dealId: deal.id, taskId: taskToDelete.id });
+    if (!result.ok) {
+      show({
+        tone: 'erro',
+        title: 'Não foi possível excluir a tarefa',
+        description: result.error ?? '',
+      });
+      return;
+    }
+    if (result.deal) setTasks(result.deal.tasks ?? []);
+    setTaskToDelete(null);
   };
 
   const handleAddTask = (e: React.FormEvent) => {
@@ -116,10 +123,7 @@ export function DealDetailPanel({
 
     setNewTaskTitle('');
     setIsAddingTask(false);
-    aplicar(
-      () => addDealTaskAction({ dealId: deal.id, title }),
-      'Não foi possível criar a tarefa',
-    );
+    aplicar(() => addDealTaskAction({ dealId: deal.id, title }), 'Não foi possível criar a tarefa');
   };
 
   return (
@@ -279,9 +283,7 @@ export function DealDetailPanel({
             </div>
 
             {tasks.length === 0 && !isAddingTask ? (
-              <p className="text-meta text-dim italic">
-                Nenhuma tarefa nesta oportunidade ainda.
-              </p>
+              <p className="text-meta text-dim italic">Nenhuma tarefa nesta oportunidade ainda.</p>
             ) : null}
 
             <ul className="flex flex-col gap-2">
@@ -320,7 +322,7 @@ export function DealDetailPanel({
 
                   <button
                     type="button"
-                    onClick={() => handleDeleteTask(task.id)}
+                    onClick={() => setTaskToDelete(task)}
                     disabled={isSavingTask}
                     aria-label={`Excluir tarefa ${task.title}`}
                     className="shrink-0 rounded p-1 text-dim opacity-0 transition-opacity group-hover:opacity-100 hover:text-red-500 focus-visible:opacity-100"
@@ -400,6 +402,21 @@ export function DealDetailPanel({
         </footer>
       </aside>
 
+      <ConfirmModal
+        open={taskToDelete !== null}
+        title="Excluir tarefa"
+        description={
+          <span>
+            Excluir a tarefa <strong className="text-ink">{taskToDelete?.title}</strong> desta
+            oportunidade? Esta ação não pode ser desfeita.
+          </span>
+        }
+        confirmLabel="Excluir tarefa"
+        variant="danger"
+        onClose={() => setTaskToDelete(null)}
+        onConfirm={handleDeleteTask}
+      />
+
       {/* Modal de Confirmação de Exclusão de Oportunidade */}
       {onDelete && (
         <ConfirmModal
@@ -408,9 +425,9 @@ export function DealDetailPanel({
           description={
             <span>
               Tem certeza que deseja excluir a oportunidade{' '}
-              <strong className="text-ink">&ldquo;{deal.title ?? deal.contactName}&rdquo;</strong>? O histórico de atividades, tarefas e valores do funil serão permanentemente removidos.
+              <strong className="text-ink">&ldquo;{deal.title ?? deal.contactName}&rdquo;</strong>?
+              O histórico de atividades, tarefas e valores do funil serão permanentemente removidos.
             </span>
-
           }
           confirmLabel="Excluir oportunidade"
           variant="danger"
@@ -425,4 +442,3 @@ export function DealDetailPanel({
     </>
   );
 }
-

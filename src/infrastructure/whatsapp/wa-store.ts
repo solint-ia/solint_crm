@@ -708,6 +708,7 @@ const substituiveisPor = (novo: NonNullable<Message['deliveryStatus']>): string[
 export const applyDeliveryUpdate = async (
   externalId: string,
   deliveryStatus: Message['deliveryStatus'],
+  inboxId?: string,
 ): Promise<void> => {
   // O id pode chegar como `externalId` (mensagem que enviamos) ou como o id
   // próprio da mensagem (eco do celular pareado).
@@ -715,7 +716,10 @@ export const applyDeliveryUpdate = async (
   // id só, e ir buscar a conta aqui é mais barato — e mais difícil de errar —
   // do que exigir que quem recebeu o recibo já soubesse de qual conta é.
   const row = await prisma.message.findFirst({
-    where: { OR: [{ externalId }, { id: externalId }] },
+    where: {
+      OR: [{ externalId }, { id: externalId }],
+      ...(inboxId ? { conversation: { inboxId } } : {}),
+    },
     select: { id: true, conversationId: true, conversation: { select: { accountId: true } } },
   });
   if (!row) return;
@@ -787,9 +791,13 @@ export const applyReaction = async (
     readonly by: MessageReaction['by'];
     readonly authorName?: string;
   },
+  inboxId?: string,
 ): Promise<void> => {
   const row = await prisma.message.findFirst({
-    where: { OR: [{ externalId }, { id: externalId }] },
+    where: {
+      OR: [{ externalId }, { id: externalId }],
+      ...(inboxId ? { conversation: { inboxId } } : {}),
+    },
     select: {
       id: true,
       conversationId: true,
@@ -862,9 +870,15 @@ export const applyReaction = async (
  * próprio "apagar" (que já marcou a linha antes de mandar o comando) não
  * disparar um segundo evento à toa.
  */
-export const markMessageRevoked = async (externalId: string): Promise<void> => {
+export const markMessageRevoked = async (
+  externalId: string,
+  inboxId?: string,
+): Promise<void> => {
   const row = await prisma.message.findFirst({
-    where: { OR: [{ externalId }, { id: externalId }] },
+    where: {
+      OR: [{ externalId }, { id: externalId }],
+      ...(inboxId ? { conversation: { inboxId } } : {}),
+    },
     select: {
       id: true,
       conversationId: true,
@@ -1090,12 +1104,15 @@ const publish = async (
  * pedidos de reenvio de decifragem do Baileys (getMessage).
  */
 export const findSentMessage = async (
-  _inboxId: string,
+  inboxId: string,
   key: { id?: string | null },
 ): Promise<{ conversation: string } | undefined> => {
   if (!key.id) return undefined;
   const msg = await prisma.message.findFirst({
-    where: { externalId: key.id },
+    where: {
+      externalId: key.id,
+      ...(inboxId ? { conversation: { inboxId } } : {}),
+    },
     select: { content: true },
   });
   if (!msg?.content || typeof msg.content !== 'object') return undefined;

@@ -1,7 +1,7 @@
 import {
   Activity,
   CheckCircle2,
-  Clock,
+  Inbox,
   MessageSquare,
   Minus,
   Star,
@@ -21,8 +21,8 @@ const KPI_ICONS: Record<string, React.ElementType> = {
   abertas: MessageSquare,
   'sem-responsavel': UserX,
   'nao-lidas': Activity,
-  tpr: Clock,
-  tmr: CheckCircle2,
+  recebidas: Inbox,
+  resolvidas: CheckCircle2,
   csat: Star,
 };
 
@@ -64,7 +64,9 @@ export function KpiCard({ kpi }: KpiCardProps) {
       <span
         aria-hidden
         className={cn(
-          'absolute inset-y-0 left-0 w-0.5 rounded-l-2xl',
+          // Um pixel para dentro acompanha a borda arredondada sem vazar pelos
+          // cantos. `overflow-hidden` não serve aqui: cortaria o InfoTooltip.
+          'pointer-events-none absolute top-px bottom-px left-px w-0.5 rounded-l-xl',
           alerta ? 'bg-amber-500' : atencao ? 'bg-blue-500' : 'bg-transparent',
         )}
       />

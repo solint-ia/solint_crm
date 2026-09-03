@@ -131,6 +131,23 @@ export const normalizeImportedPhone = (raw: string): string | null => {
   return PhoneNumber.isValid(e164) ? e164 : null;
 };
 
+/**
+ * Todos os telefones de uma célula.
+ *
+ * Bases B2B frequentemente colocam dois fixos na mesma coluna, como
+ * `(21) 22339576 / (21) 22633189`. Normalizar a célula inteira colaria os
+ * vinte dígitos e descartaria ambos como um E.164 inválido. Os separadores
+ * aceitos não incluem hífen nem espaço, pois eles fazem parte de um telefone.
+ */
+export const normalizeImportedPhones = (raw: string): readonly string[] => [
+  ...new Set(
+    raw
+      .split(/\s*(?:\/|;|,|\||\r?\n)\s*/)
+      .map(normalizeImportedPhone)
+      .filter((phone): phone is string => phone !== null),
+  ),
+];
+
 /** Uma linha da planilha, já com as colunas resolvidas para os campos do CRM. */
 export interface ImportRow {
   readonly company: string;
@@ -201,10 +218,12 @@ export interface ImportContact {
   readonly company: string;
   readonly cnpj: string;
   readonly companyAddress: string;
+  /** Todos os telefones encontrados nas células da empresa. */
+  readonly companyPhones: readonly string[];
   readonly companyPhone: string;
   /** O primeiro telefone de sócio encontrado. É o que a tabela mostra na coluna. */
   readonly partnerPhone: string;
-  /** Classificação de `partnerPhone`. */
+  /** Classificação geral, somente quando existe um contato de sócio. */
   readonly classification: string;
   /** Os sócios e os telefones de cada um. É aqui que o modelo real fica. */
   readonly partners: readonly ImportPartner[];
@@ -256,7 +275,7 @@ export const prepareImport = (rows: readonly ImportRow[]): ImportPreparation => 
     empresa: string;
     cnpj: string;
     endereco: string;
-    telefoneEmpresa: string;
+    telefonesEmpresa: string[];
     numeros: string[];
     socios: Map<string, { nome: string; telefones: ImportPartnerPhone[] }>;
   }
@@ -276,10 +295,10 @@ export const prepareImport = (rows: readonly ImportRow[]): ImportPreparation => 
     }
 
     const empresa = row.company.trim().replace(/\s+/g, ' ');
-    const telefoneEmpresa = normalizeImportedPhone(row.companyPhone);
+    const telefonesEmpresa = normalizeImportedPhones(row.companyPhone);
     const telefoneSocio = normalizeImportedPhone(row.partnerPhone);
 
-    const numeros = [telefoneEmpresa, telefoneSocio].filter(
+    const numeros = [...telefonesEmpresa, telefoneSocio].filter(
       (numero): numero is string => numero !== null,
     );
 
@@ -297,7 +316,7 @@ export const prepareImport = (rows: readonly ImportRow[]): ImportPreparation => 
         empresa,
         cnpj,
         endereco: row.companyAddress.trim(),
-        telefoneEmpresa: telefoneEmpresa ?? '',
+        telefonesEmpresa: [...telefonesEmpresa],
         numeros: [],
         socios: new Map(),
       };
@@ -309,7 +328,11 @@ export const prepareImport = (rows: readonly ImportRow[]): ImportPreparation => 
       // sempre todas vêm preenchidas.
       entrada.cnpj ||= cnpj;
       entrada.endereco ||= row.companyAddress.trim();
-      entrada.telefoneEmpresa ||= telefoneEmpresa ?? '';
+      for (const telefone of telefonesEmpresa) {
+        if (!entrada.telefonesEmpresa.includes(telefone)) {
+          entrada.telefonesEmpresa.push(telefone);
+        }
+      }
     }
 
     for (const numero of numeros) {
@@ -362,12 +385,12 @@ export const prepareImport = (rows: readonly ImportRow[]): ImportPreparation => 
       company: entrada.empresa,
       cnpj: entrada.cnpj,
       companyAddress: entrada.endereco,
-      companyPhone: entrada.telefoneEmpresa,
+      companyPhones: entrada.telefonesEmpresa,
+      companyPhone: entrada.telefonesEmpresa[0] ?? '',
       partnerPhone: principal?.phone ?? '',
-      classification:
-        highestClassification(telefonesSocios.map((phone) => phone.classification)) ||
-        principal?.classification ||
-        '',
+      // Uma empresa com mais de um contato de sócio não tem uma única
+      // classificação honesta. Cada número conserva a sua em `partners`.
+      classification: telefonesSocios.length === 1 ? (principal?.classification ?? '') : '',
       partners,
     });
 
