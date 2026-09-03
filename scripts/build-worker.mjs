@@ -78,6 +78,34 @@ const stubChannelProvider = {
   },
 };
 
+/**
+ * O worker roda fora do Next.js (Node.js puro como daemon de background).
+ * Módulos específicos do servidor HTTP do Next (`next/headers`, `next/navigation`, `server-only`)
+ * não existem no runtime do worker e quebram no resolvedor ESM do Node em produção.
+ */
+const stubNextModules = {
+  name: 'stub-next-modules-in-worker',
+  setup(pluginBuild) {
+    pluginBuild.onResolve(
+      { filter: /^(next\/(headers|cookies|server|navigation)|server-only)$/ },
+      (args) => ({
+        path: args.path,
+        namespace: 'solint-worker-stub-next',
+      }),
+    );
+    pluginBuild.onLoad({ filter: /.*/, namespace: 'solint-worker-stub-next' }, () => ({
+      contents: [
+        'export const cookies = () => ({ get: () => undefined, getAll: () => [], set: () => {}, delete: () => {}, has: () => false });',
+        'export const headers = () => new Map();',
+        'export const notFound = () => {};',
+        'export const redirect = () => {};',
+        'export default {};',
+      ].join('\n'),
+      loader: 'js',
+    }));
+  },
+};
+
 await build({
   entryPoints: ['src/worker.mts'],
   outfile: '.worker/worker.mjs',
@@ -88,7 +116,7 @@ await build({
   // Dependências continuam externas: empacotá-las não traria ganho e quebraria
   // os pacotes que carregam binário nativo (Prisma, pg, Baileys).
   packages: 'external',
-  plugins: [externalizeGeneratedPrisma, stubChannelProvider],
+  plugins: [externalizeGeneratedPrisma, stubChannelProvider, stubNextModules],
   sourcemap: 'inline',
   logLevel: 'warning',
 });
