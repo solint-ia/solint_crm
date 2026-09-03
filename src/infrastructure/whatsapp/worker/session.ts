@@ -53,9 +53,14 @@ import {
   mentionedJidsOf,
   revokedMessageId,
   timestampOf,
-  adContextOf,
   type MediaRef,
 } from '../wa-message-content';
+import {
+  base64ParaWebhook,
+  buildUpsertPayload,
+  mediaUrlAbsoluta,
+} from '../wa-webhook-payload';
+import { dispararWebhooks } from '@/infrastructure/webhooks/webhook-dispatch';
 import { mediaStore, mediaUrlFor } from '../wa-media-store';
 import { deletionKey, quotedStub } from '../wa-quote';
 import { baileysLogLevel, waLog } from '../wa-log';
@@ -207,6 +212,15 @@ export class WhatsAppSession {
 
   private readonly groupCache = new Map<string, { subject: string; size: number; at: number }>();
   private readonly avatarCache = new Map<string, { url?: string; at: number }>();
+  /**
+   * Nome da caixa, lido do banco uma vez por sessão.
+   *
+   * É o `instance` do corpo entregue aos webhooks, e a sessão só conhece o id.
+   * Uma consulta por mensagem recebida seria uma ida ao banco a mais no caminho
+   * mais quente do sistema, para um valor que só muda quando alguém renomeia a
+   * caixa — e aí a sessão já vai ser reiniciada.
+   */
+  private inboxName: string | null = null;
   private readonly crmSentIds = new Set<string>();
   private readonly lastInboundKey = new Map<string, WAMessageKey>();
   /**
@@ -1672,6 +1686,76 @@ export class WhatsAppSession {
       : new Promise<void>((resolve) => this.ociosos.push(resolve));
   }
 
+  /** Nome da caixa — o `instance` do corpo entregue. Cai no id se não houver. */
+  private async nomeDaCaixa(): Promise<string> {
+    if (this.inboxName) return this.inboxName;
+    const caixa = await prisma.inbox
+      .findFirst({
+        where: { id: this.inboxId, accountId: this.accountId },
+        select: { name: true },
+      })
+      .catch(() => null);
+    this.inboxName = caixa?.name?.trim() || this.inboxId;
+    return this.inboxName;
+  }
+
+  /** JID do número conectado nesta caixa. Vazio enquanto o socket não subiu. */
+  private get ownJid(): string {
+    const id = this.socket?.user?.id;
+    return id ? jidNormalizedUser(id) : '';
+  }
+
+  /**
+   * Anuncia a mensagem que o próprio CRM enviou, sem regravá-la.
+   *
+   * Os ids do CRM vêm de uma consulta pelo `externalId` porque este caminho não
+   * passa pela gravação — que é quem normalmente os conhece. A linha existe: o
+   * caso de uso grava antes de mandar para o socket, e só depois de o socket
+   * responder é que o id entra em `crmSentIds`.
+   *
+   * A mídia não vai em base64 aqui de propósito: são bytes que este processo
+   * acabou de subir para o WhatsApp, e baixá-los de volta para devolvê-los a um
+   * webhook seria pagar o mesmo tráfego duas vezes. Quando `SOLINT_APP_URL`
+   * está configurada, `data.mediaUrl` cobre quem precisar deles.
+   */
+  private async dispararEcoDoCrm(msg: WAMessage, messageId: string): Promise<void> {
+    try {
+      const gravada = await prisma.message.findFirst({
+        where: {
+          externalId: messageId,
+          conversation: { accountId: this.accountId, inboxId: this.inboxId },
+        },
+        select: {
+          id: true,
+          conversationId: true,
+          conversation: { select: { contactId: true } },
+        },
+      });
+      if (!gravada) return;
+
+      await dispararWebhooks(
+        'mensagem.enviada',
+        buildUpsertPayload({
+          raw: msg,
+          instance: await this.nomeDaCaixa(),
+          instanceId: this.inboxId,
+          sender: this.ownJid,
+          solint: {
+            contaId: this.accountId,
+            caixaEntradaId: this.inboxId,
+            conversaId: gravada.conversationId,
+            contatoId: gravada.conversation.contactId,
+            mensagemId: gravada.id,
+            conversaNova: false,
+          },
+        }),
+      );
+    } catch (erro) {
+      // Mesma regra do despachante: um destino de fora não derruba o socket.
+      console.warn(`[WhatsAppSession ${this.inboxId}] Falha no webhook de saída:`, erro);
+    }
+  }
+
   private async handleIncomingMessage(msg: WAMessage): Promise<void> {
     const socket = this.socket;
     if (!socket || !msg.message || !isSupportedChatJid(msg.key.remoteJid)) return;
@@ -1692,7 +1776,15 @@ export class WhatsAppSession {
       return;
     }
 
-    if (fromMe && this.crmSentIds.has(messageId)) return;
+    // O eco do que **nós** enviamos não é regravado — a linha já está no banco,
+    // posta lá pelo caso de uso que enviou. Mas ele é a única forma real da
+    // mensagem no protocolo (com a chave, o status e o aparelho que o WhatsApp
+    // atribuiu), então é daqui que sai o webhook de saída, e não de um corpo
+    // remontado à mão no caminho de envio.
+    if (fromMe && this.crmSentIds.has(messageId)) {
+      await this.dispararEcoDoCrm(msg, messageId);
+      return;
+    }
 
     let decoded = decodeWaMessage(msg);
     if (!decoded) return;
@@ -1796,9 +1888,10 @@ export class WhatsAppSession {
 
     const authorName = await this.resolveAuthorName(chat, msg, fromMe, contact.name, sender);
 
-    const content = decoded.media
+    const midia = decoded.media
       ? await this.materializeMedia(msg, messageId, decoded.media, decoded.content)
-      : decoded.content;
+      : { content: decoded.content };
+    const content = midia.content;
 
     const appMessageId = `msg-wa-${chat.conversationId}-${messageId}`;
 
@@ -1830,6 +1923,13 @@ export class WhatsAppSession {
       this.armDrainIdle();
     }
 
+    // Resolvidos antes da gravação porque os dois são consulta, e fazê-los
+    // dentro da função que monta o corpo obrigaria a montá-la assíncrona — num
+    // ponto em que quem chama já está dentro da transação de gravação.
+    const instance = await this.nomeDaCaixa();
+    const base64 = base64ParaWebhook(midia.bytes);
+    const mediaUrl = base64 ? undefined : mediaUrlAbsoluta(midia.url);
+
     const medir = waLog.timer(`[sessão ${this.inboxId}] commitMessage`);
     await commitMessage({
       accountId: this.accountId,
@@ -1840,14 +1940,16 @@ export class WhatsAppSession {
       preview: decoded.preview,
       at,
       fromMe,
-      // So faz sentido no que o contato enviou: o eco do que nos mandamos
-      // carrega o mesmo bloco e nao significa clique nenhum.
-      ...(fromMe
-        ? {}
-        : (() => {
-            const a = adContextOf(msg);
-            return a ? { anuncio: a } : {};
-          })()),
+      webhookPayload: (solint) =>
+        buildUpsertPayload({
+          raw: msg,
+          instance,
+          instanceId: this.inboxId,
+          sender: this.ownJid,
+          solint,
+          ...(base64 ? { base64 } : {}),
+          ...(mediaUrl ? { mediaUrl } : {}),
+        }),
       ...(draining ? { silent: true } : {}),
     });
     medir(`${fromMe ? 'saída' : 'entrada'} em ${chat.conversationId}`);
@@ -2130,17 +2232,37 @@ export class WhatsAppSession {
     }
   }
 
+  /**
+   * A mídia baixada e guardada, junto com os bytes e o caminho.
+   *
+   * Os bytes vão junto porque quem chama precisa deles para o base64 do
+   * webhook, e voltar ao armazenamento para relê-los logo depois de gravá-los
+   * seria uma segunda leitura do mesmo arquivo que acabou de passar pela
+   * memória.
+   */
   private async materializeMedia(
     msg: WAMessage,
     messageId: string,
     media: MediaRef,
     fallback: MessageContent,
-  ): Promise<MessageContent> {
-    if (media.fileLength > MAX_INLINE_MEDIA_BYTES) return fallback;
-    if (await mediaStore.has(messageId)) return mediaContent(media, mediaUrlFor(messageId));
+  ): Promise<{ content: MessageContent; bytes?: Buffer; url?: string }> {
+    if (media.fileLength > MAX_INLINE_MEDIA_BYTES) return { content: fallback };
+
+    if (await mediaStore.has(messageId)) {
+      const url = mediaUrlFor(messageId);
+      // Já guardada: os bytes vêm do armazenamento só se ainda couberem no
+      // base64. Acima do teto o corpo levaria a URL de qualquer forma, e ler o
+      // arquivo seria trabalho jogado fora.
+      const guardada =
+        media.fileLength <= MAX_INLINE_MEDIA_BYTES
+          ? await mediaStore.read(messageId, { accountId: this.accountId }).catch(() => null)
+          : null;
+      const bytes = guardada ? await guardada.bytes().catch(() => undefined) : undefined;
+      return { content: mediaContent(media, url), url, ...(bytes ? { bytes } : {}) };
+    }
 
     const socket = this.socket;
-    if (!socket) return fallback;
+    if (!socket) return { content: fallback };
 
     try {
       const buffer = await downloadMediaMessage(
@@ -2155,10 +2277,12 @@ export class WhatsAppSession {
         { mimeType: media.mimeType, ...(media.fileName ? { fileName: media.fileName } : {}) },
         { accountId: this.accountId, inboxId: this.inboxId, kind: 'mensagem' },
       );
-      return url ? mediaContent(media, url) : fallback;
+      // Os bytes seguem mesmo quando a gravação foi recusada: o conteúdo cai
+      // para o texto de reserva na tela, mas quem integra ainda recebe a mídia.
+      return { content: url ? mediaContent(media, url) : fallback, bytes: buffer, ...(url ? { url } : {}) };
     } catch (error) {
       console.warn(`[WhatsAppSession ${this.inboxId}] Falha ao baixar mídia:`, error);
-      return fallback;
+      return { content: fallback };
     }
   }
 

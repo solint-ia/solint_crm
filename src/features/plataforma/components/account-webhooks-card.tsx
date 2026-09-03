@@ -12,12 +12,30 @@ import {
   platformToggleWebhookAction,
 } from '@/app/(platform)/plataforma/actions';
 
-/** Os quatro eventos que o despachante realmente sabe emitir hoje. */
-const EVENTOS: readonly { readonly id: WebhookEvent; readonly label: string }[] = [
+/**
+ * Os eventos oferecidos.
+ *
+ * `conversa.resolvida` e `contato.criado` continuam na lista por compatibilidade
+ * com quem ja os marcou, mas **nenhuma linha do despachante os emite hoje**: o
+ * unico ponto de disparo e o caminho da mensagem.
+ */
+const EVENTOS: readonly {
+  readonly id: WebhookEvent;
+  readonly label: string;
+  readonly aviso?: string;
+}[] = [
   { id: 'mensagem.recebida', label: 'Mensagem recebida' },
+  {
+    id: 'mensagem.enviada',
+    label: 'Mensagem enviada',
+    aviso:
+      'Inclui o que o proprio CRM manda. Se o fluxo do outro lado responde ' +
+      'automaticamente, filtre data.key.fromMe === false na entrada — sem isso ' +
+      'ele responde a propria resposta em laco.',
+  },
   { id: 'conversa.criada', label: 'Conversa criada' },
-  { id: 'conversa.resolvida', label: 'Conversa resolvida' },
-  { id: 'contato.criado', label: 'Contato criado' },
+  { id: 'conversa.resolvida', label: 'Conversa resolvida (ainda nao emitido)' },
+  { id: 'contato.criado', label: 'Contato criado (ainda nao emitido)' },
 ];
 
 export interface PlatformWebhook {
@@ -44,7 +62,11 @@ export function AccountWebhooksCard({
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
   const [secret, setSecret] = useState('');
-  const [events, setEvents] = useState<readonly string[]>(['mensagem.recebida']);
+  const [events, setEvents] = useState<readonly string[]>([
+    'mensagem.recebida',
+    'mensagem.enviada',
+    'conversa.criada',
+  ]);
 
   const toggleEvento = (id: string) =>
     setEvents((atual) => (atual.includes(id) ? atual.filter((e) => e !== id) : [...atual, id]));
@@ -65,7 +87,7 @@ export function AccountWebhooksCard({
     setName('');
     setUrl('');
     setSecret('');
-    setEvents(['mensagem.recebida']);
+    setEvents(['mensagem.recebida', 'mensagem.enviada', 'conversa.criada']);
     router.refresh();
   };
 
@@ -180,7 +202,11 @@ export function AccountWebhooksCard({
 
         <div className="flex flex-wrap gap-3">
           {EVENTOS.map((evento) => (
-            <label key={evento.id} className="flex items-center gap-1.5 text-[11px] text-muted">
+            <label
+              key={evento.id}
+              title={evento.aviso}
+              className="flex items-center gap-1.5 text-[11px] text-muted"
+            >
               <input
                 type="checkbox"
                 checked={events.includes(evento.id)}
@@ -191,6 +217,17 @@ export function AccountWebhooksCard({
             </label>
           ))}
         </div>
+
+        {/* O aviso do laco fica ao lado da caixa que o causa, e nao na
+            documentacao: quem marca "Mensagem enviada" precisa ler no momento
+            em que marca. */}
+        {events.includes('mensagem.enviada') ? (
+          <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-400">
+            O corpo enviado inclui as mensagens que o proprio CRM manda. Se o fluxo do outro lado
+            responde sozinho, filtre <code>data.key.fromMe === false</code> logo na entrada — sem
+            isso ele passa a responder a propria resposta, em laco.
+          </p>
+        ) : null}
 
         {erro ? <p className="text-[11px] text-red-text">{erro}</p> : null}
 

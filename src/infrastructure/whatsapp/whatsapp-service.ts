@@ -19,6 +19,12 @@ import { initPostgresAuthState } from './auth/postgres-auth-state';
 import type { Contact } from '@/core/domain/contact';
 import type { Message, MessageContent } from '@/core/domain/message';
 import { PhoneNumber, isGroupAllowedInChat } from '@/core/domain/contact';
+import { dispararWebhooks } from '@/infrastructure/webhooks/webhook-dispatch';
+import {
+  base64ParaWebhook,
+  buildUpsertPayload,
+  mediaUrlAbsoluta,
+} from './wa-webhook-payload';
 import {
   applyDeliveryUpdate as persistDeliveryUpdate,
   applyReaction,
@@ -47,7 +53,6 @@ import {
   mediaContent,
   revokedMessageId,
   timestampOf,
-  adContextOf,
   type MediaRef,
 } from './wa-message-content';
 import { mediaStore, mediaUrlFor } from './wa-media-store';
@@ -92,6 +97,8 @@ export class WhatsAppService {
   private owner: WhatsAppOwner | undefined = readOwner(SESSIONS_DIR);
   /** Caixa de entrada por conta — ver `activeInboxId()`. */
   private readonly inboxIdCache = new Map<string, string>();
+  /** Nome de cada caixa, memorizado pela mesma razao do id acima. */
+  private readonly inboxNameCache = new Map<string, string>();
   private readonly groupCache = new Map<string, { subject: string; size: number; at: number }>();
   private readonly avatarCache = new Map<string, { url?: string; at: number }>();
   /** Ids de mensagens despachadas por esta plataforma — usados para ignorar o eco. */
@@ -731,6 +738,70 @@ export class WhatsAppService {
   // Entrada de mensagens
   // ---------------------------------------------------------------------------
 
+  /** Nome da caixa - o `instance` do corpo entregue. Cai no id se nao houver. */
+  private async nomeDaCaixa(accountId: string, inboxId: string): Promise<string> {
+    const cache = this.inboxNameCache.get(inboxId);
+    if (cache) return cache;
+    const caixa = await prisma.inbox
+      .findFirst({ where: { id: inboxId, accountId }, select: { name: true } })
+      .catch(() => null);
+    const nome = caixa?.name?.trim() || inboxId;
+    this.inboxNameCache.set(inboxId, nome);
+    return nome;
+  }
+
+  /** JID do numero conectado. Vazio enquanto o socket nao subiu. */
+  private get ownJid(): string {
+    const id = this.socket?.user?.id;
+    return id ? jidNormalizedUser(id) : '';
+  }
+
+  /**
+   * Anuncia a mensagem que o proprio CRM enviou, sem regrava-la.
+   *
+   * Ver a nota extensa no metodo equivalente de `worker/session.ts`: o eco e a
+   * unica forma real da mensagem no protocolo, e os ids do CRM vem de consulta
+   * porque este caminho nao passa pela gravacao.
+   */
+  private async dispararEcoDoCrm(
+    msg: WAMessage,
+    messageId: string,
+    accountId: string,
+    inboxId: string,
+  ): Promise<void> {
+    try {
+      const gravada = await prisma.message.findFirst({
+        where: { externalId: messageId, conversation: { accountId, inboxId } },
+        select: {
+          id: true,
+          conversationId: true,
+          conversation: { select: { contactId: true } },
+        },
+      });
+      if (!gravada) return;
+
+      await dispararWebhooks(
+        'mensagem.enviada',
+        buildUpsertPayload({
+          raw: msg,
+          instance: await this.nomeDaCaixa(accountId, inboxId),
+          instanceId: inboxId,
+          sender: this.ownJid,
+          solint: {
+            contaId: accountId,
+            caixaEntradaId: inboxId,
+            conversaId: gravada.conversationId,
+            contatoId: gravada.conversation.contactId,
+            mensagemId: gravada.id,
+            conversaNova: false,
+          },
+        }),
+      );
+    } catch (erro) {
+      console.warn('[WhatsAppService] Falha no webhook de saida:', erro);
+    }
+  }
+
   private async handleIncomingMessage(msg: WAMessage) {
     const socket = this.socket;
     if (!socket || !msg.message || !isSupportedChatJid(msg.key.remoteJid)) return;
@@ -768,7 +839,10 @@ export class WhatsAppService {
 
     // Mensagem despachada por esta plataforma: ja esta na timeline e o eco so
     // duplicaria a bolha. O status de entrega chega por `messages.update`.
-    if (fromMe && this.crmSentIds.has(messageId)) return;
+    if (fromMe && this.crmSentIds.has(messageId)) {
+      await this.dispararEcoDoCrm(msg, messageId, accountId, inboxId);
+      return;
+    }
 
     const decoded = decodeWaMessage(msg);
     if (!decoded) return;
@@ -823,7 +897,7 @@ export class WhatsAppService {
         : null;
     // A midia do WhatsApp e criptografada: sem decifrar e gravar localmente,
     // o navegador não tem como exibir foto, figurinha, GIF ou áudio.
-    const content = decoded.media
+    const midia = decoded.media
       ? await this.materializeMedia(
           accountId,
           inboxId,
@@ -832,7 +906,8 @@ export class WhatsAppService {
           decoded.media,
           decoded.content,
         )
-      : decoded.content;
+      : { content: decoded.content };
+    const content = midia.content;
 
     const appMessageId = `msg-wa-${chat.conversationId}-${messageId}`;
 
@@ -854,6 +929,12 @@ export class WhatsAppService {
       this.lastInboundKey.set(chat.conversationId, msg.key);
     }
 
+    // Ver a nota equivalente em `worker/session.ts`: resolvidos aqui porque sao
+    // consulta, e a funcao que monta o corpo e chamada de dentro da gravacao.
+    const instance = await this.nomeDaCaixa(accountId, inboxId);
+    const base64 = base64ParaWebhook(midia.bytes);
+    const mediaUrl = base64 ? undefined : mediaUrlAbsoluta(midia.url);
+
     await persistMessage({
       accountId,
       inboxId,
@@ -863,13 +944,16 @@ export class WhatsAppService {
       preview: decoded.preview,
       at,
       fromMe,
-      // Ver a nota equivalente em `worker/session.ts`.
-      ...(fromMe
-        ? {}
-        : (() => {
-            const a = adContextOf(msg);
-            return a ? { anuncio: a } : {};
-          })()),
+      webhookPayload: (solint) =>
+        buildUpsertPayload({
+          raw: msg,
+          instance,
+          instanceId: inboxId,
+          sender: this.ownJid,
+          solint,
+          ...(base64 ? { base64 } : {}),
+          ...(mediaUrl ? { mediaUrl } : {}),
+        }),
     });
 
     console.log(`[WhatsAppService] Conversa ${chat.conversationId} persistida com sucesso!`);
@@ -890,14 +974,19 @@ export class WhatsAppService {
     messageId: string,
     media: MediaRef,
     fallback: MessageContent,
-  ): Promise<MessageContent> {
-    if (media.fileLength > MAX_INLINE_MEDIA_BYTES) return fallback;
+  ): Promise<{ content: MessageContent; bytes?: Buffer; url?: string }> {
+    if (media.fileLength > MAX_INLINE_MEDIA_BYTES) return { content: fallback };
 
     // Reprocessamento da mesma mensagem (reconexão, `append`) reusa o arquivo.
-    if (await mediaStore.has(messageId)) return mediaContent(media, mediaUrlFor(messageId));
+    if (await mediaStore.has(messageId)) {
+      const url = mediaUrlFor(messageId);
+      const guardada = await mediaStore.read(messageId, { accountId }).catch(() => null);
+      const bytes = guardada ? await guardada.bytes().catch(() => undefined) : undefined;
+      return { content: mediaContent(media, url), url, ...(bytes ? { bytes } : {}) };
+    }
 
     const socket = this.socket;
-    if (!socket) return fallback;
+    if (!socket) return { content: fallback };
 
     try {
       const buffer = await downloadMediaMessage(
@@ -912,10 +1001,14 @@ export class WhatsAppService {
         { mimeType: media.mimeType, ...(media.fileName ? { fileName: media.fileName } : {}) },
         { accountId, inboxId, kind: 'mensagem' },
       );
-      return url ? mediaContent(media, url) : fallback;
+      return {
+        content: url ? mediaContent(media, url) : fallback,
+        bytes: buffer,
+        ...(url ? { url } : {}),
+      };
     } catch (error) {
       console.warn('[WhatsAppService] Não foi possível baixar a mídia:', error);
-      return fallback;
+      return { content: fallback };
     }
   }
 

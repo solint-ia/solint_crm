@@ -9,9 +9,13 @@ import {
   conversationRow,
 } from '@/infrastructure/repositories/prisma/mappers';
 import { dispararAutomacoes } from '@/infrastructure/automations/dispatch';
-import { dispararWebhooks, mensagemDoPayload } from '@/infrastructure/webhooks/webhook-dispatch';
+import { dispararWebhooks } from '@/infrastructure/webhooks/webhook-dispatch';
+import type {
+  SolintRefs,
+  WebhookEvent,
+  WebhookPayload,
+} from '@/infrastructure/webhooks/webhook-dispatch';
 import type { ChatIdentity } from './wa-identity';
-import type { AdContext } from './wa-message-content';
 import { waEventBus } from './whatsapp-events';
 import { normalizeBusinessHours } from '@/core/domain/business-hours';
 import { calcularSla } from '@/core/domain/sla';
@@ -226,13 +230,20 @@ export interface CommitInput {
   readonly at: Date;
   readonly fromMe: boolean;
   /**
-   * Anuncio que originou a conversa, quando a mensagem veio de um clique.
+   * Monta o corpo do webhook a partir da mensagem crua do WhatsApp.
    *
-   * Nao e gravado na mensagem: e contexto de origem, e quem o consome e a
-   * automacao do outro lado do webhook. Guardar no banco exigiria decidir onde,
-   * e nenhuma tela pede por ele hoje.
+   * **Uma função, e não o corpo pronto.** Metade do que vai no corpo vem do
+   * protocolo (a `WAMessage` do Baileys) e a outra metade só existe depois que
+   * este módulo grava — em especial `conversaNova`, que é a resposta de "a
+   * conversa já existia?" e é decidida aqui embaixo. Receber a função deixa
+   * cada lado responder o que sabe, e mantém o Baileys fora deste arquivo: ele
+   * é alcançado por código do site, e importar o protocolo aqui o arrastaria
+   * para o pacote do Next.
+   *
+   * Ausente quando a origem não tem mensagem crua para oferecer — e aí nenhum
+   * webhook é disparado, porque não haveria o que entregar.
    */
-  readonly anuncio?: AdContext;
+  readonly webhookPayload?: (refs: SolintRefs) => Omit<WebhookPayload, 'destination'>;
   /**
    * Grava sem anunciar.
    *
@@ -285,6 +296,19 @@ const findConversationState = (
     where: { id: conversationId, accountId },
     select: CONVERSATION_STATE_SELECT,
   });
+
+/**
+ * Qual assunto de inscrição esta mensagem representa.
+ *
+ * `conversa.criada` só vale para o que **chega**: uma conversa que nasce de uma
+ * mensagem nossa nasce porque alguém no CRM decidiu abri-la, e quem assina
+ * "conversa criada" está esperando o cliente aparecer, não a própria equipe.
+ * Essa mensagem sai como `mensagem.enviada`, que é o que ela é.
+ */
+const eventoDe = (fromMe: boolean, conversaExistia: boolean): WebhookEvent => {
+  if (fromMe) return 'mensagem.enviada';
+  return conversaExistia ? 'mensagem.recebida' : 'conversa.criada';
+};
 
 /**
  * Anexa a mensagem à conversa (criando-a se preciso) e publica o resultado.
@@ -348,28 +372,30 @@ export const commitMessage = async (input: CommitInput): Promise<void> => {
       conversationId: chat.conversationId,
       ...(input.preview ? { messageText: input.preview } : {}),
     });
+  }
 
-    // Sistemas de fora recebem o mesmo gatilho das automações internas, e pela
-    // mesma razão de ordem: quem for ler a conversa por API logo depois precisa
-    // encontrá-la no estado que o evento descreve.
-    await dispararWebhooks(existing ? 'mensagem.recebida' : 'conversa.criada', {
-      contaId: input.accountId,
-      ...(input.inboxId ? { caixaEntradaId: input.inboxId } : {}),
-      conversa: { id: chat.conversationId, nova: !existing },
-      contato: {
-        id: contact.id,
-        nome: contact.name,
-        telefone: contact.phone,
-        jid: chat.jid,
-        ehGrupo: chat.isGroup,
-        ...(contact.email ? { email: contact.email } : {}),
-        ...(contact.company ? { empresa: contact.company } : {}),
-        ...(contact.avatarUrl ? { avatarUrl: contact.avatarUrl } : {}),
-        etiquetas: contact.labels.map((etiqueta) => etiqueta.name),
-      },
-      mensagem: mensagemDoPayload(input.message, input.preview, input.at, input.fromMe),
-      ...(input.anuncio ? { anuncio: input.anuncio } : {}),
-    });
+  // Sistemas de fora recebem o mesmo gatilho das automações internas, e pela
+  // mesma razão de ordem: quem for ler a conversa por API logo depois precisa
+  // encontrá-la no estado que o evento descreve.
+  //
+  // **Fora da trava de `fromMe`**, ao contrário das automações acima. Uma
+  // automação que respondesse ao próprio eco entraria em laço dentro do CRM;
+  // um webhook entrega a quem pediu para receber o que sai, e quem não pediu
+  // não assina `mensagem.enviada`. A responsabilidade de não responder ao
+  // próprio eco passa a ser de quem monta o fluxo — está dito na tela de
+  // integrações, ao lado da caixa que liga o evento.
+  if (input.webhookPayload) {
+    await dispararWebhooks(
+      eventoDe(input.fromMe, Boolean(existing)),
+      input.webhookPayload({
+        contaId: input.accountId,
+        ...(input.inboxId ? { caixaEntradaId: input.inboxId } : {}),
+        conversaId: chat.conversationId,
+        contatoId: contact.id,
+        mensagemId: input.message.id,
+        conversaNova: !existing,
+      }),
+    );
   }
 };
 

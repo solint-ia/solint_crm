@@ -1,6 +1,5 @@
 import { createHmac } from 'node:crypto';
 
-import type { Message, MessageContent } from '@/core/domain/message';
 import { prisma, readJson } from '@/infrastructure/db/prisma';
 
 /**
@@ -18,14 +17,33 @@ import { prisma, readJson } from '@/infrastructure/db/prisma';
  * defeito que segurava o `NOTIFY` da fila de comandos por até 15 segundos.
  * Como esperar por um sistema de terceiros não pode travar a entrada de
  * mensagens, o preço da espera é limitado por `TIMEOUT_MS`.
+ *
+ * **O corpo entregue é a mensagem crua do WhatsApp, não o modelo do domínio.**
+ * Ele era montado em chaves de português (`conversa`, `contato`, `mensagem`) a
+ * partir de `Message`, e por isso só sabia dizer o que as telas mostram: um
+ * tipo, um texto, um caminho de mídia. Quem integra precisa do que o WhatsApp
+ * manda junto — a citação respondida, o anúncio que originou a conversa, o
+ * `ptt` do áudio — e nada disso sobrevivia à tradução. Quem monta o corpo agora
+ * é `whatsapp/wa-webhook-payload.ts`; aqui só se sabe entregá-lo.
  */
 
 /** Teto por entrega. Destino lento não pode segurar a fila de mensagens. */
 const TIMEOUT_MS = 5_000;
 
-/** Eventos emitidos. Os nomes são os mesmos oferecidos na tela de integrações. */
+/**
+ * Eventos emitidos. Os nomes são os mesmos oferecidos na tela de integrações.
+ *
+ * São o **assunto** da inscrição, e não o que vai no corpo: `event`, dentro do
+ * payload, é sempre `messages.upsert`. A distinção existe porque quem cadastra
+ * o webhook quer escolher "só o que chega" ou "também o que sai", e o protocolo
+ * do WhatsApp não tem esse conceito — as três coisas são o mesmo evento lá.
+ */
 export type WebhookEvent =
-  'mensagem.recebida' | 'conversa.criada' | 'conversa.resolvida' | 'contato.criado';
+  | 'mensagem.recebida'
+  | 'mensagem.enviada'
+  | 'conversa.criada'
+  | 'conversa.resolvida'
+  | 'contato.criado';
 
 interface LinhaWebhook {
   readonly id: string;
@@ -34,119 +52,58 @@ interface LinhaWebhook {
 }
 
 /**
- * Corpo entregue ao destino.
+ * Ponteiros para o que o CRM gravou desta mensagem.
  *
- * As chaves são em português pelo mesmo motivo que os nomes de evento são
- * (`mensagem.recebida`): quem cadastra o webhook lê os dois lado a lado na
- * mesma tela, e alternar idioma entre um e outro só criaria dúvida.
+ * Único bloco que não vem do WhatsApp, e está aqui por uma necessidade
+ * concreta: `POST /api/v1/mensagens` aceita `conversaId`, e não há como
+ * derivá-lo do `remoteJid` do lado de fora. Sem estes ids, um fluxo recebe a
+ * mensagem e não tem como responder.
  *
- * Tudo que uma automação costuma precisar vem no primeiro nível de cada bloco,
- * sem obrigar quem monta o fluxo a cavar dentro de estruturas aninhadas.
+ * A rota também aceita `jid` + `instanceId` desde a mesma mudança, então quem
+ * preferir trabalhar só com os campos do WhatsApp pode ignorar este bloco
+ * inteiro.
  */
-export interface WebhookPayload {
-  readonly evento: WebhookEvent;
-  readonly enviadoEm: string;
+export interface SolintRefs {
   readonly contaId: string;
   readonly caixaEntradaId?: string;
-  readonly conversa: {
-    readonly id: string;
-    /** `true` quando foi esta mensagem que abriu a conversa. */
-    readonly nova: boolean;
-  };
-  readonly contato: {
-    readonly id: string;
-    readonly nome: string;
-    /** E.164 (`+5579998396408`). Vazio em grupo. */
-    readonly telefone: string;
-    /** JID do WhatsApp — é o que um fluxo usa para responder pelo canal. */
-    readonly jid: string;
-    readonly ehGrupo: boolean;
-    readonly email?: string;
-    readonly empresa?: string;
-    readonly avatarUrl?: string;
-    readonly etiquetas: readonly string[];
-  };
-  /**
-   * Anuncio que originou a conversa (Click-to-WhatsApp).
-   *
-   * Presente so na mensagem que veio do clique — normalmente a primeira da
-   * conversa. E o que permite a automacao responder ja sabendo o interesse, em
-   * vez de abrir perguntando.
-   */
-  readonly anuncio?: {
-    readonly titulo: string;
-    readonly conteudo: string;
-    readonly clickId?: string;
-    readonly link?: string;
-  };
-  readonly mensagem: {
-    readonly id: string;
-    readonly externalId?: string;
-    readonly tipo: MessageContent['type'];
-    /**
-     * Representação em texto puro, seja qual for o tipo.
-     *
-     * Numa foto com legenda vem a legenda; num áudio, o rótulo. É o campo que
-     * permite escrever uma condição no fluxo sem ramificar por tipo de mídia.
-     */
-    readonly texto: string;
-    readonly deMim: boolean;
-    readonly autor: Message['author'];
-    readonly autorNome?: string;
-    readonly recebidaEm: string;
-    readonly midia?: {
-      /**
-       * Caminho da mídia **dentro desta aplicação**, relativo.
-       *
-       * Não é um link aberto: a rota exige sessão, de propósito — é conteúdo de
-       * conversa de cliente. Um fluxo que precise dos bytes tem de autenticar.
-       */
-      readonly caminho?: string;
-      readonly mimeType?: string;
-      readonly nomeArquivo?: string;
-      readonly duracao?: string;
-      readonly legenda?: string;
-    };
-  };
+  readonly conversaId: string;
+  readonly contatoId: string;
+  readonly mensagemId?: string;
+  /** `true` quando foi esta mensagem que abriu a conversa. */
+  readonly conversaNova: boolean;
 }
 
-/** Extrai o bloco de mídia do conteúdo, quando houver. */
-const midiaDe = (content: MessageContent): WebhookPayload['mensagem']['midia'] => {
-  switch (content.type) {
-    case 'image':
-      return { caminho: content.url, ...(content.caption ? { legenda: content.caption } : {}) };
-    case 'video':
-      return {
-        caminho: content.url,
-        ...(content.mimeType ? { mimeType: content.mimeType } : {}),
-        ...(content.caption ? { legenda: content.caption } : {}),
-      };
-    case 'sticker':
-      return { caminho: content.url };
-    case 'audio':
-      return {
-        ...(content.url ? { caminho: content.url } : {}),
-        ...(content.mimeType ? { mimeType: content.mimeType } : {}),
-        duracao: content.duration,
-      };
-    case 'document':
-      return {
-        ...(content.url ? { caminho: content.url } : {}),
-        nomeArquivo: content.fileName,
-      };
-    default:
-      return undefined;
-  }
-};
+/** O bloco `data`, na forma em que o Baileys entrega a mensagem. */
+export interface WebhookMessageData {
+  readonly key: Record<string, unknown>;
+  readonly pushName?: string;
+  /** Nome do status de entrega (`DELIVERY_ACK`, `READ`, ...). */
+  readonly status?: string;
+  /** Conteúdo cru: `conversation`, `audioMessage`, `imageMessage`, ... */
+  readonly message: Record<string, unknown>;
+  /** Citação, menções e anúncio de origem, elevados do conteúdo. */
+  readonly contextInfo: Record<string, unknown> | null;
+  readonly messageType: string;
+  /** Segundos, como o WhatsApp envia. */
+  readonly messageTimestamp: number;
+  readonly instanceId: string;
+  readonly source: string;
+  /** Só quando a mídia passou do teto do base64. Exige token da conta. */
+  readonly mediaUrl?: string;
+}
 
-/** Texto puro do conteúdo, para o campo que dispensa ramificar por tipo. */
-const textoDe = (content: MessageContent, resumo: string): string => {
-  if (content.type === 'text' || content.type === 'system') return content.text;
-  if (content.type === 'template') return content.text;
-  if (content.type === 'image' || content.type === 'video') return content.caption ?? resumo;
-  if (content.type === 'document') return content.fileName;
-  return resumo;
-};
+export interface WebhookPayload {
+  readonly event: 'messages.upsert';
+  /** Nome da caixa de entrada. */
+  readonly instance: string;
+  readonly data: WebhookMessageData;
+  /** A URL deste destino. Preenchida por entrega. */
+  readonly destination: string;
+  readonly date_time: string;
+  /** JID do número conectado na caixa. */
+  readonly sender: string;
+  readonly solint: SolintRefs;
+}
 
 /** Assinatura no formato que n8n, Make e Zapier já sabem conferir. */
 const assinar = (corpo: string, secret: string): string =>
@@ -172,27 +129,6 @@ const entregar = async (
   if (!resposta.ok) throw new Error(`destino respondeu ${resposta.status}`);
 };
 
-/** Monta o bloco `mensagem` do payload a partir do que a gravação já tem em mãos. */
-export const mensagemDoPayload = (
-  message: Message,
-  resumo: string,
-  at: Date,
-  fromMe: boolean,
-): WebhookPayload['mensagem'] => {
-  const midia = midiaDe(message.content);
-  return {
-    id: message.id,
-    ...(message.externalId ? { externalId: message.externalId } : {}),
-    tipo: message.content.type,
-    texto: textoDe(message.content, resumo),
-    deMim: fromMe,
-    autor: message.author,
-    ...(message.authorName ? { autorNome: message.authorName } : {}),
-    recebidaEm: at.toISOString(),
-    ...(midia ? { midia } : {}),
-  };
-};
-
 /**
  * Dispara um evento para todos os webhooks ativos da conta inscritos nele.
  *
@@ -202,11 +138,11 @@ export const mensagemDoPayload = (
  */
 export const dispararWebhooks = async (
   evento: WebhookEvent,
-  payload: Omit<WebhookPayload, 'evento' | 'enviadoEm'>,
+  payload: Omit<WebhookPayload, 'destination'>,
 ): Promise<void> => {
   try {
     const inscritos = await prisma.webhook.findMany({
-      where: { accountId: payload.contaId, isActive: true },
+      where: { accountId: payload.solint.contaId, isActive: true },
       select: { id: true, url: true, secret: true, events: true },
     });
 
@@ -218,15 +154,19 @@ export const dispararWebhooks = async (
     );
     if (alvos.length === 0) return;
 
-    const corpo = JSON.stringify({
-      evento,
-      enviadoEm: new Date().toISOString(),
-      ...payload,
-    } satisfies WebhookPayload);
-
     await Promise.all(
       alvos.map(async (webhook) => {
         try {
+          // Serializado por destino, e não uma vez para todos: `destination`
+          // carrega a URL de quem recebe, e é o que permite a um fluxo saber
+          // por qual cadastro ele foi chamado quando o mesmo n8n atende vários.
+          // O custo é um `stringify` por destino inscrito — meia dúzia por
+          // conta, contra um corpo que mentiria para todos menos o primeiro.
+          const corpo = JSON.stringify({
+            ...payload,
+            destination: webhook.url,
+          } satisfies WebhookPayload);
+
           await entregar(webhook, corpo, evento);
           await prisma.webhook.update({
             where: { id: webhook.id },
