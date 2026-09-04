@@ -86,7 +86,7 @@ export class PrismaConversationRepository implements ConversationRepository {
 
   async appendMessage(input: NewMessageInput): Promise<Message> {
     const message: Message = {
-      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: input.messageId ?? `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       conversationId: input.conversationId,
       author: 'agent',
       authorName: input.authorName,
@@ -98,7 +98,13 @@ export class PrismaConversationRepository implements ConversationRepository {
       ...(input.mentions?.length ? { mentions: input.mentions } : {}),
       ...(input.isPrivate ? {} : { deliveryStatus: 'enviando' as const }),
     };
-    return this.persistMessage(input.accountId, input.conversationId, message, input.authorId);
+    return this.persistMessage(
+      input.accountId,
+      input.conversationId,
+      message,
+      input.authorId,
+      input.idempotencyKey,
+    );
   }
 
   async appendRichMessage(
@@ -122,6 +128,7 @@ export class PrismaConversationRepository implements ConversationRepository {
     conversationId: Id,
     message: Message,
     authorId: Id,
+    idempotencyKey?: string,
   ): Promise<Message> {
     const exists = await prisma.conversation.findFirst({
       where: { id: conversationId, accountId },
@@ -225,6 +232,7 @@ export class PrismaConversationRepository implements ConversationRepository {
           externalId: message.externalId ?? null,
           origin: message.origin ?? null,
           mentions: asJson(message.mentions ?? []),
+          idempotencyKey: idempotencyKey ?? null,
         },
       });
       await tx.conversation.update({
@@ -296,7 +304,7 @@ export class PrismaConversationRepository implements ConversationRepository {
     // linha, e nada acontece.
     await prisma.message.updateMany({
       where: { id: messageId, conversationId, conversation: { accountId } },
-      data: { externalId, deliveryStatus: 'enviado' },
+      data: { externalId, deliveryStatus: 'enviado', dispatchError: null },
     });
   }
 

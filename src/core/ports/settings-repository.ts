@@ -13,6 +13,7 @@ import type {
   CustomAttributeDefinition,
   Team,
   Webhook,
+  WebhookScopeChange,
 } from '../domain/settings';
 import type { Id } from '../domain/shared';
 import type { Role, User } from '../domain/user';
@@ -133,8 +134,20 @@ export interface SettingsRepository {
   // Onda 3: Webhooks, Tokens, Respostas Rápidas, Atributos e Equipes
   createWebhook(
     accountId: Id,
-    draft: { name: string; url: string; events: readonly string[]; secret?: string },
+    draft: {
+      name: string;
+      url: string;
+      events: readonly string[];
+      secret?: string;
+      allInboxes: boolean;
+      inboxIds: readonly Id[];
+    },
   ): Promise<Webhook>;
+  updateWebhookInboxes(
+    accountId: Id,
+    webhookId: Id,
+    scope: { allInboxes: boolean; inboxIds: readonly Id[] },
+  ): Promise<WebhookScopeChange>;
   toggleWebhook(accountId: Id, webhookId: Id, enabled: boolean): Promise<Webhook>;
   deleteWebhook(accountId: Id, webhookId: Id): Promise<void>;
 

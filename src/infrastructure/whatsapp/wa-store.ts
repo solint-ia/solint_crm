@@ -319,11 +319,16 @@ export const commitMessage = async (input: CommitInput): Promise<void> => {
   await ensureContact(input.accountId, contact, chat.isGroup);
 
   const existing = await findConversationState(input.accountId, chat.conversationId);
+  let inserted: boolean;
   if (existing) {
-    await attachToConversation(input, existing);
+    inserted = await attachToConversation(input, existing);
   } else {
-    await createConversationWith(input);
+    inserted = await createConversationWith(input);
   }
+
+  // O Baileys pode repetir o mesmo `messages.upsert` em reconexões. Sem esta
+  // saída, uma duplicata incrementava não lidas e disparava IA/webhook de novo.
+  if (!inserted) return;
 
   // As automações rodam depois da gravação, nunca antes: uma regra que move o
   // card ou aplica etiqueta precisa encontrar a conversa já no estado novo.
@@ -410,7 +415,7 @@ export const commitMessage = async (input: CommitInput): Promise<void> => {
  * listener) e **a mensagem era perdida em silêncio**. Quem perdeu a corrida
  * agora simplesmente anexa à conversa que o vencedor acabou de criar.
  */
-const createConversationWith = async (input: CommitInput): Promise<void> => {
+const createConversationWith = async (input: CommitInput): Promise<boolean> => {
   const { chat, contact, message, preview, at, fromMe } = input;
   const targetInboxId = input.inboxId ?? `ibx-${input.accountId}`;
 
@@ -466,8 +471,7 @@ const createConversationWith = async (input: CommitInput): Promise<void> => {
       // única saída honesta é deixar o erro subir.
       throw error;
     }
-    await attachToConversation(input, created);
-    return;
+    return attachToConversation(input, created);
   }
 
   if (!input.silent) {
@@ -479,6 +483,7 @@ const createConversationWith = async (input: CommitInput): Promise<void> => {
       targetInboxId,
     );
   }
+  return true;
 };
 
 /**
@@ -510,7 +515,7 @@ const announce = async (
 const attachToConversation = async (
   input: CommitInput,
   existing: ExistingConversation,
-): Promise<void> => {
+): Promise<boolean> => {
   const { chat, message, preview, at, fromMe } = input;
 
   /**
@@ -525,31 +530,30 @@ const attachToConversation = async (
   const targetInboxId = existing.inboxId;
 
   try {
-    await prisma.$transaction([
-      prisma.message.upsert({
-        where: { id: message.id },
-        create: {
-          id: message.id,
-          conversationId: chat.conversationId,
-          author: message.author,
-          authorName: message.authorName ?? null,
-          contentType: message.content.type,
-          content: asJson(message.content),
-          time: message.time,
-          createdAt: at,
-          deliveryStatus: message.deliveryStatus ?? null,
-          isPrivate: message.isPrivate,
-          externalId: message.externalId ?? null,
-          origin: message.origin ?? null,
-          senderJid: message.senderJid ?? null,
-        },
-        update: {
-          deliveryStatus: message.deliveryStatus ?? undefined,
-          authorName: message.authorName ?? undefined,
-          senderJid: message.senderJid ?? undefined,
-        },
-      }),
-      prisma.conversation.update({
+    const inserted = await prisma.$transaction(async (tx) => {
+      const created = await tx.message.createMany({
+        data: [
+          {
+            id: message.id,
+            conversationId: chat.conversationId,
+            author: message.author,
+            authorName: message.authorName ?? null,
+            contentType: message.content.type,
+            content: asJson(message.content),
+            time: message.time,
+            createdAt: at,
+            deliveryStatus: message.deliveryStatus ?? null,
+            isPrivate: message.isPrivate,
+            externalId: message.externalId ?? null,
+            origin: message.origin ?? null,
+            senderJid: message.senderJid ?? null,
+          },
+        ],
+        skipDuplicates: true,
+      });
+      if (created.count === 0) return false;
+
+      await tx.conversation.update({
         where: { id: chat.conversationId, accountId: input.accountId },
         data: {
           lastMessagePreview: preview,
@@ -577,18 +581,21 @@ const attachToConversation = async (
                 at,
               )),
         },
-      }),
-    ]);
+      });
+      return true;
+    });
+    if (!inserted) return false;
   } catch (error) {
     // A mensagem já estava gravada — reentrega do WhatsApp, ou duas cópias do
     // mesmo evento chegando juntas. Nada a fazer e nada a anunciar.
-    if (isUniqueViolation(error)) return;
+    if (isUniqueViolation(error)) return false;
     throw error;
   }
 
   if (!input.silent) {
     await announce(input.accountId, 'new_message', chat.conversationId, message, targetInboxId);
   }
+  return true;
 };
 
 /**
@@ -896,10 +903,7 @@ export const applyReaction = async (
  * próprio "apagar" (que já marcou a linha antes de mandar o comando) não
  * disparar um segundo evento à toa.
  */
-export const markMessageRevoked = async (
-  externalId: string,
-  inboxId?: string,
-): Promise<void> => {
+export const markMessageRevoked = async (externalId: string, inboxId?: string): Promise<void> => {
   const row = await prisma.message.findFirst({
     where: {
       OR: [{ externalId }, { id: externalId }],

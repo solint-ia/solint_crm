@@ -79,54 +79,55 @@ model Account {
 
   createdAt DateTime @default(now())
 
-  memberships      Membership[]
-  roles            Role[]
-  labels           Label[]
-  contacts         Contact[]
-  conversations    Conversation[]
-  pipelines        Pipeline[]
-  deals            Deal[]
-  aiAgents         AiAgent[]
-  notifications    Notification[]
-  automations      Automation[]
-  inboxes          Inbox[]
-  categories       KnowledgeCategory[]
-  articles         KnowledgeArticle[]
-  settings         AccountSettings?
-  teams            Team[]
-  webhooks         Webhook[]
-  apiTokens        ApiToken[]
-  customAttributes CustomAttributeDefinition[]
-  cannedResponses  CannedResponse[]
-  macros           Macro[]
-  auditLogs        AuditLogEntry[]
-  campaigns        Campaign[]
-  segments         Segment[]
-  messageTemplates MessageTemplate[]
-  invites          Invite[]
-  tasks            Task[]
-  mediaObjects     MediaObject[]
-  scheduledMessages ScheduledMessage[]
+  memberships          Membership[]
+  roles                Role[]
+  labels               Label[]
+  contacts             Contact[]
+  conversations        Conversation[]
+  pipelines            Pipeline[]
+  deals                Deal[]
+  aiAgents             AiAgent[]
+  notifications        Notification[]
+  automations          Automation[]
+  inboxes              Inbox[]
+  categories           KnowledgeCategory[]
+  articles             KnowledgeArticle[]
+  settings             AccountSettings?
+  teams                Team[]
+  webhooks             Webhook[]
+  apiTokens            ApiToken[]
+  customAttributes     CustomAttributeDefinition[]
+  cannedResponses      CannedResponse[]
+  macros               Macro[]
+  auditLogs            AuditLogEntry[]
+  campaigns            Campaign[]
+  segments             Segment[]
+  messageTemplates     MessageTemplate[]
+  invites              Invite[]
+  tasks                Task[]
+  mediaObjects         MediaObject[]
+  scheduledMessages    ScheduledMessage[]
   contactImportBatches ContactImportBatch[]
+  webhookDeliveries    WebhookDelivery[]
 }
 
 /// A pessoa. Nada aqui é específico de uma conta — o que é, mora em `Membership`.
 model User {
-  id               String  @id
-  name             String
+  id                String  @id
+  name              String
   /// Identidade de login, global. Guardado em minúsculas para a busca ser
   /// case-insensitive. É único no sistema inteiro, e não por conta: a pessoa é
   /// uma só mesmo quando atende em dois workspaces.
-  email            String  @unique
+  email             String  @unique
   /// `scrypt` com sal por usuário. A senha em claro nunca é gravada nem logada.
-  passwordHash     String
+  passwordHash      String
   /// Projeção para inspeção direta da tabela: `superadmin` quando a
   /// pessoa administra a plataforma; nos demais casos, o papel do primeiro
   /// workspace ao qual ela foi vinculada. A autorização continua usando
   /// `Membership.roleSlug`, pois uma pessoa pode ter papéis diferentes em
   /// workspaces diferentes. Triggers do banco mantêm esta coluna sincronizada.
-  role             String?
-  avatarTone       String
+  role              String?
+  avatarTone        String
   /// URL servida por `/api/users/[userId]/avatar`, com o tipo do arquivo e uma
   /// versão embutidos na própria query string (`?t=<mimeType>&v=<timestamp>`).
   ///
@@ -135,19 +136,19 @@ model User {
   /// sirva, do próprio cache, uma foto que a pessoa acabou de trocar — sem ele,
   /// o `<img>` continuaria apontando para o mesmo endereço de sempre e trocar a
   /// foto pareceria não ter feito nada.
-  avatarUrl        String?
-  signature        String?
+  avatarUrl         String?
+  signature         String?
   /// A assinatura vai ou não vai junto com o que a pessoa escreve.
   ///
   /// Separado do texto porque desligar não é apagar: quem tira a assinatura por
   /// uma semana não deveria ter de reescrevê-la depois. O padrão é `false`
   /// porque ligar isto muda o que o cliente recebe — uma linha a mais em toda
   /// mensagem —, e essa não é uma decisão para tomar em nome de ninguém.
-  signatureEnabled Boolean @default(false)
+  signatureEnabled  Boolean @default(false)
   /// JSON: NotificationPreferences — avisos pessoais e som.
   notificationPrefs Json?
-  twoFactorEnabled Boolean @default(false)
-  lastActiveAt     String?
+  twoFactorEnabled  Boolean @default(false)
+  lastActiveAt      String?
   /// Administra webhooks e tokens de API de QUALQUER conta, pela área
   /// `/plataforma`, fora do isolamento por tenant do resto do sistema.
   ///
@@ -157,16 +158,16 @@ model User {
   /// REGRAS-GLOBAIS.md §4.4: esta é a única exceção deliberada e documentada ao
   /// isolamento multi-tenant, e mesmo ela continua consultando o banco sempre
   /// escopada por `accountId` — o que muda é quem pode fazer a pergunta.
-  isSuperAdmin     Boolean @default(false)
+  isSuperAdmin      Boolean @default(false)
 
   createdAt DateTime @default(now())
 
-  memberships    Membership[]
-  authSessions   AuthSession[]
-  conversations  Conversation[]
-  notifications  Notification[]
-  assignedTasks   Task[]       @relation("TaskAssignee")
-  createdInvites  Invite[]     @relation("InviteCreator")
+  memberships     Membership[]
+  authSessions    AuthSession[]
+  conversations   Conversation[]
+  notifications   Notification[]
+  assignedTasks   Task[]         @relation("TaskAssignee")
+  createdInvites  Invite[]       @relation("InviteCreator")
   teamMemberships TeamMember[]
 }
 
@@ -255,9 +256,9 @@ model Label {
   description String?
   usageCount  Int?
 
-  account       Account        @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  contacts      Contact[]      @relation("ContactLabels")
-  conversations Conversation[] @relation("ConversationLabels")
+  account       Account         @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  contacts      Contact[]       @relation("ContactLabels")
+  conversations Conversation[]  @relation("ConversationLabels")
   stages        PipelineStage[]
 
   @@index([accountId])
@@ -266,7 +267,7 @@ model Label {
 // ---------------------------------------------------------------- contatos
 
 model Contact {
-  id               String  @id
+  id               String    @id
   accountId        String
   name             String
   /// E.164. Vazio quando `kind = grupo` — um grupo não tem telefone próprio.
@@ -281,16 +282,16 @@ model Contact {
   /// linhas — uma por telefone. Guardar cada linha como um contato separado
   /// criava três "THIAGO FRANKLIN PROENCA" na agenda, e quem abrisse um deles
   /// não tinha como saber que os outros dois eram a mesma pessoa.
-  extraPhones      String[] @default([])
+  extraPhones      String[]  @default([])
   email            String?
   /// Nome empresarial / razão social. A coluna física usa o nome pedido
   /// pelo formato B2B; `company` preserva o contrato existente do domínio/UI.
-  company          String? @map("empresa")
+  company          String?   @map("empresa")
   cnpj             String?
-  companyAddress   String? @map("endereco")
-  companyPhone     String? @map("telefone_empresa")
-  partnerPhone     String? @map("telefone_socio")
-  classification   String? @map("classificacao")
+  companyAddress   String?   @map("endereco")
+  companyPhone     String?   @map("telefone_empresa")
+  partnerPhone     String?   @map("telefone_socio")
+  classification   String?   @map("classificacao")
   /// JSON: ContactPartner[] — os sócios da empresa e os telefones de cada um,
   /// com a classificação de cada número.
   ///
@@ -301,9 +302,9 @@ model Contact {
   /// importação acha o contato já existente e que o envio valida o
   /// destinatário. A duplicação é deliberada, e cada lado responde uma pergunta
   /// diferente.
-  partners         Json?   @map("socios")
+  partners         Json?     @map("socios")
   /// `manual`, `csv` ou `whatsapp`; separa a proveniência sem alterar `kind`.
-  origin           String  @default("manual") @map("origem")
+  origin           String    @default("manual") @map("origem")
   channel          String
   avatarTone       String
   location         String?
@@ -312,11 +313,11 @@ model Contact {
   lastContactAt    String?
   lastContactLabel String?
   /// JSON: CustomField[]
-  customFields     Json    @default("[]")
+  customFields     Json      @default("[]")
   notes            String?
   /// JSON: TimelineEvent[]
-  timeline         Json    @default("[]")
-  kind             String? @default("pessoa")
+  timeline         Json      @default("[]")
+  kind             String?   @default("pessoa")
   avatarUrl        String?
   participantCount Int?
   /// Quando o contato saiu da agenda sem levar o histórico junto.
@@ -334,8 +335,8 @@ model Contact {
   /// visível para ser atendida.
   deletedAt        DateTime?
 
-  account            Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  labels             Label[]             @relation("ContactLabels")
+  account            Account                     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  labels             Label[]                     @relation("ContactLabels")
   conversations      Conversation[]
   campaignRecipients CampaignRecipient[]
   importBatchEntries ContactImportBatchContact[]
@@ -428,12 +429,12 @@ model Conversation {
   /// JID do WhatsApp. É o destino canônico de envio.
   channelThreadId    String?
 
-  account  Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  contact  Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  inbox    Inbox     @relation(fields: [inboxId],   references: [id], onDelete: Restrict)
-  assignee User?     @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
-  labels   Label[]   @relation("ConversationLabels")
-  messages Message[]
+  account           Account            @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  contact           Contact            @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  inbox             Inbox              @relation(fields: [inboxId], references: [id], onDelete: Restrict)
+  assignee          User?              @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
+  labels            Label[]            @relation("ConversationLabels")
+  messages          Message[]
   scheduledMessages ScheduledMessage[]
 
   @@unique([inboxId, channelThreadId])
@@ -446,7 +447,7 @@ model Conversation {
 }
 
 model Message {
-  id             String   @id
+  id             String    @id
   conversationId String
   author         String
   /// Usuário do CRM que enviou a mensagem; nulo para contato/sistema.
@@ -459,9 +460,9 @@ model Message {
   /// Rótulo de exibição ("14:32").
   time           String
   /// Instante real. É daqui que saem os divisores de dia da timeline.
-  createdAt      DateTime @default(now())
+  createdAt      DateTime  @default(now())
   deliveryStatus String?
-  isPrivate      Boolean  @default(false)
+  isPrivate      Boolean   @default(false)
   /// Mensagem citada. Guarda o `Message.id`, não o id do canal: é por ele que a
   /// timeline encontra o original para desenhar a citação.
   replyToId      String?
@@ -478,7 +479,7 @@ model Message {
   /// mensagem: ela nasce, é substituída e morre junto, nunca é consultada
   /// isoladamente e o WhatsApp permite **uma** por pessoa. Uma tabela custaria
   /// um `join` em toda leitura de timeline para modelar um campo.
-  reactions      Json     @default("[]")
+  reactions      Json      @default("[]")
   /// Ids dos usuários mencionados com `@` nesta nota interna.
   ///
   /// JSON: string[]. Coluna JSON pela regra do topo deste arquivo: a lista é
@@ -487,7 +488,7 @@ model Message {
   /// Extraída no servidor a partir do texto, e nunca recebida do cliente: quem
   /// enviasse a lista poderia notificar qualquer pessoa da conta sem escrever
   /// o nome dela em lugar nenhum.
-  mentions       Json     @default("[]")
+  mentions       Json      @default("[]")
   /// JID de quem escreveu, quando a mensagem veio de um grupo.
   ///
   /// Fora de grupo é redundante (o autor é o dono da conversa) e fica nulo. Em
@@ -495,6 +496,11 @@ model Message {
   /// apontar uma mensagem de terceiro carrega o participante, e sem ele o
   /// servidor recusa a reação.
   senderJid      String?
+  /// Chave estável de uma intenção automática. Nula para mensagens manuais.
+  /// Impede dois runners/processos de criarem a mesma resposta automática.
+  idempotencyKey String?   @unique
+  /// Último erro operacional do despacho. O status continua próprio para filtro/UI.
+  dispatchError  String?
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
@@ -548,22 +554,22 @@ model Pipeline {
 }
 
 model PipelineStage {
-  id         String  @id
-  pipelineId String
-  name       String
-  order      Int
-  color      String
-  isWon      Boolean @default(false)
-  isLost     Boolean @default(false)
+  id               String  @id
+  pipelineId       String
+  name             String
+  order            Int
+  color            String
+  isWon            Boolean @default(false)
+  isLost           Boolean @default(false)
   /// Quanto esta etapa representa de conversão, de 0 a 100.
-  conversionWeight Int @default(0)
+  conversionWeight Int     @default(0)
   /// Etiqueta que representa esta etapa no cadastro do contato.
   ///
   /// É o elo entre o funil e as etiquetas: arrastar um card para cá aplica
   /// esta etiqueta ao contato e tira a da etapa de origem, e um contato que
   /// perde a última etiqueta ligada a alguma etapa sai do quadro. Nulo quando
   /// a etapa não espelha etiqueta nenhuma — o card então só se move na mão.
-  labelId String?
+  labelId          String?
 
   pipeline Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
   label    Label?   @relation(fields: [labelId], references: [id], onDelete: SetNull)
@@ -574,7 +580,7 @@ model PipelineStage {
 }
 
 model Deal {
-  id             String  @id
+  id             String   @id
   accountId      String
   pipelineId     String
   stageId        String
@@ -596,7 +602,7 @@ model Deal {
   /// Centavos. Dinheiro nunca é float.
   amountInCents  Int
   ownerName      String
-  priority       String    @default("baixa")
+  priority       String   @default("baixa")
   /// Quando o card nasceu.
   ///
   /// Distinto de `enteredStageAt`, que é a entrada na **etapa atual** e muda a
@@ -609,7 +615,7 @@ model Deal {
   nextAction     String
   conversationId String?
   /// JSON: DealHistoryEntry[]
-  history        Json    @default("[]")
+  history        Json     @default("[]")
 
   account  Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
   pipeline Pipeline      @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
@@ -672,21 +678,21 @@ model Notification {
 // ---------------------------------------------------------------- configurações
 
 model Automation {
-  id         String  @id
-  accountId  String
-  name       String
-  trigger    String
+  id             String  @id
+  accountId      String
+  name           String
+  trigger        String
   /// JSON: AutomationCondition[]
-  conditions Json    @default("[]")
+  conditions     Json    @default("[]")
   /// Como as condições se combinam: `e` (todas) ou `ou` (qualquer uma).
   /// O padrão repete o comportamento anterior ao campo, quando a lista era
   /// sempre avaliada com `every`.
-  conditionLogic String @default("e")
+  conditionLogic String  @default("e")
   /// JSON: AutomationAction[]
-  actions    Json    @default("[]")
-  enabled    Boolean @default(true)
+  actions        Json    @default("[]")
+  enabled        Boolean @default(true)
   /// Decide quem vence um conflito de sobrescrita.
-  order      Int
+  order          Int
 
   account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
@@ -694,38 +700,41 @@ model Automation {
 }
 
 model Inbox {
-  id            String  @id
-  accountId     String
-  name          String
-  channel       String
-  identifier    String
-  status        String
-  provider      String
-  teamName      String?
+  id                         String  @id
+  accountId                  String
+  name                       String
+  channel                    String
+  identifier                 String
+  status                     String
+  provider                   String
+  teamName                   String?
   /// JSON: BusinessHours
-  businessHours Json
+  businessHours              Json
   /// JSON: AutoReply
-  awayMessage   Json
+  awayMessage                Json
   /// JSON: AutoReply
-  greeting      Json
+  greeting                   Json
   /// JSON: AutoReply
-  closingMessage Json?
+  closingMessage             Json?
   /// JSON: AutoReply
-  waitingMessage Json?
+  waitingMessage             Json?
   /// Minutos de fila sem resposta antes de a mensagem de espera sair.
-  waitingMessageDelayMinutes Int @default(5)
+  waitingMessageDelayMinutes Int     @default(5)
   /// Pergunta a nota de 1 a 5 ao cliente quando o atendimento é encerrado.
-  csatEnabled   Boolean @default(false)
-  csatQuestion  String?
-  webhookUrl    String?
+  csatEnabled                Boolean @default(false)
+  csatQuestion               String?
+  webhookUrl                 String?
 
-  account       Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  conversations Conversation[]
-  waConnection  WhatsAppConnection?
-  campaigns     Campaign[]
-  mediaObjects  MediaObject[]
-  teamInboxes   TeamInbox[]
-  pipelines     Pipeline[]
+  account           Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  conversations     Conversation[]
+  waConnection      WhatsAppConnection?
+  campaigns         Campaign[]
+  mediaObjects      MediaObject[]
+  teamInboxes       TeamInbox[]
+  pipelines         Pipeline[]
+  whatsappCommands  WhatsAppCommand[]
+  webhookScopes     WebhookInbox[]
+  webhookDeliveries WebhookDelivery[]
 
   @@index([accountId])
 }
@@ -736,18 +745,18 @@ model WhatsAppConnection {
   inboxId String @id
 
   /// JID do número pareado. Nulo até o QR ser lido.
-  phoneJid        String?
-  profileName     String?
+  phoneJid           String?
+  profileName        String?
   /// Quem do CRM pareou. É o dono operacional do canal.
-  pairedByUserId  String?
-  status          String    @default("desconectado")
-  lastError       String?
-  lastConnectedAt DateTime?
+  pairedByUserId     String?
+  status             String    @default("desconectado")
+  lastError          String?
+  lastConnectedAt    DateTime?
   /// String do QR em pareamento.
-  qrPayload       String?
-  qrExpiresAt     DateTime?
+  qrPayload          String?
+  qrExpiresAt        DateTime?
   /// Contador de tentativas — evita loop de reconexão infinito após ban.
-  retryCount      Int       @default(0)
+  retryCount         Int       @default(0)
   /// Início da última sincronização manual da agenda. Também funciona como
   /// trava temporal contra cliques repetidos que forçariam novos app-state syncs.
   lastContactsSyncAt DateTime?
@@ -760,6 +769,10 @@ model WhatsAppConnection {
   /// Trava de posse: só o worker que gravou este id pode abrir o socket.
   lockOwner     String?
   lockExpiresAt DateTime?
+  /// Token monotônico de fencing. Cada nova posse incrementa o valor.
+  lockVersion   Int       @default(0)
+  /// Identifica a chave que cifrou as credenciais, permitindo rotação.
+  credsKeyId    String?
 
   updatedAt DateTime @updatedAt
 
@@ -776,9 +789,11 @@ model WhatsAppKey {
   category String
   keyId    String
 
-  valueCipher Bytes
-  valueIv     Bytes
-  valueTag    Bytes
+  valueCipher     Bytes
+  valueIv         Bytes
+  valueTag        Bytes
+  /// Identifica a chave que cifrou esta linha, permitindo rotação.
+  encryptionKeyId String?
 
   updatedAt DateTime @updatedAt
 
@@ -796,21 +811,37 @@ model WhatsAppKey {
 
 /// Fila de comandos assíncronos enviados pelo Next.js para o Worker de WhatsApp.
 model WhatsAppCommand {
-  id        String   @id @default(cuid())
-  inboxId   String
-  kind      String   // connect | disconnect | send | read
-  payload   Json     @default("{}")
-  status    String   @default("pending") // pending | processing | completed | failed
-  error     String?
+  id             String    @id @default(cuid())
+  sequence       BigInt    @unique @default(autoincrement())
+  inboxId        String
+  kind           String // connect | disconnect | send | read
+  payload        Json      @default("{}")
+  status         String    @default("pending") // pending | processing | completed | failed
+  error          String?
   /// Quantas vezes o comando voltou para a fila por sessão fora do ar.
   /// É o que dá um teto à retentativa: sem ele, uma caixa desconectada de vez
   /// faria o mesmo envio circular entre `pending` e `processing` para sempre.
-  attempts  Int      @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  attempts       Int       @default(0)
+  /// Processo que reivindicou o comando e janela durante a qual a posse vale.
+  workerId       String?
+  claimedAt      DateTime?
+  leaseUntil     DateTime?
+  /// Instante mínimo para nova tentativa; evita retry em laço apertado.
+  availableAt    DateTime  @default(now())
+  /// Comando efêmero (presença) não deve executar depois deste instante.
+  expiresAt      DateTime?
+  /// Resultado persistido para diagnóstico e integrações.
+  result         Json?
+  /// Uma intenção durável por mensagem/ação idempotente.
+  idempotencyKey String?   @unique
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  inbox Inbox @relation(fields: [inboxId], references: [id], onDelete: Cascade)
 
   @@index([inboxId, status])
-  @@index([status, createdAt])
+  @@index([status, availableAt, createdAt])
+  @@index([status, leaseUntil])
 }
 
 model KnowledgeCategory {
@@ -938,10 +969,68 @@ model Webhook {
   failureCount    Int       @default(0)
   lastTriggeredAt DateTime?
   createdAt       DateTime  @default(now())
+  /// true = recebe de todas as caixas atuais e futuras; false = somente WebhookInbox.
+  allInboxes      Boolean   @default(true)
 
-  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  account    Account           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+  inboxes    WebhookInbox[]
 
   @@index([accountId])
+}
+
+/// Caixas autorizadas a criar entregas para um webhook com allInboxes=false.
+model WebhookInbox {
+  webhookId String
+  inboxId   String
+
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+  inbox   Inbox   @relation(fields: [inboxId], references: [id], onDelete: Cascade)
+
+  @@id([webhookId, inboxId])
+  @@index([inboxId])
+}
+
+/// Outbox durável de webhooks. A mensagem não espera o n8n responder e uma
+/// indisponibilidade temporária não perde o evento.
+model WebhookDelivery {
+  id          String    @id @default(cuid())
+  sequence    BigInt    @unique @default(autoincrement())
+  webhookId   String
+  accountId   String
+  inboxId     String?
+  event       String
+  payload     Json
+  dedupeKey   String
+  status      String    @default("pending") // pending | processing | delivered | failed | canceled
+  attempts    Int       @default(0)
+  availableAt DateTime  @default(now())
+  workerId    String?
+  claimedAt   DateTime?
+  leaseUntil  DateTime?
+  lastError   String?
+  deliveredAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  inbox   Inbox?  @relation(fields: [inboxId], references: [id], onDelete: SetNull)
+
+  @@unique([webhookId, dedupeKey])
+  @@index([status, availableAt, createdAt])
+  @@index([status, leaseUntil])
+  @@index([accountId, createdAt])
+  @@index([webhookId, inboxId, status])
+}
+
+/// Liderança com prazo para tarefas globais (agendamentos, SLA, espera, retenção).
+model BackgroundLease {
+  name       String   @id
+  owner      String
+  version    Int      @default(1)
+  leaseUntil DateTime
+  updatedAt  DateTime @updatedAt
 }
 
 model ApiToken {
@@ -1139,6 +1228,9 @@ model ScheduledMessage {
   messageId      String?
   createdAt      DateTime  @default(now())
   sentAt         DateTime?
+  workerId       String?
+  claimedAt      DateTime?
+  leaseUntil     DateTime?
 
   account      Account      @relation(fields: [accountId], references: [id], onDelete: Cascade)
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -1147,6 +1239,7 @@ model ScheduledMessage {
   @@index([status, scheduledFor])
   @@index([conversationId, status])
   @@index([accountId, status])
+  @@index([status, leaseUntil])
 }
 
 model MessageTemplate {
@@ -1234,10 +1327,17 @@ model MediaObject {
   fileName   String?
   sizeBytes  Int
   checksum   String?
+  /// Identificador recebido do WhatsApp antes de receber o escopo do tenant.
+  sourceId   String
+  /// Inbox da mídia ou "account" para avatares sem inbox específica.
+  scopeKey   String
+  /// mensagem | avatar
+  mediaKind  String
   createdAt  DateTime @default(now())
 
   account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
   inbox   Inbox?  @relation(fields: [inboxId], references: [id], onDelete: SetNull)
 
+  @@unique([accountId, scopeKey, mediaKind, sourceId])
   @@index([accountId, createdAt])
 }

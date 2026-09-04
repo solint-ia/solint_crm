@@ -1,6 +1,7 @@
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 
-import { prisma, readJson } from '@/infrastructure/db/prisma';
+import { asJson, prisma, readJson } from '@/infrastructure/db/prisma';
+import { CHANNELS, postgresPubSub } from '@/infrastructure/db/postgres-pubsub';
 
 /**
  * Entrega de eventos a sistemas de fora (n8n, Make, Zapier, um endpoint próprio).
@@ -45,7 +46,7 @@ export type WebhookEvent =
   | 'conversa.resolvida'
   | 'contato.criado';
 
-interface LinhaWebhook {
+export interface LinhaWebhook {
   readonly id: string;
   readonly url: string;
   readonly secret: string | null;
@@ -109,7 +110,7 @@ export interface WebhookPayload {
 const assinar = (corpo: string, secret: string): string =>
   `sha256=${createHmac('sha256', secret).update(corpo).digest('hex')}`;
 
-const entregar = async (
+export const entregarWebhook = async (
   webhook: LinhaWebhook,
   corpo: string,
   evento: WebhookEvent,
@@ -141,8 +142,28 @@ export const dispararWebhooks = async (
   payload: Omit<WebhookPayload, 'destination'>,
 ): Promise<void> => {
   try {
+    const inboxId = payload.solint.caixaEntradaId;
     const inscritos = await prisma.webhook.findMany({
-      where: { accountId: payload.solint.contaId, isActive: true },
+      where: {
+        accountId: payload.solint.contaId,
+        isActive: true,
+        ...(inboxId
+          ? {
+              OR: [
+                { allInboxes: true },
+                {
+                  allInboxes: false,
+                  inboxes: {
+                    some: {
+                      inboxId,
+                      inbox: { accountId: payload.solint.contaId },
+                    },
+                  },
+                },
+              ],
+            }
+          : { allInboxes: true }),
+      },
       select: { id: true, url: true, secret: true, events: true },
     });
 
@@ -154,33 +175,29 @@ export const dispararWebhooks = async (
     );
     if (alvos.length === 0) return;
 
-    await Promise.all(
-      alvos.map(async (webhook) => {
-        try {
-          // Serializado por destino, e não uma vez para todos: `destination`
-          // carrega a URL de quem recebe, e é o que permite a um fluxo saber
-          // por qual cadastro ele foi chamado quando o mesmo n8n atende vários.
-          // O custo é um `stringify` por destino inscrito — meia dúzia por
-          // conta, contra um corpo que mentiria para todos menos o primeiro.
-          const corpo = JSON.stringify({
-            ...payload,
-            destination: webhook.url,
-          } satisfies WebhookPayload);
+    const payloadHash = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+    const dedupeKey = `${evento}:${payload.solint.mensagemId ?? payloadHash}`;
 
-          await entregar(webhook, corpo, evento);
-          await prisma.webhook.update({
-            where: { id: webhook.id },
-            data: { lastTriggeredAt: new Date(), failureCount: 0 },
-          });
-        } catch (erro) {
-          const motivo = erro instanceof Error ? erro.message : 'falha desconhecida';
-          console.warn(`[webhooks] ${webhook.url} não recebeu ${evento}: ${motivo}`);
-          await prisma.webhook
-            .update({ where: { id: webhook.id }, data: { failureCount: { increment: 1 } } })
-            .catch(() => undefined);
-        }
-      }),
-    );
+    // Outbox durável: receber a mensagem não depende da velocidade do n8n e
+    // uma queda entre tentativas não perde o evento. A chave composta evita a
+    // mesma mensagem ser entregue duas vezes por reprocessamento do Baileys.
+    await prisma.webhookDelivery.createMany({
+      data: alvos.map((webhook) => ({
+        webhookId: webhook.id,
+        accountId: payload.solint.contaId,
+        inboxId: inboxId ?? null,
+        event: evento,
+        payload: asJson({ ...payload, destination: webhook.url }),
+        dedupeKey,
+        status: 'pending',
+      })),
+      skipDuplicates: true,
+    });
+
+    await postgresPubSub.publish(CHANNELS.WEBHOOKS, {
+      accountId: payload.solint.contaId,
+      event: evento,
+    });
   } catch (erro) {
     console.warn('[webhooks] Falha ao consultar os webhooks da conta:', erro);
   }

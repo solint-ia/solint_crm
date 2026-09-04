@@ -63,6 +63,27 @@ export interface Webhook {
   readonly url: string;
   readonly events: readonly string[];
   readonly enabled: boolean;
+  readonly allInboxes: boolean;
+  readonly inboxIds: readonly Id[];
+}
+
+/**
+ * O que mudou quando o escopo de caixas de um webhook foi reescrito.
+ *
+ * A diferença é apurada pelo repositório, e não pela tela, porque só quem está
+ * dentro da transação lê o estado anterior sem o risco de outra alteração ter
+ * entrado no meio. Quem chama precisa dela por dois motivos: a auditoria
+ * registra quais caixas entraram e quais saíram, e a tela avisa quantas
+ * entregas ainda não enviadas foram canceladas pela nova regra.
+ */
+export interface WebhookScopeChange {
+  readonly webhook: Webhook;
+  /** Caixas que passaram a disparar este webhook. */
+  readonly added: readonly Id[];
+  /** Caixas que deixaram de dispará-lo. */
+  readonly removed: readonly Id[];
+  /** Entregas pendentes canceladas por deixarem de ser permitidas. */
+  readonly canceledDeliveries: number;
 }
 
 export interface ApiToken {

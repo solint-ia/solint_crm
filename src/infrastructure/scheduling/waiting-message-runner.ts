@@ -1,5 +1,13 @@
+import { randomUUID } from 'node:crypto';
+
 import { prisma } from '@/infrastructure/db/prisma';
 import { runWaitingAutoReply } from '@/infrastructure/whatsapp/inbox-auto-messages';
+import {
+  acquireBackgroundLease,
+  releaseBackgroundLease,
+  renewBackgroundLease,
+  type BackgroundLeaseHandle,
+} from './background-lease';
 
 /**
  * O relógio da mensagem de espera.
@@ -36,6 +44,11 @@ const jaAtivo = globalThis as typeof globalThis & { __solintWaitingRunner?: true
 export class WaitingMessageRunner {
   private timer: NodeJS.Timeout | null = null;
   private rodando = false;
+  private readonly owner: string;
+
+  constructor(owner = `waiting-${randomUUID()}`) {
+    this.owner = owner;
+  }
 
   start(): void {
     if (this.timer || jaAtivo.__solintWaitingRunner) return;
@@ -46,16 +59,27 @@ export class WaitingMessageRunner {
     console.log('[MensagemDeEspera] Varredor de conversas na fila ativo.');
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     delete jaAtivo.__solintWaitingRunner;
+    const deadline = Date.now() + 30_000;
+    while (this.rodando && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
   }
 
   private async tick(): Promise<void> {
     if (this.rodando) return;
     this.rodando = true;
+    let lease: BackgroundLeaseHandle | null = null;
+    let renew: NodeJS.Timeout | null = null;
     try {
+      lease = await acquireBackgroundLease('waiting-messages', this.owner, 2 * 60_000);
+      if (!lease) return;
+      const ownedLease = lease;
+      renew = setInterval(() => void renewBackgroundLease(ownedLease), 30_000);
+      renew.unref?.();
       /**
        * Só as caixas que ligaram a mensagem entram na conta.
        *
@@ -102,6 +126,8 @@ export class WaitingMessageRunner {
     } catch (error) {
       console.warn('[MensagemDeEspera] Falha ao varrer conversas na fila:', error);
     } finally {
+      if (renew) clearInterval(renew);
+      if (lease) await releaseBackgroundLease(lease).catch(() => undefined);
       this.rodando = false;
     }
   }

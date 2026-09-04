@@ -4,8 +4,10 @@ import type { Route } from 'next';
 import { notFound } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import { prisma, readJson } from '@/infrastructure/db/prisma';
-import { AccountWebhooksCard } from '@/features/plataforma/components/account-webhooks-card';
-import { AccountInboxWebhooksCard } from '@/features/plataforma/components/account-inbox-webhooks-card';
+import {
+  AccountWebhooksCard,
+  WEBHOOK_SEM_CAIXA,
+} from '@/features/plataforma/components/account-webhooks-card';
 import { AccountApiTokensCard } from '@/features/plataforma/components/account-api-tokens-card';
 import { AccountStatusBadge } from '@/features/plataforma/components/account-status-badge';
 import { AccountOverview } from '@/features/plataforma/components/account-overview';
@@ -200,23 +202,57 @@ async function Membros({ accountId }: { readonly accountId: string }) {
 }
 
 async function Integracoes({ accountId }: { readonly accountId: string }) {
-  const [webhooks, inboxes, tokens] = await Promise.all([
+  const [webhooks, inboxes, tokens, pendentes] = await Promise.all([
     prisma.webhook.findMany({
       where: { accountId },
       orderBy: { createdAt: 'desc' },
-      select: { id: true, name: true, url: true, events: true, isActive: true, failureCount: true },
+      select: {
+        id: true,
+        name: true,
+        url: true,
+        events: true,
+        isActive: true,
+        failureCount: true,
+        allInboxes: true,
+        inboxes: { select: { inboxId: true } },
+      },
     }),
     prisma.inbox.findMany({
       where: { accountId },
       orderBy: { name: 'asc' },
-      select: { id: true, name: true, channel: true, identifier: true, webhookUrl: true },
+      select: {
+        id: true,
+        name: true,
+        channel: true,
+        identifier: true,
+        status: true,
+        webhookUrl: true,
+      },
     }),
     prisma.apiToken.findMany({
       where: { accountId },
       orderBy: { createdAt: 'desc' },
       select: { id: true, name: true, tokenPrefix: true, createdAt: true, lastUsedAt: true },
     }),
+    // O que ainda está na fila, por webhook e por caixa. Restringir o escopo
+    // cancela justamente estas linhas, e a tela precisa dizer quantas são
+    // **antes** de o superadministrador confirmar.
+    prisma.webhookDelivery.groupBy({
+      by: ['webhookId', 'inboxId'],
+      where: { accountId, status: 'pending' },
+      _count: { _all: true },
+    }),
   ]);
+
+  const pendentesPorWebhook = new Map<string, Map<string, number>>();
+  for (const linha of pendentes) {
+    const porCaixa = pendentesPorWebhook.get(linha.webhookId) ?? new Map<string, number>();
+    // A entrega sem caixa (evento que não nasceu de uma conversa) some assim
+    // que o webhook deixa de valer para todas: entra no mapa sob uma chave
+    // própria para o aviso poder contá-la.
+    porCaixa.set(linha.inboxId ?? WEBHOOK_SEM_CAIXA, linha._count._all);
+    pendentesPorWebhook.set(linha.webhookId, porCaixa);
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -229,17 +265,17 @@ async function Integracoes({ accountId }: { readonly accountId: string }) {
           events: readJson<readonly string[]>(row.events, []),
           enabled: row.isActive,
           failureCount: row.failureCount,
+          allInboxes: row.allInboxes,
+          inboxIds: row.inboxes.map((link) => link.inboxId),
+          pendingByInbox: Object.fromEntries(pendentesPorWebhook.get(row.id) ?? []),
         }))}
-      />
-
-      <AccountInboxWebhooksCard
-        accountId={accountId}
         inboxes={inboxes.map((row) => ({
           id: row.id,
           name: row.name,
           channel: row.channel,
           identifier: row.identifier,
-          webhookUrl: row.webhookUrl ?? '',
+          status: row.status,
+          legacyWebhookUrl: row.webhookUrl ?? '',
         }))}
       />
 

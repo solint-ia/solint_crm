@@ -40,17 +40,29 @@ async function main() {
   });
 
   const id = 'teste-media-storage';
+  const mediaScope = {
+    accountId: account.id,
+    ...(inbox ? { inboxId: inbox.id } : {}),
+    kind: 'mensagem' as const,
+  };
 
   console.log('\n1) Gravar (Storage + MediaObject + cache)');
   const url = await mediaStore.save(
     id,
     PNG,
     { mimeType: 'image/png', fileName: 'pixel.png' },
-    { accountId: account.id, ...(inbox ? { inboxId: inbox.id } : {}), kind: 'mensagem' },
+    mediaScope,
   );
-  check('save devolveu a URL da rota', url === `/api/whatsapp/media/${id}`, url ?? '(nada)');
+  check(
+    'save devolveu a URL da rota',
+    Boolean(url?.startsWith('/api/whatsapp/media/')),
+    url ?? '(nada)',
+  );
 
-  const row = await prisma.mediaObject.findUnique({ where: { id } });
+  const row = await prisma.mediaObject.findFirst({
+    where: { accountId: account.id, sourceId: id },
+  });
+  const publicId = row?.id ?? '';
   check('MediaObject registrado', Boolean(row), row?.bucketPath ?? '-');
   check(
     'caminho carrega o inquilino',
@@ -60,7 +72,7 @@ async function main() {
   check('tamanho e checksum gravados', row?.sizeBytes === PNG.length && Boolean(row?.checksum));
 
   console.log('\n2) Ler com cache quente');
-  const hot = await mediaStore.read(id);
+  const hot = await mediaStore.read(publicId, { accountId: account.id });
   check('leitura do cache', hot?.size === PNG.length, `${hot?.size} bytes, ${hot?.mimeType}`);
   check('bytes conferem', Boolean(hot && (await hot.bytes()).equals(PNG)));
 
@@ -70,7 +82,7 @@ async function main() {
   check('cache local vazio', empty.length === 0);
 
   const t0 = Date.now();
-  const cold = await mediaStore.read(id);
+  const cold = await mediaStore.read(publicId, { accountId: account.id });
   check(
     'leitura com disco vazio (veio do Storage)',
     cold?.size === PNG.length,
@@ -82,11 +94,11 @@ async function main() {
 
   console.log('\n4) has() enxerga o que o outro processo gravou');
   await fsp.rm(CACHE_DIR, { recursive: true, force: true });
-  check('has() sem cache local', await mediaStore.has(id));
+  check('has() sem cache local', await mediaStore.has(id, mediaScope));
 
   console.log('\n5) clear() nao destroi a midia');
   await mediaStore.clear();
-  const survived = await mediaStore.read(id);
+  const survived = await mediaStore.read(publicId, { accountId: account.id });
   check(
     'mídia sobrevive ao clear() da desconexao',
     survived?.size === PNG.length,
@@ -111,7 +123,7 @@ async function main() {
   await fsp.writeFile(TMP_CACHE_DIR, '', 'utf-8');
 
   try {
-    const readOnly = await mediaStore.read(id);
+    const readOnly = await mediaStore.read(publicId, { accountId: account.id });
     check(
       'leitura funciona sem cache gravável',
       readOnly?.size === PNG.length,
@@ -124,7 +136,9 @@ async function main() {
   }
 
   // Limpeza
-  await prisma.mediaObject.delete({ where: { id } }).catch(() => undefined);
+  await prisma.mediaObject
+    .deleteMany({ where: { accountId: account.id, sourceId: id } })
+    .catch(() => undefined);
   await fsp.rm(CACHE_DIR, { recursive: true, force: true });
 }
 

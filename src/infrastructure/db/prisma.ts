@@ -67,8 +67,7 @@ const poolSize = (connectionString: string): number => {
   const declared = Number(new URL(connectionString).searchParams.get('connection_limit'));
   const fromUrl = Number.isInteger(declared) && declared > 0 ? declared : DEV_MIN_POOL;
 
-  const base =
-    process.env.NODE_ENV === 'production' ? fromUrl : Math.max(fromUrl, DEV_MIN_POOL);
+  const base = process.env.NODE_ENV === 'production' ? fromUrl : Math.max(fromUrl, DEV_MIN_POOL);
 
   return process.env.SOLINT_WORKER ? Math.min(base, WORKER_MAX_POOL) : base;
 };
@@ -110,6 +109,10 @@ const createClient = (): PrismaClient => {
 const globalRef = globalThis as typeof globalThis & { __solintPrisma?: PrismaClient };
 
 export const prisma: PrismaClient = globalRef.__solintPrisma ?? createClient();
+
+export const closePrisma = async (): Promise<void> => {
+  await prisma.$disconnect();
+};
 
 if (process.env.NODE_ENV !== 'production') {
   globalRef.__solintPrisma = prisma;

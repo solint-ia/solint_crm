@@ -169,12 +169,16 @@ export const SETTINGS: SeedWorkspaceSettings = {
       url: 'https://erp.solint.com.br/hooks/crm',
       events: ['conversa.criada', 'conversa.resolvida'],
       enabled: true,
+      allInboxes: true,
+      inboxIds: [],
     },
     {
       id: 'wh-2',
       url: 'https://n8n.solint.com.br/webhook/leads',
       events: ['contato.criado'],
       enabled: false,
+      allInboxes: true,
+      inboxIds: [],
     },
   ],
   apiTokens: [

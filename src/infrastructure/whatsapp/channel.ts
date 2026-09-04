@@ -140,7 +140,11 @@ export interface WhatsAppChannel {
   sendReaction(
     context: DispatchContext,
     target: DispatchTarget,
-    message: { readonly externalId: string; readonly fromMe: boolean; readonly participant?: string },
+    message: {
+      readonly externalId: string;
+      readonly fromMe: boolean;
+      readonly participant?: string;
+    },
     emoji: string,
   ): Promise<DispatchResult>;
 
@@ -148,11 +152,11 @@ export interface WhatsAppChannel {
   markRead(accountId: string, conversationId: string, inboxId?: string): Promise<void>;
 
   /** Envia sinal de presença (digitando / gravando áudio / pausado) para o contato no WhatsApp */
-  sendPresence?(
+  sendPresence(
     context: { accountId: string; inboxId: string; conversationId: string },
     target: DispatchTarget,
     status: 'composing' | 'paused' | 'recording',
-  ): Promise<void>;
+  ): Promise<DispatchResult>;
 }
 
 /**

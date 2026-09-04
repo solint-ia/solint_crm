@@ -11,12 +11,7 @@ import { horaLabel } from '@/lib/datetime';
  * mensagem de ausência responderia a cada mensagem da madrugada, uma por uma.
  */
 export type AutoMessageOrigin =
-  | 'saudacao'
-  | 'ausencia'
-  | 'encerramento'
-  | 'espera'
-  | 'csat'
-  | 'automacao';
+  'saudacao' | 'ausencia' | 'encerramento' | 'espera' | 'csat' | 'automacao';
 
 export interface AutoMessageOptions {
   readonly accountId: string;
@@ -58,8 +53,7 @@ const interpolarParaConversa = async (
     clienteNome: conversa?.contact?.name ?? '',
     agenteNome: '',
     empresa: conversa?.account?.name ?? '',
-    protocolo:
-      currentProtocol(readJson<readonly Protocol[]>(conversa?.protocols, []))?.code ?? '',
+    protocolo: currentProtocol(readJson<readonly Protocol[]>(conversa?.protocols, []))?.code ?? '',
   });
 };
 
@@ -93,62 +87,75 @@ export async function dispatchAutoMessage({
   const messageId = `msg-auto-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   const time = horaLabel(new Date());
 
-  const created = await prisma.message.create({
-    data: {
-      id: messageId,
-      conversationId,
-      author: 'system',
-      authorName,
-      // `text`, e nao `texto`. O resto do produto grava `'text'` — e a uniao
-      // `MessageContent` so conhece esse. Com `'texto'` a bolha caia no
-      // `default` do renderizador e toda automatica (saudacao, ausencia,
-      // encerramento, espera, CSAT) aparecia no chat como "Midia nao
-      // suportada", mesmo tendo chegado como texto normal no aparelho do
-      // cliente. A coluna `content` e JSON, entao o compilador nao pegava.
-      contentType: 'text',
-      content: { type: 'text', text: cleanText },
-      time,
-      isPrivate: false,
-      origin,
-    },
-  });
+  const workerMode = process.env.SOLINT_WORKER === '1';
+  const persisted = await prisma.$transaction(async (tx) => {
+    const created = await tx.message.create({
+      data: {
+        id: messageId,
+        conversationId,
+        author: 'system',
+        authorName,
+        // `text`, e nao `texto`. O resto do produto grava `'text'` — e a uniao
+        // `MessageContent` so conhece esse. Com `'texto'` a bolha caia no
+        // `default` do renderizador e toda automatica (saudacao, ausencia,
+        // encerramento, espera, CSAT) aparecia no chat como "Midia nao
+        // suportada", mesmo tendo chegado como texto normal no aparelho do
+        // cliente. A coluna `content` e JSON, entao o compilador nao pegava.
+        contentType: 'text',
+        content: { type: 'text', text: cleanText },
+        time,
+        deliveryStatus: 'enviando',
+        isPrivate: false,
+        origin,
+      },
+    });
 
-  await prisma.conversation.updateMany({
-    where: { id: conversationId, accountId },
-    data: {
-      lastMessagePreview: cleanText,
-      lastMessageAt: time,
-      lastActivityAt: new Date(),
-    },
+    await tx.conversation.updateMany({
+      where: { id: conversationId, accountId },
+      data: {
+        lastMessagePreview: cleanText,
+        lastMessageAt: time,
+        lastActivityAt: new Date(),
+      },
+    });
+
+    const command = workerMode
+      ? await tx.whatsAppCommand.create({
+          data: {
+            inboxId,
+            kind: 'send',
+            payload: {
+              recipient: {
+                channelThreadId: recipient.channelThreadId ?? undefined,
+                phone: recipient.phone,
+              },
+              content: { text: cleanText },
+              accountId,
+              conversationId,
+              messageId: created.id,
+            },
+            status: 'pending',
+            idempotencyKey: `message:${created.id}`,
+          },
+          select: { id: true },
+        })
+      : null;
+
+    return { created, commandId: command?.id };
   });
+  const created = persisted.created;
 
   // Despacho no canal WhatsApp
   let falhaDeEntrega: string | undefined;
   try {
-    if (process.env.SOLINT_WORKER === '1') {
-      // Dentro do worker: enfileira o comando direto
+    if (workerMode) {
+      // Mensagem e comando já foram gravados na mesma transação. O NOTIFY é só
+      // aceleração; a varredura encontra a linha mesmo se o aviso se perder.
       const { CHANNELS, postgresPubSub } = await import('@/infrastructure/db/postgres-pubsub');
-      const command = await prisma.whatsAppCommand.create({
-        data: {
-          inboxId,
-          kind: 'send',
-          payload: {
-            recipient: {
-              channelThreadId: recipient.channelThreadId ?? undefined,
-              phone: recipient.phone,
-            },
-            content: { text: cleanText },
-            accountId,
-            conversationId,
-            messageId: created.id,
-          },
-          status: 'pending',
-        },
-      });
       await postgresPubSub.publish(CHANNELS.COMMANDS, {
         inboxId,
         kind: 'send',
-        id: command.id,
+        id: persisted.commandId,
       });
     } else {
       // Dentro do servidor Next.js
@@ -195,7 +202,10 @@ export async function dispatchAutoMessage({
      */
     falhaDeEntrega = error instanceof Error ? error.message : 'Falha ao despachar no canal.';
     await prisma.message
-      .update({ where: { id: created.id }, data: { deliveryStatus: 'falha' } })
+      .update({
+        where: { id: created.id },
+        data: { deliveryStatus: 'falha', dispatchError: falhaDeEntrega },
+      })
       .catch(() => {
         // Marcar a falha não pode virar uma segunda falha.
       });

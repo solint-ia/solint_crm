@@ -73,6 +73,11 @@ export const getWhatsAppChannel = (): Promise<WhatsAppChannel> => {
     const { SlaRunner } = await import('../scheduling/sla-runner');
     new SlaRunner().start();
 
+    // No modo sem worker dedicado, este processo também entrega o outbox de
+    // webhooks. A entrega continua independente da página aberta no navegador.
+    const { WebhookDeliveryRunner } = await import('../webhooks/webhook-delivery-runner');
+    new WebhookDeliveryRunner().start();
+
     return canal;
   })();
 

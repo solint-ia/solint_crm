@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { currentProtocol, type Protocol } from '@/core/domain/conversation';
 import { previewOfMessage, type Message } from '@/core/domain/message';
 import { hasVariables, interpolate } from '@/core/domain/message-variables';
@@ -38,6 +40,8 @@ const BATCH = 20;
  * falha, com o motivo, em vez de sair atrasada.
  */
 const MAX_ATRASO_MS = 6 * 60 * 60 * 1000;
+const LEASE_MS = 2 * 60_000;
+const LEASE_RENEW_MS = 30_000;
 
 export interface ScheduledDelivery {
   (input: {
@@ -47,7 +51,12 @@ export interface ScheduledDelivery {
     readonly messageId: string;
     readonly recipient: { readonly channelThreadId?: string; readonly phone?: string };
     readonly text: string;
-  }): Promise<{ readonly ok: boolean; readonly externalId?: string; readonly error?: string }>;
+  }): Promise<{
+    readonly ok: boolean;
+    readonly queued?: boolean;
+    readonly externalId?: string;
+    readonly error?: string;
+  }>;
 }
 
 interface Vencida {
@@ -75,24 +84,45 @@ const jaAtivo = globalThis as typeof globalThis & { __solintScheduledRunner?: tr
 export class ScheduledMessageRunner {
   private timer: NodeJS.Timeout | null = null;
   private rodando = false;
+  private readonly workerId: string;
+  private activeTick: Promise<void> | null = null;
 
-  constructor(private readonly entregar: ScheduledDelivery) {}
+  constructor(
+    private readonly entregar: ScheduledDelivery,
+    workerId = `scheduled-${randomUUID()}`,
+  ) {
+    this.workerId = workerId;
+  }
 
   start(): void {
     if (this.timer || jaAtivo.__solintScheduledRunner) return;
     jaAtivo.__solintScheduledRunner = true;
-    this.timer = setInterval(() => void this.tick(), POLL_MS);
+    this.timer = setInterval(() => this.runTick(), POLL_MS);
     this.timer.unref?.();
     // A primeira rodada sai já: o que venceu enquanto o processo estava fora
     // não tem por que esperar mais vinte segundos.
-    void this.tick();
+    this.runTick();
     console.log('[ScheduledMessages] Varredor de mensagens agendadas ativo.');
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     delete jaAtivo.__solintScheduledRunner;
+    if (this.activeTick) {
+      await Promise.race([
+        this.activeTick,
+        new Promise<void>((resolve) => setTimeout(resolve, 30_000)),
+      ]);
+    }
+  }
+
+  private runTick(): void {
+    if (this.activeTick) return;
+    const task = this.tick().finally(() => {
+      if (this.activeTick === task) this.activeTick = null;
+    });
+    this.activeTick = task;
   }
 
   /**
@@ -103,6 +133,17 @@ export class ScheduledMessageRunner {
     if (this.rodando) return;
     this.rodando = true;
     try {
+      await prisma.scheduledMessage.updateMany({
+        where: { status: 'sending', leaseUntil: { lte: new Date() } },
+        data: {
+          status: 'pending',
+          workerId: null,
+          claimedAt: null,
+          leaseUntil: null,
+          error: 'Execução interrompida; agendamento retomado com idempotência.',
+        },
+      });
+
       const vencidas = (await prisma.scheduledMessage.findMany({
         where: { status: 'pending', scheduledFor: { lte: new Date() } },
         orderBy: { scheduledFor: 'asc' },
@@ -131,17 +172,44 @@ export class ScheduledMessageRunner {
          */
         const { count } = await prisma.scheduledMessage.updateMany({
           where: { id: linha.id, status: 'pending' },
-          data: { status: 'sending' },
+          data: {
+            status: 'sending',
+            workerId: this.workerId,
+            claimedAt: new Date(),
+            leaseUntil: new Date(Date.now() + LEASE_MS),
+            messageId: `msg-scheduled-${linha.id}`,
+            error: null,
+          },
         });
         if (count === 0) continue;
 
         try {
-          await this.enviarUma(linha);
+          const renew = setInterval(() => {
+            void prisma.scheduledMessage.updateMany({
+              where: { id: linha.id, status: 'sending', workerId: this.workerId },
+              data: { leaseUntil: new Date(Date.now() + LEASE_MS) },
+            });
+          }, LEASE_RENEW_MS);
+          renew.unref?.();
+          try {
+            await this.enviarUma(linha);
+          } finally {
+            clearInterval(renew);
+          }
         } catch (error) {
           const motivo = error instanceof Error ? error.message : 'Falha ao enviar o agendamento.';
           console.error(`[ScheduledMessages] Agendamento ${linha.id} falhou:`, error);
           await prisma.scheduledMessage
-            .update({ where: { id: linha.id }, data: { status: 'failed', error: motivo } })
+            .updateMany({
+              where: { id: linha.id, status: 'sending', workerId: this.workerId },
+              data: {
+                status: 'failed',
+                error: motivo,
+                workerId: null,
+                claimedAt: null,
+                leaseUntil: null,
+              },
+            })
             .catch(() => undefined);
         }
       }
@@ -154,11 +222,14 @@ export class ScheduledMessageRunner {
 
   private async enviarUma(linha: Vencida): Promise<void> {
     if (Date.now() - linha.scheduledFor.getTime() > MAX_ATRASO_MS) {
-      await prisma.scheduledMessage.update({
-        where: { id: linha.id },
+      await prisma.scheduledMessage.updateMany({
+        where: { id: linha.id, status: 'sending', workerId: this.workerId },
         data: {
           status: 'failed',
           error: 'O agendamento venceu há muito tempo e não foi enviado automaticamente.',
+          workerId: null,
+          claimedAt: null,
+          leaseUntil: null,
         },
       });
       return;
@@ -179,9 +250,15 @@ export class ScheduledMessageRunner {
     });
 
     if (!conversation) {
-      await prisma.scheduledMessage.update({
-        where: { id: linha.id },
-        data: { status: 'failed', error: 'A conversa não existe mais.' },
+      await prisma.scheduledMessage.updateMany({
+        where: { id: linha.id, status: 'sending', workerId: this.workerId },
+        data: {
+          status: 'failed',
+          error: 'A conversa não existe mais.',
+          workerId: null,
+          claimedAt: null,
+          leaseUntil: null,
+        },
       });
       return;
     }
@@ -205,7 +282,7 @@ export class ScheduledMessageRunner {
 
     const agora = new Date();
     const message: Message = {
-      id: `msg-${agora.getTime()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: `msg-scheduled-${linha.id}`,
       conversationId: conversation.id,
       author: 'agent',
       authorName: linha.userName,
@@ -218,37 +295,43 @@ export class ScheduledMessageRunner {
       ...(linha.isPrivate ? {} : { deliveryStatus: 'enviando' as const }),
     };
 
-    await prisma.$transaction([
-      prisma.message.create({
-        data: {
-          id: message.id,
-          conversationId: conversation.id,
-          author: message.author,
-          authorName: message.authorName ?? null,
-          contentType: message.content.type,
-          content: asJson(message.content),
-          time: message.time,
-          createdAt: agora,
-          deliveryStatus: message.deliveryStatus ?? null,
-          isPrivate: message.isPrivate,
-          replyToId: message.replyToId ?? null,
-          origin: message.origin ?? null,
-        },
-      }),
-      prisma.conversation.update({
-        where: { id: conversation.id, accountId: linha.accountId },
-        data: {
-          lastMessagePreview: message.isPrivate
-            ? conversation.lastMessagePreview
-            : previewOfMessage(message),
-          lastMessageAt: message.time,
-          lastActivityAt: agora,
-        },
-      }),
-    ]);
+    await prisma.$transaction(async (tx) => {
+      const created = await tx.message.createMany({
+        data: [
+          {
+            id: message.id,
+            conversationId: conversation.id,
+            author: message.author,
+            authorName: message.authorName ?? null,
+            contentType: message.content.type,
+            content: asJson(message.content),
+            time: message.time,
+            createdAt: agora,
+            deliveryStatus: message.deliveryStatus ?? null,
+            isPrivate: message.isPrivate,
+            replyToId: message.replyToId ?? null,
+            origin: message.origin ?? null,
+          },
+        ],
+        skipDuplicates: true,
+      });
+      if (created.count > 0) {
+        await tx.conversation.update({
+          where: { id: conversation.id, accountId: linha.accountId },
+          data: {
+            lastMessagePreview: message.isPrivate
+              ? conversation.lastMessagePreview
+              : previewOfMessage(message),
+            lastMessageAt: message.time,
+            lastActivityAt: agora,
+          },
+        });
+      }
+    });
 
     let entregue: Message = message;
     let erro: string | undefined;
+    let queued = false;
 
     // Nota interna nunca sai para o canal externo — a regra vale igual aqui.
     if (!linha.isPrivate && conversation.channel === 'whatsapp') {
@@ -271,24 +354,33 @@ export class ScheduledMessageRunner {
         entregue = { ...message, deliveryStatus: 'falha' };
         await prisma.message.update({
           where: { id: message.id },
-          data: { deliveryStatus: 'falha' },
+          data: { deliveryStatus: 'falha', dispatchError: erro },
         });
       } else if (resultado.externalId) {
         entregue = { ...message, externalId: resultado.externalId, deliveryStatus: 'enviado' };
         await prisma.message.update({
           where: { id: message.id },
-          data: { externalId: resultado.externalId, deliveryStatus: 'enviado' },
+          data: {
+            externalId: resultado.externalId,
+            deliveryStatus: 'enviado',
+            dispatchError: null,
+          },
         });
+      } else if (resultado.queued) {
+        queued = true;
       }
     }
 
-    await prisma.scheduledMessage.update({
-      where: { id: linha.id },
+    await prisma.scheduledMessage.updateMany({
+      where: { id: linha.id, status: 'sending', workerId: this.workerId },
       data: {
-        status: erro ? 'failed' : 'sent',
-        sentAt: agora,
+        status: erro ? 'failed' : queued ? 'queued' : 'sent',
+        sentAt: erro || queued ? null : agora,
         messageId: message.id,
-        ...(erro ? { error: erro } : {}),
+        workerId: null,
+        claimedAt: null,
+        leaseUntil: null,
+        error: erro ?? null,
       },
     });
 

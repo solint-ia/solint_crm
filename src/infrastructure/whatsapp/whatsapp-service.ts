@@ -20,11 +20,7 @@ import type { Contact } from '@/core/domain/contact';
 import type { Message, MessageContent } from '@/core/domain/message';
 import { PhoneNumber, isGroupAllowedInChat } from '@/core/domain/contact';
 import { dispararWebhooks } from '@/infrastructure/webhooks/webhook-dispatch';
-import {
-  base64ParaWebhook,
-  buildUpsertPayload,
-  mediaUrlAbsoluta,
-} from './wa-webhook-payload';
+import { base64ParaWebhook, buildUpsertPayload, mediaUrlAbsoluta } from './wa-webhook-payload';
 import {
   applyDeliveryUpdate as persistDeliveryUpdate,
   applyReaction,
@@ -59,6 +55,7 @@ import { mediaStore, mediaUrlFor } from './wa-media-store';
 import { deletionKey, quotedStub } from './wa-quote';
 import { waVersion } from './wa-version';
 import { silenceNoisyLibsignalLogs } from './wa-console-filter';
+import type { DispatchResult } from './channel';
 
 import {
   AVATAR_TTL_MS,
@@ -978,9 +975,12 @@ export class WhatsAppService {
     if (media.fileLength > MAX_INLINE_MEDIA_BYTES) return { content: fallback };
 
     // Reprocessamento da mesma mensagem (reconexão, `append`) reusa o arquivo.
-    if (await mediaStore.has(messageId)) {
-      const url = mediaUrlFor(messageId);
-      const guardada = await mediaStore.read(messageId, { accountId }).catch(() => null);
+    const mediaScope = { accountId, inboxId, kind: 'mensagem' as const };
+    if (await mediaStore.has(messageId, mediaScope)) {
+      const publicId = await mediaStore.publicId(messageId, mediaScope);
+      if (!publicId) return { content: fallback };
+      const url = mediaUrlFor(publicId);
+      const guardada = await mediaStore.read(messageId, mediaScope).catch(() => null);
       const bytes = guardada ? await guardada.bytes().catch(() => undefined) : undefined;
       return { content: mediaContent(media, url), url, ...(bytes ? { bytes } : {}) };
     }
@@ -1346,7 +1346,9 @@ export class WhatsAppService {
       return ownUrl;
     } catch {
       // Foto privada ou indisponível: mantém a cópia que já existir.
-      const fallback = (await mediaStore.has(mediaId)) ? mediaUrlFor(mediaId) : undefined;
+      const avatarScope = { accountId, kind: 'avatar' as const };
+      const publicId = await mediaStore.publicId(mediaId, avatarScope);
+      const fallback = publicId ? mediaUrlFor(publicId) : undefined;
       this.avatarCache.set(jid, { url: fallback, at: Date.now() });
       return fallback;
     }
@@ -1405,6 +1407,7 @@ export class WhatsAppService {
     target: { readonly channelThreadId?: string; readonly phone?: string },
     text: string,
     quote?: { readonly externalId: string; readonly fromMe: boolean; readonly text: string },
+    providerMessageId?: string,
   ): Promise<{ ok: boolean; externalId?: string; error?: string }> {
     const socket = this.socket;
     if (!socket || this.currentStatus.status !== 'conectado') {
@@ -1420,10 +1423,14 @@ export class WhatsAppService {
       const sent = await socket.sendMessage(
         jid,
         { text },
-        quote ? { quoted: quotedStub(jid, quote) } : {},
+        {
+          ...(quote ? { quoted: quotedStub(jid, quote) } : {}),
+          ...(providerMessageId ? { messageId: providerMessageId } : {}),
+        },
       );
       const externalId = sent?.key.id ?? undefined;
-      if (externalId) this.trackSentId(externalId);
+      if (!externalId) return { ok: false, error: 'WhatsApp não confirmou o envio.' };
+      this.trackSentId(externalId);
       return { ok: true, externalId };
     } catch (error) {
       console.error('[WhatsAppService] Erro ao enviar mensagem WhatsApp:', error);
@@ -1489,6 +1496,7 @@ export class WhatsAppService {
         readonly fromMe: boolean;
         readonly text: string;
       };
+      readonly providerMessageId?: string;
     },
   ): Promise<{ ok: boolean; externalId?: string; error?: string }> {
     const socket = this.socket;
@@ -1518,13 +1526,13 @@ export class WhatsAppService {
               };
 
     try {
-      const sent = await socket.sendMessage(
-        jid,
-        payload,
-        media.quote ? { quoted: quotedStub(jid, media.quote) } : {},
-      );
+      const sent = await socket.sendMessage(jid, payload, {
+        ...(media.quote ? { quoted: quotedStub(jid, media.quote) } : {}),
+        ...(media.providerMessageId ? { messageId: media.providerMessageId } : {}),
+      });
       const externalId = sent?.key.id ?? undefined;
-      if (externalId) this.trackSentId(externalId);
+      if (!externalId) return { ok: false, error: 'WhatsApp não confirmou o envio do anexo.' };
+      this.trackSentId(externalId);
       return { ok: true, externalId };
     } catch (error) {
       console.error('[WhatsAppService] Erro ao enviar mídia:', error);
@@ -1766,15 +1774,19 @@ export class WhatsAppService {
   async sendPresence(
     rawTarget: string,
     status: 'composing' | 'paused' | 'recording',
-  ): Promise<void> {
-    if (!this.socket) return;
+  ): Promise<DispatchResult> {
+    if (!this.socket) return { ok: false, error: 'WhatsApp desconectado.' };
     const targetJid = isSupportedChatJid(rawTarget) ? rawTarget : jidFromPhone(rawTarget);
-    if (!targetJid) return;
+    if (!targetJid) return { ok: false, error: 'Destinatário do WhatsApp inválido.' };
     try {
       await this.socket.presenceSubscribe(targetJid);
       await this.socket.sendPresenceUpdate(status, targetJid);
-    } catch {
-      // Ignora falha suave de presença
+      return { ok: true };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Falha ao emitir presença no WhatsApp.',
+      };
     }
   }
 

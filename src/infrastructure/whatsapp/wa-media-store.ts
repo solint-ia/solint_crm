@@ -128,6 +128,25 @@ export interface MediaScope {
 
 export const isSafeMediaId = (id: string): boolean => SAFE_ID.test(id);
 
+const mediaKindFor = (scope: MediaScope): 'mensagem' | 'avatar' => scope.kind ?? 'mensagem';
+
+const scopeKeyFor = (scope: MediaScope): string =>
+  mediaKindFor(scope) === 'avatar' ? (scope.inboxId ?? 'account') : (scope.inboxId ?? 'sem-caixa');
+
+/** IDs recebidos do WhatsApp só são únicos dentro de uma sessão. */
+const scopedMediaId = (sourceId: string, scope: MediaScope): string => {
+  const digest = createHash('sha256')
+    .update(`${scope.accountId}\0${scopeKeyFor(scope)}\0${mediaKindFor(scope)}\0${sourceId}`)
+    .digest('base64url');
+  return `${mediaKindFor(scope) === 'avatar' ? 'pp' : 'wa'}-${digest}`;
+};
+
+const exactScopeWhere = (sourceId: string, scope: MediaScope) => ({
+  scopeKey: scopeKeyFor(scope),
+  mediaKind: mediaKindFor(scope),
+  OR: [{ id: sourceId }, { sourceId }],
+});
+
 const pathsFor = (id: string): { bin: string; meta: string } | null => {
   const dir = cacheDir();
   if (!dir) return null;
@@ -232,7 +251,7 @@ export const mediaStore = {
    * o que fazia cada processo achar que a mídia do outro não existia — e baixar
    * de novo.
    */
-  async has(id: string): Promise<boolean> {
+  async has(id: string, scope: MediaScope): Promise<boolean> {
     if (!isSafeMediaId(id)) return false;
 
     // Com Storage configurado, a pergunta é sobre **durabilidade**, e o disco
@@ -244,12 +263,28 @@ export const mediaStore = {
       // tenant-ok: existência do registro, não entrega de conteúdo. Chamado só
       // pelo worker para decidir se precisa baixar de novo — quem entrega ao
       // navegador é `read`, e lá a posse é conferida.
-      return (await prisma.mediaObject.count({ where: { id } })) > 0;
+      return (
+        (await prisma.mediaObject.count({
+          where: { accountId: scope.accountId, ...exactScopeWhere(id, scope) },
+        })) > 0
+      );
     }
 
     // Sem Storage, quem grava e quem serve são o mesmo host: o disco é a verdade.
-    const paths = pathsFor(id);
+    const paths = pathsFor(scopedMediaId(id, scope));
     return paths ? fs.existsSync(paths.bin) : false;
+  },
+
+  /** Resolve o id público sem permitir que um id de origem atravesse tenants. */
+  async publicId(id: string, scope: MediaScope): Promise<string | null> {
+    if (!isSafeMediaId(id)) return null;
+    const object = await prisma.mediaObject.findFirst({
+      where: { accountId: scope.accountId, ...exactScopeWhere(id, scope) },
+    });
+    if (object) return object.id;
+    const derived = scopedMediaId(id, scope);
+    const paths = pathsFor(derived);
+    return paths && fs.existsSync(paths.bin) ? derived : null;
   },
 
   /**
@@ -261,23 +296,28 @@ export const mediaStore = {
    * corrigir, só que numa camada acima.
    */
   async save(
-    id: string,
+    sourceId: string,
     data: Buffer,
     meta: MediaMeta,
-    scope?: MediaScope,
+    scope: MediaScope,
   ): Promise<string | undefined> {
-    if (!isSafeMediaId(id) || data.length === 0 || data.length > MAX_MEDIA_BYTES) {
+    if (!isSafeMediaId(sourceId) || data.length === 0 || data.length > MAX_MEDIA_BYTES) {
       return undefined;
     }
 
     const mimeType = meta.mimeType || 'application/octet-stream';
+    let id = scopedMediaId(sourceId, scope);
 
     /** A mídia ficou onde qualquer processo consegue lê-la depois? */
     let durable = false;
 
-    // Sem conta não há caminho com inquilino, e sem isso a mídia não pode ir
-    // para um bucket compartilhado. Fica só em cache — degradado, mas servível.
-    if (scope && isStorageConfigured()) {
+    if (isStorageConfigured()) {
+      // Registros anteriores à migração conservam o id legado; reutilizá-lo
+      // evita violar a nova chave composta durante uma atualização de mídia.
+      const existing = await prisma.mediaObject.findFirst({
+        where: { accountId: scope.accountId, ...exactScopeWhere(sourceId, scope) },
+      });
+      if (existing) id = existing.id;
       const bucket = bucketFor(scope);
       const objectPath = bucketPathFor(id, scope, mimeType);
 
@@ -295,13 +335,21 @@ export const mediaStore = {
               fileName: meta.fileName ?? null,
               sizeBytes: data.length,
               checksum,
+              sourceId,
+              scopeKey: scopeKeyFor(scope),
+              mediaKind: mediaKindFor(scope),
             },
             update: {
+              accountId: scope.accountId,
+              inboxId: scope.inboxId ?? null,
               bucketPath: `${bucket}/${objectPath}`,
               mimeType,
               fileName: meta.fileName ?? null,
               sizeBytes: data.length,
               checksum,
+              sourceId,
+              scopeKey: scopeKeyFor(scope),
+              mediaKind: mediaKindFor(scope),
             },
           });
           // O registro é o que torna a mídia localizável: o objeto no bucket
@@ -354,7 +402,7 @@ export const mediaStore = {
    * conversas. O Storage é o que garante que a resposta existe mesmo quando o
    * disco foi trocado — ou quando quem gravou foi o outro processo.
    */
-  async read(id: string, scope?: { readonly accountId: string }): Promise<StoredMedia | null> {
+  async read(id: string, scope: MediaScope): Promise<StoredMedia | null> {
     if (!isSafeMediaId(id)) return null;
 
     // A posse é conferida **antes** do cache, não depois.
@@ -365,25 +413,31 @@ export const mediaStore = {
     // Quem não informa `scope` é código de servidor que já opera dentro de uma
     // conta (o worker, ao enviar um anexo); quem atende requisição de navegador
     // informa, sempre.
-    if (scope) {
-      const owned = await prisma.mediaObject.count({
-        where: { id, accountId: scope.accountId },
-      });
-      if (owned === 0) return null;
-    }
+    const hasExactScope = Boolean(scope?.inboxId || scope?.kind);
+    const object = await prisma.mediaObject.findFirst({
+      where: {
+        accountId: scope.accountId,
+        ...(hasExactScope ? exactScopeWhere(id, scope) : { id }),
+      },
+    });
 
-    const cached = await readCache(id);
+    // A rota HTTP informa apenas a conta e precisa encontrar o id público
+    // exato no banco antes de tocar no cache. Código interno informa o escopo
+    // completo e também funciona no modo local sem Storage.
+    if (!hasExactScope && !object) return null;
+    const resolvedId = object?.id ?? (hasExactScope ? scopedMediaId(id, scope) : id);
+
+    const cached = await readCache(resolvedId);
     if (cached) return cached;
     if (!isStorageConfigured()) return null;
 
-    // tenant-ok: a posse já foi conferida acima, quando `scope` foi informado.
-    const object = await prisma.mediaObject.findUnique({ where: { id } });
     if (!object) return null;
 
     const slash = object.bucketPath.indexOf('/');
     if (slash < 0) return null;
     const bucket = object.bucketPath.slice(0, slash) as BucketName;
     const objectPath = object.bucketPath.slice(slash + 1);
+    if (scope && !objectPath.startsWith(`${scope.accountId}/`)) return null;
 
     const data = await storage.download(bucket, objectPath);
     if (!data) return null;
@@ -397,7 +451,7 @@ export const mediaStore = {
     // bytes que já estão aqui. Voltar pelo disco fazia a leitura inteira
     // depender de uma gravação que é opcional por definição — e que é sempre
     // impossível no sistema de arquivos somente leitura da função serverless.
-    await writeCache(id, data, meta);
+    await writeCache(resolvedId, data, meta);
     return fromBuffer(data, meta);
   },
 

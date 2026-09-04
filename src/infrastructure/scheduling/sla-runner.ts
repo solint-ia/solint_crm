@@ -6,6 +6,12 @@ import {
 } from '@/core/domain/sla';
 import { prisma } from '@/infrastructure/db/prisma';
 import { createNotification } from '@/infrastructure/notifications/create-notification';
+import {
+  acquireBackgroundLease,
+  releaseBackgroundLease,
+  renewBackgroundLease,
+  type BackgroundLeaseHandle,
+} from './background-lease';
 
 /**
  * O relógio do prazo de resposta.
@@ -39,6 +45,11 @@ const jaAtivo = globalThis as typeof globalThis & { __solintSlaRunner?: true };
 export class SlaRunner {
   private timer: NodeJS.Timeout | null = null;
   private rodando = false;
+  private readonly owner: string;
+
+  constructor(owner = `sla-${randomUUID()}`) {
+    this.owner = owner;
+  }
 
   start(): void {
     if (this.timer || jaAtivo.__solintSlaRunner) return;
@@ -49,16 +60,27 @@ export class SlaRunner {
     console.log('[SLA] Varredor de prazos de resposta ativo.');
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     delete jaAtivo.__solintSlaRunner;
+    const deadline = Date.now() + 30_000;
+    while (this.rodando && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
   }
 
   private async tick(): Promise<void> {
     if (this.rodando) return;
     this.rodando = true;
+    let lease: BackgroundLeaseHandle | null = null;
+    let renew: NodeJS.Timeout | null = null;
     try {
+      lease = await acquireBackgroundLease('sla', this.owner, 5 * 60_000);
+      if (!lease) return;
+      const ownedLease = lease;
+      renew = setInterval(() => void renewBackgroundLease(ownedLease), 60_000);
+      renew.unref?.();
       const agora = new Date();
       const desde = new Date(agora.getTime() - JANELA_MS);
 
@@ -167,7 +189,10 @@ export class SlaRunner {
     } catch (error) {
       console.error('[SLA] Falha na varredura de prazos:', error);
     } finally {
+      if (renew) clearInterval(renew);
+      if (lease) await releaseBackgroundLease(lease).catch(() => undefined);
       this.rodando = false;
     }
   }
 }
+import { randomUUID } from 'node:crypto';

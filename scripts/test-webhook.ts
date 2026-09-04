@@ -19,12 +19,17 @@ import type { AddressInfo } from 'node:net';
 import type { WAMessage } from '@whiskeysockets/baileys';
 
 import { prisma } from '../src/infrastructure/db/prisma';
+import { WebhookDeliveryRunner } from '../src/infrastructure/webhooks/webhook-delivery-runner';
 import { dispararWebhooks } from '../src/infrastructure/webhooks/webhook-dispatch';
 import type { SolintRefs } from '../src/infrastructure/webhooks/webhook-dispatch';
 import { buildUpsertPayload } from '../src/infrastructure/whatsapp/wa-webhook-payload';
 
 const SEGREDO = 'segredo-de-teste';
 const JID = '557981454771@s.whatsapp.net';
+/** Id fixo para a caixa do teste: a entrega guarda `inboxId` com chave estrangeira. */
+const CAIXA = 'ibx-teste';
+/** Teto de espera por entrega. O entregador varre a fila, não responde na hora. */
+const ESPERA_MS = 20_000;
 
 const falhas: string[] = [];
 const check = (label: string, ok: boolean, detalhe = '') => {
@@ -39,12 +44,25 @@ interface Recebido {
 
 const REFS: SolintRefs = {
   contaId: '',
-  caixaEntradaId: 'ibx-teste',
+  caixaEntradaId: CAIXA,
   conversaId: 'cv-teste',
   contatoId: 'ct-teste',
   mensagemId: 'msg-teste',
   conversaNova: false,
 };
+
+/**
+ * Cada disparo precisa de um id de mensagem próprio.
+ *
+ * A chave de deduplicação da outbox é `evento:mensagemId`, e ela é única por
+ * webhook — repetir o mesmo id faria o segundo caso do teste ser descartado
+ * como reprocessamento do Baileys, e o teste acusaria "nada chegou" onde o
+ * comportamento está certo.
+ */
+let sequencia = 0;
+const proximoId = () => `msg-teste-${++sequencia}`;
+
+const dormir = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** Um `Long` do protobuf, na forma em que o Baileys o entrega. */
 const long = (valor: number) => ({ low: valor, high: 0, unsigned: true });
@@ -138,6 +156,25 @@ async function main() {
   if (!account) throw new Error('Nenhuma conta no banco para testar.');
   const refs: SolintRefs = { ...REFS, contaId: account.id };
 
+  // A entrega guarda a caixa de origem, com chave estrangeira. Sem uma caixa
+  // real no banco, a outbox recusaria a linha antes de qualquer conferência.
+  await prisma.inbox.upsert({
+    where: { id: CAIXA },
+    update: { accountId: account.id },
+    create: {
+      id: CAIXA,
+      accountId: account.id,
+      name: 'Odonto Excellence',
+      channel: 'whatsapp',
+      identifier: '5579999999999',
+      status: 'desconectado',
+      provider: 'baileys',
+      businessHours: {},
+      awayMessage: {},
+      greeting: {},
+    },
+  });
+
   const webhook = await prisma.webhook.create({
     data: {
       accountId: account.id,
@@ -149,6 +186,27 @@ async function main() {
     },
   });
 
+  // Quem entrega é o runner, a partir da outbox: `dispararWebhooks` só
+  // enfileira. Sem ele de pé, nenhum caso deste arquivo receberia nada.
+  const runner = new WebhookDeliveryRunner('teste-webhook');
+  runner.start();
+
+  /** Espera o destino ser chamado `quantas` vezes, ou desiste. */
+  const aguardar = async (quantas: number): Promise<void> => {
+    const limite = Date.now() + ESPERA_MS;
+    while (recebidos.length < quantas && Date.now() < limite) await dormir(100);
+  };
+
+  /** Espera até `condicao` valer, ou desiste. Devolve se valeu. */
+  const aguardarAte = async (condicao: () => Promise<boolean>): Promise<boolean> => {
+    const limite = Date.now() + ESPERA_MS;
+    while (Date.now() < limite) {
+      if (await condicao()) return true;
+      await dormir(200);
+    }
+    return false;
+  };
+
   /** Dispara e devolve o único corpo que chegou, já em objeto. */
   const disparar = async (
     evento: Parameters<typeof dispararWebhooks>[0],
@@ -156,7 +214,11 @@ async function main() {
     base64?: string,
   ): Promise<Record<string, unknown>> => {
     recebidos.length = 0;
-    await dispararWebhooks(evento, { ...montar(raw, base64), solint: refs });
+    await dispararWebhooks(evento, {
+      ...montar(raw, base64),
+      solint: { ...refs, mensagemId: proximoId() },
+    });
+    await aguardar(1);
     const entrega = recebidos[0];
     if (!entrega) throw new Error(`nada chegou ao destino para ${evento}`);
     return JSON.parse(entrega.corpo) as Record<string, unknown>;
@@ -181,7 +243,11 @@ async function main() {
     );
     check('event', texto.event === 'messages.upsert', String(texto.event));
     check('instance é o nome da caixa', texto.instance === 'Odonto Excellence');
-    check('destination é a URL deste destino', texto.destination === url, String(texto.destination));
+    check(
+      'destination é a URL deste destino',
+      texto.destination === url,
+      String(texto.destination),
+    );
     check('sender', texto.sender === '5579999999999@s.whatsapp.net');
     check('date_time em ISO', typeof texto.date_time === 'string');
     check('key.remoteJid', em(texto, 'data.key.remoteJid') === JID);
@@ -201,7 +267,10 @@ async function main() {
       'conteúdo do texto',
       em(texto, 'data.message.conversation') === 'Olá! Posso ter mais informações sobre isso?',
     );
-    check('messageContextInfo descartado', em(texto, 'data.message.messageContextInfo') === undefined);
+    check(
+      'messageContextInfo descartado',
+      em(texto, 'data.message.messageContextInfo') === undefined,
+    );
     check('solint.conversaId para a resposta', em(texto, 'solint.conversaId') === 'cv-teste');
 
     console.log('\n2) Áudio gravado (ptt) com base64');
@@ -257,7 +326,10 @@ async function main() {
       }),
     );
     check('messageType', em(citacao, 'data.messageType') === 'extendedTextMessage');
-    check('texto da resposta', em(citacao, 'data.message.extendedTextMessage.text') === 'sim, esse mesmo');
+    check(
+      'texto da resposta',
+      em(citacao, 'data.message.extendedTextMessage.text') === 'sim, esse mesmo',
+    );
     check(
       'citação no lugar de origem',
       em(citacao, 'data.message.extendedTextMessage.contextInfo.quotedMessage.conversation') ===
@@ -267,7 +339,10 @@ async function main() {
       'citação elevada para data.contextInfo',
       em(citacao, 'data.contextInfo.quotedMessage.conversation') === 'Você quer dizer o implante?',
     );
-    check('stanzaId da citada', em(citacao, 'data.contextInfo.stanzaId') === '3EB0C767D097C1E1A5D2');
+    check(
+      'stanzaId da citada',
+      em(citacao, 'data.contextInfo.stanzaId') === '3EB0C767D097C1E1A5D2',
+    );
 
     console.log('\n4) Clique em anúncio (externalAdReply)');
     const anuncio = await disparar(
@@ -311,8 +386,14 @@ async function main() {
       'miniatura do anúncio descartada',
       em(anuncio, 'data.contextInfo.externalAdReply.thumbnail') === undefined,
     );
-    check('conversionData descartado', em(anuncio, 'data.contextInfo.conversionData') === undefined);
-    check('mentionedJid vazio preservado', Array.isArray(em(anuncio, 'data.contextInfo.mentionedJid')));
+    check(
+      'conversionData descartado',
+      em(anuncio, 'data.contextInfo.conversionData') === undefined,
+    );
+    check(
+      'mentionedJid vazio preservado',
+      Array.isArray(em(anuncio, 'data.contextInfo.mentionedJid')),
+    );
 
     console.log('\n5) Imagem com legenda');
     const imagem = await disparar(
@@ -348,7 +429,10 @@ async function main() {
       ),
     );
     check('key.fromMe verdadeiro', em(saida, 'data.key.fromMe') === true);
-    check('texto da saída', em(saida, 'data.message.conversation') === 'Claro! Fica na Rua X, 100.');
+    check(
+      'texto da saída',
+      em(saida, 'data.message.conversation') === 'Claro! Fica na Rua X, 100.',
+    );
 
     console.log('\n7) Nenhum array de bytes sobreviveu em nenhum corpo');
     for (const [nome, corpo] of [
@@ -365,8 +449,20 @@ async function main() {
 
     console.log('\n8) Evento NAO inscrito nao dispara');
     recebidos.length = 0;
-    await dispararWebhooks('conversa.criada', { ...montar(crua({ conversation: 'oi' })), solint: refs });
+    await dispararWebhooks('conversa.criada', {
+      ...montar(crua({ conversation: 'oi' })),
+      solint: { ...refs, mensagemId: proximoId() },
+    });
+    // Ausência não se prova esperando para sempre: dois ciclos de varredura do
+    // entregador são folga suficiente para o que fosse sair já ter saído.
+    await dormir(2_000);
     check('destino nao foi chamado', recebidos.length === 0, `${recebidos.length} chamada(s)`);
+    check(
+      'nenhuma entrega foi enfileirada',
+      (await prisma.webhookDelivery.count({
+        where: { webhookId: webhook.id, event: 'conversa.criada' },
+      })) === 0,
+    );
 
     console.log('\n9) Cada destino recebe a propria URL em destination');
     const segundaUrl = `${url}/segundo`;
@@ -382,8 +478,9 @@ async function main() {
     recebidos.length = 0;
     await dispararWebhooks('mensagem.recebida', {
       ...montar(crua({ conversation: 'para os dois' })),
-      solint: refs,
+      solint: { ...refs, mensagemId: proximoId() },
     });
+    await aguardar(2);
     const destinos = recebidos
       .map((r) => (JSON.parse(r.corpo) as { destination: string }).destination)
       .sort();
@@ -396,6 +493,9 @@ async function main() {
     await prisma.webhook.delete({ where: { id: segundo.id } }).catch(() => undefined);
 
     console.log('\n10) Sucesso zera o contador e carimba a data');
+    await aguardarAte(async () =>
+      Boolean((await prisma.webhook.findUnique({ where: { id: webhook.id } }))?.lastTriggeredAt),
+    );
     const depois = await prisma.webhook.findUnique({ where: { id: webhook.id } });
     check('failureCount zerado', depois?.failureCount === 0, String(depois?.failureCount));
     check('lastTriggeredAt gravado', Boolean(depois?.lastTriggeredAt));
@@ -410,16 +510,28 @@ async function main() {
     try {
       await dispararWebhooks('mensagem.recebida', {
         ...montar(crua({ conversation: 'ninguem ouve' })),
-        solint: refs,
+        solint: { ...refs, mensagemId: proximoId() },
       });
     } catch {
       lancou = true;
     }
     check('nao lancou (gravacao da mensagem fica a salvo)', !lancou);
+    const contou = await aguardarAte(async () => {
+      const linha = await prisma.webhook.findUnique({ where: { id: webhook.id } });
+      return (linha?.failureCount ?? 0) >= 1;
+    });
     const comFalha = await prisma.webhook.findUnique({ where: { id: webhook.id } });
-    check('failureCount incrementado', comFalha?.failureCount === 1, String(comFalha?.failureCount));
+    check('failureCount incrementado', contou, String(comFalha?.failureCount));
+    check(
+      'entrega volta para a fila em vez de sumir',
+      (await prisma.webhookDelivery.count({
+        where: { webhookId: webhook.id, status: { in: ['pending', 'processing'] } },
+      })) >= 1,
+    );
   } finally {
+    await runner.stop();
     await prisma.webhook.delete({ where: { id: webhook.id } }).catch(() => undefined);
+    await prisma.inbox.delete({ where: { id: CAIXA } }).catch(() => undefined);
     servidor.close();
   }
 }

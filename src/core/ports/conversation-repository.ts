@@ -29,6 +29,9 @@ export interface NewMessageInput {
   readonly isPrivate: boolean;
   readonly authorId: Id;
   readonly authorName: string;
+  /** Identidade estável fornecida por uma integração HTTP. */
+  readonly messageId?: Id;
+  readonly idempotencyKey?: string;
   /** Mensagem citada, quando esta é uma resposta a uma anterior. */
   readonly replyToId?: Id;
   /** Quem foi mencionado com `@`, já resolvido no servidor. */

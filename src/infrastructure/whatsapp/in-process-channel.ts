@@ -7,6 +7,7 @@ import type {
   WhatsAppChannel,
 } from './channel';
 import { mediaStore } from './wa-media-store';
+import { providerMessageIdFor } from './provider-message-id';
 import { whatsappService } from './whatsapp-service';
 import type { WhatsAppOwner, WhatsAppStatusPayload } from './whatsapp-events';
 
@@ -41,12 +42,17 @@ export class InProcessWhatsAppChannel implements WhatsAppChannel {
   }
 
   async sendText(
-    _context: DispatchContext,
+    context: DispatchContext,
     target: DispatchTarget,
     text: string,
     quote?: DispatchQuote,
   ): Promise<DispatchResult> {
-    return whatsappService.sendTextMessage(target, text, quote);
+    return whatsappService.sendTextMessage(
+      target,
+      text,
+      quote,
+      providerMessageIdFor(context.messageId),
+    );
   }
 
   async deleteMessage(
@@ -58,7 +64,7 @@ export class InProcessWhatsAppChannel implements WhatsAppChannel {
   }
 
   async sendMedia(
-    _context: DispatchContext,
+    context: DispatchContext,
     target: DispatchTarget,
     media: DispatchMedia,
     quote?: DispatchQuote,
@@ -66,7 +72,11 @@ export class InProcessWhatsAppChannel implements WhatsAppChannel {
     // O anexo já foi gravado no depósito antes de chegar aqui, e é de lá que os
     // bytes saem — nos dois motores. Passar o Buffer por este método deixaria a
     // fronteira com uma forma para cada motor, que é justamente o que ela evita.
-    const stored = await mediaStore.read(media.mediaId);
+    const stored = await mediaStore.read(media.mediaId, {
+      accountId: context.accountId,
+      inboxId: context.inboxId,
+      kind: 'mensagem',
+    });
     if (!stored) return { ok: false, error: 'Anexo não encontrado no depósito local.' };
 
     const data = await stored.bytes();
@@ -78,23 +88,24 @@ export class InProcessWhatsAppChannel implements WhatsAppChannel {
       ...(media.caption ? { caption: media.caption } : {}),
       ...(media.voice ? { voice: true } : {}),
       ...(quote ? { quote } : {}),
+      providerMessageId: providerMessageIdFor(context.messageId),
     });
   }
 
   async sendReaction(
     _context: DispatchContext,
     target: DispatchTarget,
-    message: { readonly externalId: string; readonly fromMe: boolean; readonly participant?: string },
+    message: {
+      readonly externalId: string;
+      readonly fromMe: boolean;
+      readonly participant?: string;
+    },
     emoji: string,
   ): Promise<DispatchResult> {
     return whatsappService.sendReaction(target, message, emoji);
   }
 
-  async markRead(
-    _accountId: string,
-    conversationId: string,
-    _inboxId?: string,
-  ): Promise<void> {
+  async markRead(_accountId: string, conversationId: string, _inboxId?: string): Promise<void> {
     await whatsappService.markConversationAsRead(conversationId);
   }
 
@@ -102,9 +113,9 @@ export class InProcessWhatsAppChannel implements WhatsAppChannel {
     _context: { accountId: string; inboxId: string; conversationId: string },
     target: DispatchTarget,
     status: 'composing' | 'paused' | 'recording',
-  ): Promise<void> {
+  ): Promise<DispatchResult> {
     const raw = target.channelThreadId ?? target.phone;
-    if (!raw) return;
-    await whatsappService.sendPresence(raw, status);
+    if (!raw) return { ok: false, error: 'Conversa sem destinatário do WhatsApp.' };
+    return whatsappService.sendPresence(raw, status);
   }
 }

@@ -2,6 +2,7 @@ import { CHANNELS, postgresPubSub } from '@/infrastructure/db/postgres-pubsub';
 import { prisma } from '@/infrastructure/db/prisma';
 import { pruneCacheKeys } from '../auth/postgres-auth-state';
 import { mediaStore } from '../wa-media-store';
+import { providerMessageIdFor } from '../provider-message-id';
 import { waLog } from '../wa-log';
 import { loadConversationForEvent } from '../wa-store';
 import { waEventBus } from '../whatsapp-events';
@@ -61,56 +62,17 @@ const ESPERA_SESSAO_MS = 30_000;
  */
 const MAX_TENTATIVAS = 5;
 
-/**
- * Raias de execução.
- *
- * A fila era uma corrente única: um `send` travado segurava tudo atrás dele.
- * Medido no caso real — um comando de leitura enfileirado às 20:28 só terminou
- * 170 segundos depois, um segundo após o envio que estava à sua frente. Marcar
- * uma conversa como lida não tem relação nenhuma com um envio pendente, e não
- * havia motivo para esperar.
- *
- * Dentro de cada raia a ordem é preservada, porque ali ela significa alguma
- * coisa: dois envios para o mesmo contato devem sair na ordem em que foram
- * escritos, e um `disconnect` depois de um `connect` deve encontrar a sessão de
- * pé. Entre raias não há ordem a preservar.
- *
- * **A raia é por caixa, não global.** Três correntes para o worker inteiro
- * pareciam suficientes quando havia uma caixa; com duas, elas viraram o
- * gargalo. Um `connect` da caixa B esperava o `connect` da caixa A terminar
- * de buscar a versão do Baileys na rede e de carregar as credenciais do
- * Postgres — era essa a demora a mais da segunda conexão. Pior: a corrente
- * era global ao **processo**, então um envio lento da conta X atrasava o
- * envio da conta Y, que não tem nada a ver com isso.
- *
- * Duas caixas são dois números de WhatsApp, dois sockets e duas sessões
- * independentes. Nada no domínio pede que uma espere a outra.
- */
-const LANES = {
-  // `delete` entra na raia de envio porque é escrita no mesmo chat: a ordem
-  // entre mandar e apagar é a única que não pode se inverter.
-  envio: new Set(['send', 'send_media', 'delete', 'react']),
-  sessao: new Set(['connect', 'disconnect']),
-  leitura: new Set(['read', 'presence']),
-} as const;
-
-type LaneName = keyof typeof LANES;
-
-const laneOf = (kind: string): LaneName => {
-  for (const [name, kinds] of Object.entries(LANES) as [LaneName, Set<string>][]) {
-    if (kinds.has(kind)) return name;
-  }
-  // Comando desconhecido não pode entrar na raia de envio e atrasá-la; a de
-  // leitura é a mais barata e a mais tolerante a uma surpresa.
-  return 'leitura';
-};
+const COMMAND_LEASE_MS = 60_000;
+const LEASE_RENEW_MS = 20_000;
 
 interface CommandRow {
   readonly id: string;
+  readonly sequence: bigint;
   readonly inboxId: string;
   readonly kind: string;
   readonly payload: unknown;
   readonly attempts: number;
+  readonly expiresAt: Date | null;
 }
 
 export class CommandConsumer {
@@ -119,10 +81,12 @@ export class CommandConsumer {
   private sweepTimer: NodeJS.Timeout | null = null;
   private unsubscribe: (() => void) | null = null;
   private sweepCount = 0;
+  private readonly workerId: string;
+  private lastSweepAt: Date | null = null;
 
   /**
-   * Uma corrente por caixa **e** raia. Serializa o que está dentro, libera o
-   * que está fora.
+   * Uma corrente por caixa. Toda ação da mesma sessão preserva a sequência
+   * gravada no banco; caixas diferentes continuam avançando em paralelo.
    *
    * O mapa é podado quando a corrente termina: sem isso ele guardaria uma
    * entrada por caixa que já passou por aqui, para sempre. A comparação
@@ -143,6 +107,13 @@ export class CommandConsumer {
 
   constructor(sessionManager: WhatsAppSessionManager) {
     this.sessionManager = sessionManager;
+    this.workerId = sessionManager.workerId;
+  }
+
+  get healthy(): boolean {
+    return Boolean(
+      this.isRunning && this.lastSweepAt && Date.now() - this.lastSweepAt.getTime() < 60_000,
+    );
   }
 
   start(): void {
@@ -165,23 +136,24 @@ export class CommandConsumer {
     void this.cleanup();
   }
 
-  /**
-   * Lê os pendentes e entrega cada um à sua raia.
-   *
-   * A leitura em si continua sendo uma consulta só. O que mudou é o destino: em
-   * vez de um laço que executa tudo em sequência, cada comando entra na corrente
-   * da sua raia e as três avançam em paralelo.
-   */
+  /** Lê somente o primeiro comando elegível de cada inbox. */
   private async dispatchPending(): Promise<void> {
     if (!this.isRunning) return;
 
     let commands: CommandRow[];
     try {
-      commands = await prisma.whatsAppCommand.findMany({
-        where: { status: 'pending' },
-        orderBy: { createdAt: 'asc' },
-        take: 50,
-      });
+      await this.reapExpiredCommands();
+      commands = await prisma.$queryRaw<CommandRow[]>`
+        SELECT DISTINCT ON ("inboxId")
+          "id", "sequence", "inboxId", "kind", "payload", "attempts", "expiresAt"
+        FROM "WhatsAppCommand"
+        WHERE "status" = 'pending'
+          AND "availableAt" <= CURRENT_TIMESTAMP
+          AND ("expiresAt" IS NULL OR "expiresAt" > CURRENT_TIMESTAMP)
+        ORDER BY "inboxId", "sequence"
+        LIMIT 100
+      `;
+      this.lastSweepAt = new Date();
     } catch (err) {
       console.warn('[CommandConsumer] Falha ao consultar comandos:', err);
       return;
@@ -191,7 +163,7 @@ export class CommandConsumer {
       if (this.inFlight.has(cmd.id)) continue;
       this.inFlight.add(cmd.id);
 
-      const chave = `${cmd.inboxId}:${laneOf(cmd.kind)}`;
+      const chave = cmd.inboxId;
       const anterior = this.lanes.get(chave) ?? Promise.resolve();
       const corrente = anterior
         .then(() => this.runCommand(cmd))
@@ -199,29 +171,168 @@ export class CommandConsumer {
         .finally(() => {
           this.inFlight.delete(cmd.id);
           if (this.lanes.get(chave) === corrente) this.lanes.delete(chave);
+          if (this.isRunning) void this.dispatchPending();
         });
       this.lanes.set(chave, corrente);
     }
+  }
+
+  /**
+   * Reivindica o comando sob advisory lock da inbox. A trava transacional faz
+   * duas réplicas observarem/alterarem a fila daquela conexão em sequência.
+   */
+  private async claimCommand(cmd: CommandRow): Promise<CommandRow | null> {
+    return prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${cmd.inboxId}))`;
+
+      const clock = await tx.$queryRaw<Array<{ now: Date }>>`SELECT CURRENT_TIMESTAMP AS "now"`;
+      const now = clock[0]?.now;
+      if (!now) return null;
+
+      const fresh = await tx.whatsAppCommand.findFirst({
+        where: {
+          id: cmd.id,
+          status: 'pending',
+          availableAt: { lte: now },
+          OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+        },
+      });
+      if (!fresh) return null;
+
+      const [active, older, connection] = await Promise.all([
+        tx.whatsAppCommand.findFirst({
+          where: {
+            inboxId: cmd.inboxId,
+            status: 'processing',
+            leaseUntil: { gt: now },
+          },
+          select: { id: true },
+        }),
+        tx.whatsAppCommand.findFirst({
+          where: {
+            inboxId: cmd.inboxId,
+            status: 'pending',
+            availableAt: { lte: now },
+            sequence: { lt: fresh.sequence },
+          },
+          select: { id: true },
+        }),
+        tx.whatsAppConnection.findUnique({
+          where: { inboxId: cmd.inboxId },
+          select: { lockOwner: true, lockExpiresAt: true },
+        }),
+      ]);
+
+      if (active || older) return null;
+      if (
+        connection?.lockOwner &&
+        connection.lockOwner !== this.workerId &&
+        connection.lockExpiresAt &&
+        connection.lockExpiresAt > now
+      ) {
+        return null;
+      }
+
+      const leaseUntil = new Date(now.getTime() + COMMAND_LEASE_MS);
+      const { count } = await tx.whatsAppCommand.updateMany({
+        where: { id: fresh.id, status: 'pending' },
+        data: {
+          status: 'processing',
+          workerId: this.workerId,
+          claimedAt: now,
+          leaseUntil,
+          error: null,
+        },
+      });
+      if (count === 0) return null;
+
+      return {
+        id: fresh.id,
+        sequence: fresh.sequence,
+        inboxId: fresh.inboxId,
+        kind: fresh.kind,
+        payload: fresh.payload,
+        attempts: fresh.attempts,
+        expiresAt: fresh.expiresAt,
+      };
+    });
+  }
+
+  private async renewLease(commandId: string): Promise<void> {
+    await prisma.$executeRaw`
+      UPDATE "WhatsAppCommand"
+      SET "leaseUntil" = CURRENT_TIMESTAMP + INTERVAL '60 seconds'
+      WHERE "id" = ${commandId}
+        AND "status" = 'processing'
+        AND "workerId" = ${this.workerId}
+    `;
+  }
+
+  /** Recupera trabalho abandonado e descarta presença que já perdeu o sentido. */
+  private async reapExpiredCommands(): Promise<void> {
+    await prisma.$transaction([
+      prisma.whatsAppCommand.updateMany({
+        where: { status: 'pending', expiresAt: { lte: new Date() } },
+        data: { status: 'failed', error: 'Comando expirado antes da execução.' },
+      }),
+      prisma.whatsAppCommand.updateMany({
+        where: {
+          status: 'processing',
+          leaseUntil: { lte: new Date() },
+          attempts: { lt: MAX_TENTATIVAS - 1 },
+        },
+        data: {
+          status: 'pending',
+          workerId: null,
+          claimedAt: null,
+          leaseUntil: null,
+          availableAt: new Date(),
+          attempts: { increment: 1 },
+          error: 'Lease expirado; comando recuperado após interrupção do worker.',
+        },
+      }),
+      prisma.whatsAppCommand.updateMany({
+        where: {
+          status: 'processing',
+          leaseUntil: { lte: new Date() },
+          attempts: { gte: MAX_TENTATIVAS - 1 },
+        },
+        data: {
+          status: 'failed',
+          workerId: null,
+          claimedAt: null,
+          leaseUntil: null,
+          error: 'Número máximo de recuperações do comando excedido.',
+        },
+      }),
+    ]);
   }
 
   /** Executa um comando e registra o desfecho na linha da fila. */
   private async runCommand(cmd: CommandRow): Promise<void> {
     if (!this.isRunning) return;
 
-    // Marca como em processamento para evitar duplicidade
-    const { count } = await prisma.whatsAppCommand.updateMany({
-      where: { id: cmd.id, status: 'pending' },
-      data: { status: 'processing' },
-    });
-    if (count === 0) return;
+    const claimed = await this.claimCommand(cmd);
+    if (!claimed) return;
 
-    const medir = waLog.timer(`[CommandConsumer] ${cmd.kind}`);
+    const leaseTimer = setInterval(() => {
+      void this.renewLease(claimed.id).catch((error: unknown) => {
+        console.warn(`[CommandConsumer] Falha ao renovar lease de ${claimed.id}:`, error);
+      });
+    }, LEASE_RENEW_MS);
+    leaseTimer.unref?.();
+
+    const medir = waLog.timer(`[CommandConsumer] ${claimed.kind}`);
     try {
-      await this.executeCommand(cmd);
+      await this.executeCommand(claimed);
       medir('concluído');
-      await prisma.whatsAppCommand.update({
-        where: { id: cmd.id },
-        data: { status: 'completed' },
+      await prisma.whatsAppCommand.updateMany({
+        where: { id: claimed.id, status: 'processing', workerId: this.workerId },
+        data: {
+          status: 'completed',
+          leaseUntil: null,
+          result: { completedAt: new Date().toISOString() },
+        },
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Erro ao processar comando';
@@ -238,17 +349,26 @@ export class CommandConsumer {
        * Devolver a linha para `pending` basta para a retentativa acontecer: a
        * varredura a encontra no ciclo seguinte, e o intervalo dela é o recuo.
        */
-      const adiavel = error instanceof SessaoIndisponivelError && cmd.attempts + 1 < MAX_TENTATIVAS;
+      const adiavel =
+        error instanceof SessaoIndisponivelError && claimed.attempts + 1 < MAX_TENTATIVAS;
 
       if (adiavel) {
         console.warn(
-          `[CommandConsumer] Comando ${cmd.id} (${cmd.kind}) adiado: ${errorMessage} ` +
-            `Tentativa ${cmd.attempts + 1}/${MAX_TENTATIVAS}.`,
+          `[CommandConsumer] Comando ${claimed.id} (${claimed.kind}) adiado: ${errorMessage} ` +
+            `Tentativa ${claimed.attempts + 1}/${MAX_TENTATIVAS}.`,
         );
         const { count: devolvido } = await prisma.whatsAppCommand
           .updateMany({
-            where: { id: cmd.id, status: 'processing' },
-            data: { status: 'pending', error: errorMessage, attempts: { increment: 1 } },
+            where: { id: claimed.id, status: 'processing', workerId: this.workerId },
+            data: {
+              status: 'pending',
+              workerId: null,
+              claimedAt: null,
+              leaseUntil: null,
+              availableAt: new Date(Date.now() + 3_000 * 2 ** claimed.attempts),
+              error: errorMessage,
+              attempts: { increment: 1 },
+            },
           })
           .catch(() => ({ count: 0 }));
         // Só sai daqui se a linha realmente voltou para a fila. Se a gravação
@@ -257,14 +377,21 @@ export class CommandConsumer {
         if (devolvido > 0) return;
       }
 
-      console.error(`[CommandConsumer] Erro no comando ${cmd.id} (${cmd.kind}):`, error);
+      console.error(`[CommandConsumer] Erro no comando ${claimed.id} (${claimed.kind}):`, error);
       await prisma.whatsAppCommand
-        .update({
-          where: { id: cmd.id },
-          data: { status: 'failed', error: errorMessage, attempts: { increment: 1 } },
+        .updateMany({
+          where: { id: claimed.id, status: 'processing', workerId: this.workerId },
+          data: {
+            status: 'failed',
+            error: errorMessage,
+            attempts: { increment: 1 },
+            leaseUntil: null,
+          },
         })
         .catch(() => undefined);
-      await this.markMessageFailed(cmd.payload, errorMessage);
+      await this.markMessageFailed(claimed.payload, errorMessage);
+    } finally {
+      clearInterval(leaseTimer);
     }
   }
 
@@ -351,14 +478,20 @@ export class CommandConsumer {
       case 'send': {
         const session = await this.sessaoPronta(inboxId);
         const quote = payload['quote'] as
-          | { externalId: string; fromMe: boolean; text: string }
-          | undefined;
+          { externalId: string; fromMe: boolean; text: string } | undefined;
         const externalId = await session.sendMessage(
-          (payload['recipient'] ?? {}) as { phone?: string; jid?: string; channelThreadId?: string },
+          (payload['recipient'] ?? {}) as {
+            phone?: string;
+            jid?: string;
+            channelThreadId?: string;
+          },
           (payload['content'] ?? {}) as { text?: string },
           {
             ...((payload['options'] ?? {}) as { paced?: boolean }),
             ...(quote ? { quote } : {}),
+            ...(typeof payload['messageId'] === 'string'
+              ? { providerMessageId: providerMessageIdFor(payload['messageId']) }
+              : {}),
           },
         );
         await this.stampMessage(payload, externalId);
@@ -372,7 +505,11 @@ export class CommandConsumer {
           throw new Error('Comando de exclusão sem o id da mensagem no canal.');
         }
         await session.deleteMessage(
-          (payload['recipient'] ?? {}) as { phone?: string; jid?: string; channelThreadId?: string },
+          (payload['recipient'] ?? {}) as {
+            phone?: string;
+            jid?: string;
+            channelThreadId?: string;
+          },
           externalId,
         );
         break;
@@ -389,7 +526,11 @@ export class CommandConsumer {
           throw new Error('Comando de reação sem o id da mensagem no canal.');
         }
         await session.sendReaction(
-          (payload['recipient'] ?? {}) as { phone?: string; jid?: string; channelThreadId?: string },
+          (payload['recipient'] ?? {}) as {
+            phone?: string;
+            jid?: string;
+            channelThreadId?: string;
+          },
           {
             externalId: alvo.externalId,
             fromMe: Boolean(alvo.fromMe),
@@ -411,8 +552,7 @@ export class CommandConsumer {
           voice?: boolean;
         };
         const mediaQuote = payload['quote'] as
-          | { externalId: string; fromMe: boolean; text: string }
-          | undefined;
+          { externalId: string; fromMe: boolean; text: string } | undefined;
 
         if (!media.mediaId || !media.kind) {
           throw new Error('Comando de anexo sem identificação da mídia.');
@@ -421,13 +561,25 @@ export class CommandConsumer {
         // Os bytes vêm do depósito, que já busca no Storage quando o cache
         // deste host não os tem — é o que permite ao worker enviar um anexo
         // recebido pela aplicação rodando noutra máquina.
-        const stored = await mediaStore.read(media.mediaId);
+        const accountId = payload['accountId'];
+        if (typeof accountId !== 'string') {
+          throw new Error('Comando de anexo sem identificação da conta.');
+        }
+        const stored = await mediaStore.read(media.mediaId, {
+          accountId,
+          inboxId,
+          kind: 'mensagem',
+        });
         if (!stored) {
           throw new Error(`Anexo ${media.mediaId} não encontrado no depósito do worker.`);
         }
 
         const externalId = await session.sendMediaMessage(
-          (payload['recipient'] ?? {}) as { phone?: string; jid?: string; channelThreadId?: string },
+          (payload['recipient'] ?? {}) as {
+            phone?: string;
+            jid?: string;
+            channelThreadId?: string;
+          },
 
           {
             kind: media.kind,
@@ -437,6 +589,9 @@ export class CommandConsumer {
             ...(media.caption ? { caption: media.caption } : {}),
             ...(media.voice ? { voice: true } : {}),
             ...(mediaQuote ? { quote: mediaQuote } : {}),
+            ...(typeof payload['messageId'] === 'string'
+              ? { providerMessageId: providerMessageIdFor(payload['messageId']) }
+              : {}),
           },
         );
         await this.stampMessage(payload, externalId);
@@ -444,52 +599,45 @@ export class CommandConsumer {
       }
 
       case 'read': {
-        const session = this.sessionManager.get(inboxId);
-        if (session && typeof payload['conversationId'] === 'string') {
-          await session.markAsRead(payload['conversationId']);
+        if (typeof payload['conversationId'] !== 'string') {
+          throw new Error('Comando de leitura sem identificação da conversa.');
         }
+        const session = await this.sessaoPronta(inboxId);
+        await session.markAsRead(payload['conversationId']);
         break;
       }
 
       case 'presence': {
         const session = this.sessionManager.get(inboxId);
-        if (session) {
-          const recipient = (payload['recipient'] ?? {}) as { phone?: string; jid?: string; channelThreadId?: string };
-          const status = (payload['status'] ?? 'composing') as 'composing' | 'paused' | 'recording';
-          await session.sendPresence(recipient, status);
+        if (!session?.isConnected) {
+          throw new SessaoIndisponivelError(`Sessão WhatsApp ${inboxId} não está conectada.`);
         }
+        const recipient = (payload['recipient'] ?? {}) as {
+          phone?: string;
+          jid?: string;
+          channelThreadId?: string;
+        };
+        const status = (payload['status'] ?? 'composing') as 'composing' | 'paused' | 'recording';
+        await session.sendPresence(recipient, status);
         break;
       }
 
       case 'sync_groups': {
-        const accountId = typeof payload['accountId'] === 'string' ? payload['accountId'] : undefined;
-        const session =
-          this.sessionManager.get(inboxId) ??
-          (accountId ? this.sessionManager.getByAccountId(accountId) : undefined);
-        if (session) {
-          const accId = accountId ?? session.accountId;
-          await session.syncAllGroups(accId);
-        } else {
-          console.warn(`[CommandConsumer] Nenhuma sessão ativa encontrada para sincronizar grupos (inbox: ${inboxId})`);
-        }
+        const accountId =
+          typeof payload['accountId'] === 'string' ? payload['accountId'] : undefined;
+        const session = await this.sessaoPronta(inboxId);
+        await session.syncAllGroups(accountId ?? session.accountId);
         break;
       }
 
       case 'sync_contacts': {
-        const accountId = typeof payload['accountId'] === 'string' ? payload['accountId'] : undefined;
-        const session =
-          this.sessionManager.get(inboxId) ??
-          (accountId ? this.sessionManager.getByAccountId(accountId) : undefined);
-        if (session) {
-          await session.syncAllStoredContacts();
-        } else {
-          console.warn(`[CommandConsumer] Nenhuma sessão ativa encontrada para sincronizar contatos (inbox: ${inboxId})`);
-        }
+        const session = await this.sessaoPronta(inboxId);
+        await session.syncAllStoredContacts();
         break;
       }
 
       default: {
-        console.warn(`[CommandConsumer] Tipo de comando desconhecido: ${kind}`);
+        throw new Error(`Tipo de comando desconhecido: ${kind}`);
       }
     }
   }
@@ -516,7 +664,19 @@ export class CommandConsumer {
 
     await prisma.message.updateMany({
       where: { id: messageId, conversationId, conversation: { accountId } },
-      data: { externalId, deliveryStatus: 'enviado' },
+      data: { externalId, deliveryStatus: 'enviado', dispatchError: null },
+    });
+
+    await prisma.scheduledMessage.updateMany({
+      where: { accountId, messageId, status: { in: ['queued', 'sending'] } },
+      data: {
+        status: 'sent',
+        sentAt: new Date(),
+        error: null,
+        workerId: null,
+        claimedAt: null,
+        leaseUntil: null,
+      },
     });
 
     // O aviso para a tela é cortesia, e por isso não pode derrubar o comando.
@@ -568,7 +728,17 @@ export class CommandConsumer {
           // encontra esta guarda em vez de reescrever o histórico.
           deliveryStatus: { notIn: ['enviado', 'entregue', 'lido'] },
         },
-        data: { deliveryStatus: 'falha' },
+        data: { deliveryStatus: 'falha', dispatchError: error },
+      });
+      await prisma.scheduledMessage.updateMany({
+        where: { accountId, messageId, status: { in: ['queued', 'sending'] } },
+        data: {
+          status: 'failed',
+          error,
+          workerId: null,
+          claimedAt: null,
+          leaseUntil: null,
+        },
       });
       await this.emitMessageUpdate(accountId, conversationId, messageId);
     } catch (err) {
@@ -601,7 +771,7 @@ export class CommandConsumer {
     });
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.isRunning = false;
     if (this.sweepTimer) {
       clearInterval(this.sweepTimer);
@@ -609,5 +779,9 @@ export class CommandConsumer {
     }
     this.unsubscribe?.();
     this.unsubscribe = null;
+    await Promise.race([
+      Promise.allSettled([...this.lanes.values()]),
+      new Promise<void>((resolve) => setTimeout(resolve, 30_000)),
+    ]);
   }
 }

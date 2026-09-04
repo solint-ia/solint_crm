@@ -97,6 +97,8 @@ interface PendingWrite {
   readonly keyId: string;
   /** `null` significa remover a chave. */
   readonly value: unknown;
+  readonly workerId?: string;
+  readonly lockVersion?: number;
 }
 
 /**
@@ -110,7 +112,8 @@ interface PendingWrite {
 const writeBatch = async (rows: readonly PendingWrite[]): Promise<number> => {
   if (rows.length === 0) return 0;
 
-  const columns = '"inboxId","category","keyId","valueCipher","valueIv","valueTag","updatedAt"';
+  const columns =
+    '"inboxId","category","keyId","valueCipher","valueIv","valueTag","encryptionKeyId","updatedAt"';
   let written = 0;
 
   for (let i = 0; i < rows.length; i += ROWS_PER_STATEMENT) {
@@ -120,11 +123,16 @@ const writeBatch = async (rows: readonly PendingWrite[]): Promise<number> => {
 
     for (const row of slice) {
       const serialized = Buffer.from(JSON.stringify(row.value, BufferJSON.replacer));
-      const { cipher, iv, tag } = seal(serialized);
+      const {
+        cipher,
+        iv,
+        tag,
+        keyId: encryptionKeyId,
+      } = seal(serialized, `wa-key:${row.inboxId}:${row.category}:${row.keyId}`);
       const base = params.length;
-      params.push(row.inboxId, row.category, row.keyId, cipher, iv, tag);
+      params.push(row.inboxId, row.category, row.keyId, cipher, iv, tag, encryptionKeyId);
       tuples.push(
-        `($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},now())`,
+        `($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7},now())`,
       );
     }
 
@@ -132,7 +140,8 @@ const writeBatch = async (rows: readonly PendingWrite[]): Promise<number> => {
       `INSERT INTO "WhatsAppKey" (${columns}) VALUES ${tuples.join(',')} ` +
         `ON CONFLICT ("inboxId","category","keyId") DO UPDATE SET ` +
         `"valueCipher" = EXCLUDED."valueCipher", "valueIv" = EXCLUDED."valueIv", ` +
-        `"valueTag" = EXCLUDED."valueTag", "updatedAt" = now()`,
+        `"valueTag" = EXCLUDED."valueTag", "encryptionKeyId" = EXCLUDED."encryptionKeyId", ` +
+        `"updatedAt" = now()`,
       ...params,
     );
     written += slice.length;
@@ -171,8 +180,35 @@ const deleteBatch = async (rows: readonly PendingWrite[]): Promise<number> => {
  */
 const applyWrites = async (rows: readonly PendingWrite[], origem: string): Promise<void> => {
   const started = Date.now();
-  const upserts = rows.filter((row) => row.value !== null && row.value !== undefined);
-  const deletes = rows.filter((row) => row.value === null || row.value === undefined);
+  const fenced = rows.filter((row) => row.workerId && row.lockVersion !== undefined);
+  const owners = fenced.length
+    ? await prisma.whatsAppConnection.findMany({
+        where: {
+          OR: fenced.map((row) => ({
+            inboxId: row.inboxId,
+            lockOwner: row.workerId,
+            lockVersion: row.lockVersion,
+          })),
+        },
+        select: { inboxId: true, lockOwner: true, lockVersion: true },
+      })
+    : [];
+  const validOwnership = new Set(
+    owners.map((row) => `${row.inboxId}:${row.lockOwner}:${row.lockVersion}`),
+  );
+  const allowed = rows.filter(
+    (row) =>
+      !row.workerId ||
+      row.lockVersion === undefined ||
+      validOwnership.has(`${row.inboxId}:${row.workerId}:${row.lockVersion}`),
+  );
+  const rejected = rows.length - allowed.length;
+  if (rejected > 0) {
+    waLog.warn(`[keystore] ${rejected} escrita(s) rejeitada(s) por perda da posse da sessão.`);
+  }
+
+  const upserts = allowed.filter((row) => row.value !== null && row.value !== undefined);
+  const deletes = allowed.filter((row) => row.value === null || row.value === undefined);
 
   const gravadas = await writeBatch(upserts);
   const removidas = await deleteBatch(deletes);
@@ -321,7 +357,7 @@ export const isPairedCreds = (creds: AuthenticationCreds | null | undefined): bo
 export async function hasPairedSession(inboxId: string): Promise<boolean> {
   const conn = await prisma.whatsAppConnection.findUnique({
     where: { inboxId },
-    select: { credsCipher: true, credsIv: true, credsTag: true },
+    select: { credsCipher: true, credsIv: true, credsTag: true, credsKeyId: true },
   });
   if (!conn?.credsCipher || !conn.credsIv || !conn.credsTag) return false;
 
@@ -330,6 +366,7 @@ export async function hasPairedSession(inboxId: string): Promise<boolean> {
       Buffer.from(conn.credsCipher),
       Buffer.from(conn.credsIv),
       Buffer.from(conn.credsTag),
+      conn.credsKeyId ? { aad: `wa-creds:${inboxId}`, keyId: conn.credsKeyId } : {},
     ).toString('utf-8');
     return isPairedCreds(JSON.parse(plain, BufferJSON.reviver) as AuthenticationCreds);
   } catch {
@@ -340,7 +377,7 @@ export async function hasPairedSession(inboxId: string): Promise<boolean> {
 
 export async function initPostgresAuthState(
   inboxId: string,
-  options: { forceFresh?: boolean } = {},
+  options: { forceFresh?: boolean; workerId?: string; lockVersion?: number } = {},
 ): Promise<{
   state: AuthenticationState;
   saveCreds: () => Promise<void>;
@@ -368,6 +405,7 @@ export async function initPostgresAuthState(
           Buffer.from(conn.credsCipher),
           Buffer.from(conn.credsIv),
           Buffer.from(conn.credsTag),
+          conn.credsKeyId ? { aad: `wa-creds:${inboxId}`, keyId: conn.credsKeyId } : {},
         ).toString('utf-8'),
         BufferJSON.reviver,
       );
@@ -392,52 +430,52 @@ export async function initPostgresAuthState(
     await prisma.whatsAppKey.deleteMany({ where: { inboxId } }).catch(() => {});
   }
 
-function toBuffer(val: unknown): Buffer {
-  if (Buffer.isBuffer(val)) return val;
-  if (val instanceof Uint8Array) return Buffer.from(val);
-  if (typeof val === 'object' && val !== null) {
-    if ('type' in val && (val as { type: unknown }).type === 'Buffer' && 'data' in val) {
-      const data = (val as { data: unknown }).data;
-      if (typeof data === 'string') return Buffer.from(data, 'base64');
-      if (Array.isArray(data)) return Buffer.from(data);
-    }
-    if ('data' in val && typeof (val as { data: unknown }).data === 'string') {
-      return Buffer.from((val as { data: string }).data, 'base64');
-    }
-    if (Array.isArray(val)) {
-      return Buffer.from(val);
-    }
-  }
-  return Buffer.from(String(val ?? ''));
-}
-
-function fixSenderKeyBuffers(value: unknown): unknown {
-  if (!value || typeof value !== 'object') return value;
-  const val = value as Record<string, unknown>;
-  if (Array.isArray(val['senderMessageKeys'])) {
-    for (const msgKey of val['senderMessageKeys'] as Record<string, unknown>[]) {
-      if (msgKey && msgKey['seed'] && !Buffer.isBuffer(msgKey['seed'])) {
-        msgKey['seed'] = toBuffer(msgKey['seed']);
+  function toBuffer(val: unknown): Buffer {
+    if (Buffer.isBuffer(val)) return val;
+    if (val instanceof Uint8Array) return Buffer.from(val);
+    if (typeof val === 'object' && val !== null) {
+      if ('type' in val && (val as { type: unknown }).type === 'Buffer' && 'data' in val) {
+        const data = (val as { data: unknown }).data;
+        if (typeof data === 'string') return Buffer.from(data, 'base64');
+        if (Array.isArray(data)) return Buffer.from(data);
+      }
+      if ('data' in val && typeof (val as { data: unknown }).data === 'string') {
+        return Buffer.from((val as { data: string }).data, 'base64');
+      }
+      if (Array.isArray(val)) {
+        return Buffer.from(val);
       }
     }
+    return Buffer.from(String(val ?? ''));
   }
-  if (val['senderSigningKey'] && typeof val['senderSigningKey'] === 'object') {
-    const signingKey = val['senderSigningKey'] as Record<string, unknown>;
-    if (signingKey['public'] && !Buffer.isBuffer(signingKey['public'])) {
-      signingKey['public'] = toBuffer(signingKey['public']);
+
+  function fixSenderKeyBuffers(value: unknown): unknown {
+    if (!value || typeof value !== 'object') return value;
+    const val = value as Record<string, unknown>;
+    if (Array.isArray(val['senderMessageKeys'])) {
+      for (const msgKey of val['senderMessageKeys'] as Record<string, unknown>[]) {
+        if (msgKey && msgKey['seed'] && !Buffer.isBuffer(msgKey['seed'])) {
+          msgKey['seed'] = toBuffer(msgKey['seed']);
+        }
+      }
     }
-    if (signingKey['private'] && !Buffer.isBuffer(signingKey['private'])) {
-      signingKey['private'] = toBuffer(signingKey['private']);
+    if (val['senderSigningKey'] && typeof val['senderSigningKey'] === 'object') {
+      const signingKey = val['senderSigningKey'] as Record<string, unknown>;
+      if (signingKey['public'] && !Buffer.isBuffer(signingKey['public'])) {
+        signingKey['public'] = toBuffer(signingKey['public']);
+      }
+      if (signingKey['private'] && !Buffer.isBuffer(signingKey['private'])) {
+        signingKey['private'] = toBuffer(signingKey['private']);
+      }
     }
+    if (val['senderChainKey'] && typeof val['senderChainKey'] === 'object') {
+      const chainKey = val['senderChainKey'] as Record<string, unknown>;
+      if (chainKey['seed'] && !Buffer.isBuffer(chainKey['seed'])) {
+        chainKey['seed'] = toBuffer(chainKey['seed']);
+      }
+    }
+    return value;
   }
-  if (val['senderChainKey'] && typeof val['senderChainKey'] === 'object') {
-    const chainKey = val['senderChainKey'] as Record<string, unknown>;
-    if (chainKey['seed'] && !Buffer.isBuffer(chainKey['seed'])) {
-      chainKey['seed'] = toBuffer(chainKey['seed']);
-    }
-  }
-  return value;
-}
 
   return {
     state: {
@@ -489,6 +527,12 @@ function fixSenderKeyBuffers(value: unknown): unknown {
                 Buffer.from(row.valueCipher),
                 Buffer.from(row.valueIv),
                 Buffer.from(row.valueTag),
+                row.encryptionKeyId
+                  ? {
+                      aad: `wa-key:${inboxId}:${type}:${row.keyId}`,
+                      keyId: row.encryptionKeyId,
+                    }
+                  : {},
               ).toString('utf-8');
               value = JSON.parse(plain, BufferJSON.reviver);
             } catch {
@@ -531,6 +575,8 @@ function fixSenderKeyBuffers(value: unknown): unknown {
                 category,
                 keyId,
                 value: vazio ? null : value,
+                ...(options.workerId ? { workerId: options.workerId } : {}),
+                ...(options.lockVersion !== undefined ? { lockVersion: options.lockVersion } : {}),
               };
 
               if (CACHE_CATEGORIES.has(category)) {
@@ -555,7 +601,26 @@ function fixSenderKeyBuffers(value: unknown): unknown {
 
     saveCreds: async () => {
       const serialized = Buffer.from(JSON.stringify(creds, BufferJSON.replacer));
-      const { cipher, iv, tag } = seal(serialized);
+      const { cipher, iv, tag, keyId: credsKeyId } = seal(serialized, `wa-creds:${inboxId}`);
+
+      if (options.workerId && options.lockVersion !== undefined) {
+        const { count } = await prisma.whatsAppConnection.updateMany({
+          where: {
+            inboxId,
+            lockOwner: options.workerId,
+            lockVersion: options.lockVersion,
+          },
+          data: {
+            credsCipher: Uint8Array.from(cipher),
+            credsIv: Uint8Array.from(iv),
+            credsTag: Uint8Array.from(tag),
+            credsKeyId,
+          },
+        });
+        if (count !== 1)
+          throw new Error(`Posse da sessão ${inboxId} perdida ao salvar credenciais.`);
+        return;
+      }
 
       await prisma.whatsAppConnection.upsert({
         where: { inboxId },
@@ -565,11 +630,13 @@ function fixSenderKeyBuffers(value: unknown): unknown {
           credsCipher: Uint8Array.from(cipher),
           credsIv: Uint8Array.from(iv),
           credsTag: Uint8Array.from(tag),
+          credsKeyId,
         },
         update: {
           credsCipher: Uint8Array.from(cipher),
           credsIv: Uint8Array.from(iv),
           credsTag: Uint8Array.from(tag),
+          credsKeyId,
         },
       });
     },

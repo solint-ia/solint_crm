@@ -142,14 +142,35 @@ async function applyDispatch(
   }
 
   if (sent.ok && sent.queued) {
+    await prisma.message.updateMany({
+      where: { id: message.id, conversationId, conversation: { accountId } },
+      data: { deliveryStatus: 'enviando', dispatchError: null },
+    });
     return { message: { ...message, deliveryStatus: 'enviando' } };
   }
 
+  const error = sent.error ?? 'O canal recusou o envio.';
+  await prisma.message.updateMany({
+    where: { id: message.id, conversationId, conversation: { accountId } },
+    data: { deliveryStatus: 'falha', dispatchError: error },
+  });
   return {
     message: { ...message, deliveryStatus: 'falha' },
-    ...(sent.error ? { error: sent.error } : {}),
+    error,
   };
 }
+
+const persistDispatchFailure = async (
+  accountId: string,
+  conversationId: string,
+  messageId: string,
+  error: string,
+): Promise<void> => {
+  await prisma.message.updateMany({
+    where: { id: messageId, conversationId, conversation: { accountId } },
+    data: { deliveryStatus: 'falha', dispatchError: error },
+  });
+};
 
 /**
  * Resolve `{{cliente.nome}}` e companhia para uma conversa.
@@ -305,6 +326,12 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
       } else {
         dispatchError =
           channelStatus.error ?? 'WhatsApp desconectado: a mensagem não foi entregue.';
+        await persistDispatchFailure(
+          session.account.id,
+          conversation.id,
+          message.id,
+          dispatchError,
+        );
         message = { ...message, deliveryStatus: 'falha' };
       }
     }
@@ -1180,6 +1207,7 @@ export async function sendTemplateAction(input: unknown): Promise<SendMessageRes
       dispatchError = applied.error;
     } else {
       dispatchError = channelStatus.error ?? 'WhatsApp desconectado: o template não foi entregue.';
+      await persistDispatchFailure(session.account.id, conversation.id, message.id, dispatchError);
       message = { ...message, deliveryStatus: 'falha' };
     }
   }
@@ -1470,6 +1498,7 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
       dispatchError = applied.error;
     } else {
       dispatchError = channelStatus.error ?? 'WhatsApp desconectado: o anexo não foi entregue.';
+      await persistDispatchFailure(session.account.id, conversation.id, message.id, dispatchError);
       message = { ...message, deliveryStatus: 'falha' };
     }
   }
@@ -1558,20 +1587,20 @@ export async function setOperatorTypingAction(input: unknown): Promise<ActionRes
   if (!conversation || conversation.channel !== 'whatsapp') return { ok: true };
 
   const channel = await getWhatsAppChannel();
-  if (channel.sendPresence) {
-    await channel.sendPresence(
-      {
-        accountId: session.account.id,
-        inboxId: conversation.inboxId,
-        conversationId: conversation.id,
-      },
-      {
-        channelThreadId: conversation.channelThreadId,
-        phone: conversation.contact.phone,
-      },
-      parsed.data.isTyping ? 'composing' : 'paused',
-    );
-  }
+  // Presença continua sendo best effort na interface: uma falha cosmética não
+  // deve bloquear o compositor nem o envio da mensagem do atendente.
+  await channel.sendPresence(
+    {
+      accountId: session.account.id,
+      inboxId: conversation.inboxId,
+      conversationId: conversation.id,
+    },
+    {
+      channelThreadId: conversation.channelThreadId,
+      phone: conversation.contact.phone,
+    },
+    parsed.data.isTyping ? 'composing' : 'paused',
+  );
 
   return { ok: true };
 }

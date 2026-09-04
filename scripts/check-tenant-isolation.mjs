@@ -37,6 +37,10 @@ const SCOPED = new Set([
   'membership',
   'team',
   'webhook',
+  // A entrega carrega `accountId` além do webhook: a fila é varrida por conta
+  // no cancelamento em massa, e é ali que um `where` esquecido apagaria a fila
+  // de todo mundo.
+  'webhookDelivery',
   'apiToken',
   'customAttributeDefinition',
   'cannedResponse',
@@ -61,6 +65,8 @@ const VIA_PARENT = new Set([
   'whatsAppKey',
   'whatsAppCommand',
   'campaignRecipient',
+  // A caixa autorizada de um webhook: existe dentro do webhook, que é da conta.
+  'webhookInbox',
   // A linha de ligação não tem `accountId`: ela existe dentro de um lote, e o
   // lote é da conta. Escopar aqui seria guardar a mesma informação duas vezes.
   'contactImportBatchContact',

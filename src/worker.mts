@@ -26,18 +26,14 @@ async function main() {
   // Antes de qualquer coisa do WhatsApp: a `libsignal` despeja objetos de
   // sessão inteiros — chave privada inclusive — em `console.info` a cada
   // contato que troca de aparelho. Ver `wa-console-filter.ts`.
-  const { silenceNoisyLibsignalLogs } = await import(
-    './infrastructure/whatsapp/wa-console-filter'
-  );
+  const { silenceNoisyLibsignalLogs } = await import('./infrastructure/whatsapp/wa-console-filter');
   silenceNoisyLibsignalLogs();
 
   const { CommandConsumer } = await import('./infrastructure/whatsapp/worker/command-consumer');
-  const { WhatsAppSessionManager } = await import(
-    './infrastructure/whatsapp/worker/session-manager'
-  );
-  const { publishWorkerBeat, WORKER_BEAT_INTERVAL_MS } = await import(
-    './infrastructure/whatsapp/worker-presence'
-  );
+  const { WhatsAppSessionManager } =
+    await import('./infrastructure/whatsapp/worker/session-manager');
+  const { publishWorkerBeat, WORKER_BEAT_INTERVAL_MS } =
+    await import('./infrastructure/whatsapp/worker-presence');
 
   console.log('====================================================');
   console.log('  Solint CRM — Worker de WhatsApp (Baileys Engine)');
@@ -48,6 +44,16 @@ async function main() {
 
   const commandConsumer = new CommandConsumer(sessionManager);
   commandConsumer.start();
+
+  const { CommandRecoveryRunner } =
+    await import('./infrastructure/whatsapp/worker/command-recovery-runner');
+  const commandRecoveryRunner = new CommandRecoveryRunner();
+  commandRecoveryRunner.start();
+
+  const { WebhookDeliveryRunner } =
+    await import('./infrastructure/webhooks/webhook-delivery-runner');
+  const webhookRunner = new WebhookDeliveryRunner(sessionManager.workerId);
+  webhookRunner.start();
 
   /**
    * Varredor das mensagens agendadas.
@@ -64,8 +70,9 @@ async function main() {
   const { prisma } = await import('./infrastructure/db/prisma');
 
   const scheduledRunner = new ScheduledMessageRunner(async (envio) => {
-    const command = await prisma.whatsAppCommand.create({
-      data: {
+    const command = await prisma.whatsAppCommand.upsert({
+      where: { idempotencyKey: `message:${envio.messageId}` },
+      create: {
         inboxId: envio.inboxId,
         kind: 'send',
         payload: {
@@ -76,7 +83,9 @@ async function main() {
           messageId: envio.messageId,
         },
         status: 'pending',
+        idempotencyKey: `message:${envio.messageId}`,
       },
+      update: {},
     });
     await postgresPubSub.publish(CHANNELS.COMMANDS, {
       inboxId: envio.inboxId,
@@ -85,8 +94,8 @@ async function main() {
     });
     // Sem `externalId`: a fila aceitou, o envio ainda não aconteceu. Quem
     // carimba o id do canal — e promove a bolha a "enviado" — é o consumidor.
-    return { ok: true };
-  });
+    return { ok: true, queued: true };
+  }, sessionManager.workerId);
   scheduledRunner.start();
 
   /**
@@ -97,16 +106,14 @@ async function main() {
    * segue pelo `dispatchAutoMessage`, que dentro do worker enfileira um comando
    * como qualquer outro.
    */
-  const { WaitingMessageRunner } = await import(
-    './infrastructure/scheduling/waiting-message-runner'
-  );
-  const waitingRunner = new WaitingMessageRunner();
+  const { WaitingMessageRunner } =
+    await import('./infrastructure/scheduling/waiting-message-runner');
+  const waitingRunner = new WaitingMessageRunner(sessionManager.workerId);
   waitingRunner.start();
 
-  const { AuditRetentionRunner } = await import(
-    './infrastructure/scheduling/audit-retention-runner'
-  );
-  const auditRetentionRunner = new AuditRetentionRunner();
+  const { AuditRetentionRunner } =
+    await import('./infrastructure/scheduling/audit-retention-runner');
+  const auditRetentionRunner = new AuditRetentionRunner(sessionManager.workerId);
   auditRetentionRunner.start();
 
   /**
@@ -114,7 +121,7 @@ async function main() {
    * observa "ninguém respondeu ainda".
    */
   const { SlaRunner } = await import('./infrastructure/scheduling/sla-runner');
-  const slaRunner = new SlaRunner();
+  const slaRunner = new SlaRunner(sessionManager.workerId);
   slaRunner.start();
 
   /**
@@ -146,9 +153,21 @@ async function main() {
   const http = await import('node:http');
   const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 10000;
 
-  const server = http.createServer((req, res) => {
-    if (req.url === '/health' || req.url === '/' || req.url === '/ping') {
-      res.writeHead(200, {
+  const server = http.createServer(async (req, res) => {
+    const liveRoute = req.url === '/live' || req.url === '/' || req.url === '/ping';
+    const readyRoute = req.url === '/ready' || req.url === '/health';
+    if (liveRoute || readyRoute) {
+      let databaseReady = true;
+      if (readyRoute) {
+        try {
+          await prisma.$queryRaw`SELECT 1`;
+        } catch {
+          databaseReady = false;
+        }
+      }
+      const ready =
+        databaseReady && commandConsumer.healthy && webhookRunner.healthy && postgresPubSub.ready;
+      res.writeHead(liveRoute || ready ? 200 : 503, {
         'Content-Type': 'application/json',
         'Cache-Control': 'no-store',
       });
@@ -172,11 +191,17 @@ async function main() {
 
       res.end(
         JSON.stringify({
-          status: 'ok',
+          status: readyRoute ? (ready ? 'ready' : 'not_ready') : 'alive',
           service: 'solint-whatsapp-worker',
           workerId: sessionManager.workerId,
           uptimeSeconds: Math.floor(process.uptime()),
           sessions: sessionManager.size,
+          checks: {
+            database: databaseReady,
+            commandConsumer: commandConsumer.healthy,
+            webhookDelivery: webhookRunner.healthy,
+            pubsub: postgresPubSub.ready,
+          },
           memoryMB: {
             rss: mb(mem.rss),
             heapTotal: mb(mem.heapTotal),
@@ -200,26 +225,36 @@ async function main() {
 
   const { flushPendingKeys } = await import('./infrastructure/whatsapp/auth/postgres-auth-state');
 
-  const handleShutdown = async (signal: string, exitCode = 0) => {
-    console.log(`\n[Worker] Recebido sinal ${signal}. Encerrando sessões com segurança...`);
-    clearInterval(beat);
-    server.close();
-    scheduledRunner.stop();
-    waitingRunner.stop();
-    auditRetentionRunner.stop();
-    slaRunner.stop();
-    commandConsumer.stop();
-    await sessionManager.shutdown();
-    // As chaves de cache (`lid-mapping`, `tctoken`) são gravadas fora do mutex
-    // do Baileys, o que significa que pode haver um lote ainda na fila neste
-    // instante. Perdê-lo não quebra a sessão — o Baileys refaz por USync —, mas
-    // custaria uma rodada de consultas na próxima conexão sem necessidade.
-    await flushPendingKeys();
-    console.log('[Worker] Todas as conexões encerradas. Tchau!');
-    // Um encerramento por falha precisa sair diferente de zero: é o código de
-    // saída que diz ao supervisor do Render se aquilo foi um desligamento
-    // pedido ou um problema.
-    process.exit(exitCode);
+  let shutdownPromise: Promise<void> | null = null;
+  const handleShutdown = (signal: string, exitCode = 0): Promise<void> => {
+    if (shutdownPromise) return shutdownPromise;
+    shutdownPromise = (async () => {
+      console.log(`\n[Worker] Recebido sinal ${signal}. Encerrando sessões com segurança...`);
+      clearInterval(beat);
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await scheduledRunner.stop();
+      await waitingRunner.stop();
+      await auditRetentionRunner.stop();
+      await slaRunner.stop();
+      await commandRecoveryRunner.stop();
+      await commandConsumer.stop();
+      await sessionManager.shutdown();
+      await webhookRunner.stop();
+      // As chaves de cache (`lid-mapping`, `tctoken`) são gravadas fora do mutex
+      // do Baileys, o que significa que pode haver um lote ainda na fila neste
+      // instante. Perdê-lo não quebra a sessão — o Baileys refaz por USync —, mas
+      // custaria uma rodada de consultas na próxima conexão sem necessidade.
+      await flushPendingKeys();
+      await postgresPubSub.shutdown();
+      const { closePrisma } = await import('./infrastructure/db/prisma');
+      await closePrisma();
+      console.log('[Worker] Todas as conexões encerradas. Tchau!');
+      // Um encerramento por falha precisa sair diferente de zero: é o código de
+      // saída que diz ao supervisor do Render se aquilo foi um desligamento
+      // pedido ou um problema.
+      process.exit(exitCode);
+    })();
+    return shutdownPromise;
   };
 
   process.on('SIGINT', () => void handleShutdown('SIGINT'));
@@ -243,7 +278,8 @@ async function main() {
    * antes de restaurar a sessão.
    */
   process.on('unhandledRejection', (reason) => {
-    console.error('[Worker] Rejeição não tratada (processo mantido de pé):', reason);
+    console.error('[Worker] Rejeição não tratada. Encerrando de forma limpa:', reason);
+    void handleShutdown('unhandledRejection', 1);
   });
 
   process.on('uncaughtException', (error) => {

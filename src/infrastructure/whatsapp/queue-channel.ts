@@ -9,12 +9,7 @@ import type {
   WhatsAppChannel,
 } from './channel';
 import type { WhatsAppOwner, WhatsAppStatusPayload } from './whatsapp-events';
-import {
-  algumaTravaViva,
-  filaParada,
-  waitForWorker,
-  workerPresence,
-} from './worker-presence';
+import { algumaTravaViva, filaParada, waitForWorker, workerPresence } from './worker-presence';
 
 /**
  * Trava viva no banco: prova de que existe um worker operando aquela caixa.
@@ -69,10 +64,37 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     return (pareada ?? comConexao ?? inboxes[0])?.id ?? null;
   }
 
-  private async enqueue(inboxId: string, kind: string, payload: object): Promise<string> {
-    const command = await prisma.whatsAppCommand.create({
-      data: { inboxId, kind, payload: payload as never, status: 'pending' },
-    });
+  private async enqueue(
+    inboxId: string,
+    kind: string,
+    payload: object,
+    options: { idempotencyKey?: string; expiresAt?: Date } = {},
+  ): Promise<string> {
+    let command: { id: string };
+    try {
+      command = await prisma.whatsAppCommand.create({
+        data: {
+          inboxId,
+          kind,
+          payload: payload as never,
+          status: 'pending',
+          ...(options.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : {}),
+          ...(options.expiresAt ? { expiresAt: options.expiresAt } : {}),
+        },
+        select: { id: true },
+      });
+    } catch (error) {
+      // A mesma mensagem pode chegar duas vezes por retry HTTP. A chave única
+      // transforma a segunda requisição em confirmação da primeira intenção.
+      const existing = options.idempotencyKey
+        ? await prisma.whatsAppCommand.findUnique({
+            where: { idempotencyKey: options.idempotencyKey },
+            select: { id: true },
+          })
+        : null;
+      if (!existing) throw error;
+      command = existing;
+    }
     // **Esperado**, e não disparado ao vento.
     //
     // Era `void`, com o argumento de que a varredura pegaria o comando de todo
@@ -282,16 +304,23 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     }
 
     try {
-      await this.enqueue(inboxId, kind, {
-        ...body,
-        accountId: context.accountId,
-        conversationId: context.conversationId,
-        // Exclusão e reação não carregam `messageId`: quando um comando falha, o
-        // worker usa esse campo para marcar a bolha como não entregue — e uma
-        // exclusão (ou uma reação) recusada carimbaria "falha" numa mensagem que
-        // foi entregue com sucesso, dizendo o contrário da verdade sobre ela.
-        ...(kind === 'delete' || kind === 'react' ? {} : { messageId: context.messageId }),
-      });
+      await this.enqueue(
+        inboxId,
+        kind,
+        {
+          ...body,
+          accountId: context.accountId,
+          conversationId: context.conversationId,
+          // Exclusão e reação não carregam `messageId`: quando um comando falha, o
+          // worker usa esse campo para marcar a bolha como não entregue — e uma
+          // exclusão (ou uma reação) recusada carimbaria "falha" numa mensagem que
+          // foi entregue com sucesso, dizendo o contrário da verdade sobre ela.
+          ...(kind === 'delete' || kind === 'react' ? {} : { messageId: context.messageId }),
+        },
+        kind === 'send' || kind === 'send_media'
+          ? { idempotencyKey: `message:${context.messageId}` }
+          : {},
+      );
       return { ok: true, queued: true };
     } catch (error) {
       return {
@@ -365,12 +394,32 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     context: { accountId: string; inboxId: string; conversationId: string },
     target: DispatchTarget,
     status: 'composing' | 'paused' | 'recording',
-  ): Promise<void> {
-    if (!context.inboxId || !(await this.workerOnline(context.inboxId))) return;
-    await this.enqueue(context.inboxId, 'presence', {
-      recipient: target,
-      status,
-      conversationId: context.conversationId,
-    });
+  ): Promise<DispatchResult> {
+    if (!context.inboxId) {
+      return { ok: false, error: 'Conversa sem caixa de entrada definida.' };
+    }
+    if (!(await this.workerOnline(context.inboxId))) {
+      return { ok: false, error: 'O worker de WhatsApp não está em execução.' };
+    }
+
+    try {
+      await this.enqueue(
+        context.inboxId,
+        'presence',
+        {
+          recipient: target,
+          status,
+          accountId: context.accountId,
+          conversationId: context.conversationId,
+        },
+        { expiresAt: new Date(Date.now() + 10_000) },
+      );
+      return { ok: true, queued: true };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Falha ao enfileirar a presença.',
+      };
+    }
   }
 }

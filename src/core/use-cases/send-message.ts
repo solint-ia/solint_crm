@@ -10,6 +10,8 @@ export interface SendMessageInput {
   readonly conversationId: Id;
   readonly text: string;
   readonly isPrivate: boolean;
+  readonly messageId?: Id;
+  readonly idempotencyKey?: string;
   /** Mensagem da mesma conversa que esta resposta cita. */
   readonly replyToId?: Id;
   /**
@@ -56,6 +58,8 @@ export const createSendMessage =
     conversationId,
     text,
     isPrivate,
+    messageId,
+    idempotencyKey,
     replyToId,
     mentionCandidates = [],
   }: SendMessageInput): Promise<Result<SendMessageOutput>> => {
@@ -118,6 +122,8 @@ export const createSendMessage =
       isPrivate,
       authorId: session.user.id,
       authorName: session.user.name,
+      ...(messageId ? { messageId } : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
       ...(replyToId ? { replyToId } : {}),
       ...(mentions.length > 0 ? { mentions } : {}),
     });

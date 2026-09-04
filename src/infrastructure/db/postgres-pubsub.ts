@@ -28,6 +28,8 @@ const CHANNELS = {
   STATUS: 'solint_whatsapp_status',
   /** Avisa o worker que ha comando novo na fila — evita esperar o proximo poll. */
   COMMANDS: 'solint_whatsapp_commands',
+  /** Avisa o entregador de que há um item novo no outbox de webhooks. */
+  WEBHOOKS: 'solint_webhook_deliveries',
   /** Batida do worker: e assim que a aplicacao sabe que existe um worker vivo. */
   WORKER: 'solint_whatsapp_worker',
 } as const;
@@ -42,6 +44,11 @@ export interface PubSubNotification<T = unknown> {
 class PostgresPubSubManager {
   private listenerClient: pg.Client | null = null;
   private isConnecting = false;
+  private shuttingDown = false;
+
+  get ready(): boolean {
+    return this.listenerClient !== null && !this.shuttingDown;
+  }
 
   /**
    * Quantas tentativas seguidas falharam, para espaçar as próximas.
@@ -74,16 +81,14 @@ class PostgresPubSubManager {
    * inscricao vai junto — nunca chega notificacao nenhuma.
    */
   private listenerConnectionString(): string | undefined {
-    return (
-      process.env.DIRECT_URL ?? process.env.WORKER_DATABASE_URL ?? process.env.DATABASE_URL
-    );
+    return process.env.DIRECT_URL ?? process.env.WORKER_DATABASE_URL ?? process.env.DATABASE_URL;
   }
 
   /**
    * Inicializa o cliente de escuta permanente (LISTEN) via porta de sessão 5432.
    */
   async startListening(): Promise<void> {
-    if (this.listenerClient || this.isConnecting) return;
+    if (this.listenerClient || this.isConnecting || this.shuttingDown) return;
 
     // Durante o `next build` os modulos sao avaliados so para gerar as paginas:
     // ninguem esta ouvindo evento nenhum, e cada processo do build abriria a sua
@@ -257,6 +262,7 @@ class PostgresPubSubManager {
   }
 
   private reconnect(): void {
+    if (this.shuttingDown) return;
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
@@ -278,6 +284,7 @@ class PostgresPubSubManager {
   }
 
   private scheduleReconnect(delayMs: number): void {
+    if (this.shuttingDown) return;
     if (this.retryTimeout) clearTimeout(this.retryTimeout);
     this.retryTimeout = setTimeout(() => {
       // `startListening` trata os próprios erros; o `catch` existe para que uma
@@ -434,9 +441,22 @@ class PostgresPubSubManager {
       console.warn('[PostgresPubSub] Falha ao publicar evento no Postgres:', err);
     }
   }
+
+  async shutdown(): Promise<void> {
+    this.shuttingDown = true;
+    if (this.retryTimeout) clearTimeout(this.retryTimeout);
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.retryTimeout = null;
+    this.heartbeatTimer = null;
+    const client = this.listenerClient;
+    this.listenerClient = null;
+    if (client) await this.encerrarCliente(client);
+  }
 }
 
-const globalRef = globalThis as typeof globalThis & { __solintPostgresPubSub?: PostgresPubSubManager };
+const globalRef = globalThis as typeof globalThis & {
+  __solintPostgresPubSub?: PostgresPubSubManager;
+};
 
 export const postgresPubSub: PostgresPubSubManager =
   globalRef.__solintPostgresPubSub ?? new PostgresPubSubManager();

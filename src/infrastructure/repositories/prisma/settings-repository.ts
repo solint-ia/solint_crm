@@ -13,6 +13,7 @@ import type {
   CustomAttributeDefinition,
   Team,
   Webhook,
+  WebhookScopeChange,
 } from '@/core/domain/settings';
 import { ConflictError, NotFoundError, type Id } from '@/core/domain/shared';
 import { SYSTEM_ROLES, systemRoleId } from '@/core/domain/system-roles';
@@ -168,7 +169,11 @@ export class PrismaSettingsRepository implements SettingsRepository {
         include: { teamMembers: true, teamInboxes: true },
         orderBy: { name: 'asc' },
       }),
-      prisma.webhook.findMany({ where: { accountId }, orderBy: { name: 'asc' } }),
+      prisma.webhook.findMany({
+        where: { accountId },
+        include: { inboxes: { select: { inboxId: true } } },
+        orderBy: { name: 'asc' },
+      }),
       prisma.apiToken.findMany({ where: { accountId }, orderBy: { createdAt: 'desc' } }),
       prisma.customAttributeDefinition.findMany({
         where: { accountId },
@@ -225,6 +230,8 @@ export class PrismaSettingsRepository implements SettingsRepository {
         url: w.url,
         events: readJson<readonly string[]>(w.events, []),
         enabled: w.isActive,
+        allInboxes: w.allInboxes,
+        inboxIds: w.inboxes.map((link) => link.inboxId),
       })),
       apiTokens: apiTokens.map((tk): ApiToken => ({
         id: tk.id,
@@ -535,6 +542,19 @@ export class PrismaSettingsRepository implements SettingsRepository {
       })
     ).map((row) => row.id);
 
+    const webhooksWithoutAnotherInbox = (
+      await prisma.webhook.findMany({
+        where: {
+          accountId,
+          allInboxes: false,
+          inboxes: { some: { inboxId: connectionId } },
+        },
+        select: { id: true, _count: { select: { inboxes: true } } },
+      })
+    )
+      .filter((webhook) => webhook._count.inboxes === 1)
+      .map((webhook) => webhook.id);
+
     await prisma.$transaction([
       ...(conversationIds.length > 0
         ? [
@@ -548,6 +568,21 @@ export class PrismaSettingsRepository implements SettingsRepository {
       // a partir da campanha.
       prisma.campaign.deleteMany({ where: { accountId, inboxId: connectionId } }),
       prisma.conversation.deleteMany({ where: { accountId, inboxId: connectionId } }),
+      prisma.webhookDelivery.updateMany({
+        where: { accountId, inboxId: connectionId, status: 'pending' },
+        data: {
+          status: 'canceled',
+          lastError: 'Entrega cancelada porque a caixa de entrada foi excluída.',
+        },
+      }),
+      ...(webhooksWithoutAnotherInbox.length > 0
+        ? [
+            prisma.webhook.updateMany({
+              where: { accountId, id: { in: webhooksWithoutAnotherInbox } },
+              data: { isActive: false },
+            }),
+          ]
+        : []),
       prisma.inbox.delete({ where: { id: connectionId, accountId } }),
     ]);
   }
@@ -668,45 +703,177 @@ export class PrismaSettingsRepository implements SettingsRepository {
   // --- Onda 3: Webhooks ---
   async createWebhook(
     accountId: Id,
-    draft: { name: string; url: string; events: readonly string[]; secret?: string },
+    draft: {
+      name: string;
+      url: string;
+      events: readonly string[];
+      secret?: string;
+      allInboxes: boolean;
+      inboxIds: readonly Id[];
+    },
   ): Promise<Webhook> {
-    const row = await prisma.webhook.create({
-      data: {
-        accountId,
-        name: draft.name,
-        url: draft.url,
-        events: asJson(draft.events),
-        // Sem segredo a entrega sai sem assinatura, e quem recebe nao tem como
-        // provar que o evento veio daqui. O campo e opcional porque um endpoint
-        // interno de rede fechada pode dispensar; exposto na internet, nao.
-        ...(draft.secret ? { secret: draft.secret } : {}),
-        isActive: true,
-      },
+    const inboxIds = draft.allInboxes ? [] : [...new Set(draft.inboxIds)];
+    const row = await prisma.$transaction(async (tx) => {
+      if (!draft.allInboxes) {
+        const valid = await tx.inbox.count({ where: { accountId, id: { in: inboxIds } } });
+        if (inboxIds.length === 0 || valid !== inboxIds.length) {
+          throw new ConflictError('Selecione apenas caixas de entrada pertencentes a esta conta.');
+        }
+      }
+
+      return tx.webhook.create({
+        data: {
+          accountId,
+          name: draft.name,
+          url: draft.url,
+          events: asJson(draft.events),
+          // Sem segredo a entrega sai sem assinatura, e quem recebe nao tem como
+          // provar que o evento veio daqui. O campo e opcional porque um endpoint
+          // interno de rede fechada pode dispensar; exposto na internet, nao.
+          ...(draft.secret ? { secret: draft.secret } : {}),
+          isActive: true,
+          allInboxes: draft.allInboxes,
+          ...(inboxIds.length > 0
+            ? { inboxes: { createMany: { data: inboxIds.map((inboxId) => ({ inboxId })) } } }
+            : {}),
+        },
+        include: { inboxes: { select: { inboxId: true } } },
+      });
     });
     return {
       id: row.id,
       url: row.url,
       events: readJson<readonly string[]>(row.events, []),
       enabled: row.isActive,
+      allInboxes: row.allInboxes,
+      inboxIds: row.inboxes.map((link) => link.inboxId),
+    };
+  }
+
+  /**
+   * Reescreve o escopo de caixas e devolve o que mudou.
+   *
+   * O estado anterior é lido dentro da mesma transação que o substitui: fora
+   * dela, duas edições simultâneas produziriam um registro de auditoria que
+   * descreve uma diferença que nunca existiu.
+   *
+   * O cancelamento das entregas pendentes acompanha a escrita porque a fila é o
+   * que o destino ainda vai receber. Deixá-lo para depois abriria uma janela em
+   * que o entregador pega uma entrega de caixa recém-removida e a manda assim
+   * mesmo. Uma requisição já em voo termina — quem opera precisa saber disso, e
+   * é por isso que o total cancelado volta para a tela.
+   */
+  async updateWebhookInboxes(
+    accountId: Id,
+    webhookId: Id,
+    scope: { allInboxes: boolean; inboxIds: readonly Id[] },
+  ): Promise<WebhookScopeChange> {
+    const inboxIds = scope.allInboxes ? [] : [...new Set(scope.inboxIds)];
+
+    const resultado = await prisma.$transaction(async (tx) => {
+      const webhook = await tx.webhook.findFirst({
+        where: { id: webhookId, accountId },
+        select: { id: true, allInboxes: true, inboxes: { select: { inboxId: true } } },
+      });
+      if (!webhook) throw new NotFoundError('Webhook', webhookId);
+
+      if (!scope.allInboxes) {
+        const valid = await tx.inbox.count({ where: { accountId, id: { in: inboxIds } } });
+        if (inboxIds.length === 0 || valid !== inboxIds.length) {
+          throw new ConflictError('Selecione apenas caixas de entrada pertencentes a esta conta.');
+        }
+      }
+
+      const antes = new Set(webhook.inboxes.map((link) => link.inboxId));
+      const depois = new Set(inboxIds);
+
+      const updated = await tx.webhook.update({
+        where: { id: webhookId, accountId },
+        data: {
+          allInboxes: scope.allInboxes,
+          inboxes: {
+            deleteMany: {},
+            ...(inboxIds.length > 0
+              ? { createMany: { data: inboxIds.map((inboxId) => ({ inboxId })) } }
+              : {}),
+          },
+        },
+        include: { inboxes: { select: { inboxId: true } } },
+      });
+
+      let canceledDeliveries = 0;
+      if (!scope.allInboxes) {
+        const { count } = await tx.webhookDelivery.updateMany({
+          where: {
+            accountId,
+            webhookId,
+            status: 'pending',
+            OR: [{ inboxId: null }, { inboxId: { notIn: inboxIds } }],
+          },
+          data: {
+            status: 'canceled',
+            lastError: 'Entrega cancelada após alteração do escopo de caixas.',
+          },
+        });
+        canceledDeliveries = count;
+      }
+
+      return {
+        updated,
+        canceledDeliveries,
+        added: inboxIds.filter((id) => !antes.has(id)),
+        removed: [...antes].filter((id) => !depois.has(id)),
+      };
+    });
+
+    const row = resultado.updated;
+    return {
+      webhook: {
+        id: row.id,
+        url: row.url,
+        events: readJson<readonly string[]>(row.events, []),
+        enabled: row.isActive,
+        allInboxes: row.allInboxes,
+        inboxIds: row.inboxes.map((link) => link.inboxId),
+      },
+      added: resultado.added,
+      removed: resultado.removed,
+      canceledDeliveries: resultado.canceledDeliveries,
     };
   }
 
   async toggleWebhook(accountId: Id, webhookId: Id, enabled: boolean): Promise<Webhook> {
-    const exists = await prisma.webhook.findFirst({
-      where: { id: webhookId, accountId },
-      select: { id: true },
-    });
-    if (!exists) throw new NotFoundError('Webhook', webhookId);
+    const row = await prisma.$transaction(async (tx) => {
+      const exists = await tx.webhook.findFirst({
+        where: { id: webhookId, accountId },
+        select: { id: true },
+      });
+      if (!exists) throw new NotFoundError('Webhook', webhookId);
 
-    const row = await prisma.webhook.update({
-      where: { id: webhookId, accountId },
-      data: { isActive: enabled },
+      const updated = await tx.webhook.update({
+        where: { id: webhookId, accountId },
+        data: { isActive: enabled },
+        include: { inboxes: { select: { inboxId: true } } },
+      });
+
+      if (!enabled) {
+        await tx.webhookDelivery.updateMany({
+          where: { accountId, webhookId, status: 'pending' },
+          data: {
+            status: 'canceled',
+            lastError: 'Entrega cancelada porque o webhook foi desativado.',
+          },
+        });
+      }
+      return updated;
     });
     return {
       id: row.id,
       url: row.url,
       events: readJson<readonly string[]>(row.events, []),
       enabled: row.isActive,
+      allInboxes: row.allInboxes,
+      inboxIds: row.inboxes.map((link) => link.inboxId),
     };
   }
 

@@ -18,7 +18,11 @@ const RESTORE_MAX_ATTEMPTS = 3;
 export class WhatsAppSessionManager {
   readonly workerId: string;
   private readonly sessions = new Map<string, WhatsAppSession>();
+  private readonly starting = new Map<string, Promise<WhatsAppSession>>();
   private heartbeatTimer: NodeJS.Timeout | null = null;
+  private heartbeatRunning = false;
+  private shuttingDown = false;
+  private readonly restoreTimers = new Set<NodeJS.Timeout>();
 
   constructor() {
     this.workerId = `worker-${process.pid}-${randomBytes(4).toString('hex')}`;
@@ -37,89 +41,69 @@ export class WhatsAppSessionManager {
 
   private startHeartbeat(): void {
     this.heartbeatTimer = setInterval(async () => {
-      const activeInboxIds = Array.from(this.sessions.keys());
-      if (activeInboxIds.length === 0) return;
-
-      const newExpiry = new Date(Date.now() + LOCK_TTL_MS);
+      if (this.heartbeatRunning || this.shuttingDown) return;
+      this.heartbeatRunning = true;
       try {
-        const { count } = await prisma.whatsAppConnection.updateMany({
-          where: {
-            inboxId: { in: activeInboxIds },
-            lockOwner: this.workerId,
-          },
-          data: {
-            lockExpiresAt: newExpiry,
-          },
-        });
+        const active = Array.from(this.sessions.entries());
+        const renewed = await Promise.all(
+          active.map(async ([inboxId, session]) => {
+            const count = await prisma.$executeRaw`
+              UPDATE "WhatsAppConnection"
+              SET "lockExpiresAt" = CURRENT_TIMESTAMP + INTERVAL '30 seconds'
+              WHERE "inboxId" = ${inboxId}
+                AND "lockOwner" = ${this.workerId}
+                AND "lockVersion" = ${session.lockVersion}
+            `;
+            return { inboxId, ok: count === 1 };
+          }),
+        );
 
-        /**
-         * Renovou menos travas do que tem sessões: perdeu a posse de alguma.
-         *
-         * Isto passava despercebido. O `updateMany` não acha a linha, devolve
-         * `count` menor, e o worker seguia com o socket aberto de um número que
-         * já pertence a outro processo — os dois no ar, e o WhatsApp derrubando
-         * um deles com 440. A trava vence quando o banco fica inalcançável por
-         * mais de 30 s (pool esgotado, pooler reiniciando), e o processo nem
-         * fica sabendo.
-         *
-         * Encerrar a sessão órfã é o certo: quem tem a trava é quem manda, e
-         * insistir sem ela é justamente a colisão que a trava existe para
-         * evitar. Quem estiver com a posse mantém o número no ar.
-         */
-        if (count < activeInboxIds.length) {
-          const donos = await prisma.whatsAppConnection.findMany({
-            where: { inboxId: { in: activeInboxIds } },
-            select: { inboxId: true, lockOwner: true },
-          });
-          const perdidas = donos
-            .filter((linha) => linha.lockOwner !== this.workerId)
-            .map((linha) => linha.inboxId);
-
-          for (const inboxId of perdidas) {
-            console.warn(
-              `[WhatsAppSessionManager] Perdi a trava de ${inboxId} para outro worker. ` +
-                'Encerrando a sessão local para não colidir.',
-            );
-            const session = this.sessions.get(inboxId);
-            this.sessions.delete(inboxId);
-            if (session) await session.stop().catch(() => undefined);
-          }
+        for (const { inboxId, ok } of renewed) {
+          if (ok) continue;
+          console.warn(
+            `[WhatsAppSessionManager] Posse de ${inboxId} perdida; encerrando o socket local.`,
+          );
+          const session = this.sessions.get(inboxId);
+          this.sessions.delete(inboxId);
+          if (session) await session.stop({ persistStatus: false }).catch(() => undefined);
         }
       } catch (err) {
         console.warn('[WhatsAppSessionManager] Falha ao renovar heartbeat dos locks:', err);
+      } finally {
+        this.heartbeatRunning = false;
       }
     }, HEARTBEAT_INTERVAL_MS);
+    this.heartbeatTimer.unref?.();
   }
 
-  private async acquireLock(inboxId: string): Promise<boolean> {
-    const now = new Date();
-    const expiry = new Date(Date.now() + LOCK_TTL_MS);
-
-    // Tenta obter a posse da sessão: livre, expirada ou já pertencente a este worker
-    const { count } = await prisma.whatsAppConnection.updateMany({
-      where: {
-        inboxId,
-        OR: [
-          { lockOwner: null },
-          { lockExpiresAt: { lt: now } },
-          { lockOwner: this.workerId },
-        ],
-      },
-      data: {
-        lockOwner: this.workerId,
-        lockExpiresAt: expiry,
-      },
-    });
-
-    return count > 0;
+  private async acquireLock(inboxId: string): Promise<number | null> {
+    const rows = await prisma.$queryRaw<Array<{ lockVersion: number }>>`
+      UPDATE "WhatsAppConnection"
+      SET
+        "lockVersion" = CASE
+          WHEN "lockOwner" = ${this.workerId} THEN "lockVersion"
+          ELSE "lockVersion" + 1
+        END,
+        "lockOwner" = ${this.workerId},
+        "lockExpiresAt" = CURRENT_TIMESTAMP + INTERVAL '30 seconds'
+      WHERE "inboxId" = ${inboxId}
+        AND (
+          "lockOwner" IS NULL
+          OR "lockExpiresAt" < CURRENT_TIMESTAMP
+          OR "lockOwner" = ${this.workerId}
+        )
+      RETURNING "lockVersion"
+    `;
+    return rows[0]?.lockVersion ?? null;
   }
 
-  private async releaseLock(inboxId: string): Promise<void> {
+  private async releaseLock(inboxId: string, lockVersion: number): Promise<void> {
     try {
       await prisma.whatsAppConnection.updateMany({
         where: {
           inboxId,
           lockOwner: this.workerId,
+          lockVersion,
         },
         data: {
           lockOwner: null,
@@ -132,6 +116,20 @@ export class WhatsAppSessionManager {
   }
 
   async start(inboxId: string): Promise<WhatsAppSession> {
+    if (this.shuttingDown) {
+      throw new SessaoIndisponivelError('O worker está em processo de encerramento.');
+    }
+    const pending = this.starting.get(inboxId);
+    if (pending) return pending;
+
+    const task = this.startOne(inboxId).finally(() => {
+      if (this.starting.get(inboxId) === task) this.starting.delete(inboxId);
+    });
+    this.starting.set(inboxId, task);
+    return task;
+  }
+
+  private async startOne(inboxId: string): Promise<WhatsAppSession> {
     const existing = this.sessions.get(inboxId);
     if (existing) {
       await existing.start();
@@ -160,8 +158,8 @@ export class WhatsAppSessionManager {
     });
 
     // 3. Tenta adquirir a trava de posse (Mutex distribuído)
-    const acquired = await this.acquireLock(inboxId);
-    if (!acquired) {
+    const lockVersion = await this.acquireLock(inboxId);
+    if (lockVersion === null) {
       /**
        * `SessaoIndisponivelError`, e não um erro comum: quem manda é o outro
        * worker, e o comando precisa **voltar para a fila** para que ele o pegue.
@@ -181,7 +179,10 @@ export class WhatsAppSessionManager {
     }
 
     // 4. Cria e inicia a sessão
-    const session = new WhatsAppSession(inboxId, inbox.accountId);
+    const session = new WhatsAppSession(inboxId, inbox.accountId, {
+      workerId: this.workerId,
+      lockVersion,
+    });
     this.sessions.set(inboxId, session);
 
     try {
@@ -189,29 +190,24 @@ export class WhatsAppSessionManager {
       return session;
     } catch (error) {
       this.sessions.delete(inboxId);
-      await this.releaseLock(inboxId);
+      await this.releaseLock(inboxId, lockVersion);
       throw error;
     }
   }
 
   async stop(inboxId: string): Promise<void> {
+    const starting = this.starting.get(inboxId);
+    if (starting) await starting.catch(() => undefined);
     const session = this.sessions.get(inboxId);
     if (session) {
       await session.stop();
       this.sessions.delete(inboxId);
+      await this.releaseLock(inboxId, session.lockVersion);
     }
-    await this.releaseLock(inboxId);
   }
 
   get(inboxId: string): WhatsAppSession | undefined {
     return this.sessions.get(inboxId);
-  }
-
-  getByAccountId(accountId: string): WhatsAppSession | undefined {
-    for (const session of this.sessions.values()) {
-      if (session.accountId === accountId) return session;
-    }
-    return undefined;
   }
 
   /**
@@ -284,7 +280,9 @@ export class WhatsAppSessionManager {
     try {
       await this.start(inboxId);
       if (attempt > 0) {
-        console.log(`[WhatsAppSessionManager] Conexão ${inboxId} restaurada na tentativa ${attempt + 1}.`);
+        console.log(
+          `[WhatsAppSessionManager] Conexão ${inboxId} restaurada na tentativa ${attempt + 1}.`,
+        );
       }
     } catch (err) {
       const disputa = err instanceof Error && err.message.includes('já está operando');
@@ -302,16 +300,24 @@ export class WhatsAppSessionManager {
           `Nova tentativa em ${Math.round(espera / 1000)}s (${attempt + 2}/${RESTORE_MAX_ATTEMPTS}).`,
       );
 
-      const timer = setTimeout(() => void this.restoreOne(inboxId, attempt + 1), espera);
+      if (this.shuttingDown) return;
+      const timer = setTimeout(() => {
+        this.restoreTimers.delete(timer);
+        if (!this.shuttingDown) void this.restoreOne(inboxId, attempt + 1);
+      }, espera);
+      this.restoreTimers.add(timer);
       timer.unref?.();
     }
   }
 
   async shutdown(): Promise<void> {
+    this.shuttingDown = true;
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
+    for (const timer of this.restoreTimers) clearTimeout(timer);
+    this.restoreTimers.clear();
 
     /**
      * Em paralelo, e não uma de cada vez.
