@@ -19,6 +19,7 @@ import { initPostgresAuthState } from './auth/postgres-auth-state';
 import type { Contact } from '@/core/domain/contact';
 import type { Message, MessageContent } from '@/core/domain/message';
 import { PhoneNumber, isGroupAllowedInChat } from '@/core/domain/contact';
+import { isApiTokenActor } from '@/core/domain/user';
 import { dispararWebhooks } from '@/infrastructure/webhooks/webhook-dispatch';
 import { base64ParaWebhook, buildUpsertPayload, mediaUrlAbsoluta } from './wa-webhook-payload';
 import {
@@ -771,11 +772,22 @@ export class WhatsAppService {
         where: { externalId: messageId, conversation: { accountId, inboxId } },
         select: {
           id: true,
+          authorId: true,
           conversationId: true,
           conversation: { select: { contactId: true } },
         },
       });
       if (!gravada) return;
+
+      /**
+       * O que a integração mandou não volta para ela.
+       *
+       * Mesma regra da gêmea no worker: a resposta do agente saía pelo
+       * WhatsApp, voltava como eco e disparava `mensagem.enviada`, acordando o
+       * fluxo que acabou de escrevê-la. Mensagem digitada por uma pessoa no CRM
+       * continua saindo — essa o fluxo precisa ver para alimentar a memória.
+       */
+      if (isApiTokenActor(gravada.authorId)) return;
 
       await dispararWebhooks(
         'mensagem.enviada',

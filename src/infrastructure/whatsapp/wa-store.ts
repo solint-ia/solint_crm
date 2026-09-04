@@ -8,12 +8,13 @@ import {
   contactRow,
   conversationRow,
 } from '@/infrastructure/repositories/prisma/mappers';
+import { aplicarPausaDoAgente } from '@/infrastructure/repositories/prisma/conversation-repository';
 import { dispararAutomacoes } from '@/infrastructure/automations/dispatch';
 import { dispararWebhooks } from '@/infrastructure/webhooks/webhook-dispatch';
 import type {
   SolintRefs,
   WebhookEvent,
-  WebhookPayload,
+  WebhookPayloadEmMontagem,
 } from '@/infrastructure/webhooks/webhook-dispatch';
 import type { ChatIdentity } from './wa-identity';
 import { waEventBus } from './whatsapp-events';
@@ -243,7 +244,7 @@ export interface CommitInput {
    * Ausente quando a origem não tem mensagem crua para oferecer — e aí nenhum
    * webhook é disparado, porque não haveria o que entregar.
    */
-  readonly webhookPayload?: (refs: SolintRefs) => Omit<WebhookPayload, 'destination'>;
+  readonly webhookPayload?: (refs: SolintRefs) => WebhookPayloadEmMontagem;
   /**
    * Grava sem anunciar.
    *
@@ -377,6 +378,29 @@ export const commitMessage = async (input: CommitInput): Promise<void> => {
       conversationId: chat.conversationId,
       ...(input.preview ? { messageText: input.preview } : {}),
     });
+  }
+
+  /**
+   * O atendente respondeu pelo celular: o agente sai da conversa por um tempo.
+   *
+   * Chegar aqui com `fromMe` já significa isso. O eco do que o CRM enviou sai
+   * antes, em `dispararEcoDoCrm`, e nunca alcança esta função; e uma repetição
+   * do Baileys morre no `inserted` logo acima. Sobra o caso real: alguém abriu
+   * o WhatsApp no aparelho e escreveu para o cliente.
+   *
+   * Não há botão para clicar nesse caminho — por isso a pausa é deduzida, e por
+   * isso ela é curta. `aplicarPausaDoAgente` não encurta uma pausa manual que
+   * ainda esteja valendo.
+   *
+   * A falha é engolida: um agente que continua respondendo é um problema menor
+   * do que a mensagem do atendente não entrar na conversa.
+   */
+  if (input.fromMe) {
+    try {
+      await aplicarPausaDoAgente(input.accountId, chat.conversationId, 'resposta_no_celular');
+    } catch (erro) {
+      console.warn('[wa-store] Falha ao pausar o agente após resposta pelo celular:', erro);
+    }
   }
 
   // Sistemas de fora recebem o mesmo gatilho das automações internas, e pela

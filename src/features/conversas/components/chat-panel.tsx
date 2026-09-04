@@ -36,6 +36,7 @@ import { Menu, MenuHeader, MenuItem } from '@/components/ui/menu';
 import { Modal } from '@/components/ui/modal';
 import { Composer, type ComposerMode, type MediaResult } from './composer';
 import {
+  AiPauseButton,
   AssigneeButton,
   InboxMenu,
   LabelMenu,
@@ -111,6 +112,8 @@ interface ChatPanelProps {
   readonly onChangeStatus: (status: ConversationStatus) => void;
   readonly onAssign: (assignee: { id: string; name: string } | null) => void;
   readonly onChangePriority: (priority: Priority) => void;
+  readonly onToggleAiPause: (paused: boolean) => void;
+  readonly aiPausePending: boolean;
   readonly onSetLabels: (labels: readonly Label[]) => void;
   readonly inboxes: readonly { readonly id: string; readonly name: string }[];
   readonly onMoveInbox: (inboxId: string) => void;
@@ -139,6 +142,8 @@ export function ChatPanel({
   onChangeStatus,
   onAssign,
   onChangePriority,
+  onToggleAiPause,
+  aiPausePending,
   onSetLabels,
   inboxes,
   onMoveInbox,
@@ -146,7 +151,7 @@ export function ChatPanel({
   isContextOpen = false,
   onToggleContext,
 }: ChatPanelProps) {
-  const { agendamento } = useDatasDaConta();
+  const { agendamento, hora } = useDatasDaConta();
   const [transferOpen, setTransferOpen] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
   const [replyTo, setReplyTo] = useState<Message | undefined>();
@@ -396,6 +401,13 @@ export function ChatPanel({
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* Seletor Rápido de Status (Interativo e Compacto) */}
           <StatusMenu conversation={conversation} onChange={onChangeStatus} />
+
+          <AiPauseButton
+            conversation={conversation}
+            onToggle={onToggleAiPause}
+            pending={aiPausePending}
+            formatHour={(iso) => hora(new Date(iso))}
+          />
 
           {/* Grupo de Metadados Expandido em Telas Muito Largas (Container @6xl+) */}
           {!isContextOpen && (

@@ -17,6 +17,7 @@ import { createSendMedia, createSendTemplate } from '@/core/use-cases/send-rich-
 import {
   createAssignConversation,
   createChangeConversationPriority,
+  createSetAiPause,
   createSetConversationLabels,
 } from '@/core/use-cases/triage-conversation';
 import { EchoAiAgentSandbox } from './repositories/in-memory/ai-agent-repository';
@@ -50,6 +51,7 @@ export interface Container {
     readonly assignConversation: ReturnType<typeof createAssignConversation>;
     readonly moveConversationInbox: ReturnType<typeof createMoveConversationInbox>;
     readonly changeConversationPriority: ReturnType<typeof createChangeConversationPriority>;
+    readonly setAiPause: ReturnType<typeof createSetAiPause>;
     readonly setConversationLabels: ReturnType<typeof createSetConversationLabels>;
     readonly sendTemplate: ReturnType<typeof createSendTemplate>;
     readonly sendMedia: ReturnType<typeof createSendMedia>;
@@ -87,6 +89,7 @@ const buildContainer = (): Container => {
       assignConversation: createAssignConversation(conversations),
       moveConversationInbox: createMoveConversationInbox(conversations),
       changeConversationPriority: createChangeConversationPriority(conversations),
+      setAiPause: createSetAiPause(conversations),
       setConversationLabels: createSetConversationLabels(conversations),
       sendTemplate: createSendTemplate(conversations),
       sendMedia: createSendMedia(conversations),

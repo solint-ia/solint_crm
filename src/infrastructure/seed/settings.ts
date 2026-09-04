@@ -140,6 +140,7 @@ export const SETTINGS: SeedWorkspaceSettings = {
         text: 'Olá! Recebemos sua mensagem e um consultor vai te responder em instantes 🙂',
       },
       waitingMessageDelayMinutes: 5,
+      aiPauseChannelReplyMinutes: 30,
       csatEnabled: false,
       webhookUrl: 'https://erp.solint.com.br/hooks/whatsapp-comercial',
     },
@@ -158,6 +159,7 @@ export const SETTINGS: SeedWorkspaceSettings = {
       },
       greeting: { enabled: false, text: '' },
       waitingMessageDelayMinutes: 5,
+      aiPauseChannelReplyMinutes: 30,
       csatEnabled: false,
     },
     // As caixas de Instagram, Webchat, E-mail e Telegram saíram junto com os

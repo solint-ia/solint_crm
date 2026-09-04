@@ -329,6 +329,9 @@ const updateInboxSchema = z.object({
   closingMessage: autoReplySchema.optional(),
   waitingMessage: autoReplySchema.optional(),
   waitingMessageDelayMinutes: z.number().int().min(1).max(120).optional(),
+  // Um dia de teto: a pausa deduzida de uma resposta no celular é um palpite do
+  // sistema, e palpite não deve valer mais que um turno de trabalho.
+  aiPauseChannelReplyMinutes: z.number().int().min(5).max(1440).optional(),
   csatEnabled: z.boolean().optional(),
   csatQuestion: z.string().trim().max(300).optional(),
   // `webhookUrl` saiu daqui de propósito: a integração de cada caixa é
@@ -346,6 +349,7 @@ const INBOX_FIELD_LABELS: Readonly<Record<string, string>> = {
   closingMessage: 'a mensagem de encerramento',
   waitingMessage: 'a mensagem de espera',
   waitingMessageDelayMinutes: 'o tempo da mensagem de espera',
+  aiPauseChannelReplyMinutes: 'a pausa do agente ao responder pelo celular',
   csatQuestion: 'a pergunta da pesquisa de satisfação',
 };
 

@@ -429,6 +429,23 @@ model Conversation {
   /// JID do WhatsApp. É o destino canônico de envio.
   channelThreadId    String?
 
+  /// Ate quando o agente de IA fica fora desta conversa. Vazio = agente ativo.
+  ///
+  /// Um prazo, e nao um "sim/nao", porque os dois modos de pausar precisam
+  /// terminar sozinhos: quem clica em "assumir" esquece de devolver, e a pausa
+  /// que nasce de uma resposta pelo celular nao tem botao para desfaze-la. Com
+  /// uma data, "ainda esta pausado?" e uma comparacao — nao ha runner varrendo
+  /// conversa para reativar agente, nem estado que possa ficar preso.
+  aiPausedUntil      DateTime?
+  /// Quem pausou. Vazio quando a pausa foi automatica.
+  ///
+  /// Texto solto, e nao chave estrangeira para `User`, pelo mesmo motivo que
+  /// `assigneeId` nao serve aqui: a pausa automatica nao tem autor nenhum.
+  aiPausedBy         String?
+  aiPausedByName     String?
+  /// `manual` (botao da tela) ou `resposta_no_celular` (deteccao automatica).
+  aiPausedReason     String?
+
   account           Account            @relation(fields: [accountId], references: [id], onDelete: Cascade)
   contact           Contact            @relation(fields: [contactId], references: [id], onDelete: Cascade)
   inbox             Inbox              @relation(fields: [inboxId], references: [id], onDelete: Restrict)
@@ -720,6 +737,12 @@ model Inbox {
   waitingMessage             Json?
   /// Minutos de fila sem resposta antes de a mensagem de espera sair.
   waitingMessageDelayMinutes Int     @default(5)
+  /// Minutos de pausa quando o atendente responde pelo app do WhatsApp.
+  ///
+  /// Curto de proposito: aqui a pausa e um palpite do sistema, e nao a decisao
+  /// de alguem. Errar para menos devolve o agente cedo demais uma vez; errar
+  /// para mais deixa o cliente sem resposta sem ninguem ter pedido isso.
+  aiPauseChannelReplyMinutes Int     @default(30)
   /// Pergunta a nota de 1 a 5 ao cliente quando o atendimento é encerrado.
   csatEnabled                Boolean @default(false)
   csatQuestion               String?

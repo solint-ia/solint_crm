@@ -56,6 +56,7 @@ import {
   type MediaRef,
 } from '../wa-message-content';
 import { base64ParaWebhook, buildUpsertPayload, mediaUrlAbsoluta } from '../wa-webhook-payload';
+import { isApiTokenActor } from '@/core/domain/user';
 import { dispararWebhooks } from '@/infrastructure/webhooks/webhook-dispatch';
 import { mediaStore, mediaUrlFor } from '../wa-media-store';
 import { deletionKey, quotedStub } from '../wa-quote';
@@ -1780,11 +1781,28 @@ export class WhatsAppSession {
         },
         select: {
           id: true,
+          authorId: true,
           conversationId: true,
           conversation: { select: { contactId: true } },
         },
       });
       if (!gravada) return;
+
+      /**
+       * O que a integração mandou não volta para ela.
+       *
+       * Sem esta saída, a resposta do agente saía pelo WhatsApp, voltava como
+       * eco e disparava `mensagem.enviada` — que acorda o mesmo fluxo que
+       * acabou de escrevê-la. É execução que não decide nada: o n8n já sabe o
+       * que ele próprio respondeu.
+       *
+       * A regra é o autor, e não a rota: `authorId` guarda `api-token:<id>`
+       * para tudo que entrou por token. Mensagem digitada por uma pessoa no CRM
+       * continua saindo, porque essa o fluxo precisa ver para alimentar a
+       * memória do agente. A do celular nem passa por aqui — ela é gravada em
+       * `commitMessage`, e dispara por lá.
+       */
+      if (isApiTokenActor(gravada.authorId)) return;
 
       await dispararWebhooks(
         'mensagem.enviada',

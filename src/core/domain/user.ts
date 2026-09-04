@@ -318,6 +318,20 @@ export interface Session {
  */
 export const SUPERADMIN_PERMISSIONS: readonly Permission[] = PERMISSIONS;
 
+/**
+ * Prefixo do ator que é um token de API, e não uma pessoa.
+ *
+ * Mora no domínio porque três camadas dependem dele: a autenticação o escreve,
+ * o repositório recusa atribuir a conversa a ele, e o despachante de webhooks
+ * decide por ele se o evento de saída é eco da própria integração. Repetir a
+ * string em cada lugar faria a primeira divergência passar despercebida.
+ */
+export const API_TOKEN_ACTOR_PREFIX = 'api-token:';
+
+/** A ação partiu de uma integração, e não de alguém logado no CRM. */
+export const isApiTokenActor = (actorId: string | null | undefined): boolean =>
+  Boolean(actorId?.startsWith(API_TOKEN_ACTOR_PREFIX));
+
 /** Autorização é decidida sempre aqui — nunca espalhada por componentes. */
 export const can = (session: Session, permission: Permission): boolean =>
   session.permissions.includes(permission);

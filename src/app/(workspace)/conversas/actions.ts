@@ -710,6 +710,67 @@ export async function assignConversationAction(input: unknown): Promise<ActionRe
   return { ok: true };
 }
 
+const aiPauseSchema = z.object({
+  conversationId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH),
+  paused: z.boolean(),
+});
+
+/**
+ * Assume a conversa das mãos do agente de IA, ou a devolve.
+ *
+ * Assumir faz duas coisas no mesmo clique — pausa o agente e atribui a conversa
+ * a quem clicou — porque na prática elas são a mesma decisão: quem tira o robô
+ * da conversa está dizendo que vai atender. Deixar a atribuição para um segundo
+ * clique produziria conversas sem responsável que a IA também não responde, e
+ * ninguém as veria na fila.
+ *
+ * A atribuição só acontece se a conversa **não tiver dono**. Assumir não rouba
+ * o atendimento de um colega; nesse caso pausa o agente e para por aí.
+ *
+ * Devolver ao agente não mexe no responsável: quem atendeu continua sendo quem
+ * atendeu, e o histórico da conversa não deve mudar por causa de um botão de
+ * automação.
+ */
+export async function setConversationAiPauseAction(input: unknown): Promise<ActionResult> {
+  const parsed = aiPauseSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Dados inválidos.' };
+
+  const session = await container.session.getCurrentSession();
+  const result = await container.useCases.setAiPause({
+    session,
+    conversationId: parsed.data.conversationId,
+    paused: parsed.data.paused,
+  });
+  if (!result.ok) return { ok: false, error: result.error.message };
+
+  if (parsed.data.paused && !result.value.assigneeId) {
+    await container.useCases.assignConversation({
+      session,
+      conversationId: parsed.data.conversationId,
+      assignee: { id: session.user.id, name: session.user.name },
+    });
+  }
+
+  await writeAuditLog({
+    accountId: session.account.id,
+    actorId: session.user.id,
+    actorName: session.user.name,
+    action: 'configuracao.alterada',
+    targetType: 'conversa',
+    targetId: parsed.data.conversationId,
+    targetName: result.value.contact.name,
+    metadata: {
+      detalhe: parsed.data.paused
+        ? 'agente de IA pausado nesta conversa'
+        : 'agente de IA devolvido a esta conversa',
+      ...(result.value.aiPausedUntil ? { pausadoAte: result.value.aiPausedUntil } : {}),
+    },
+  });
+
+  await broadcast(parsed.data.conversationId);
+  return { ok: true };
+}
+
 const prioritySchema = z.object({
   conversationId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH),
   priority: z.enum(PRIORITIES),

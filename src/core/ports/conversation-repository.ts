@@ -1,4 +1,5 @@
 import type {
+  AiPauseReason,
   Conversation,
   ConversationFilter,
   ConversationStatus,
@@ -73,6 +74,25 @@ export interface ConversationWriter {
   ): Promise<Conversation>;
   changePriority(accountId: Id, conversationId: Id, priority: Priority): Promise<Conversation>;
   assign(accountId: Id, conversationId: Id, assignee: Assignee | null): Promise<Conversation>;
+  /**
+   * Tira o agente de IA desta conversa por um tempo.
+   *
+   * O prazo não vem de quem chama: ele é lido da caixa de entrada, aqui dentro,
+   * porque os dois caminhos que pausam precisam do mesmo número. O botão da tela
+   * e a detecção de resposta pelo celular são códigos distantes um do outro, e
+   * deixar cada um calcular o próprio vencimento faria a configuração valer para
+   * um e não para o outro no dia em que alguém a mudasse.
+   *
+   * `actor` é ausente na pausa automática — ninguém pediu por ela.
+   */
+  pauseAiAgent(
+    accountId: Id,
+    conversationId: Id,
+    reason: AiPauseReason,
+    actor?: Assignee,
+  ): Promise<Conversation>;
+  /** Devolve a conversa ao agente antes de o prazo vencer. */
+  resumeAiAgent(accountId: Id, conversationId: Id): Promise<Conversation>;
   /**
    * Move o atendimento para outra caixa de entrada.
    *

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import {
+  API_TOKEN_ACTOR_PREFIX,
   DEFAULT_NOTIFICATION_PREFERENCES,
   PERMISSIONS,
   type Permission,
@@ -52,9 +53,9 @@ const sessaoDoToken = (
     // há `jti` a revogar. O identificador aponta para o token para que quem
     // ler a auditoria saiba que a ação veio de uma integração, não de um
     // navegador — e para que trocar de workspace por aqui seja impossível.
-    tokenId: `api-token:${token.id}`,
+    tokenId: `${API_TOKEN_ACTOR_PREFIX}${token.id}`,
     user: {
-      id: `api-token:${token.id}`,
+      id: `${API_TOKEN_ACTOR_PREFIX}${token.id}`,
       accountId: account.id,
       name: token.name,
       email: '',

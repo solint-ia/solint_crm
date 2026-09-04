@@ -74,6 +74,34 @@ export interface SolintRefs {
   readonly conversaNova: boolean;
 }
 
+/**
+ * `SolintRefs` mais o que só o despachante sabe.
+ *
+ * A separação existe para que os três pontos que montam corpo — a mensagem que
+ * chega, o eco do que o CRM manda e a gêmea no processo em memória — não
+ * precisem conhecer nem consultar a pausa. Eles descrevem a mensagem; o estado
+ * da conversa no instante do disparo é lido num lugar só, e assim dois webhooks
+ * da mesma mensagem nunca discordam entre si.
+ */
+export interface SolintRefsEntregues extends SolintRefs {
+  /**
+   * O agente de IA está fora desta conversa neste instante.
+   *
+   * Quem integra usa isto para decidir se **responde**. O evento continua
+   * chegando de qualquer jeito: a memória do agente precisa do que foi dito
+   * enquanto o humano atendia, senão ele volta sem saber o que aconteceu.
+   */
+  readonly agentePausado: boolean;
+  /**
+   * Quando o agente volta sozinho.
+   *
+   * Ausente em dois casos que não devem ser confundidos: o agente não está
+   * pausado, ou a pausa **não vence** — alguém assumiu a conversa pela tela, e
+   * ela dura até esse alguém devolver. `agentePausado` é o campo que decide.
+   */
+  readonly agentePausadoAte?: string;
+}
+
 /** O bloco `data`, na forma em que o Baileys entrega a mensagem. */
 export interface WebhookMessageData {
   readonly key: Record<string, unknown>;
@@ -103,7 +131,7 @@ export interface WebhookPayload {
   readonly date_time: string;
   /** JID do número conectado na caixa. */
   readonly sender: string;
-  readonly solint: SolintRefs;
+  readonly solint: SolintRefsEntregues;
 }
 
 /** Assinatura no formato que n8n, Make e Zapier já sabem conferir. */
@@ -137,12 +165,45 @@ export const entregarWebhook = async (
  * uma mensagem que já aconteceu. Falha vira contador e aviso no log — e o
  * contador é o que a tela de integrações mostra.
  */
+/** O corpo como quem dispara o monta: sem os campos que o despachante preenche. */
+export type WebhookPayloadEmMontagem = Omit<WebhookPayload, 'destination' | 'solint'> & {
+  readonly solint: SolintRefs;
+};
+
 export const dispararWebhooks = async (
   evento: WebhookEvent,
-  payload: Omit<WebhookPayload, 'destination'>,
+  payload: WebhookPayloadEmMontagem,
 ): Promise<void> => {
   try {
     const inboxId = payload.solint.caixaEntradaId;
+
+    // A pausa é lida aqui, e não em cada um dos três pontos que montam corpo:
+    // é a mesma pergunta em todos, e a resposta muda entre um disparo e o
+    // seguinte. Ler no despachante garante que os dois webhooks de uma mesma
+    // mensagem enxerguem o mesmo estado.
+    const conversa = await prisma.conversation.findFirst({
+      where: { id: payload.solint.conversaId, accountId: payload.solint.contaId },
+      select: { aiPausedUntil: true, aiPausedReason: true },
+    });
+    // A pausa do botão não tem prazo, então `agentePausadoAte` só aparece na que
+    // vence sozinha. Quem integra decide por `agentePausado`, e não pela data:
+    // ler "sem prazo" como "sem pausa" faria o agente responder por cima de
+    // quem acabou de assumir a conversa.
+    const pausado = Boolean(
+      conversa?.aiPausedReason &&
+        (!conversa.aiPausedUntil || conversa.aiPausedUntil.getTime() > Date.now()),
+    );
+    const corpo: Omit<WebhookPayload, 'destination'> = {
+      ...payload,
+      solint: {
+        ...payload.solint,
+        agentePausado: pausado,
+        ...(pausado && conversa?.aiPausedUntil
+          ? { agentePausadoAte: conversa.aiPausedUntil.toISOString() }
+          : {}),
+      },
+    };
+
     const inscritos = await prisma.webhook.findMany({
       where: {
         accountId: payload.solint.contaId,
@@ -175,8 +236,8 @@ export const dispararWebhooks = async (
     );
     if (alvos.length === 0) return;
 
-    const payloadHash = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
-    const dedupeKey = `${evento}:${payload.solint.mensagemId ?? payloadHash}`;
+    const payloadHash = createHash('sha256').update(JSON.stringify(corpo)).digest('hex');
+    const dedupeKey = `${evento}:${corpo.solint.mensagemId ?? payloadHash}`;
 
     // Outbox durável: receber a mensagem não depende da velocidade do n8n e
     // uma queda entre tentativas não perde o evento. A chave composta evita a
@@ -187,7 +248,7 @@ export const dispararWebhooks = async (
         accountId: payload.solint.contaId,
         inboxId: inboxId ?? null,
         event: evento,
-        payload: asJson({ ...payload, destination: webhook.url }),
+        payload: asJson({ ...corpo, destination: webhook.url }),
         dedupeKey,
         status: 'pending',
       })),

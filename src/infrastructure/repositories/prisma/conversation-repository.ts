@@ -1,4 +1,5 @@
 import type {
+  AiPauseReason,
   Conversation,
   ConversationFilter,
   ConversationStatus,
@@ -8,7 +9,7 @@ import type { Contact } from '@/core/domain/contact';
 import type { Label } from '@/core/domain/label';
 import { previewOfMessage, type Message } from '@/core/domain/message';
 import { NotFoundError, type Id } from '@/core/domain/shared';
-import type { InboxAccess } from '@/core/domain/user';
+import { isApiTokenActor, type InboxAccess } from '@/core/domain/user';
 import type {
   Assignee,
   ConversationRepository,
@@ -44,6 +45,70 @@ const STATUS_LABELS: Readonly<Record<ConversationStatus, string>> = {
  */
 const inboxScope = (access: InboxAccess) =>
   access === 'todas' ? {} : { inboxId: { in: [...access] } };
+
+/**
+ * Grava a pausa do agente, sem nunca enfraquecer uma que já esteja valendo.
+ *
+ * O botão pausa **sem prazo**: quem assumiu a conversa devolve quando
+ * terminar, e dar validade a isso traria o agente de volta no meio de um
+ * atendimento humano sem ninguém ter pedido.
+ *
+ * A pausa por resposta no celular é o oposto — ninguém a pediu, e não há botão
+ * para desfazê-la —, então ela vence sozinha. E ela nunca sobrescreve a do
+ * botão: a sequência é banal (o atendente assume e, cinco minutos depois,
+ * responde pelo aparelho) e sobrescrever transformaria uma pausa sem prazo numa
+ * de meia hora, por causa de um ato do próprio atendente.
+ *
+ * A saída sem escrita também é o que torna a chamada segura de repetir: cada
+ * mensagem mandada pelo celular passa por aqui, e só a primeira de cada janela
+ * grava alguma coisa.
+ */
+export const aplicarPausaDoAgente = async (
+  accountId: Id,
+  conversationId: Id,
+  reason: AiPauseReason,
+  actor?: Assignee,
+): Promise<void> => {
+  const conversa = await prisma.conversation.findFirst({
+    where: { id: conversationId, accountId },
+    select: {
+      aiPausedUntil: true,
+      aiPausedReason: true,
+      inbox: { select: { aiPauseChannelReplyMinutes: true } },
+    },
+  });
+  if (!conversa) throw new NotFoundError('Conversa', conversationId);
+
+  if (reason === 'manual') {
+    await prisma.conversation.update({
+      where: { id: conversationId, accountId },
+      data: {
+        aiPausedUntil: null,
+        aiPausedBy: actor?.id ?? null,
+        aiPausedByName: actor?.name ?? null,
+        aiPausedReason: 'manual',
+      },
+    });
+    return;
+  }
+
+  // Pausa sem prazo em vigor: não há o que acrescentar, e escrever aqui só
+  // poderia piorar.
+  if (conversa.aiPausedReason && !conversa.aiPausedUntil) return;
+
+  const ate = new Date(Date.now() + conversa.inbox.aiPauseChannelReplyMinutes * 60_000);
+  if (conversa.aiPausedUntil && conversa.aiPausedUntil.getTime() >= ate.getTime()) return;
+
+  await prisma.conversation.update({
+    where: { id: conversationId, accountId },
+    data: {
+      aiPausedUntil: ate,
+      aiPausedBy: null,
+      aiPausedByName: null,
+      aiPausedReason: reason,
+    },
+  });
+};
 
 export class PrismaConversationRepository implements ConversationRepository {
   async list(
@@ -251,6 +316,23 @@ export class PrismaConversationRepository implements ConversationRepository {
       if (message.author !== 'agent' || message.isPrivate || exists.assigneeId) return false;
 
       /**
+       * Token de API não assume atendimento.
+       *
+       * `assigneeId` aponta para `User`, e a sessão de um token tem o id
+       * `api-token:<id>`, que não existe naquela tabela. Sem esta guarda, a
+       * primeira resposta de uma integração a uma conversa **sem responsável**
+       * violava a chave estrangeira, abortava a transação inteira e derrubava a
+       * gravação da mensagem junto — a rota devolvia 500 e o texto não entrava
+       * na timeline.
+       *
+       * Recusar é o comportamento certo mesmo sem a restrição do banco: a
+       * conversa ficaria com o nome de um token onde a tela mostra o
+       * responsável, e o atendente humano perderia a fila de "sem responsável"
+       * que ele usa para saber o que ainda não foi atendido.
+       */
+      if (isApiTokenActor(authorId)) return false;
+
+      /**
        * Compare-and-set: somente a conversa ainda sem responsável pode ser
        * assumida. Se dois agentes responderem juntos, o segundo UPDATE espera
        * o primeiro terminar e reavalia `assigneeId: null`; por isso ele não
@@ -363,6 +445,30 @@ export class PrismaConversationRepository implements ConversationRepository {
     return this.patch(accountId, conversationId, {
       assigneeId: assignee?.id ?? null,
       assigneeName: assignee?.name ?? null,
+    });
+  }
+
+  async pauseAiAgent(
+    accountId: Id,
+    conversationId: Id,
+    reason: AiPauseReason,
+    actor?: Assignee,
+  ): Promise<Conversation> {
+    await aplicarPausaDoAgente(accountId, conversationId, reason, actor);
+    const row = await prisma.conversation.findFirst({
+      where: { id: conversationId, accountId },
+      include: CONVERSATION_INCLUDE,
+    });
+    if (!row) throw new NotFoundError('Conversa', conversationId);
+    return conversationRow(row);
+  }
+
+  async resumeAiAgent(accountId: Id, conversationId: Id): Promise<Conversation> {
+    return this.patch(accountId, conversationId, {
+      aiPausedUntil: null,
+      aiPausedBy: null,
+      aiPausedByName: null,
+      aiPausedReason: null,
     });
   }
 

@@ -29,7 +29,7 @@ const JID = '557981454771@s.whatsapp.net';
 /** Id fixo para a caixa do teste: a entrega guarda `inboxId` com chave estrangeira. */
 const CAIXA = 'ibx-teste';
 /** Teto de espera por entrega. O entregador varre a fila, não responde na hora. */
-const ESPERA_MS = 20_000;
+const ESPERA_MS = 45_000;
 
 const falhas: string[] = [];
 const check = (label: string, ok: boolean, detalhe = '') => {
@@ -490,11 +490,31 @@ async function main() {
       destinos.join('|') === [url, segundaUrl].sort().join('|'),
       destinos.join(' , '),
     );
+    // Esperar a fila do segundo destino esvaziar antes de apagá-lo.
+    //
+    // Receber o POST não é o fim da entrega: o entregador ainda vai marcar a
+    // linha como `delivered` e zerar o contador do webhook. Apagar no meio
+    // disso derrubava a transação com "registro não encontrado", a entrega
+    // voltava para a fila com backoff, e o teste seguinte herdava um destino
+    // morto repetindo para sempre — que era a origem real da intermitência.
+    await aguardarAte(
+      async () =>
+        (await prisma.webhookDelivery.count({
+          where: { webhookId: segundo.id, status: { in: ['pending', 'processing'] } },
+        })) === 0,
+    );
     await prisma.webhook.delete({ where: { id: segundo.id } }).catch(() => undefined);
 
     console.log('\n10) Sucesso zera o contador e carimba a data');
-    await aguardarAte(async () =>
-      Boolean((await prisma.webhook.findUnique({ where: { id: webhook.id } }))?.lastTriggeredAt),
+    // A espera é pela **fila vazia**, e não pela data de disparo: `lastTriggeredAt`
+    // já tinha sido gravado pela primeira entrega bem-sucedida, então usá-lo como
+    // condição fazia o teste ler o contador no meio de uma tentativa em curso e
+    // acusar falha onde havia só uma entrega ainda não concluída.
+    await aguardarAte(
+      async () =>
+        (await prisma.webhookDelivery.count({
+          where: { webhookId: webhook.id, status: { in: ['pending', 'processing'] } },
+        })) === 0,
     );
     const depois = await prisma.webhook.findUnique({ where: { id: webhook.id } });
     check('failureCount zerado', depois?.failureCount === 0, String(depois?.failureCount));
@@ -530,7 +550,17 @@ async function main() {
     );
   } finally {
     await runner.stop();
-    await prisma.webhook.delete({ where: { id: webhook.id } }).catch(() => undefined);
+    // Apagar por **nome**, e não pelos ids desta execução: o caso 9 cria um
+    // segundo destino no meio do teste, e uma execução que morre antes dele
+    // deixava esse webhook para trás apontando para uma porta que não existe
+    // mais. As entregas dele ficavam repetindo para sempre, e a execução
+    // seguinte herdava a fila de uma anterior — o teste passava a falhar por
+    // causa do próprio lixo.
+    await prisma.webhook
+      .deleteMany({
+        where: { accountId: account.id, name: { in: ['Teste automatizado', 'Segundo destino'] } },
+      })
+      .catch(() => undefined);
     await prisma.inbox.delete({ where: { id: CAIXA } }).catch(() => undefined);
     servidor.close();
   }

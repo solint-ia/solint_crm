@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  Bot,
   Clock,
   Globe,
   Inbox as InboxIcon,
@@ -692,6 +693,7 @@ function InboxDetail({
   );
 
   const [waitingDelay, setWaitingDelay] = useState(connection.waitingMessageDelayMinutes || 5);
+  const [aiPauseCanal, setAiPauseCanal] = useState(connection.aiPauseChannelReplyMinutes || 30);
   const [csatEnabled, setCsatEnabled] = useState(connection.csatEnabled ?? false);
   const [csatQuestion, setCsatQuestion] = useState(connection.csatQuestion ?? '');
   const [saving, setSaving] = useState(false);
@@ -718,6 +720,7 @@ function InboxDetail({
         },
       ) ||
     waitingDelay !== (connection.waitingMessageDelayMinutes || 5) ||
+    aiPauseCanal !== (connection.aiPauseChannelReplyMinutes || 30) ||
     csatEnabled !== (connection.csatEnabled ?? false) ||
     csatQuestion !== (connection.csatQuestion ?? '');
 
@@ -749,6 +752,7 @@ function InboxDetail({
       },
     );
     setWaitingDelay(connection.waitingMessageDelayMinutes || 5);
+    setAiPauseCanal(connection.aiPauseChannelReplyMinutes || 30);
     setCsatEnabled(connection.csatEnabled ?? false);
     setCsatQuestion(connection.csatQuestion ?? '');
     setError(undefined);
@@ -765,6 +769,7 @@ function InboxDetail({
       closingMessage,
       waitingMessage,
       waitingMessageDelayMinutes: waitingDelay,
+      aiPauseChannelReplyMinutes: aiPauseCanal,
       csatEnabled,
       csatQuestion,
     });
@@ -788,6 +793,7 @@ function InboxDetail({
       closingMessage,
       waitingMessage,
       waitingMessageDelayMinutes: waitingDelay,
+      aiPauseChannelReplyMinutes: aiPauseCanal,
       csatEnabled,
       ...(csatQuestion ? { csatQuestion } : {}),
     });
@@ -1030,6 +1036,56 @@ function InboxDetail({
               </label>
             }
           />
+        </div>
+
+        {/* ---------------------------------------------------------- */}
+        {/* AGENTE DE IA                                               */}
+        {/* ---------------------------------------------------------- */}
+        <div className="rounded-2xl border border-line bg-surface p-4.5 shadow-2xs">
+          <div className="flex items-start gap-2.5 border-b border-line-soft pb-3.5">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-violet-500/10 text-violet-600 dark:text-violet-400">
+              <Bot className="size-4" />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold text-ink">Agente de IA</h4>
+              <p className="text-xs text-muted">
+                Quando o agente sai da conversa porque um atendente entrou nela.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-3.5 flex flex-col gap-3">
+            <p className="text-xs text-muted">
+              Quando alguém clica em <strong className="text-ink">Assumir</strong> na conversa, o
+              agente fica fora dela até que alguém o devolva. Não há prazo: quem assumiu decide
+              quando termina.
+            </p>
+
+            <label className="flex flex-wrap items-center gap-2 text-xs text-muted">
+              <Timer className="size-3.5 shrink-0 text-dim" />
+              <span>
+                Sem passar pela tela, quando o atendente responder pelo app do WhatsApp, pausar por
+              </span>
+              <input
+                type="number"
+                min={5}
+                max={1440}
+                value={aiPauseCanal}
+                onChange={(event) =>
+                  setAiPauseCanal(Math.min(1440, Math.max(5, Number(event.target.value) || 5)))
+                }
+                aria-label="Minutos de pausa do agente ao responder pelo celular"
+                className="h-8 w-16 rounded-lg border border-line bg-surface px-2 text-center font-mono text-xs text-ink outline-none focus:border-brand shadow-2xs"
+              />
+              <span>minutos</span>
+            </label>
+
+            <p className="rounded-xl border border-line bg-surface-2/60 px-3 py-2 text-[11px] text-muted">
+              Nesse período o webhook continua entregando as mensagens, marcadas com
+              <code className="mx-1 font-mono">agentePausado: true</code>. Elas seguem alimentando a
+              memória do agente; o que ele não faz é responder.
+            </p>
+          </div>
         </div>
 
         {/* ---------------------------------------------------------- */}

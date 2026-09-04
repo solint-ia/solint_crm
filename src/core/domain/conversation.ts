@@ -126,7 +126,54 @@ export interface Conversation {
    * enderecado por LID quebraria.
    */
   readonly channelThreadId?: string;
+  /**
+   * Quando a pausa vence sozinha. Ausente na pausa que não vence.
+   *
+   * Quem diz se o agente está calado é `aiPausedReason`, não este campo: a
+   * pausa do botão dura até alguém desfazê-la, e só a que o sistema deduziu
+   * sozinho carrega prazo. Ninguém compara a data à mão — `isAiPaused` decide
+   * num lugar só, para a tela, o despachante e a rota de envio nunca
+   * divergirem.
+   */
+  readonly aiPausedUntil?: IsoDateTime;
+  /** Nome de quem pausou. Ausente quando a pausa foi automática. */
+  readonly aiPausedByName?: string;
+  readonly aiPausedReason?: AiPauseReason;
 }
+
+/**
+ * Por que o agente está calado.
+ *
+ * `manual` é decisão de alguém: clicou em "assumir conversa". Ela não vence —
+ * quem assumiu devolve quando terminar. Já `resposta_no_celular` é dedução do
+ * sistema: o atendente respondeu pelo app do WhatsApp, onde não existe botão
+ * nenhum para clicar, e por isso ela precisa expirar sozinha.
+ *
+ * É essa diferença que decide se há prazo: pausa que alguém pediu só termina
+ * quando alguém disser; pausa que o sistema deduziu não pode durar para sempre
+ * por falta de quem a desfaça.
+ */
+export type AiPauseReason = 'manual' | 'resposta_no_celular';
+
+/**
+ * O agente de IA está pausado nesta conversa?
+ *
+ * A pausa é uma data no futuro, e não um sinalizador: comparar aqui, e não em
+ * cada chamador, é o que impede a tela dizer "pausado" enquanto o despachante
+ * já voltou a mandar evento — os dois leem a mesma linha, com relógios de
+ * processos diferentes.
+ */
+export const isAiPaused = (
+  conversation: Pick<Conversation, 'aiPausedReason' | 'aiPausedUntil'>,
+  now: Date = new Date(),
+): boolean => {
+  if (!conversation.aiPausedReason) return false;
+  // Sem prazo é pausa que não vence: alguém clicou em assumir, e só um clique
+  // desfaz. Dar validade a ela devolveria o agente à conversa no meio de um
+  // atendimento humano, sem ninguém ter pedido — e sem nada avisando.
+  if (!conversation.aiPausedUntil) return true;
+  return Date.parse(conversation.aiPausedUntil) > now.getTime();
+};
 
 /** Ordenacao cronologica confiavel: cai para 0 quando a conversa não tem atividade. */
 export const activityTimeOf = (conversation: Pick<Conversation, 'lastActivityAt'>): number =>

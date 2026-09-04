@@ -32,6 +32,42 @@ export const createAssignConversation =
     return ok(await repository.assign(session.account.id, conversationId, assignee));
   };
 
+export interface SetAiPauseInput {
+  readonly session: Session;
+  readonly conversationId: Id;
+  /** `true` tira o agente da conversa; `false` o devolve antes do prazo. */
+  readonly paused: boolean;
+}
+
+/**
+ * Cala o agente de IA nesta conversa, ou o traz de volta.
+ *
+ * A permissão exigida é a de **responder**, e não a de transferir: quem pode
+ * escrever para o cliente é exatamente quem precisa poder assumir a conversa
+ * das mãos do agente. Pedir a permissão de transferência excluiria o atendente
+ * comum justamente do caso que o botão existe para resolver.
+ *
+ * Pausar carimba quem pausou, para a tela poder dizer de quem é a conversa
+ * agora. Despausar não carimba ninguém: o campo volta a vazio, que é o estado
+ * "o agente responde".
+ */
+export const createSetAiPause =
+  (repository: ConversationWriter) =>
+  async ({ session, conversationId, paused }: SetAiPauseInput): Promise<Result<Conversation>> => {
+    if (!can(session, 'conversas:responder')) {
+      return fail(new DomainError('Sem permissão para pausar o agente.', 'FORBIDDEN'));
+    }
+    if (!paused) {
+      return ok(await repository.resumeAiAgent(session.account.id, conversationId));
+    }
+    return ok(
+      await repository.pauseAiAgent(session.account.id, conversationId, 'manual', {
+        id: session.user.id,
+        name: session.user.name,
+      }),
+    );
+  };
+
 export interface ChangePriorityInput {
   readonly session: Session;
   readonly conversationId: Id;

@@ -27,7 +27,10 @@ import { container } from '../src/infrastructure/container';
 import { prisma } from '../src/infrastructure/db/prisma';
 import { WebhookDeliveryRunner } from '../src/infrastructure/webhooks/webhook-delivery-runner';
 import { dispararWebhooks } from '../src/infrastructure/webhooks/webhook-dispatch';
-import type { SolintRefs, WebhookPayload } from '../src/infrastructure/webhooks/webhook-dispatch';
+import type {
+  SolintRefs,
+  WebhookPayloadEmMontagem,
+} from '../src/infrastructure/webhooks/webhook-dispatch';
 
 const ESPERA_MS = 20_000;
 
@@ -73,7 +76,7 @@ const criarCaixa = async (accountId: string, nome: string) =>
 const payloadDe = (
   contaId: string,
   caixaId: string | undefined,
-): Omit<WebhookPayload, 'destination'> => {
+): WebhookPayloadEmMontagem => {
   const solint: SolintRefs = {
     contaId,
     ...(caixaId ? { caixaEntradaId: caixaId } : {}),

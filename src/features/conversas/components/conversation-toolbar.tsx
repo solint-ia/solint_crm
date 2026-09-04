@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  Bot,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -12,7 +13,7 @@ import {
 } from 'lucide-react';
 import type { WhatsAppTemplate } from '@/core/domain/campaign';
 import type { Conversation, ConversationStatus, Priority } from '@/core/domain/conversation';
-import { PRIORITIES } from '@/core/domain/conversation';
+import { isAiPaused, PRIORITIES } from '@/core/domain/conversation';
 import type { Label } from '@/core/domain/label';
 import type { User } from '@/core/domain/user';
 import { Menu, MenuHeader, MenuItem } from '@/components/ui/menu';
@@ -286,6 +287,66 @@ export function LabelMenu({
         </>
       )}
     </Menu>
+  );
+}
+
+/**
+ * Tira o agente de IA da conversa, ou o devolve.
+ *
+ * Fica fora dos grupos que somem em tela estreita, ao lado do status: é ação
+ * de atendimento, não metadado. Quem precisa dela está no meio de uma conversa
+ * em que o robô está respondendo errado, e procurar o botão num menu escondido
+ * custa exatamente os segundos que importam.
+ *
+ * O prazo só aparece no rótulo quando existe. A pausa do botão não vence — foi
+ * uma pessoa que pediu, e é uma pessoa que desfaz. Já a que nasce de uma
+ * resposta pelo celular expira sozinha, e aí o horário precisa estar à vista:
+ * sem ele, "pausado" seria uma promessa que a tela não cumpre.
+ */
+export function AiPauseButton({
+  conversation,
+  onToggle,
+  pending,
+  formatHour,
+}: {
+  readonly conversation: Conversation;
+  readonly onToggle: (paused: boolean) => void;
+  readonly pending: boolean;
+  readonly formatHour: (iso: string) => string;
+}) {
+  const pausado = isAiPaused(conversation);
+  const porCelular = conversation.aiPausedReason === 'resposta_no_celular';
+
+  const titulo = !pausado
+    ? 'Assumir a conversa e pausar o agente de IA'
+    : porCelular
+      ? `Agente pausado até ${formatHour(conversation.aiPausedUntil!)} porque alguém respondeu pelo celular. Clique para devolver ao agente.`
+      : `Agente pausado${conversation.aiPausedByName ? ` por ${conversation.aiPausedByName}` : ''}. Fica assim até alguém devolver a conversa a ele.`;
+
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(!pausado)}
+      disabled={pending}
+      title={titulo}
+      aria-pressed={pausado}
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold transition-all shadow-2xs cursor-pointer select-none disabled:opacity-60',
+        pausado
+          ? 'bg-amber-500/15 text-amber-600 dark:text-amber-300 border-amber-500/30 hover:bg-amber-500/25'
+          : 'bg-surface-2/70 text-ink border-line hover:bg-surface',
+      )}
+    >
+      {pausado ? <PauseCircle className="size-3.5" /> : <Bot className="size-3.5 text-dim" />}
+      <span className="hidden @2xl:inline">
+        {!pausado
+          ? 'Assumir'
+          : porCelular
+            ? `Você atende · até ${formatHour(conversation.aiPausedUntil!)}`
+            : 'Você atende'}
+      </span>
+      <span className="@2xl:hidden">{pausado ? 'Você atende' : 'Assumir'}</span>
+    </button>
   );
 }
 

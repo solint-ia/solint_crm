@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
+import { isApiTokenActor } from '@/core/domain/user';
 import { MAX_MESSAGE_LENGTH } from '@/core/use-cases/send-message';
 import { sessionFromApiToken } from '@/infrastructure/auth/api-token';
 import { container } from '@/infrastructure/container';
@@ -53,6 +54,36 @@ const corpoSchema = z
   .refine(hasConversationTarget, {
     message: 'Informe conversaId, jid ou number.',
   });
+
+/**
+ * O que toda resposta de envio devolve.
+ *
+ * Antes daqui saíam três campos — id, entregue, enfileirado — e o resto quem
+ * integra tinha de guardar do próprio lado antes de chamar. Isso funciona
+ * enquanto o fluxo é uma linha reta; quebra assim que a resposta é gravada num
+ * log, num Data Store ou numa fila, porque nesses lugares só existe o que o
+ * corpo trouxe. Devolver o texto, o horário e a quem a mensagem foi determina
+ * que uma execução do n8n possa ser auditada sozinha, sem cruzar com o pedido.
+ *
+ * `criadaEm` é o instante em UTC, e `hora` é o rótulo curto que o CRM mostra na
+ * bolha, no fuso da conta. Os dois porque servem a coisas diferentes: um ordena,
+ * o outro aparece para uma pessoa.
+ */
+const corpoDaResposta = (
+  message: { id: string; time: string; createdAt?: string; isPrivate: boolean },
+  conversation: { id: string; inboxId: string; contact: { id: string; name: string } },
+  texto: string,
+) => ({
+  mensagemId: message.id,
+  conversaId: conversation.id,
+  caixaEntradaId: conversation.inboxId,
+  contatoId: conversation.contact.id,
+  contatoNome: conversation.contact.name,
+  texto,
+  notaInterna: message.isPrivate,
+  hora: message.time,
+  ...(message.createdAt ? { criadaEm: message.createdAt } : {}),
+});
 
 /**
  * Código de erro do domínio para status HTTP.
@@ -121,6 +152,41 @@ export async function POST(request: Request) {
     );
   }
 
+  /**
+   * Conversa assumida por uma pessoa não recebe resposta de robô.
+   *
+   * É a única guarda que funciona contra a corrida real: o atendente clica em
+   * "assumir" enquanto o agente já está redigindo, e a resposta chega aqui de
+   * qualquer jeito — o fluxo lá fora leu o estado de segundos atrás. Filtrar só
+   * no n8n deixaria essa janela aberta, e o cliente veria o robô falando por
+   * cima de quem acabou de assumir.
+   *
+   * Vale apenas para token de API. Atendente logado continua enviando: pausar o
+   * agente é justamente para ele poder escrever.
+   */
+  if (isApiTokenActor(session.user.id)) {
+    const conversa = await prisma.conversation.findFirst({
+      where: { id: conversationId, accountId: session.account.id },
+      select: { aiPausedUntil: true, aiPausedReason: true },
+    });
+    const pausado =
+      conversa?.aiPausedReason &&
+      (!conversa.aiPausedUntil || conversa.aiPausedUntil.getTime() > Date.now());
+    if (pausado) {
+      return NextResponse.json(
+        {
+          ok: false,
+          erro: 'Conversa assumida por um atendente: o agente esta pausado.',
+          agentePausado: true,
+          ...(conversa.aiPausedUntil
+            ? { agentePausadoAte: conversa.aiPausedUntil.toISOString() }
+            : {}),
+        },
+        { status: 409 },
+      );
+    }
+  }
+
   const stableMessageId = idempotencyKey
     ? `msg-api-${createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 40)}`
     : undefined;
@@ -134,6 +200,8 @@ export async function POST(request: Request) {
         conversationId: true,
         content: true,
         isPrivate: true,
+        time: true,
+        createdAt: true,
         externalId: true,
         deliveryStatus: true,
         dispatchError: true,
@@ -165,6 +233,11 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       mensagemId: existing.id,
+      conversaId: existing.conversationId,
+      texto: content.text ?? parsed.data.texto,
+      notaInterna: existing.isPrivate,
+      hora: existing.time,
+      criadaEm: existing.createdAt.toISOString(),
       ...(existing.externalId ? { externalId: existing.externalId } : {}),
       entregue: Boolean(existing.externalId),
       enfileirado: !existing.externalId && !existing.isPrivate,
@@ -203,13 +276,15 @@ export async function POST(request: Request) {
   const { conversation } = resultado.value;
   const message = resultado.value.message;
 
+  const corpo = corpoDaResposta(message, conversation, parsed.data.texto);
+
   // Nota interna termina aqui: ela é registro do CRM e nunca vai para o canal.
   if (isPrivate) {
-    return NextResponse.json({ ok: true, mensagemId: message.id, entregue: false });
+    return NextResponse.json({ ok: true, ...corpo, entregue: false });
   }
 
   if (conversation.channel !== 'whatsapp') {
-    return NextResponse.json({ ok: true, mensagemId: message.id, entregue: false });
+    return NextResponse.json({ ok: true, ...corpo, entregue: false });
   }
 
   const channel = await getWhatsAppChannel();
@@ -228,14 +303,7 @@ export async function POST(request: Request) {
       },
       data: { deliveryStatus: 'falha', dispatchError: error },
     });
-    return NextResponse.json(
-      {
-        ok: false,
-        mensagemId: message.id,
-        erro: error,
-      },
-      { status: 503 },
-    );
+    return NextResponse.json({ ok: false, ...corpo, entregue: false, erro: error }, { status: 503 });
   }
 
   const enviado = await channel.sendText(
@@ -259,7 +327,7 @@ export async function POST(request: Request) {
       },
       data: { deliveryStatus: 'falha', dispatchError: error },
     });
-    return NextResponse.json({ ok: false, mensagemId: message.id, erro: error }, { status: 502 });
+    return NextResponse.json({ ok: false, ...corpo, entregue: false, erro: error }, { status: 502 });
   }
 
   // `queued` é o motor worker dizendo "aceitei, ainda não enviei" — o mesmo
@@ -274,7 +342,7 @@ export async function POST(request: Request) {
     );
     return NextResponse.json({
       ok: true,
-      mensagemId: message.id,
+      ...corpo,
       externalId: enviado.externalId,
       entregue: true,
     });
@@ -282,7 +350,7 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     ok: true,
-    mensagemId: message.id,
+    ...corpo,
     entregue: false,
     enfileirado: true,
   });

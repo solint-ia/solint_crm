@@ -6,6 +6,7 @@ import {
   assignConversationAction,
   cancelScheduledMessageAction,
   changeConversationPriorityAction,
+  setConversationAiPauseAction,
   changeConversationStatusAction,
   deleteMessageAction,
   listScheduledMessagesAction,
@@ -90,6 +91,7 @@ export async function InboxData({
       markAsRead={markConversationReadAction}
       assign={assignConversationAction}
       changePriority={changeConversationPriorityAction}
+      setAiPause={setConversationAiPauseAction}
       setLabels={setConversationLabelsAction}
       setContactLabels={setContactLabelsAction}
       sendTemplate={sendTemplateAction}

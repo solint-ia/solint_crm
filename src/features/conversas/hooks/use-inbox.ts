@@ -58,6 +58,10 @@ interface UseInboxParams {
     conversationId: string;
     priority: Priority;
   }) => Promise<{ ok: boolean; error?: string }>;
+  readonly setAiPause?: (input: {
+    conversationId: string;
+    paused: boolean;
+  }) => Promise<{ ok: boolean; error?: string }>;
   readonly setLabels?: (input: {
     conversationId: string;
     labelIds: readonly string[];
@@ -136,6 +140,7 @@ export function useInbox({
   markAsRead,
   assign,
   changePriority,
+  setAiPause,
   setLabels,
   sendTemplate,
   sendMedia,
@@ -773,6 +778,26 @@ export function useInbox({
     [selected, changePriority, optimistic],
   );
 
+  /**
+   * Pausar não recebe atualização otimista.
+   *
+   * O vencimento é calculado no servidor, a partir do ajuste da caixa — o
+   * cliente não o conhece. Adivinhar aqui faria a tela mostrar um horário que
+   * se corrige sozinho um segundo depois, e o horário é justamente o que essa
+   * etiqueta existe para dizer. O estado de "salvando" cobre a espera; o valor
+   * certo chega pelo evento de tempo real que a action publica.
+   */
+  const [aiPausePending, setAiPausePending] = useState(false);
+  const handleToggleAiPause = useCallback(
+    (paused: boolean) => {
+      if (!selected || !setAiPause) return;
+      const id = selected.id;
+      setAiPausePending(true);
+      void setAiPause({ conversationId: id, paused }).finally(() => setAiPausePending(false));
+    },
+    [selected, setAiPause],
+  );
+
   const handleSetLabels = useCallback(
     (labels: readonly Label[]) => {
       if (!selected || !setLabels) return;
@@ -875,6 +900,8 @@ export function useInbox({
     changeStatus: handleChangeStatus,
     assign: handleAssign,
     changePriority: handleChangePriority,
+    toggleAiPause: handleToggleAiPause,
+    aiPausePending,
     setLabels: handleSetLabels,
     setContactLabels: handleSetContactLabels,
     sendTemplate: handleSendTemplate,

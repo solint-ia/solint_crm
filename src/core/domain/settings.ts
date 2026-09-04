@@ -49,6 +49,8 @@ export interface ChannelConnection {
    * um minuto e uma loja que responde em vinte não querem avisar na mesma hora.
    */
   readonly waitingMessageDelayMinutes: number;
+  /** Minutos que o agente fica fora quando o atendente responde pelo app do WhatsApp. */
+  readonly aiPauseChannelReplyMinutes: number;
   /** Pergunta a nota de 1 a 5 ao cliente quando o atendimento é encerrado. */
   readonly csatEnabled: boolean;
   readonly csatQuestion?: string;

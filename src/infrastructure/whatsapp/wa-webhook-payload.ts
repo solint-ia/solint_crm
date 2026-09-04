@@ -6,7 +6,10 @@ import {
   type WAMessageContent,
 } from '@whiskeysockets/baileys';
 
-import type { SolintRefs, WebhookPayload } from '@/infrastructure/webhooks/webhook-dispatch';
+import type {
+  SolintRefs,
+  WebhookPayloadEmMontagem,
+} from '@/infrastructure/webhooks/webhook-dispatch';
 
 /**
  * Tradução da mensagem crua do WhatsApp para o corpo entregue aos webhooks.
@@ -270,7 +273,7 @@ export interface UpsertPayloadInput {
  */
 export const buildUpsertPayload = (
   entrada: UpsertPayloadInput,
-): Omit<WebhookPayload, 'destination'> => {
+): WebhookPayloadEmMontagem => {
   const { raw } = entrada;
 
   // Desembrulha `ephemeralMessage`/`viewOnceMessage` pela mesma razão de

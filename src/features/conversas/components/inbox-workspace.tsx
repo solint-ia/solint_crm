@@ -71,6 +71,10 @@ interface InboxWorkspaceProps {
     conversationId: string;
     priority: Priority;
   }) => Promise<{ ok: boolean; error?: string }>;
+  readonly setAiPause: (input: {
+    conversationId: string;
+    paused: boolean;
+  }) => Promise<{ ok: boolean; error?: string }>;
   readonly setLabels: (input: {
     conversationId: string;
     labelIds: readonly string[];
@@ -153,6 +157,7 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
     markAsRead: props.markAsRead,
     assign: props.assign,
     changePriority: props.changePriority,
+    setAiPause: props.setAiPause,
     setLabels: props.setLabels,
     sendTemplate: props.sendTemplate,
     sendMedia: props.sendMedia,
@@ -437,6 +442,8 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
               onChangeStatus={inbox.changeStatus}
               onAssign={inbox.assign}
               onChangePriority={inbox.changePriority}
+              onToggleAiPause={inbox.toggleAiPause}
+              aiPausePending={inbox.aiPausePending}
               onSetLabels={inbox.setLabels}
               onBack={() => setPane('lista')}
               isContextOpen={isContextOpen}

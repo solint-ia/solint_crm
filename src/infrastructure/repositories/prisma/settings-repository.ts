@@ -466,6 +466,9 @@ export class PrismaSettingsRepository implements SettingsRepository {
           ...(patch.greeting ? { greeting: asJson(patch.greeting) } : {}),
           ...(patch.closingMessage ? { closingMessage: asJson(patch.closingMessage) } : {}),
           ...(patch.waitingMessage ? { waitingMessage: asJson(patch.waitingMessage) } : {}),
+          ...(patch.aiPauseChannelReplyMinutes === undefined
+            ? {}
+            : { aiPauseChannelReplyMinutes: patch.aiPauseChannelReplyMinutes }),
           ...(patch.waitingMessageDelayMinutes === undefined
             ? {}
             : { waitingMessageDelayMinutes: patch.waitingMessageDelayMinutes }),

@@ -21,6 +21,7 @@ import type {
   TimelineEvent,
 } from '@/core/domain/contact';
 import type {
+  AiPauseReason,
   Conversation,
   ConversationStatus,
   Priority,
@@ -256,6 +257,16 @@ export const conversationRow = (row: ConversationWithRelations): Conversation =>
   ...(row.lastInboundAt ? { lastInboundAt: row.lastInboundAt } : {}),
   ...(row.channelOffline === null ? {} : { channelOffline: row.channelOffline }),
   ...(row.channelThreadId ? { channelThreadId: row.channelThreadId } : {}),
+  // A pausa vencida não vira campo: o domínio trata ausência de motivo como
+  // "agente ativo", e mandar uma data do passado obrigaria cada tela a repetir
+  // a comparação — inclusive as que só querem saber se mostram o aviso.
+  ...(row.aiPausedReason && (!row.aiPausedUntil || row.aiPausedUntil.getTime() > Date.now())
+    ? {
+        aiPausedReason: row.aiPausedReason as AiPauseReason,
+        ...(row.aiPausedUntil ? { aiPausedUntil: row.aiPausedUntil.toISOString() } : {}),
+        ...(row.aiPausedByName ? { aiPausedByName: row.aiPausedByName } : {}),
+      }
+    : {}),
 });
 
 /**
@@ -458,6 +469,7 @@ export const connectionRow = (row: DbInbox): ChannelConnection => ({
   closingMessage: normalizeAutoReply(row.closingMessage),
   waitingMessage: normalizeAutoReply(row.waitingMessage),
   waitingMessageDelayMinutes: row.waitingMessageDelayMinutes || 5,
+  aiPauseChannelReplyMinutes: row.aiPauseChannelReplyMinutes || 30,
   csatEnabled: row.csatEnabled,
   ...(row.csatQuestion ? { csatQuestion: row.csatQuestion } : {}),
   ...(row.webhookUrl ? { webhookUrl: row.webhookUrl } : {}),
