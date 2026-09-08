@@ -693,7 +693,7 @@ function InboxDetail({
   );
 
   const [waitingDelay, setWaitingDelay] = useState(connection.waitingMessageDelayMinutes || 5);
-  const [aiPauseCanal, setAiPauseCanal] = useState(connection.aiPauseChannelReplyMinutes || 30);
+  const [aiPauseCanal, setAiPauseCanal] = useState(connection.aiPauseChannelReplyMinutes || 10);
   const [csatEnabled, setCsatEnabled] = useState(connection.csatEnabled ?? false);
   const [csatQuestion, setCsatQuestion] = useState(connection.csatQuestion ?? '');
   const [saving, setSaving] = useState(false);
@@ -720,7 +720,7 @@ function InboxDetail({
         },
       ) ||
     waitingDelay !== (connection.waitingMessageDelayMinutes || 5) ||
-    aiPauseCanal !== (connection.aiPauseChannelReplyMinutes || 30) ||
+    aiPauseCanal !== (connection.aiPauseChannelReplyMinutes || 10) ||
     csatEnabled !== (connection.csatEnabled ?? false) ||
     csatQuestion !== (connection.csatQuestion ?? '');
 
@@ -752,7 +752,7 @@ function InboxDetail({
       },
     );
     setWaitingDelay(connection.waitingMessageDelayMinutes || 5);
-    setAiPauseCanal(connection.aiPauseChannelReplyMinutes || 30);
+    setAiPauseCanal(connection.aiPauseChannelReplyMinutes || 10);
     setCsatEnabled(connection.csatEnabled ?? false);
     setCsatQuestion(connection.csatQuestion ?? '');
     setError(undefined);
@@ -1056,8 +1056,9 @@ function InboxDetail({
 
           <div className="mt-3.5 flex flex-col gap-3">
             <p className="text-xs text-muted">
-              Quando alguém clica em <strong className="text-ink">Assumir</strong> na conversa, o
-              agente fica fora dela até que alguém o devolva. Não há prazo: quem assumiu decide
+              Quando alguém clica em <strong className="text-ink">Pausar IA</strong> na conversa, o
+              agente fica fora dela até que alguém clique em{' '}
+              <strong className="text-ink">Iniciar IA</strong>. Não há prazo: quem pausou decide
               quando termina.
             </p>
 

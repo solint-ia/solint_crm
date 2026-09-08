@@ -468,7 +468,7 @@ export const connectionRow = (row: DbInbox): ChannelConnection => ({
   closingMessage: normalizeAutoReply(row.closingMessage),
   waitingMessage: normalizeAutoReply(row.waitingMessage),
   waitingMessageDelayMinutes: row.waitingMessageDelayMinutes || 5,
-  aiPauseChannelReplyMinutes: row.aiPauseChannelReplyMinutes || 30,
+  aiPauseChannelReplyMinutes: row.aiPauseChannelReplyMinutes || 10,
   csatEnabled: row.csatEnabled,
   ...(row.csatQuestion ? { csatQuestion: row.csatQuestion } : {}),
   ...(row.webhookUrl ? { webhookUrl: row.webhookUrl } : {}),

@@ -298,6 +298,12 @@ export function LabelMenu({
  * em que o robô está respondendo errado, e procurar o botão num menu escondido
  * custa exatamente os segundos que importam.
  *
+ * **O rótulo nomeia a ação, não o estado.** Era "Assumir"/"Você atende", que
+ * obrigava a ler o ícone e a cor para saber o que o clique ia fazer — e, pior,
+ * não dizia em lugar nenhum que o alvo era o agente de IA. "Pausar IA" e
+ * "Iniciar IA" dizem. O estado continua legível pelo `aria-pressed`, pela cor
+ * âmbar e pelo ícone.
+ *
  * O prazo só aparece no rótulo quando existe. A pausa do botão não vence — foi
  * uma pessoa que pediu, e é uma pessoa que desfaz. Já a que nasce de uma
  * resposta pelo celular expira sozinha, e aí o horário precisa estar à vista:
@@ -318,7 +324,7 @@ export function AiPauseButton({
   const porCelular = conversation.aiPausedReason === 'resposta_no_celular';
 
   const titulo = !pausado
-    ? 'Assumir a conversa e pausar o agente de IA'
+    ? 'Pausar o agente de IA e assumir a conversa'
     : porCelular
       ? `Agente pausado até ${formatHour(conversation.aiPausedUntil!)} porque alguém respondeu pelo celular. Clique para devolver ao agente.`
       : `Agente pausado${conversation.aiPausedByName ? ` por ${conversation.aiPausedByName}` : ''}. Fica assim até alguém devolver a conversa a ele.`;
@@ -340,12 +346,12 @@ export function AiPauseButton({
       {pausado ? <PauseCircle className="size-3.5" /> : <Bot className="size-3.5 text-dim" />}
       <span className="hidden @2xl:inline">
         {!pausado
-          ? 'Assumir'
+          ? 'Pausar IA'
           : porCelular
-            ? `Você atende · até ${formatHour(conversation.aiPausedUntil!)}`
-            : 'Você atende'}
+            ? `Iniciar IA · volta ${formatHour(conversation.aiPausedUntil!)}`
+            : 'Iniciar IA'}
       </span>
-      <span className="@2xl:hidden">{pausado ? 'Você atende' : 'Assumir'}</span>
+      <span className="@2xl:hidden">{pausado ? 'Iniciar IA' : 'Pausar IA'}</span>
     </button>
   );
 }

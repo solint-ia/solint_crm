@@ -748,7 +748,7 @@ model Inbox {
   /// Curto de proposito: aqui a pausa e um palpite do sistema, e nao a decisao
   /// de alguem. Errar para menos devolve o agente cedo demais uma vez; errar
   /// para mais deixa o cliente sem resposta sem ninguem ter pedido isso.
-  aiPauseChannelReplyMinutes Int     @default(30)
+  aiPauseChannelReplyMinutes Int     @default(10)
   /// Pergunta a nota de 1 a 5 ao cliente quando o atendimento é encerrado.
   csatEnabled                Boolean @default(false)
   csatQuestion               String?

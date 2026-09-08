@@ -57,7 +57,7 @@ const inboxScope = (access: InboxAccess) =>
  * para desfazê-la —, então ela vence sozinha. E ela nunca sobrescreve a do
  * botão: a sequência é banal (o atendente assume e, cinco minutos depois,
  * responde pelo aparelho) e sobrescrever transformaria uma pausa sem prazo numa
- * de meia hora, por causa de um ato do próprio atendente.
+ * de dez minutos, por causa de um ato do próprio atendente.
  *
  * A saída sem escrita também é o que torna a chamada segura de repetir: cada
  * mensagem mandada pelo celular passa por aqui, e só a primeira de cada janela
