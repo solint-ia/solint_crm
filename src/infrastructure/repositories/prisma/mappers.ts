@@ -14,12 +14,7 @@ import type {
 import { AUTOMATION_CONDITION_LOGICS } from '@/core/domain/automation';
 import { normalizeAutoReply, normalizeBusinessHours } from '@/core/domain/business-hours';
 import type { Channel } from '@/core/domain/channel';
-import type {
-  Contact,
-  ContactPartner,
-  CustomField,
-  TimelineEvent,
-} from '@/core/domain/contact';
+import type { Contact, ContactPartner, CustomField, TimelineEvent } from '@/core/domain/contact';
 import type {
   AiPauseReason,
   Conversation,
@@ -119,6 +114,9 @@ export const contactRow = (row: ContactWithLabels): Contact => ({
   ...(row.kind ? { kind: row.kind as Contact['kind'] } : {}),
   ...(row.avatarUrl ? { avatarUrl: row.avatarUrl } : {}),
   ...(row.participantCount === null ? {} : { participantCount: row.participantCount }),
+  ...(row.whatsappOptOutAt ? { whatsappOptOutAt: row.whatsappOptOutAt.toISOString() } : {}),
+  ...(row.whatsappOptOutReason ? { whatsappOptOutReason: row.whatsappOptOutReason } : {}),
+  ...(row.whatsappOptInAt ? { whatsappOptInAt: row.whatsappOptInAt.toISOString() } : {}),
 });
 
 /**

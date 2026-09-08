@@ -75,6 +75,23 @@ export async function dispatchAutoMessage({
 }: AutoMessageOptions) {
   if (!text || !text.trim()) return null;
 
+  // Todas as automaticas convergem aqui. Bloquear antes de criar a mensagem
+  // impede saudacao, ausencia, CSAT e regras de contornarem um opt-out.
+  const eligible = await prisma.conversation.findFirst({
+    where: { id: conversationId, accountId, inboxId },
+    select: {
+      aiPausedReason: true,
+      contact: { select: { whatsappOptOutAt: true } },
+    },
+  });
+  if (
+    !eligible ||
+    eligible.contact.whatsappOptOutAt ||
+    eligible.aiPausedReason === 'solicitacao_humana'
+  ) {
+    return null;
+  }
+
   /**
    * As automáticas também aceitam variáveis.
    *
@@ -119,6 +136,17 @@ export async function dispatchAutoMessage({
       },
     });
 
+    if (workerMode) {
+      await tx.whatsAppCommand.create({
+        data: {
+          inboxId,
+          kind: 'read',
+          payload: { conversationId },
+          status: 'pending',
+        },
+      });
+    }
+
     const command = workerMode
       ? await tx.whatsAppCommand.create({
           data: {
@@ -133,6 +161,7 @@ export async function dispatchAutoMessage({
               accountId,
               conversationId,
               messageId: created.id,
+              trafficClass: 'automated',
             },
             status: 'pending',
             idempotencyKey: `message:${created.id}`,
@@ -161,12 +190,14 @@ export async function dispatchAutoMessage({
       // Dentro do servidor Next.js
       const { getWhatsAppChannel } = await import('./channel-provider');
       const channel = await getWhatsAppChannel();
+      await channel.markRead(accountId, conversationId, inboxId);
       const resultado = await channel.sendText(
         {
           accountId,
           conversationId,
           messageId: created.id,
           inboxId,
+          trafficClass: 'automated',
         },
         {
           channelThreadId: recipient.channelThreadId ?? undefined,

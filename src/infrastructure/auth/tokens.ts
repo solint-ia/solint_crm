@@ -1,4 +1,5 @@
-import { jwtVerify, SignJWT } from 'jose';
+import { SignJWT } from 'jose/jwt/sign';
+import { jwtVerify } from 'jose/jwt/verify';
 
 /**
  * Emissão e verificação do token de sessão.

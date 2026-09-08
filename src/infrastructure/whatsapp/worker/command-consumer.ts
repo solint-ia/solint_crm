@@ -65,6 +65,15 @@ const MAX_TENTATIVAS = 5;
 const COMMAND_LEASE_MS = 60_000;
 const LEASE_RENEW_MS = 20_000;
 
+const intervalFromEnv = (name: string, fallback: number): number => {
+  const parsed = Number.parseInt(process.env[name] ?? '', 10);
+  return Number.isFinite(parsed) ? Math.min(Math.max(parsed, 0), 5_000) : fallback;
+};
+
+/** Backpressure previsivel; nao usa jitter nem tenta imitar comportamento humano. */
+const AUTOMATED_MIN_INTERVAL_MS = intervalFromEnv('WA_AUTOMATED_MIN_INTERVAL_MS', 750);
+const HUMAN_MIN_INTERVAL_MS = intervalFromEnv('WA_HUMAN_MIN_INTERVAL_MS', 0);
+
 interface CommandRow {
   readonly id: string;
   readonly sequence: bigint;
@@ -104,6 +113,8 @@ export class CommandConsumer {
    * isso seria refeito a cada ciclo.
    */
   private readonly inFlight = new Set<string>();
+  /** Ultimo inicio de envio por caixa; caixas distintas nunca esperam entre si. */
+  private readonly lastOutboundAt = new Map<string, number>();
 
   constructor(sessionManager: WhatsAppSessionManager) {
     this.sessionManager = sessionManager;
@@ -457,6 +468,30 @@ export class CommandConsumer {
     );
   }
 
+  private async paceOutbound(inboxId: string, trafficClass: unknown): Promise<void> {
+    const interval =
+      trafficClass === 'automated' ? AUTOMATED_MIN_INTERVAL_MS : HUMAN_MIN_INTERVAL_MS;
+    const waitMs = interval - (Date.now() - (this.lastOutboundAt.get(inboxId) ?? 0));
+    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+    this.lastOutboundAt.set(inboxId, Date.now());
+  }
+
+  /** Revalida automaticas no ultimo ponto seguro antes de tocar o socket. */
+  private async assertAutomatedRecipientAllowed(payload: Record<string, unknown>): Promise<void> {
+    if (payload['trafficClass'] !== 'automated') return;
+    const conversationId = payload['conversationId'];
+    const accountId = payload['accountId'];
+    if (typeof conversationId !== 'string' || typeof accountId !== 'string') return;
+
+    const conversation = await prisma.conversation.findFirst({
+      where: { id: conversationId, accountId },
+      select: { contact: { select: { whatsappOptOutAt: true } } },
+    });
+    if (conversation?.contact.whatsappOptOutAt) {
+      throw new Error('Envio automatico cancelado: o contato solicitou opt-out do WhatsApp.');
+    }
+  }
+
   private async executeCommand(cmd: CommandRow): Promise<void> {
     const { inboxId, kind } = cmd;
     const payload = (cmd.payload && typeof cmd.payload === 'object' ? cmd.payload : {}) as Record<
@@ -477,6 +512,8 @@ export class CommandConsumer {
 
       case 'send': {
         const session = await this.sessaoPronta(inboxId);
+        await this.assertAutomatedRecipientAllowed(payload);
+        await this.paceOutbound(inboxId, payload['trafficClass']);
         const quote = payload['quote'] as
           { externalId: string; fromMe: boolean; text: string } | undefined;
         const externalId = await session.sendMessage(
@@ -487,7 +524,6 @@ export class CommandConsumer {
           },
           (payload['content'] ?? {}) as { text?: string },
           {
-            ...((payload['options'] ?? {}) as { paced?: boolean }),
             ...(quote ? { quote } : {}),
             ...(typeof payload['messageId'] === 'string'
               ? { providerMessageId: providerMessageIdFor(payload['messageId']) }
@@ -543,6 +579,8 @@ export class CommandConsumer {
 
       case 'send_media': {
         const session = await this.sessaoPronta(inboxId);
+        await this.assertAutomatedRecipientAllowed(payload);
+        await this.paceOutbound(inboxId, payload['trafficClass']);
         const media = (payload['media'] ?? {}) as {
           kind?: 'image' | 'video' | 'audio' | 'document';
           mediaId?: string;
@@ -617,8 +655,16 @@ export class CommandConsumer {
           jid?: string;
           channelThreadId?: string;
         };
-        const status = (payload['status'] ?? 'composing') as 'composing' | 'paused' | 'recording';
-        await session.sendPresence(recipient, status);
+        const rawStatus = payload['status'];
+        const status =
+          rawStatus === 'paused' || rawStatus === 'recording' || rawStatus === 'composing'
+            ? rawStatus
+            : 'composing';
+        const durationMs =
+          typeof payload['durationMs'] === 'number' && Number.isFinite(payload['durationMs'])
+            ? Math.min(Math.max(Math.trunc(payload['durationMs']), 0), 6_000)
+            : undefined;
+        await session.sendPresence(recipient, status, durationMs);
         break;
       }
 

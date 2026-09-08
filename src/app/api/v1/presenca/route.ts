@@ -34,9 +34,9 @@ const bodySchema = z
      * Quanto tempo, em milissegundos, o indicador fica visível antes da rota
      * responder.
      *
-     * Sem este campo a chamada é o que sempre foi: dispara e volta na hora, e o
-     * WhatsApp do destinatário decide sozinho quando o indicador some. Com ele,
-     * a rota segura a resposta pelo tempo pedido e manda `paused` no fim — é o
+     * Sem este campo a rota volta na hora e a sessao sustenta o indicador por
+     * seis segundos em background. Com ele, a rota tambem segura a resposta
+     * pelo tempo pedido e manda `paused` no fim — e o
      * equivalente ao `delay` que a Evolution API aceitava na própria chamada de
      * presença, para quem está migrando um fluxo que dependia disso.
      */
@@ -143,7 +143,12 @@ export async function POST(request: Request) {
     conversationId: conversation.id,
   };
 
-  const dispatched = await channel.sendPresence(context, target, parsed.data.status);
+  const dispatched = await channel.sendPresence(
+    context,
+    target,
+    parsed.data.status,
+    parsed.data.duracaoMs,
+  );
 
   if (!dispatched.ok) {
     return NextResponse.json(
@@ -152,13 +157,20 @@ export async function POST(request: Request) {
     );
   }
 
-  // Segura a resposta pelo tempo pedido, com o indicador no ar, e limpa antes
-  // de devolver. `paused` explícito no fim, e não silêncio: esperar o WhatsApp
-  // do destinatário decidir sozinho quando o indicador some tiraria da rota
-  // justamente a garantia que `duracaoMs` existe para dar.
+  /**
+   * A espera daqui é para **quem chamou**, não para o WhatsApp.
+   *
+   * Quem segura o indicador no ar e um temporizador da sessao, sem ocupar a
+   * fila da caixa; o `paused` sai no fim. Esta pausa existe por outro motivo: um fluxo do n8n
+   * dispara o envio da mensagem no nó seguinte, imediatamente. Sem ela, a
+   * resposta chegaria junto com o "digitando", e o efeito que `duracaoMs`
+   * compra não seria visto por ninguém.
+   *
+   * As duas esperas correm em paralelo e não precisam coincidir no milissegundo:
+   * a do worker governa o que o contato vê, a daqui governa o ritmo do fluxo.
+   */
   if (parsed.data.duracaoMs && parsed.data.status !== 'paused') {
     await dormir(parsed.data.duracaoMs);
-    await channel.sendPresence(context, target, 'paused').catch(() => undefined);
   }
 
   return NextResponse.json({
@@ -167,6 +179,7 @@ export async function POST(request: Request) {
     status: parsed.data.status,
     aceito: true,
     enfileirado: dispatched.queued === true,
+    confirmadoPeloWorker: dispatched.confirmed ?? channel.engine === 'inprocess',
     ...(parsed.data.duracaoMs ? { duracaoMs: parsed.data.duracaoMs } : {}),
   });
 }

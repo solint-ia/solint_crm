@@ -1,0 +1,590 @@
+AUDITORIA DO WORKER WHATSAPP, CONCORRÊNCIA E HOSPEDAGEM
+Projeto: Solint CRM
+Data da revisão: 04/09/2026
+
+======================================================================
+0. ATUALIZAÇÃO APÓS A IMPLEMENTAÇÃO
+======================================================================
+
+As correções de robustez identificadas nesta auditoria foram implementadas no
+código, com exceção deliberada das mudanças de infraestrutura/deploy. Esta
+seção prevalece sobre os diagnósticos históricos das seções seguintes quando
+elas descreverem uma limitação já corrigida.
+
+Principais correções concluídas:
+
+- comandos do WhatsApp agora possuem sequência persistente, idempotência,
+  tentativas, backoff, lease, reaper de itens abandonados e processamento em
+  uma fila estritamente ordenada por inbox; inboxes diferentes continuam em
+  paralelo;
+- envio usa ID estável de mensagem no provedor e persiste o erro de despacho,
+  reduzindo duplicações em retomadas de resultado incerto;
+- respostas automáticas criam mensagem e comando na mesma transação;
+- mensagens agendadas possuem lease e distinguem corretamente "enfileirada"
+  de "enviada"; um recuperador reencaminha mensagens antigas presas em
+  "enviando" sem comando;
+- eventos recebidos são deduplicados no banco antes de alterar não lidas,
+  automações ou webhooks;
+- webhooks usam outbox durável, deduplicação, ordenação por destino,
+  retentativas com backoff e dead-letter após o limite de tentativas;
+- sessões possuem trava por inbox, fencing token monotônico, heartbeat
+  condicionado ao proprietário, proteção contra sockets antigos e liberação
+  exata da geração da trava;
+- mídia e cache agora são identificados por conta, inbox, tipo e origem, com
+  validação do caminho no Storage para impedir colisão entre tenants;
+- credenciais novas usam identificação da chave de criptografia e AAD; há
+  suporte a rotação por WA_ENCRYPTION_KEY_PREVIOUS;
+- runners de background e mensagens agendadas ganharam leases distribuídos;
+- o worker expõe liveness e readiness separadas e encerra de forma ordenada,
+  drenando filas, sessões, webhooks, pub/sub e conexões de banco.
+
+Independência entre duas conexões:
+
+Cada inbox tem socket, credenciais, geração de lock e lane de comandos próprios.
+Uma desconexão, backlog ou comando lento da inbox A não deve assumir, encerrar
+ou reordenar comandos da inbox B. As duas podem ser processadas em paralelo,
+enquanto as ações de uma mesma inbox são serializadas. A independência é
+lógica, não física: todas ainda compartilham processo Node.js, event loop,
+memória e banco. Portanto, crash, OOM, pane do banco ou saturação global podem
+afetar todas as conexões do mesmo worker. Isolamento total de falha exigiria
+processos/réplicas separados por grupo de inboxes, uma decisão de deploy que
+ficou fora desta implementação.
+
+Comportamento ao fechar a página do site:
+
+SIM. Fechar o navegador não encerra a sessão do WhatsApp nem o fluxo do agente.
+A página e o SSE servem somente para interface/atualização visual. Com o worker
+executando, a aplicação/API pública acessível, o banco disponível e o workflow
+do n8n ativo usando a URL de produção, o fluxo continua em background:
+
+WhatsApp -> worker -> banco/outbox -> webhook do n8n -> agente -> POST na API
+do CRM -> fila persistente -> worker -> WhatsApp.
+
+Isso deixa de funcionar se o host suspender o processo, o worker cair, o banco
+ficar indisponível, o workflow estiver inativo, for usada a URL de teste do n8n
+ou a aplicação deixar de estar publicamente acessível. O webhook atualmente
+funcional é o cadastrado na conta (tabela Webhook); Inbox.webhookUrl ainda não
+é consumido pelo despachante, portanto o n8n deve filtrar data.instanceId.
+
+Validação final do código:
+
+- schema Prisma formatado, validado e client regenerado;
+- lint aprovado sem erros ou avisos;
+- typecheck da aplicação aprovado;
+- build TypeScript do worker aprovado;
+- build otimizado do Next.js aprovado, incluindo validação de tipos e geração
+  das 18 páginas estáticas; foi usado `npx next build` para não executar a
+  migração que faz parte do script npm de produção;
+- verificador estático de isolamento aprovado: 280 consultas analisadas e
+  nenhuma consulta escapou do escopo de conta;
+- verificador de tipografia aprovado em 189 arquivos;
+- migração preparada em
+  prisma/migrations/20260904120000_worker_resilience_and_tenant_media,
+  mas NÃO aplicada ao banco, conforme a exclusão de deploy solicitada;
+- não foi disparado um webhook real de produção do n8n, pois isso seria uma
+  ação externa. O comportamento de página fechada foi verificado pela
+  arquitetura e pelo ciclo de vida dos processos, não por uma mensagem real.
+
+Riscos residuais relevantes:
+
+- o processo compartilhado continua sendo um domínio comum de falha;
+- é necessário aplicar a nova migração antes de iniciar esta versão;
+- métricas/alertas externos e teste de carga/falha com n8n real continuam sendo
+  providências operacionais recomendadas;
+- nenhuma revisão honesta pode garantir ausência absoluta de bugs, mas os
+  problemas críticos confirmados de ordenação, retomada, deduplicação, fencing
+  e isolamento de mídia foram tratados no código.
+
+======================================================================
+1. RESUMO EXECUTIVO
+======================================================================
+
+As conexões de WhatsApp têm isolamento lógico por inbox, mas ainda não são
+totalmente independentes. Cada inbox possui seu próprio socket, autenticação,
+estado de reconexão, cache de grupos, presença, contatos e drain. Entretanto,
+todas as conexões do mesmo worker compartilham processo Node.js, event loop,
+memória, pool PostgreSQL, consumidor da fila, limitador de gravação, heartbeat,
+agendadores e alguns caches.
+
+Consequência: desconectar diretamente a conexão A não encerra o socket B, mas
+sobrecarga, falha de banco, vazamento de memória, OOM, crash do processo ou
+starvation provocado por A podem atrasar ou derrubar B.
+
+Não é possível certificar o sistema como isento de bugs no estado atual. Foram
+encontrados problemas confirmados no banco e riscos estruturais no código que
+devem ser corrigidos antes de um deploy considerado robusto.
+
+Recomendação de hospedagem para o momento atual:
+
+- Hostinger VPS KVM 2 para web e worker em containers separados.
+- Continuar usando PostgreSQL e Storage gerenciados pelo Supabase.
+- Se o n8n também ficar na mesma VPS, preferir KVM 4 para ter mais memória.
+- Usar somente uma réplica do worker até concluir fencing, leases e ordenação
+  distribuída.
+- Migrar para AWS gerenciada quando a operação exigir alta disponibilidade,
+  autoscaling, auditoria corporativa e múltiplas réplicas reais.
+
+======================================================================
+2. RESULTADOS CONFIRMADOS NO AMBIENTE
+======================================================================
+
+A inspeção do banco foi somente leitura e encontrou:
+
+- Duas sessões de WhatsApp conectadas simultaneamente no mesmo worker.
+- Um comando sync_groups preso em processing por mais de seis dias.
+- Doze mensagens em enviando há entre três e oito dias, sem externalId.
+- Treze mídias com divergência entre accountId e a conta presente no caminho
+  do arquivo no Storage.
+
+A divergência de mídia é o risco mais grave. O MediaObject.id é global, mas IDs
+de mensagens e avatares do WhatsApp podem se repetir entre contas. Um upsert
+baseado somente no id pode alterar o caminho do Storage e manter outro
+proprietário na linha, provocando mistura de mídia entre tenants.
+
+Validações executadas:
+
+- TypeScript: aprovado.
+- Build do worker: aprovado localmente.
+- Lint: aprovado, sem erros ou avisos.
+- Conexões DATABASE_URL, DIRECT_URL e WORKER_DATABASE_URL: aprovadas.
+- Chave WA_ENCRYPTION_KEY: tamanho válido de 32 bytes.
+- Verificador estático de isolamento de tenant: 277 queries aprovadas.
+
+O verificador estático não detectou o problema concreto de mídia, pois considera
+o MediaObject.id globalmente único. O npm audit não foi concluído porque a
+consulta expirou. Não há uma suíte suficiente de testes de concorrência, crash
+recovery, duas inboxes sob carga ou múltiplas réplicas.
+
+======================================================================
+3. ISOLAMENTO ENTRE DUAS CONEXÕES
+======================================================================
+
+Componentes isolados por inbox:
+
+- Socket do Baileys.
+- Namespace de credenciais e chaves no PostgreSQL.
+- Contadores e timers de reconexão.
+- Cache de grupos, contatos, presença e avatares da sessão.
+- Identificação da última mensagem recebida para leitura.
+- Estado de drain e mensagens tocadas durante o histórico inicial.
+- Lane local de envio identificada pelo inboxId.
+
+Componentes compartilhados e capazes de gerar interferência:
+
+- Processo Node.js, event loop e memória.
+- Pool de conexões PostgreSQL.
+- Cliente de LISTEN/NOTIFY.
+- Heartbeat em lote das travas das sessões.
+- Limitador global de gravação das mensagens recebidas.
+- Seleção global dos 50 comandos mais antigos.
+- Cache e fila de flush das chaves do Baileys.
+- Runners de agendamento, SLA, espera e retenção.
+- Memória usada para baixar e enviar mídias completas.
+- Cache e identificação de mídia sem escopo completo de tenant.
+
+Cenários de interferência possíveis:
+
+1. Uma rajada de inbound na inbox A ocupa o limitador global e atrasa B.
+2. Um webhook lento de A mantém capacidade de gravação ocupada e atrasa B.
+3. A envia mídia grande ao mesmo tempo que B, eleva o RSS e pode derrubar todo
+   o processo por falta de memória.
+4. O backlog de A domina os 50 primeiros comandos e causa starvation em B.
+5. Falha ou saturação do banco impede o heartbeat de todas as sessões.
+6. Uma indisponibilidade maior que o TTL permite que outro worker assuma a
+   trava enquanto o socket antigo ainda está ativo, produzindo split brain.
+7. Uma exceção fatal ou OOM encerra simultaneamente todas as conexões do worker.
+8. O fallback getByAccountId pode executar a sincronização pedida para B usando
+   a sessão A da mesma conta.
+
+Conclusão: há isolamento funcional parcial, mas não há isolamento completo de
+recursos, falhas e justiça de processamento.
+
+======================================================================
+4. AÇÕES E CONCORRÊNCIA
+======================================================================
+
+O consumidor utiliza três lanes locais por inbox:
+
+- envio: send, send_media, delete e react.
+- sessao: connect e disconnect.
+- leitura: read e presence.
+
+Essas lanes são correntes de Promises, não processos independentes. Por serem
+separadas, disconnect pode concorrer com send, e presence pode concorrer com
+send ou disconnect. sync_groups e sync_contacts não estão explicitamente nas
+lanes e entram na lane de leitura por padrão.
+
+As lanes existem somente na memória de um processo. Se dois workers estiverem
+ativos, comandos consecutivos da mesma inbox podem ser reivindicados por
+processos diferentes e executados fora de ordem.
+
+Problema específico da rota de presença:
+
+- O n8n pode fazer o POST de presença antes do POST de envio, mas presence e
+  send entram em lanes diferentes. A ordem real não fica garantida.
+- Se não existir socket ou destinatário válido, sendPresence retorna sem erro.
+- Erros do Baileys são capturados e não chegam ao consumidor.
+- O comando pode ser marcado completed sem emitir o sinal de digitando.
+- Presença antiga não possui TTL e pode ser executada tarde demais.
+
+Correção esperada:
+
+- Ordenação persistente por inbox e conversa.
+- Presence e send da mesma conversa devem respeitar a sequência criada.
+- Presence deve retornar emitted, expired, session_unavailable ou failed.
+- Presença deve ter TTL curto e nunca ser repetida depois de expirar.
+- Connect e disconnect devem ser barreiras exclusivas da inbox.
+
+======================================================================
+5. FILA, ENTREGA E RECUPERAÇÃO
+======================================================================
+
+Problemas encontrados:
+
+- A reivindicação pending -> processing é atômica por linha, mas não possui
+  workerId, claimedAt, leaseUntil ou reaper.
+- Se o processo morrer, a linha pode permanecer processing para sempre. Há um
+  caso real desse problema no banco.
+- Cada worker consulta todos os comandos, mesmo sem possuir a sessão da inbox.
+- Mensagem e comando são criados em operações separadas. Uma falha entre elas
+  deixa a mensagem em enviando sem trabalho correspondente.
+- Um envio pode chegar ao WhatsApp e o processo morrer antes de persistir o
+  externalId. Esse estado é ambíguo e não deve ser reenviado cegamente.
+- O fallback de externalId sent-{timestamp} não prova que o WhatsApp aceitou a
+  mensagem.
+- read, presence e sincronizações podem terminar como sucesso sem executar nada.
+- O stop do consumidor não aguarda as lanes e comandos em andamento.
+- A limpeza remove rapidamente comandos finalizados, mas não recupera processing.
+
+Melhoria necessária:
+
+- Transactional outbox para criar Message e WhatsAppCommand juntos.
+- Estados queued, sending, sent, failed e ambiguous.
+- Lease renovável com workerId e reaper de comandos abandonados.
+- Idempotency key e messageId estável enviado ao Baileys.
+- Consumidor limitado às inboxes cujas travas pertencem ao worker.
+- Seleção justa entre inboxes, evitando que uma conta monopolize o lote.
+- Dead-letter e política explícita de retry por tipo de comando.
+
+======================================================================
+6. RECEBIMENTO, AUTOMAÇÕES E AGENDADORES
+======================================================================
+
+- Eventos assíncronos do mesmo socket não são serializados por inbox.
+- Um evento do socket antigo pode continuar escrevendo depois da reconexão.
+- Falha de banco no inbound é apenas registrada em log; não existe fila durável
+  para repetir o recebimento.
+- O mesmo inbound reprocessado pode incrementar não lidas e disparar novamente
+  automações e webhooks.
+- Webhooks síncronos ocupam o limitador de persistência por até cinco segundos.
+- Runners de agendamento, espera e SLA iniciam em cada réplica do worker.
+- Checks do tipo consultar e depois criar não são atômicos e podem duplicar
+  saudação, ausência, SLA ou mensagem agendada.
+- Mensagem agendada pode ser marcada sent quando foi apenas colocada na fila.
+
+Correções:
+
+- Executor/event queue por inbox com generation/fencing token.
+- Commit do inbound idempotente e efeitos apenas quando a linha for nova.
+- Outbox durável de webhooks com retry, backoff e dead-letter.
+- Lease/liderança distribuída para runners.
+- Chaves únicas de idempotência para automações e agendamentos.
+
+======================================================================
+7. CICLO DE VIDA, SEGURANÇA E OBSERVABILIDADE
+======================================================================
+
+Problemas:
+
+- /health responde 200 sem validar banco, listener, fila, criptografia ou idade
+  do heartbeat.
+- Shutdown não espera servidor HTTP, runners, lanes e operações em andamento.
+- Múltiplos sinais podem iniciar shutdown concorrente.
+- unhandledRejection mantém um processo potencialmente inconsistente vivo.
+- A trava usa relógio da aplicação e não possui fencing token monotônico.
+- Um worker antigo pode atualizar status, credenciais e chaves depois que outro
+  assumiu a sessão.
+- WA_ENCRYPTION_KEY não possui versão ou keyring para rotação.
+- Chave incorreta pode fazer sessões serem ignoradas sem derrubar a readiness.
+
+Correções:
+
+- Separar endpoints /live e /ready.
+- Readiness deve validar banco, listener, consumidor, heartbeat e criptografia.
+- Shutdown drenável, reentrante e com timeout controlado.
+- Usar horário do banco e fencing token em todas as gravações da sessão.
+- Keyring versionado e migração segura de credenciais.
+- Métricas por inbox: backlog, latência, reconnect, lease, memória, mídia,
+  webhook e mensagens antigas.
+
+======================================================================
+8. PLANO PRIORIZADO DE IMPLEMENTAÇÃO
+======================================================================
+
+P0 - Antes do deploy
+
+1. Corrigir identidade e escopo das mídias por accountId e inboxId.
+2. Reconciliar os 13 registros divergentes, com backup prévio.
+3. Adicionar lease, workerId, claimedAt, leaseUntil e reaper à fila.
+4. Reconciliar comando e mensagens antigas sem reenvio automático.
+5. Implementar transactional outbox entre Message e WhatsAppCommand.
+6. Usar ID estável no envio ao Baileys e remover externalId artificial.
+7. Corrigir presença para propagar falhas, ter TTL e preservar ordem com send.
+8. Corrigir o bundle que importa Prisma por caminho absoluto do Windows.
+
+P1 - Independência por inbox
+
+9. Executor persistente e ordenado por inbox/conversa.
+10. Connect/disconnect como barreiras exclusivas.
+11. Remover getByAccountId como fallback operacional.
+12. Consumir apenas comandos de sessões possuídas pelo worker.
+13. Adicionar fencing token e usar relógio do banco.
+14. Aplicar round-robin, quotas e semáforos por inbox.
+15. Limitar memória e concorrência de mídia.
+
+P2 - Automações e consistência
+
+16. Liderança/lease para runners globais.
+17. Idempotência nas mensagens automáticas, SLA e agendamentos.
+18. Fila durável para webhook.
+19. Resultado real para read, delete, react, sync e presence.
+
+P3 - Operação e deploy
+
+20. Shutdown drenável e healthchecks reais.
+21. Logs estruturados, métricas e alertas.
+22. Keyring de criptografia e rotação segura.
+23. Docker multi-stage com Node 24 LTS e usuário não root.
+24. Separar build, migrate e start.
+25. Criar Docker Compose para Hostinger e IaC/task definitions para AWS.
+
+P4 - Testes de aceite
+
+26. Backlog de 1.000 comandos em A com envio simultâneo em B.
+27. Reconexão, sync e mídia em A sem alterar ou atrasar B.
+28. Kill do worker antes e depois do envio ao provedor.
+29. Rolling deploy com dois workers sem duplicar ou inverter mensagens.
+30. Teste de acesso cruzado de mídia entre tenants.
+31. Presença sempre antes do envio correspondente ou falha explícita.
+32. Chave de criptografia incorreta deve derrubar readiness.
+33. Queda do LISTEN deve degradar para polling e depois se recuperar.
+
+======================================================================
+9. COMPARAÇÃO DE HOSPEDAGEM
+======================================================================
+
+Premissas dos custos:
+
+- Consulta realizada em 04/09/2026.
+- Conversão aproximada pela PTAX de venda de 03/09/2026: R$ 5,0962/USD.
+- Valores AWS não incluem impostos, suporte pago ou grandes excessos de tráfego.
+- Banco e Storage atuais podem permanecer no Supabase; seus custos não estão
+  incluídos nos valores de computação.
+- Preços podem mudar e precisam ser confirmados antes da contratação.
+
+---------------------------------------------------------------------
+9.1 HOSTINGER VPS - RECOMENDAÇÃO ATUAL
+---------------------------------------------------------------------
+
+Plano sugerido: KVM 2
+
+- 2 vCPU.
+- 8 GB de RAM.
+- 100 GB NVMe.
+- 8 TB de largura de banda.
+- R$ 43,99/mês no período promocional.
+- O preço é contratado/pago em ciclo de 24 meses: R$ 1.055,76 no ciclo.
+- Renovação informada: R$ 77,99/mês, também em ciclo de 24 meses, ou
+  R$ 1.871,76 por ciclo.
+
+Se também hospedar n8n e outras automações na mesma máquina, considerar KVM 4:
+
+- 4 vCPU, 16 GB RAM e 200 GB NVMe.
+- R$ 59,99/mês promocional.
+- Renovação informada de R$ 149,99/mês.
+
+Vantagens:
+
+- Melhor custo-benefício para o estágio atual.
+- Recursos muito superiores ao custo de uma instância AWS equivalente.
+- Docker, acesso root, firewall, snapshot e backup semanal.
+- Fatura previsível em reais e bastante banda incluída.
+- Web e worker podem ser containers separados na mesma máquina.
+
+Desvantagens:
+
+- Ponto único de falha.
+- Deploy, firewall, atualizações, monitoramento e recuperação são sua
+  responsabilidade.
+- Escala predominantemente vertical e manual.
+- Alta disponibilidade real exige outra VPS e correções de concorrência.
+- Preço promocional exige compromisso antecipado e a renovação é maior.
+
+---------------------------------------------------------------------
+9.2 AWS LIGHTSAIL - ALTERNATIVA AWS SIMPLES
+---------------------------------------------------------------------
+
+Plano equivalente a 8 GB:
+
+- 2 vCPU, 8 GB RAM, 160 GB SSD e IPv4 público.
+- USD 44/mês, aproximadamente R$ 224/mês pela PTAX utilizada.
+- A franquia de transferência em São Paulo é metade da franquia padrão; tráfego
+  excedente de saída custa USD 0,15/GB.
+
+Plano de 4 GB, caso os testes mostrem memória suficiente:
+
+- 2 vCPU, 4 GB RAM e 80 GB SSD.
+- USD 24/mês, aproximadamente R$ 122/mês.
+
+Vantagens:
+
+- Preço AWS mais simples e previsível.
+- Região São Paulo disponível.
+- Integração futura com outros serviços AWS.
+- Snapshot, IP, métricas básicas e transferência incluídos no pacote.
+
+Desvantagens:
+
+- Continua sendo uma única VM, com quase as mesmas responsabilidades da VPS.
+- É substancialmente mais caro que a Hostinger equivalente.
+- CPU é baseada em baseline/burst, não desempenho totalmente dedicado.
+- Menos flexível e resiliente do que ECS/RDS, sem ser tão barato quanto a
+  Hostinger.
+
+---------------------------------------------------------------------
+9.3 AWS GERENCIADA - ECS FARGATE + RDS
+---------------------------------------------------------------------
+
+Arquitetura de referência em São Paulo:
+
+- Serviço ECS web: 0,5 vCPU e 1 GB.
+- Serviço ECS worker: 1 vCPU e 2 GB, inicialmente uma réplica.
+- Application Load Balancer.
+- RDS PostgreSQL Single-AZ pequeno.
+- NAT Gateway para tarefas privadas.
+- ECR, CloudWatch, Secrets Manager e S3.
+
+Valores de referência calculados com preços oficiais de São Paulo:
+
+- Fargate web + worker: cerca de USD 92,86/mês.
+- Application Load Balancer: cerca de USD 25/mês mais LCU.
+- RDS db.t4g.micro + 20 GB: cerca de USD 29/mês.
+- RDS db.t4g.small + 20 GB: cerca de USD 55/mês.
+- Um NAT Gateway: cerca de USD 67,89/mês mais USD 0,093/GB processado.
+- IPv4, logs, imagens e Storage: normalmente mais USD 10 a USD 30/mês em carga
+  pequena.
+
+Total estimado da arquitetura completa:
+
+- USD 230 a USD 300/mês.
+- Aproximadamente R$ 1.170 a R$ 1.530/mês pela PTAX utilizada, antes de impostos.
+
+Se mantiver Supabase e evitar RDS/NAT com uma configuração mais econômica, a
+faixa pode cair para aproximadamente USD 130 a USD 170/mês, ou R$ 660 a
+R$ 870/mês, mas com compromissos de segurança/rede e menor isolamento.
+
+Vantagens:
+
+- Infraestrutura reproduzível, métricas, IAM, Secrets Manager e auditoria.
+- Deploy automatizado e rollback mais maduro.
+- Escala horizontal e serviços gerenciados.
+- Caminho melhor para alta disponibilidade e operação empresarial.
+
+Desvantagens:
+
+- Custo de cinco a vinte vezes maior, dependendo da comparação.
+- Mais complexidade de rede, IAM, ECS, RDS, logs e controle de custos.
+- NAT Gateway e região São Paulo elevam bastante a fatura.
+- A aplicação ainda precisa das correções de fencing e fila; ECS por si só não
+  elimina duplicidade ou split brain.
+- Um rolling deploy padrão pode sobrepor worker antigo e novo.
+
+======================================================================
+10. DECISÃO RECOMENDADA
+======================================================================
+
+Escolha recomendada agora: HOSTINGER VPS KVM 2.
+
+Motivos:
+
+1. O projeto ainda deve operar com uma réplica do worker.
+2. A alta disponibilidade da AWS não pode ser plenamente usada antes das
+   correções de fila, fencing e ordenação.
+3. KVM 2 oferece 8 GB de RAM, suficiente folga inicial para Next.js e Baileys.
+4. O custo é muito menor e a implantação é mais simples.
+5. PostgreSQL e mídia já podem permanecer em serviços externos gerenciados.
+
+Escolher AWS gerenciada quando houver pelo menos uma destas necessidades:
+
+- SLA comercial alto e redundância entre zonas.
+- Crescimento que exija múltiplas réplicas.
+- Equipe capaz de operar IAM, VPC, ECS, RDS e observabilidade.
+- Requisitos corporativos de compliance e auditoria.
+- Receita suficiente para absorver uma infraestrutura acima de R$ 1.000/mês.
+
+Se for obrigatório usar AWS agora, Lightsail de 8 GB é a opção de transição
+mais comparável à Hostinger. Ele não oferece a resiliência do ECS, mas evita a
+complexidade e o custo completo da arquitetura gerenciada.
+
+======================================================================
+11. DEPLOY RESUMIDO POR PEÇA
+======================================================================
+
+Hostinger VPS:
+
+1. Instalar Ubuntu, Docker Engine, Compose e Caddy ou Nginx.
+2. CI cria duas imagens da mesma base: web e worker, e publica no GHCR.
+3. Container web executa next start e fica atrás do proxy HTTPS.
+4. Container worker executa diretamente o bundle pronto do worker.
+5. Job migrate executa prisma migrate deploy uma vez antes da atualização.
+6. PostgreSQL e Storage permanecem no Supabase.
+7. Segredos ficam em arquivo de ambiente com permissão restrita, nunca no Git.
+8. Worker usa restart: unless-stopped e apenas healthcheck interno.
+9. Atualização: docker compose pull, migrate, recriar web e depois worker.
+10. n8n usa container e subdomínio separados; se compartilhar a VPS, usar KVM 4.
+
+AWS gerenciada:
+
+1. CI cria imagens web e worker e publica no ECR.
+2. Web roda em um serviço ECS Fargate atrás do ALB e HTTPS/ACM.
+3. Worker roda em serviço ECS separado, desiredCount 1 inicialmente.
+4. Migração roda como ECS Task one-shot antes do deploy.
+5. PostgreSQL vai para RDS privado ou permanece no Supabase.
+6. Mídia vai para S3 ou permanece no Supabase Storage.
+7. Segredos ficam no Secrets Manager e são injetados nas tasks.
+8. Logs e alertas ficam no CloudWatch.
+9. Até existir fencing, configurar deploy do worker sem sobreposição entre task
+   antiga e nova, aceitando breve indisponibilidade.
+10. n8n fica em serviço separado ou em Lightsail dedicado.
+
+======================================================================
+12. FONTES DE PREÇO E IMPLANTAÇÃO
+======================================================================
+
+Hostinger VPS Brasil:
+https://www.hostinger.com/br/servidor-vps
+
+AWS Lightsail:
+https://aws.amazon.com/pt/lightsail/pricing/
+
+Regiões do Lightsail:
+https://docs.aws.amazon.com/pt_br/lightsail/latest/userguide/understanding-regions-and-availability-zones-in-amazon-lightsail.html
+
+Transferência do Lightsail:
+https://docs.aws.amazon.com/pt_br/lightsail/latest/userguide/amazon-lightsail-faq-data-transfer-allowance.html
+
+AWS Fargate:
+https://aws.amazon.com/pt/fargate/pricing/
+
+AWS RDS PostgreSQL:
+https://aws.amazon.com/rds/postgresql/pricing/
+
+AWS VPC/NAT:
+https://aws.amazon.com/vpc/pricing/
+
+PTAX do Banco Central do Brasil:
+https://ptax.bcb.gov.br/ptax_internet/consultarUltimaCotacaoDolar.do
+
+======================================================================
+FIM DO RELATÓRIO
+======================================================================

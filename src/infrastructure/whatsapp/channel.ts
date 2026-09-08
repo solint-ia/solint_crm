@@ -32,6 +32,8 @@ export interface DispatchContext {
    * mensagem vinha de um número que ele não conhecia.
    */
   readonly inboxId: string;
+  /** Classe operacional para backpressure; nunca adiciona jitter ou simula humano. */
+  readonly trafficClass?: 'human' | 'automated';
 }
 
 /**
@@ -70,6 +72,8 @@ export interface DispatchResult {
   readonly externalId?: string;
   /** O envio entrou na fila. A tela mostra "enviando" e o recibo chega depois. */
   readonly queued?: boolean;
+  /** O worker ja executou o comando; ausente nos demais tipos de despacho. */
+  readonly confirmed?: boolean;
   readonly error?: string;
 }
 
@@ -151,11 +155,18 @@ export interface WhatsAppChannel {
   /** `inboxId` é o da conversa: confirmar leitura na sessão errada não confirma nada. */
   markRead(accountId: string, conversationId: string, inboxId?: string): Promise<void>;
 
-  /** Envia sinal de presença (digitando / gravando áudio / pausado) para o contato no WhatsApp */
+  /**
+   * Envia sinal de presença (digitando / gravando áudio / pausado) ao contato.
+   *
+   * `durationMs` sustenta o indicador pelo tempo pedido e manda `paused` no
+   * fim. Sem ele a sessao usa uma janela curta de seis segundos em background;
+   * zero envia somente o chatstate pontual.
+   */
   sendPresence(
     context: { accountId: string; inboxId: string; conversationId: string },
     target: DispatchTarget,
     status: 'composing' | 'paused' | 'recording',
+    durationMs?: number,
   ): Promise<DispatchResult>;
 }
 

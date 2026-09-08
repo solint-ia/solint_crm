@@ -38,6 +38,32 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
   readonly engine = 'worker' as const;
 
   /**
+   * Espera curta pelo inicio real de uma presenca.
+   *
+   * A rota do n8n mede a duracao depois deste retorno. Sem esta confirmacao, os
+   * seis segundos comecavam enquanto o comando ainda estava pendente e a
+   * mensagem seguinte podia sair junto do primeiro `composing`.
+   */
+  private async waitForCommandOutcome(
+    commandId: string,
+    timeoutMs = 1_500,
+  ): Promise<{ status: 'completed' | 'failed' | 'timeout'; error?: string }> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const row = await prisma.whatsAppCommand.findUnique({
+        where: { id: commandId },
+        select: { status: true, error: true },
+      });
+      if (row?.status === 'completed') return { status: 'completed' };
+      if (row?.status === 'failed') {
+        return { status: 'failed', error: row.error ?? 'O worker recusou o comando.' };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return { status: 'timeout' };
+  }
+
+  /**
    * Caixa de WhatsApp da conta. Sem ela não há a quem endereçar o comando.
    *
    * A escolha precisa ser **determinística e informada**, não a primeira que o
@@ -316,6 +342,7 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
           // exclusão (ou uma reação) recusada carimbaria "falha" numa mensagem que
           // foi entregue com sucesso, dizendo o contrário da verdade sobre ela.
           ...(kind === 'delete' || kind === 'react' ? {} : { messageId: context.messageId }),
+          ...(context.trafficClass ? { trafficClass: context.trafficClass } : {}),
         },
         kind === 'send' || kind === 'send_media'
           ? { idempotencyKey: `message:${context.messageId}` }
@@ -394,6 +421,7 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     context: { accountId: string; inboxId: string; conversationId: string },
     target: DispatchTarget,
     status: 'composing' | 'paused' | 'recording',
+    durationMs?: number,
   ): Promise<DispatchResult> {
     if (!context.inboxId) {
       return { ok: false, error: 'Conversa sem caixa de entrada definida.' };
@@ -403,7 +431,7 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     }
 
     try {
-      await this.enqueue(
+      const commandId = await this.enqueue(
         context.inboxId,
         'presence',
         {
@@ -411,10 +439,18 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
           status,
           accountId: context.accountId,
           conversationId: context.conversationId,
+          ...(durationMs !== undefined ? { durationMs } : {}),
         },
-        { expiresAt: new Date(Date.now() + 10_000) },
+        // O prazo cobre a espera que o worker vai segurar, e não só a viagem
+        // até ele: com a validade fixa em dez segundos, um indicador de seis
+        // vencia na fila antes de chegar a ser executado.
+        { expiresAt: new Date(Date.now() + 10_000 + (durationMs ?? 6_000)) },
       );
-      return { ok: true, queued: true };
+      const outcome = await this.waitForCommandOutcome(commandId);
+      if (outcome.status === 'failed') {
+        return { ok: false, error: outcome.error };
+      }
+      return { ok: true, queued: true, confirmed: outcome.status === 'completed' };
     } catch (error) {
       return {
         ok: false,

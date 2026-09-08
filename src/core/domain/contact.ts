@@ -101,7 +101,17 @@ export interface Contact {
   readonly avatarUrl?: string;
   /** Número de participantes — so faz sentido para kind === 'grupo'. */
   readonly participantCount?: number;
+  /** Momento em que o contato pediu para nao receber novos envios. */
+  readonly whatsappOptOutAt?: IsoDateTime;
+  /** Comando normalizado que originou o bloqueio, para auditoria. */
+  readonly whatsappOptOutReason?: string;
+  /** Ultima reautorizacao explicita recebida pelo proprio contato. */
+  readonly whatsappOptInAt?: IsoDateTime;
 }
+
+/** Grupos nao usam consentimento individual; pessoas com opt-out nao recebem. */
+export const canReceiveWhatsApp = (contact: Pick<Contact, 'kind' | 'whatsappOptOutAt'>): boolean =>
+  contact.kind === 'grupo' || !contact.whatsappOptOutAt;
 
 /** Resumo suficiente para navegar pelas listas importadas sem nova requisição. */
 export interface ContactImportBatchSummary {

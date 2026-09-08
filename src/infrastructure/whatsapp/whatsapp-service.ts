@@ -115,6 +115,10 @@ export class WhatsAppService {
     { readonly accountId: string; readonly inboxId: string; readonly conversationId: string }
   >();
   private readonly typingByConversation = new Map<string, boolean>();
+  /** Janelas de presenca enviadas, independentes por chat. */
+  private readonly outboundPresenceTimers = new Map<string, NodeJS.Timeout>();
+  /** `available` e global; este conjunto impede um chat de encerrar outro. */
+  private readonly outboundPresenceOnline = new Set<string>();
   private readonly contactsStore = new Map<string, Partial<WAContact>>();
   /** A agenda completa já foi recebida ou ainda requer um resync manual? */
   private hasAddressBookSnapshot = false;
@@ -669,6 +673,7 @@ export class WhatsAppService {
       for (const conv of recentConversations) {
         if (conv.channelThreadId && isSupportedChatJid(conv.channelThreadId)) {
           this.watchPresence(conv.channelThreadId, { accountId, inboxId, conversationId: conv.id });
+          await new Promise((resolve) => setTimeout(resolve, 40));
         }
       }
     } catch {
@@ -1432,6 +1437,7 @@ export class WhatsAppService {
     }
 
     try {
+      await this.finishOutboundPresence(jid, socket);
       const sent = await socket.sendMessage(
         jid,
         { text },
@@ -1538,6 +1544,7 @@ export class WhatsAppService {
               };
 
     try {
+      await this.finishOutboundPresence(jid, socket);
       const sent = await socket.sendMessage(jid, payload, {
         ...(media.quote ? { quoted: quotedStub(jid, media.quote) } : {}),
         ...(media.providerMessageId ? { messageId: media.providerMessageId } : {}),
@@ -1569,7 +1576,36 @@ export class WhatsAppService {
   async markConversationAsRead(conversationId: string): Promise<void> {
     if (!this.socket || this.currentStatus.status !== 'conectado') return;
 
-    const key = this.lastInboundKey.get(conversationId);
+    const accountId = this.accountId();
+    const inboxId = await this.activeInboxId();
+    if (!accountId || !inboxId) return;
+
+    const conv = await prisma.conversation.findFirst({
+      where: { id: conversationId, accountId, inboxId },
+      select: {
+        channelThreadId: true,
+        contact: { select: { phone: true } },
+        messages: {
+          where: { author: 'contact', externalId: { not: null } },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { externalId: true, senderJid: true },
+        },
+      },
+    });
+    if (!conv) return;
+
+    const latest = conv.messages[0];
+    const key =
+      this.lastInboundKey.get(conversationId) ??
+      (conv.channelThreadId && latest?.externalId
+        ? {
+            remoteJid: conv.channelThreadId,
+            id: latest.externalId,
+            fromMe: false,
+            ...(latest.senderJid ? { participant: latest.senderJid } : {}),
+          }
+        : undefined);
     if (key) {
       try {
         await this.socket.readMessages([key]);
@@ -1579,26 +1615,11 @@ export class WhatsAppService {
       }
     }
 
-    const accountId = this.accountId();
-    const inboxId = await this.activeInboxId();
-    if (!accountId || !inboxId) return;
-
-    const conv = await prisma.conversation.findFirst({
-      where: { id: conversationId, accountId },
-      select: { channelThreadId: true, contact: { select: { phone: true } } },
-    });
-    if (!conv) return;
-
     const raw = conv.channelThreadId ?? conv.contact?.phone;
     const targetJid = raw ? (isSupportedChatJid(raw) ? raw : jidFromPhone(raw)) : undefined;
     if (!targetJid) return;
 
-    try {
-      await this.socket.presenceSubscribe(targetJid);
-      this.watchPresence(targetJid, { accountId, inboxId, conversationId });
-    } catch {
-      // Ignora falha suave
-    }
+    this.watchPresence(targetJid, { accountId, inboxId, conversationId });
   }
 
   async disconnect(): Promise<void> {
@@ -1636,6 +1657,9 @@ export class WhatsAppService {
   }
 
   private teardownSocket() {
+    for (const timer of this.outboundPresenceTimers.values()) clearTimeout(timer);
+    this.outboundPresenceTimers.clear();
+    this.outboundPresenceOnline.clear();
     if (!this.socket) return;
     try {
       this.socket.ev.removeAllListeners('connection.update');
@@ -1783,18 +1807,81 @@ export class WhatsAppService {
     }
   }
 
+  private async finishOutboundPresence(jid: string, socket: WASocket): Promise<void> {
+    const timer = this.outboundPresenceTimers.get(jid);
+    if (timer) clearTimeout(timer);
+    this.outboundPresenceTimers.delete(jid);
+    const wasOnline = this.outboundPresenceOnline.delete(jid);
+    if (!wasOnline) return;
+
+    await socket.sendPresenceUpdate('paused', jid).catch(() => undefined);
+    if (this.outboundPresenceOnline.size === 0 && this.socket === socket) {
+      await socket.sendPresenceUpdate('unavailable').catch(() => undefined);
+    }
+  }
+
+  /** Gemea de `WhatsAppSession.sendPresence`, sem bloquear o request do Next. */
   async sendPresence(
     rawTarget: string,
     status: 'composing' | 'paused' | 'recording',
+    durationMs?: number,
   ): Promise<DispatchResult> {
     if (!this.socket) return { ok: false, error: 'WhatsApp desconectado.' };
     const targetJid = isSupportedChatJid(rawTarget) ? rawTarget : jidFromPhone(rawTarget);
     if (!targetJid) return { ok: false, error: 'Destinatário do WhatsApp inválido.' };
+
+    const socket = this.socket;
     try {
-      await this.socket.presenceSubscribe(targetJid);
-      await this.socket.sendPresenceUpdate(status, targetJid);
+      const duration = Math.min(Math.max(Math.trunc(durationMs ?? 6_000), 0), 6_000);
+      const oldTimer = this.outboundPresenceTimers.get(targetJid);
+
+      if (status === 'paused') {
+        if (oldTimer) clearTimeout(oldTimer);
+        this.outboundPresenceTimers.delete(targetJid);
+        const hadWindow = this.outboundPresenceOnline.has(targetJid);
+        await this.finishOutboundPresence(targetJid, socket);
+        // Mesmo sem janela registrada, encaminha o `paused` explicito.
+        if (!hadWindow) {
+          await socket.sendPresenceUpdate('paused', targetJid);
+        }
+        return { ok: true };
+      }
+
+      if (duration > 0 && oldTimer) clearTimeout(oldTimer);
+      if (duration > 0) this.outboundPresenceTimers.delete(targetJid);
+      if (duration > 0 && !this.outboundPresenceOnline.has(targetJid)) {
+        const firstWindow = this.outboundPresenceOnline.size === 0;
+        this.outboundPresenceOnline.add(targetJid);
+        if (firstWindow) await socket.sendPresenceUpdate('available').catch(() => undefined);
+      }
+
+      // Assinar presenca serve para recebe-la do contato, nao para enviar a nossa.
+      await socket.sendPresenceUpdate(status, targetJid);
+
+      if (duration > 0) {
+        const timer = setTimeout(() => {
+          if (this.outboundPresenceTimers.get(targetJid) !== timer) return;
+          this.outboundPresenceTimers.delete(targetJid);
+          this.outboundPresenceOnline.delete(targetJid);
+          if (this.socket !== socket) return;
+          void socket
+            .sendPresenceUpdate('paused', targetJid)
+            .catch(() => undefined)
+            .finally(() => {
+              if (this.outboundPresenceOnline.size === 0 && this.socket === socket) {
+                void socket.sendPresenceUpdate('unavailable').catch(() => undefined);
+              }
+            });
+        }, duration);
+        timer.unref?.();
+        this.outboundPresenceTimers.set(targetJid, timer);
+      }
       return { ok: true };
     } catch (error) {
+      this.outboundPresenceOnline.delete(targetJid);
+      if (this.outboundPresenceOnline.size === 0 && this.socket === socket) {
+        await socket.sendPresenceUpdate('unavailable').catch(() => undefined);
+      }
       return {
         ok: false,
         error: error instanceof Error ? error.message : 'Falha ao emitir presença no WhatsApp.',

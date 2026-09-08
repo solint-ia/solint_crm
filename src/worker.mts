@@ -81,6 +81,7 @@ async function main() {
           accountId: envio.accountId,
           conversationId: envio.conversationId,
           messageId: envio.messageId,
+          trafficClass: 'automated',
         },
         status: 'pending',
         idempotencyKey: `message:${envio.messageId}`,

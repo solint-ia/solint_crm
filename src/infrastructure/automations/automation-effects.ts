@@ -110,9 +110,7 @@ export const prismaAutomationEffects: AutomationEffects = {
     });
 
     if (atual?.status !== 'resolvida') {
-      const { runClosingAutoReply } = await import(
-        '@/infrastructure/whatsapp/inbox-auto-messages'
-      );
+      const { runClosingAutoReply } = await import('@/infrastructure/whatsapp/inbox-auto-messages');
       await runClosingAutoReply(accountId, conversationId).catch((error) => {
         console.warn('[automacoes] Falha ao despachar o encerramento automático:', error);
       });
@@ -137,10 +135,13 @@ export const prismaAutomationEffects: AutomationEffects = {
         inboxId: true,
         channel: true,
         channelThreadId: true,
-        contact: { select: { phone: true } },
+        contact: { select: { phone: true, whatsappOptOutAt: true } },
       },
     });
     if (!conversation) throw new Error('Conversa não encontrada.');
+    if (conversation.channel === 'whatsapp' && conversation.contact.whatsappOptOutAt) {
+      return { suppressed: true, reason: 'whatsapp_opt_out' };
+    }
 
     const { dispatchAutoMessage } = await import('@/infrastructure/whatsapp/auto-reply');
     const message = await dispatchAutoMessage({

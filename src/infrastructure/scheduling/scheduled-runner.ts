@@ -245,7 +245,7 @@ export class ScheduledMessageRunner {
         lastMessagePreview: true,
         protocols: true,
         account: { select: { name: true } },
-        contact: { select: { phone: true, name: true } },
+        contact: { select: { phone: true, name: true, whatsappOptOutAt: true } },
       },
     });
 
@@ -255,6 +255,24 @@ export class ScheduledMessageRunner {
         data: {
           status: 'failed',
           error: 'A conversa não existe mais.',
+          workerId: null,
+          claimedAt: null,
+          leaseUntil: null,
+        },
+      });
+      return;
+    }
+
+    if (
+      !linha.isPrivate &&
+      conversation.channel === 'whatsapp' &&
+      conversation.contact.whatsappOptOutAt
+    ) {
+      await prisma.scheduledMessage.updateMany({
+        where: { id: linha.id, status: 'sending', workerId: this.workerId },
+        data: {
+          status: 'failed',
+          error: 'Envio cancelado: o contato solicitou opt-out do WhatsApp.',
           workerId: null,
           claimedAt: null,
           leaseUntil: null,

@@ -21,6 +21,10 @@ import { waEventBus } from './whatsapp-events';
 import { normalizeBusinessHours } from '@/core/domain/business-hours';
 import { calcularSla } from '@/core/domain/sla';
 import { novoProtocolo } from '@/infrastructure/conversations/protocols';
+import {
+  classifyWhatsAppInboundIntent,
+  type WhatsAppInboundIntent,
+} from '@/core/domain/whatsapp-compliance';
 
 /**
  * Persistência das mensagens que chegam do WhatsApp.
@@ -312,6 +316,81 @@ const eventoDe = (fromMe: boolean, conversaExistia: boolean): WebhookEvent => {
 };
 
 /**
+ * Persiste comandos de privacidade/escalonamento antes de qualquer automacao.
+ *
+ * A atualizacao e escopada por conta e conversa, e nao toca na sessao do
+ * WhatsApp. Um opt-in so remove a pausa criada pelo proprio opt-out; nunca
+ * devolve ao robo uma conversa que um atendente havia assumido manualmente.
+ */
+const applyInboundComplianceIntent = async (
+  input: Pick<CommitInput, 'accountId' | 'contact' | 'chat' | 'preview'>,
+): Promise<WhatsAppInboundIntent | undefined> => {
+  const intent = classifyWhatsAppInboundIntent(input.preview);
+  if (!intent) return undefined;
+
+  const now = new Date();
+  if (intent === 'opt_out') {
+    await prisma.$transaction([
+      prisma.contact.updateMany({
+        where: { id: input.contact.id, accountId: input.accountId },
+        data: {
+          whatsappOptOutAt: now,
+          whatsappOptOutReason: input.preview.trim().slice(0, 160),
+        },
+      }),
+      prisma.conversation.updateMany({
+        where: { id: input.chat.conversationId, accountId: input.accountId },
+        data: {
+          aiPausedUntil: null,
+          aiPausedBy: null,
+          aiPausedByName: 'Solicitacao do contato',
+          aiPausedReason: 'opt_out',
+        },
+      }),
+    ]);
+    return intent;
+  }
+
+  if (intent === 'opt_in') {
+    await prisma.$transaction([
+      prisma.contact.updateMany({
+        where: { id: input.contact.id, accountId: input.accountId },
+        data: {
+          whatsappOptOutAt: null,
+          whatsappOptOutReason: null,
+          whatsappOptInAt: now,
+        },
+      }),
+      prisma.conversation.updateMany({
+        where: {
+          id: input.chat.conversationId,
+          accountId: input.accountId,
+          aiPausedReason: 'opt_out',
+        },
+        data: {
+          aiPausedUntil: null,
+          aiPausedBy: null,
+          aiPausedByName: null,
+          aiPausedReason: null,
+        },
+      }),
+    ]);
+    return intent;
+  }
+
+  await prisma.conversation.updateMany({
+    where: { id: input.chat.conversationId, accountId: input.accountId },
+    data: {
+      aiPausedUntil: null,
+      aiPausedBy: null,
+      aiPausedByName: 'Solicitacao do contato',
+      aiPausedReason: 'solicitacao_humana',
+    },
+  });
+  return intent;
+};
+
+/**
  * Anexa a mensagem à conversa (criando-a se preciso) e publica o resultado.
  */
 export const commitMessage = async (input: CommitInput): Promise<void> => {
@@ -330,6 +409,19 @@ export const commitMessage = async (input: CommitInput): Promise<void> => {
   // O Baileys pode repetir o mesmo `messages.upsert` em reconexões. Sem esta
   // saída, uma duplicata incrementava não lidas e disparava IA/webhook de novo.
   if (!inserted) return;
+
+  let complianceIntent: WhatsAppInboundIntent | undefined;
+  if (!input.fromMe && !chat.isGroup) {
+    try {
+      complianceIntent = await applyInboundComplianceIntent(input);
+    } catch (error) {
+      // Mesmo se a auditoria falhar, o comando inequívoco desta mensagem nao
+      // recebe resposta automatica. O webhook ainda e entregue para que o
+      // atendimento humano consiga observar e tratar o pedido.
+      complianceIntent = classifyWhatsAppInboundIntent(input.preview);
+      console.warn('[wa-store] Falha ao aplicar preferencia do contato:', error);
+    }
+  }
 
   // As automações rodam depois da gravação, nunca antes: uma regra que move o
   // card ou aplica etiqueta precisa encontrar a conversa já no estado novo.
@@ -356,7 +448,7 @@ export const commitMessage = async (input: CommitInput): Promise<void> => {
             input.preview,
           );
 
-          if (!virouNota) {
+          if (!virouNota && !complianceIntent) {
             await runInboundAutoReplies({
               accountId: input.accountId,
               inboxId,
@@ -372,12 +464,14 @@ export const commitMessage = async (input: CommitInput): Promise<void> => {
       }
     }
 
-    await dispararAutomacoes({
-      accountId: input.accountId,
-      trigger: existing ? 'mensagem_recebida' : 'conversa_criada',
-      conversationId: chat.conversationId,
-      ...(input.preview ? { messageText: input.preview } : {}),
-    });
+    if (!complianceIntent || complianceIntent === 'opt_in') {
+      await dispararAutomacoes({
+        accountId: input.accountId,
+        trigger: existing ? 'mensagem_recebida' : 'conversa_criada',
+        conversationId: chat.conversationId,
+        ...(input.preview ? { messageText: input.preview } : {}),
+      });
+    }
   }
 
   /**

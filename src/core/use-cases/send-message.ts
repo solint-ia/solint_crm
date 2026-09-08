@@ -4,6 +4,7 @@ import type { Message } from '../domain/message';
 import { DomainError, fail, ok, type Id, type Result } from '../domain/shared';
 import { can, type Session } from '../domain/user';
 import type { ConversationRepository } from '../ports/conversation-repository';
+import { canReceiveWhatsApp } from '../domain/contact';
 
 export interface SendMessageInput {
   readonly session: Session;
@@ -82,6 +83,19 @@ export const createSendMessage =
     );
     if (!conversation) {
       return fail(new DomainError('Conversa não encontrada.', 'NOT_FOUND'));
+    }
+
+    if (
+      !isPrivate &&
+      conversation.channel === 'whatsapp' &&
+      !canReceiveWhatsApp(conversation.contact)
+    ) {
+      return fail(
+        new DomainError(
+          'O contato pediu para não receber mensagens. Um novo opt-in explicito e necessario.',
+          'WHATSAPP_OPTED_OUT',
+        ),
+      );
     }
 
     if (!isPrivate && !canSendFreeText(conversation)) {

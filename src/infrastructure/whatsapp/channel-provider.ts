@@ -53,6 +53,7 @@ export const getWhatsAppChannel = (): Promise<WhatsAppChannel> => {
           conversationId: envio.conversationId,
           messageId: envio.messageId,
           inboxId: envio.inboxId,
+          trafficClass: 'automated',
         },
         envio.recipient,
         envio.text,

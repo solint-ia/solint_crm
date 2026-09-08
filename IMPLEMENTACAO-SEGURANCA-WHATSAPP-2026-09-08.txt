@@ -1,0 +1,122 @@
+IMPLEMENTACAO DE DESEMPENHO E SEGURANCA DO WHATSAPP
+Projeto: Solint CRM
+Data: 08/09/2026
+
+ESCOPO
+
+Foram implementadas as fases conservadoras de presenca, consentimento,
+escalonamento humano, leitura, controle de rajadas e atualizacao segura de
+dependencias. A fase 7, migracao para a API oficial da Meta, ficou fora por
+solicitacao do responsavel. Nenhum deploy ou migrate deploy foi executado.
+
+MUDANCAS IMPLEMENTADAS
+
+1. SEND PRESENCE / COMPOSING
+
+- O comando de presenca nao dorme mais dentro da lane da inbox.
+- Cada JID possui seu proprio timer; uma conversa nao encerra a presenca de outra.
+- Cada inbox mantem estado proprio; caixas diferentes continuam em paralelo.
+- `available` e global para a sessao, por isso usa contagem de janelas ativas e
+  so volta a `unavailable` quando a ultima termina.
+- Timers sao cancelados em envio, pausa, troca de socket e desconexao.
+- Sem `duracaoMs`, o indicador e sustentado por 6 segundos em background e a
+  rota responde imediatamente. Com duracao, o n8n espera de 0 a 6000 ms.
+- A rota aguarda por ate 1,5 segundo a confirmacao do comando no worker antes de
+  iniciar a espera solicitada, reduzindo a corrida entre composing e mensagem.
+- `presenceSubscribe` foi retirado do caminho de envio: ele serve para receber
+  a presenca do contato. As assinaturas de recebimento foram mantidas e
+  espacadas em 40 ms durante a carga inicial, preservando a interface.
+- O antigo modo `paced` com atraso aleatorio foi removido. O sistema nao tenta
+  imitar comportamento humano nem evadir deteccao.
+
+2. CONSENTIMENTO E ESCALONAMENTO
+
+- Novos campos persistem opt-out, motivo e ultimo opt-in do contato.
+- Comandos exatos de opt-out: PARAR, STOP, UNSUBSCRIBE, SAIR, CANCELAR,
+  CANCELAR MENSAGENS, NAO QUERO RECEBER MENSAGENS, PARE DE ENVIAR MENSAGENS e
+  REMOVER MEU NUMERO.
+- Comandos exatos de opt-in: VOLTAR, START, REATIVAR, QUERO RECEBER MENSAGENS e
+  PODE ENVIAR MENSAGENS.
+- A comparacao e exata e normalizada. Uma frase comum como "vou sair agora" nao
+  bloqueia o contato por engano.
+- Opt-out bloqueia texto, template, anexo, agendamento e automacoes.
+- O consumidor revalida mensagens automaticas imediatamente antes do socket,
+  protegendo tambem comandos que ja estavam na fila.
+- HUMANO, ATENDENTE, FALAR COM ATENDENTE, QUERO FALAR COM ATENDENTE e SUPORTE
+  HUMANO pausam o agente de IA sem impedir o atendimento manual.
+- Um opt-in so remove a pausa causada pelo opt-out. Nunca remove uma pausa que
+  um atendente criou manualmente.
+- O webhook continua recebendo o pedido. Se o n8n tentar responder, a API recusa
+  enquanto a conversa estiver pausada ou o contato estiver em opt-out.
+
+3. LEITURA ANTES DA RESPOSTA
+
+- Respostas da API/n8n e mensagens automaticas criam o comando de leitura antes
+  do comando de envio, na mesma lane persistente da inbox.
+- A chave da ultima mensagem recebida e reconstruida do banco depois de um
+  reinicio, em vez de depender apenas da memoria da sessao.
+
+4. CONTROLE DE RAJADAS
+
+- Envios automaticos/API possuem intervalo fixo padrao de 750 ms entre inicios.
+- Mensagens digitadas por atendentes permanecem sem atraso adicional por padrao.
+- O controle e por inbox. Uma caixa nunca espera a outra.
+- Variaveis opcionais:
+  WA_AUTOMATED_MIN_INTERVAL_MS=750
+  WA_HUMAN_MIN_INTERVAL_MS=0
+- Valores sao limitados internamente entre 0 e 5000 ms.
+
+5. DEPENDENCIAS
+
+- Next atualizado de 15.5.23 para 15.5.25.
+- Prisma CLI, client e adapter alinhados em 7.10.0.
+- Sharp atualizado de 0.34.5 para 0.35.4.
+- fast-uri atualizado de 3.1.5 para 3.1.7.
+- O import do jose usado no middleware passou a carregar somente assinatura e
+  verificacao JWT, sem os modulos de compressao incompatíveis com Edge.
+- O npm audit caiu de 8 alertas altos para 5 altos e 1 moderado.
+- Os alertas restantes estao em dependencias transitivas do Prisma CLI e do
+  PostCSS empacotado pelo Next. O npm so oferece correcao automatica com mudanca
+  principal/downgrade quebrador; `npm audit fix --force` NAO foi executado.
+
+MIGRACAO PREPARADA, NAO APLICADA
+
+prisma/migrations/20260908200000_whatsapp_consent_controls/migration.sql
+
+Ela deve ser aplicada antes de iniciar esta versao em qualquer ambiente. A
+aplicacao ao banco ficou para a etapa de deploy, conforme solicitado.
+
+VALIDACOES EXECUTADAS
+
+- Prisma validate e generate: aprovados.
+- Classificador de opt-in/opt-out/humano: casos positivos e falso positivo
+  "vou sair agora" aprovados.
+- ESLint: aprovado sem erro ou aviso.
+- TypeScript: aprovado.
+- Build do worker: aprovado.
+- Build otimizado do Next 15.5.25: aprovado, 18 paginas estaticas.
+- Isolamento de tenant: 295 consultas verificadas, nenhuma fora do escopo.
+- Verificador de tipografia: 189 arquivos aprovados.
+
+LIMITES E RISCOS RESIDUAIS
+
+- Baileys e um cliente nao oficial. Nenhuma alteracao pode garantir ausencia de
+  bloqueio do numero; a Meta alerta que clientes nao oficiais podem causar
+  suspensao temporaria ou permanente.
+- A API oficial, templates oficiais, janela oficial de 24 horas e opt-in de
+  campanhas ficam para a fase 7 futura.
+- Nao foi realizado envio real para um numero nem webhook real do n8n, pois isso
+  alteraria sistemas externos. Os testes foram estaticos, de compilacao e build.
+- Nao foram alterados fingerprint do navegador, credenciais, QR, politica de
+  reconexao ou resolucao de destinatarios. Essas mudancas poderiam dificultar
+  novas conexoes ou mensagens existentes sem evidencia suficiente.
+
+FONTES OFICIAIS CONSULTADAS NA ANALISE
+
+https://business.whatsapp.com/policy/preview?lang=pt_BR
+https://faq.whatsapp.com/378279804439436/?cms_platform=android&locale=pt_BR
+https://faq.whatsapp.com/5957850900902049/?category=5245250&locale=pt_BR
+https://www.whatsapp.com/legal/terms-of-service
+
+Fonte primaria da biblioteca usada pelo projeto:
+https://github.com/WhiskeySockets/Baileys

@@ -5,6 +5,7 @@ import { DomainError, fail, ok, type Id, type Result } from '../domain/shared';
 import { can, type Session } from '../domain/user';
 import type { ConversationRepository } from '../ports/conversation-repository';
 import { horaLabel } from '@/lib/datetime';
+import { canReceiveWhatsApp } from '../domain/contact';
 
 const nowLabel = (): string => horaLabel(new Date());
 
@@ -64,6 +65,14 @@ export const createSendTemplate =
       session.inboxAccess,
     );
     if (!conversation) return fail(new DomainError('Conversa não encontrada.', 'NOT_FOUND'));
+    if (conversation.channel === 'whatsapp' && !canReceiveWhatsApp(conversation.contact)) {
+      return fail(
+        new DomainError(
+          'O contato pediu para não receber mensagens. Um novo opt-in explicito e necessario.',
+          'WHATSAPP_OPTED_OUT',
+        ),
+      );
+    }
 
     const message: Message = {
       id: newId(),
@@ -126,6 +135,18 @@ export const createSendMedia =
       session.inboxAccess,
     );
     if (!conversation) return fail(new DomainError('Conversa não encontrada.', 'NOT_FOUND'));
+    if (
+      !isPrivate &&
+      conversation.channel === 'whatsapp' &&
+      !canReceiveWhatsApp(conversation.contact)
+    ) {
+      return fail(
+        new DomainError(
+          'O contato pediu para não receber mensagens. Um novo opt-in explicito e necessario.',
+          'WHATSAPP_OPTED_OUT',
+        ),
+      );
+    }
 
     const message: Message = {
       id: newId(),

@@ -96,6 +96,7 @@ const statusPara = (codigo: string): number => {
   if (codigo === 'FORBIDDEN') return 403;
   if (codigo === 'NOT_FOUND') return 404;
   if (codigo === 'HSM_WINDOW_CLOSED') return 409;
+  if (codigo === 'WHATSAPP_OPTED_OUT') return 409;
   return 400;
 };
 
@@ -303,7 +304,16 @@ export async function POST(request: Request) {
       },
       data: { deliveryStatus: 'falha', dispatchError: error },
     });
-    return NextResponse.json({ ok: false, ...corpo, entregue: false, erro: error }, { status: 503 });
+    return NextResponse.json(
+      { ok: false, ...corpo, entregue: false, erro: error },
+      { status: 503 },
+    );
+  }
+
+  // Respostas de agente externo confirmam a leitura antes do envio. No motor
+  // worker os dois comandos entram na mesma raia da caixa e preservam a ordem.
+  if (isApiTokenActor(session.user.id)) {
+    await channel.markRead(session.account.id, conversation.id, conversation.inboxId);
   }
 
   const enviado = await channel.sendText(
@@ -312,6 +322,7 @@ export async function POST(request: Request) {
       conversationId: conversation.id,
       messageId: message.id,
       inboxId: conversation.inboxId,
+      trafficClass: isApiTokenActor(session.user.id) ? 'automated' : 'human',
     },
     { channelThreadId: conversation.channelThreadId, phone: conversation.contact.phone },
     parsed.data.texto,
@@ -327,7 +338,10 @@ export async function POST(request: Request) {
       },
       data: { deliveryStatus: 'falha', dispatchError: error },
     });
-    return NextResponse.json({ ok: false, ...corpo, entregue: false, erro: error }, { status: 502 });
+    return NextResponse.json(
+      { ok: false, ...corpo, entregue: false, erro: error },
+      { status: 502 },
+    );
   }
 
   // `queued` é o motor worker dizendo "aceitei, ainda não enviei" — o mesmo

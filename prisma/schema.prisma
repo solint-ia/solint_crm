@@ -267,31 +267,31 @@ model Label {
 // ---------------------------------------------------------------- contatos
 
 model Contact {
-  id               String    @id
-  accountId        String
-  name             String
+  id                   String    @id
+  accountId            String
+  name                 String
   /// E.164. Vazio quando `kind = grupo` — um grupo não tem telefone próprio.
   ///
   /// É o número por onde as conversas saem. Continua sendo **um**: uma conversa
   /// tem um destinatário, e escolher sozinho qual dos números usar seria decidir
   /// no lugar de quem atende.
-  phone            String
+  phone                String
   /// Outros números da mesma pessoa, em E.164, sem repetir o de `phone`.
   ///
   /// Nasce das importações de prospecção, onde a mesma pessoa aparece em várias
   /// linhas — uma por telefone. Guardar cada linha como um contato separado
   /// criava três "THIAGO FRANKLIN PROENCA" na agenda, e quem abrisse um deles
   /// não tinha como saber que os outros dois eram a mesma pessoa.
-  extraPhones      String[]  @default([])
-  email            String?
+  extraPhones          String[]  @default([])
+  email                String?
   /// Nome empresarial / razão social. A coluna física usa o nome pedido
   /// pelo formato B2B; `company` preserva o contrato existente do domínio/UI.
-  company          String?   @map("empresa")
-  cnpj             String?
-  companyAddress   String?   @map("endereco")
-  companyPhone     String?   @map("telefone_empresa")
-  partnerPhone     String?   @map("telefone_socio")
-  classification   String?   @map("classificacao")
+  company              String?   @map("empresa")
+  cnpj                 String?
+  companyAddress       String?   @map("endereco")
+  companyPhone         String?   @map("telefone_empresa")
+  partnerPhone         String?   @map("telefone_socio")
+  classification       String?   @map("classificacao")
   /// JSON: ContactPartner[] — os sócios da empresa e os telefones de cada um,
   /// com a classificação de cada número.
   ///
@@ -302,24 +302,29 @@ model Contact {
   /// importação acha o contato já existente e que o envio valida o
   /// destinatário. A duplicação é deliberada, e cada lado responde uma pergunta
   /// diferente.
-  partners         Json?     @map("socios")
+  partners             Json?     @map("socios")
   /// `manual`, `csv` ou `whatsapp`; separa a proveniência sem alterar `kind`.
-  origin           String    @default("manual") @map("origem")
-  channel          String
-  avatarTone       String
-  location         String?
-  timezone         String?
-  ownerName        String?
-  lastContactAt    String?
-  lastContactLabel String?
+  origin               String    @default("manual") @map("origem")
+  channel              String
+  avatarTone           String
+  location             String?
+  timezone             String?
+  ownerName            String?
+  lastContactAt        String?
+  lastContactLabel     String?
   /// JSON: CustomField[]
-  customFields     Json      @default("[]")
-  notes            String?
+  customFields         Json      @default("[]")
+  notes                String?
   /// JSON: TimelineEvent[]
-  timeline         Json      @default("[]")
-  kind             String?   @default("pessoa")
-  avatarUrl        String?
-  participantCount Int?
+  timeline             Json      @default("[]")
+  kind                 String?   @default("pessoa")
+  avatarUrl            String?
+  participantCount     Int?
+  /// Pedido explicito para interromper mensagens de saida.
+  whatsappOptOutAt     DateTime? @map("whatsapp_opt_out_at")
+  whatsappOptOutReason String?   @map("whatsapp_opt_out_reason")
+  /// Ultima autorizacao explicita posterior a um opt-out.
+  whatsappOptInAt      DateTime? @map("whatsapp_opt_in_at")
   /// Quando o contato saiu da agenda sem levar o histórico junto.
   ///
   /// `Conversation.contactId` é obrigatório e cai em cascata: apagar a linha do
@@ -333,7 +338,7 @@ model Contact {
   /// contato com histórico é marcado aqui e some das listas. Se a pessoa voltar
   /// a escrever, a marca é limpa — a conversa nova precisa de um contato
   /// visível para ser atendida.
-  deletedAt        DateTime?
+  deletedAt            DateTime?
 
   account            Account                     @relation(fields: [accountId], references: [id], onDelete: Cascade)
   labels             Label[]                     @relation("ContactLabels")
@@ -344,6 +349,7 @@ model Contact {
   @@index([accountId])
   /// A agenda lista só os vivos, e é a consulta mais frequente da tela.
   @@index([accountId, deletedAt])
+  @@index([accountId, whatsappOptOutAt])
 }
 
 /// Uma execução de importação CSV nomeada pelo usuário.
@@ -436,15 +442,15 @@ model Conversation {
   /// que nasce de uma resposta pelo celular nao tem botao para desfaze-la. Com
   /// uma data, "ainda esta pausado?" e uma comparacao — nao ha runner varrendo
   /// conversa para reativar agente, nem estado que possa ficar preso.
-  aiPausedUntil      DateTime?
+  aiPausedUntil  DateTime?
   /// Quem pausou. Vazio quando a pausa foi automatica.
   ///
   /// Texto solto, e nao chave estrangeira para `User`, pelo mesmo motivo que
   /// `assigneeId` nao serve aqui: a pausa automatica nao tem autor nenhum.
-  aiPausedBy         String?
-  aiPausedByName     String?
+  aiPausedBy     String?
+  aiPausedByName String?
   /// `manual` (botao da tela) ou `resposta_no_celular` (deteccao automatica).
-  aiPausedReason     String?
+  aiPausedReason String?
 
   account           Account            @relation(fields: [accountId], references: [id], onDelete: Cascade)
   contact           Contact            @relation(fields: [contactId], references: [id], onDelete: Cascade)

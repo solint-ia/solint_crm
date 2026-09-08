@@ -23,6 +23,31 @@ import type { WhatsAppOwner, WhatsAppStatusPayload } from './whatsapp-events';
  */
 export class InProcessWhatsAppChannel implements WhatsAppChannel {
   readonly engine = 'inprocess' as const;
+  private outboundLane: Promise<void> = Promise.resolve();
+  private lastOutboundAt = 0;
+
+  private enqueueOutbound<T>(
+    trafficClass: DispatchContext['trafficClass'],
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const intervalName =
+      trafficClass === 'automated' ? 'WA_AUTOMATED_MIN_INTERVAL_MS' : 'WA_HUMAN_MIN_INTERVAL_MS';
+    const fallback = trafficClass === 'automated' ? 750 : 0;
+    const parsed = Number.parseInt(process.env[intervalName] ?? '', 10);
+    const interval = Number.isFinite(parsed) ? Math.min(Math.max(parsed, 0), 5_000) : fallback;
+
+    const run = this.outboundLane.then(async () => {
+      const waitMs = interval - (Date.now() - this.lastOutboundAt);
+      if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+      this.lastOutboundAt = Date.now();
+      return operation();
+    });
+    this.outboundLane = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
 
   /**
    * `inboxId` é aceito e ignorado: este motor tem uma sessão só para o processo
@@ -47,11 +72,8 @@ export class InProcessWhatsAppChannel implements WhatsAppChannel {
     text: string,
     quote?: DispatchQuote,
   ): Promise<DispatchResult> {
-    return whatsappService.sendTextMessage(
-      target,
-      text,
-      quote,
-      providerMessageIdFor(context.messageId),
+    return this.enqueueOutbound(context.trafficClass, () =>
+      whatsappService.sendTextMessage(target, text, quote, providerMessageIdFor(context.messageId)),
     );
   }
 
@@ -80,16 +102,18 @@ export class InProcessWhatsAppChannel implements WhatsAppChannel {
     if (!stored) return { ok: false, error: 'Anexo não encontrado no depósito local.' };
 
     const data = await stored.bytes();
-    return whatsappService.sendMediaMessage(target, {
-      kind: media.kind,
-      data,
-      mimeType: media.mimeType,
-      ...(media.fileName ? { fileName: media.fileName } : {}),
-      ...(media.caption ? { caption: media.caption } : {}),
-      ...(media.voice ? { voice: true } : {}),
-      ...(quote ? { quote } : {}),
-      providerMessageId: providerMessageIdFor(context.messageId),
-    });
+    return this.enqueueOutbound(context.trafficClass, () =>
+      whatsappService.sendMediaMessage(target, {
+        kind: media.kind,
+        data,
+        mimeType: media.mimeType,
+        ...(media.fileName ? { fileName: media.fileName } : {}),
+        ...(media.caption ? { caption: media.caption } : {}),
+        ...(media.voice ? { voice: true } : {}),
+        ...(quote ? { quote } : {}),
+        providerMessageId: providerMessageIdFor(context.messageId),
+      }),
+    );
   }
 
   async sendReaction(
@@ -113,9 +137,10 @@ export class InProcessWhatsAppChannel implements WhatsAppChannel {
     _context: { accountId: string; inboxId: string; conversationId: string },
     target: DispatchTarget,
     status: 'composing' | 'paused' | 'recording',
+    durationMs?: number,
   ): Promise<DispatchResult> {
     const raw = target.channelThreadId ?? target.phone;
     if (!raw) return { ok: false, error: 'Conversa sem destinatário do WhatsApp.' };
-    return whatsappService.sendPresence(raw, status);
+    return whatsappService.sendPresence(raw, status, durationMs);
   }
 }

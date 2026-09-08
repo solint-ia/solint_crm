@@ -153,7 +153,7 @@ export interface Conversation {
  * quando alguém disser; pausa que o sistema deduziu não pode durar para sempre
  * por falta de quem a desfaça.
  */
-export type AiPauseReason = 'manual' | 'resposta_no_celular';
+export type AiPauseReason = 'manual' | 'resposta_no_celular' | 'opt_out' | 'solicitacao_humana';
 
 /**
  * O agente de IA está pausado nesta conversa?
@@ -190,7 +190,6 @@ export const isHsmWindowOpen = (
   _conversation: Pick<Conversation, 'channel' | 'lastInboundAt'>,
   _now: Date = new Date(),
 ): boolean => true;
-
 
 /** Filtro rápido da lista de conversas. */
 export type InboxScope = 'minhas' | 'nao_atribuidas' | 'todas';
