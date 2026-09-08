@@ -1,7 +1,7 @@
 'use client';
 
 import { useTransition } from 'react';
-import { LogOut } from 'lucide-react';
+import { Loader2, LogOut } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { logoutAction } from '@/app/(auth)/actions';
 
@@ -21,7 +21,15 @@ export function LogoutButton({
 }) {
   const [pending, startTransition] = useTransition();
 
-  const sair = () => startTransition(() => void logoutAction());
+  const sair = () => {
+    startTransition(async () => {
+      try {
+        await logoutAction();
+      } finally {
+        window.location.href = '/login';
+      }
+    });
+  };
 
   if (variant === 'linha') {
     return (
@@ -34,7 +42,11 @@ export function LogoutButton({
           className,
         )}
       >
-        <LogOut className="size-[18px] shrink-0" />
+        {pending ? (
+          <Loader2 className="size-[18px] shrink-0 animate-spin" />
+        ) : (
+          <LogOut className="size-[18px] shrink-0" />
+        )}
         {pending ? 'Saindo…' : 'Sair da conta'}
       </button>
     );
@@ -45,14 +57,18 @@ export function LogoutButton({
       type="button"
       onClick={sair}
       disabled={pending}
-      title="Sair da conta"
-      aria-label="Sair da conta"
+      title={pending ? 'Saindo…' : 'Sair da conta'}
+      aria-label={pending ? 'Saindo…' : 'Sair da conta'}
       className={cn(
         'flex size-9 items-center justify-center rounded-control text-dim transition-colors hover:bg-red-soft hover:text-red-text disabled:opacity-60',
         className,
       )}
     >
-      <LogOut className="size-[18px]" />
+      {pending ? (
+        <Loader2 className="size-[18px] animate-spin" />
+      ) : (
+        <LogOut className="size-[18px]" />
+      )}
     </button>
   );
 }

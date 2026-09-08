@@ -11,7 +11,13 @@ export function LogoutAllSessionsButton() {
   const [pending, startTransition] = useTransition();
 
   const confirm = () => {
-    startTransition(() => void logoutAllSessionsAction());
+    startTransition(async () => {
+      try {
+        await logoutAllSessionsAction();
+      } finally {
+        window.location.href = '/login';
+      }
+    });
   };
 
   return (

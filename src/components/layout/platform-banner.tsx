@@ -1,7 +1,7 @@
 'use client';
 
 import { useTransition } from 'react';
-import { LogOut, ShieldAlert } from 'lucide-react';
+import { Loader2, LogOut, ShieldAlert } from 'lucide-react';
 import { leaveAccountAction } from '@/app/(platform)/plataforma/session-actions';
 
 /**
@@ -42,10 +42,22 @@ export function PlatformBanner({
       <button
         type="button"
         disabled={saindo}
-        onClick={() => startTransition(() => void leaveAccountAction())}
+        onClick={() => {
+          startTransition(async () => {
+            try {
+              await leaveAccountAction();
+            } finally {
+              window.location.href = '/plataforma';
+            }
+          });
+        }}
         className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-amber-500/50 px-2 py-1 font-semibold transition-colors hover:bg-amber-500/20 disabled:opacity-60"
       >
-        <LogOut className="size-3" />
+        {saindo ? (
+          <Loader2 className="size-3 shrink-0 animate-spin" />
+        ) : (
+          <LogOut className="size-3 shrink-0" />
+        )}
         {saindo ? 'Saindo…' : 'Sair da conta'}
       </button>
     </div>
