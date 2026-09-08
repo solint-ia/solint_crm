@@ -3,7 +3,11 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
-import { DEFAULT_NOTIFICATION_PREFERENCES } from '@/core/domain/user';
+import {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  NOTIFICATION_SOUNDS,
+  type NotificationPreferences,
+} from '@/core/domain/user';
 import {
   ALLOWED_AVATAR_MIME_TYPES,
   MAX_AVATAR_BYTES,
@@ -12,11 +16,8 @@ import {
 } from '@/core/domain/image-upload';
 import { BUCKETS, storage } from '@/infrastructure/storage/supabase-storage';
 import { container } from '@/infrastructure/container';
-import { asJson, prisma } from '@/infrastructure/db/prisma';
-import {
-  destroyCurrentSession,
-  revokeAllSessions,
-} from '@/infrastructure/auth/session';
+import { asJson, prisma, readJson } from '@/infrastructure/db/prisma';
+import { destroyCurrentSession, revokeAllSessions } from '@/infrastructure/auth/session';
 import { writeAuditLog } from '@/infrastructure/audit/write-audit-log';
 
 export interface ProfileActionResult {
@@ -43,8 +44,45 @@ const profileSchema = z.object({
     mentions: z.boolean(),
     sla: z.boolean(),
     sound: z.boolean(),
+    soundTone: z.enum(NOTIFICATION_SOUNDS),
   }),
 });
+
+const notificationSoundSchema = z.object({
+  soundTone: z.enum(NOTIFICATION_SOUNDS),
+});
+
+/** Salva imediatamente o timbre escolhido no controle da caixa de entrada. */
+export async function updateNotificationSoundAction(input: unknown): Promise<ProfileActionResult> {
+  const parsed = notificationSoundSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Som de notificação inválido.' };
+
+  const session = await container.session.getCurrentSession();
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { notificationPrefs: true },
+    });
+    if (!user) return { ok: false, error: 'Usuário não encontrado.' };
+
+    const prefs: NotificationPreferences = {
+      ...DEFAULT_NOTIFICATION_PREFERENCES,
+      ...readJson<Partial<NotificationPreferences>>(user.notificationPrefs, {}),
+      soundTone: parsed.data.soundTone,
+    };
+
+    await prisma.user.update({
+      where: { id: session.user.id },
+      data: { notificationPrefs: asJson(prefs) },
+    });
+    revalidatePath('/', 'layout');
+    return { ok: true };
+  } catch (error) {
+    console.error('[perfil] Falha ao salvar som de notificação:', error);
+    return { ok: false, error: 'Não foi possível salvar o som escolhido.' };
+  }
+}
 
 /**
  * Grava o perfil da pessoa.
@@ -123,9 +161,7 @@ export async function logoutAllSessionsAction(): Promise<never> {
  * `File` do navegador sem passar a base64 por cima, que infla o payload em
  * ~33% para nada.
  */
-export async function uploadProfilePhotoAction(
-  formData: FormData,
-): Promise<ProfileActionResult> {
+export async function uploadProfilePhotoAction(formData: FormData): Promise<ProfileActionResult> {
   const session = await container.session.getCurrentSession();
 
   const file = formData.get('photo');

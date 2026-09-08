@@ -131,6 +131,7 @@ export default async function WorkspaceLayout({
             tela. */}
         <LiveNotificationsProvider
           soundEnabled={session.user.notifications.sound}
+          soundTone={session.user.notifications.soundTone}
           accountId={session.account.id}
           currentUserId={session.user.id}
         >
@@ -145,25 +146,25 @@ export default async function WorkspaceLayout({
                 />
               ) : null}
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
-              <NavigationRail
-                items={items}
-                unreadCount={unreadCount}
-                userName={session.user.name}
-                userTone={session.user.avatarTone}
-                userAvatarUrl={session.user.avatarUrl}
-                availability={session.user.availability}
-                accessibleInboxes={accessibleInboxes}
-                conversationCounts={conversationCounts}
-                // O rodapé do menu leva para a seção de caixas de
-                // `/configuracoes`, então a permissão exigida é exatamente a
-                // daquela seção — `caixas:todas` diz quais caixas a pessoa
-                // enxerga, não que ela administra o sistema, e um papel com
-                // alcance amplo e sem acesso a ajustes veria um atalho para uma
-                // tela que responderia "acesso negado".
-                canManageInboxes={can(session, 'config.caixas:escrever')}
-                roleName={role?.name ?? session.user.roleSlug}
-              />
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
+                <NavigationRail
+                  items={items}
+                  unreadCount={unreadCount}
+                  userName={session.user.name}
+                  userTone={session.user.avatarTone}
+                  userAvatarUrl={session.user.avatarUrl}
+                  availability={session.user.availability}
+                  accessibleInboxes={accessibleInboxes}
+                  conversationCounts={conversationCounts}
+                  // O rodapé do menu leva para a seção de caixas de
+                  // `/configuracoes`, então a permissão exigida é exatamente a
+                  // daquela seção — `caixas:todas` diz quais caixas a pessoa
+                  // enxerga, não que ela administra o sistema, e um papel com
+                  // alcance amplo e sem acesso a ajustes veria um atalho para uma
+                  // tela que responderia "acesso negado".
+                  canManageInboxes={can(session, 'config.caixas:escrever')}
+                  roleName={role?.name ?? session.user.roleSlug}
+                />
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
               </div>
             </div>
           </ToastProvider>

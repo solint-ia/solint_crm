@@ -10,6 +10,7 @@ import type {
 } from '@/core/domain/conversation';
 import type { Message } from '@/core/domain/message';
 import type { CannedResponse } from '@/core/domain/settings';
+import type { NotificationSound } from '@/core/domain/user';
 import { markConversationNotificationsAsReadAction } from '@/components/layout/notification-actions';
 import { useLiveNotifications } from '@/features/realtime/live-notifications';
 import { cn } from '@/lib/cn';
@@ -28,6 +29,7 @@ interface InboxWorkspaceProps {
   readonly conversations: readonly Conversation[];
   readonly currentUserId: string;
   readonly currentUserName: string;
+  readonly notificationSound: NotificationSound;
   /** Nome da conta, para a variável `{{empresa}}` das respostas rápidas. */
   readonly companyName: string;
   readonly sendMessage: (input: {
@@ -302,7 +304,7 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
                 onChange={inbox.setFilters}
               />
               <InboxSortMenu sort={inbox.sort} onChange={inbox.setSort} />
-              <NotificationVolumeControl />
+              <NotificationVolumeControl initialSound={props.notificationSound} />
             </div>
           </div>
 

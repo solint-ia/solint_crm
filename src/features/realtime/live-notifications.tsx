@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -13,9 +14,10 @@ import type { Conversation } from '@/core/domain/conversation';
 import type { Message } from '@/core/domain/message';
 import { previewOfMessage } from '@/core/domain/message';
 import type { AppNotification } from '@/core/domain/notification';
+import type { NotificationSound } from '@/core/domain/user';
 import { useDatasDaConta } from '@/components/layout/regional-provider';
 import { useConversationEvents } from './conversation-events';
-import { playNotificationSound } from './notification-sound';
+import { NOTIFICATION_SOUND_CHANGED_EVENT, playNotificationSound } from './notification-sound';
 
 /**
  * Mensagens novas viram aviso no sininho — não cartão flutuante.
@@ -58,11 +60,13 @@ const MAX_ITEMS = 20;
 
 export function LiveNotificationsProvider({
   soundEnabled,
+  soundTone,
   accountId,
   currentUserId,
   children,
 }: {
   readonly soundEnabled: boolean;
+  readonly soundTone: NotificationSound;
   /** Conta ativa: trocar de workspace esvazia a lista acumulada. */
   readonly accountId: string;
   /** Quem está olhando: decide quais avisos dirigidos são dele. */
@@ -96,6 +100,22 @@ export function LiveNotificationsProvider({
    */
   const somLigado = useRef(soundEnabled);
   somLigado.current = soundEnabled;
+
+  /**
+   * O timbre pode mudar no seletor sem remontar o layout. O evento local deixa
+   * a escolha valer nesta aba imediatamente; a prop reassume no próximo
+   * carregamento depois que a preferência persistida for lida do usuário.
+   */
+  const somEscolhido = useRef(soundTone);
+  useEffect(() => {
+    somEscolhido.current = soundTone;
+    const atualizar = (event: Event) => {
+      const escolhido = (event as CustomEvent<{ sound?: NotificationSound }>).detail?.sound;
+      if (escolhido) somEscolhido.current = escolhido;
+    };
+    window.addEventListener(NOTIFICATION_SOUND_CHANGED_EVENT, atualizar);
+    return () => window.removeEventListener(NOTIFICATION_SOUND_CHANGED_EVENT, atualizar);
+  }, [soundTone]);
 
   /**
    * A conversa aberta agora, por `ref` pelo mesmo motivo do som: o handler do
@@ -137,7 +157,7 @@ export function LiveNotificationsProvider({
         if (current.some((item) => item.id === aviso.id)) return current;
         return [aviso, ...current].slice(0, MAX_ITEMS);
       });
-      if (somLigado.current) playNotificationSound();
+      if (somLigado.current) playNotificationSound(somEscolhido.current);
       return;
     }
 
@@ -191,13 +211,11 @@ export function LiveNotificationsProvider({
       return [aviso, ...semDuplicata].slice(0, MAX_ITEMS);
     });
 
-    if (somLigado.current) playNotificationSound();
+    if (somLigado.current) playNotificationSound(somEscolhido.current);
   });
 
   const markRead = useCallback((id: string) => {
-    setItems((current) =>
-      current.map((item) => (item.id === id ? { ...item, read: true } : item)),
-    );
+    setItems((current) => current.map((item) => (item.id === id ? { ...item, read: true } : item)));
   }, []);
 
   const markAllRead = useCallback(() => {
@@ -247,7 +265,5 @@ const VAZIO: LiveNotificationsApi = {
  * avisos ao vivo é um defeito pequeno; uma tela em branco, um grande.
  */
 export function useLiveNotifications(): LiveNotificationsApi {
-  return (
-    useContext(LiveNotificationsContext) ?? VAZIO
-  );
+  return useContext(LiveNotificationsContext) ?? VAZIO;
 }

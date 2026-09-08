@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useRef, useState, useTransition } from 'react';
-import { BellOff, Inbox as InboxIcon, Volume2 } from 'lucide-react';
+import { BellOff, Inbox as InboxIcon, Play, Volume2 } from 'lucide-react';
 import type { AvailabilityStatus, NotificationPreferences, Session } from '@/core/domain/user';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -17,6 +17,11 @@ import { updateProfileAction, uploadProfilePhotoAction } from '@/app/(workspace)
 import { switchWorkspaceAction } from '@/components/layout/workspace-actions';
 import { ALLOWED_AVATAR_MIME_TYPES } from '@/core/domain/image-upload';
 import { planned } from '@/components/ui/planned';
+import {
+  NOTIFICATION_SOUND_OPTIONS,
+  announceNotificationSoundChange,
+  testNotificationSound,
+} from '@/features/realtime/notification-sound';
 import { cn } from '@/lib/cn';
 
 interface ProfileInbox {
@@ -113,6 +118,12 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
   const patchNotifications = (patch: Partial<NotificationPreferences>) =>
     setNotifications((current) => ({ ...current, ...patch }));
 
+  const chooseNotificationSound = (soundTone: NotificationPreferences['soundTone']) => {
+    patchNotifications({ soundTone });
+    announceNotificationSoundChange(soundTone);
+    testNotificationSound(soundTone);
+  };
+
   const dirty = useMemo(
     () =>
       name.trim() !== user.name ||
@@ -151,6 +162,7 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
     setSignature(user.signature ?? '');
     setSignatureEnabled(user.signatureEnabled);
     setNotifications(user.notifications);
+    announceNotificationSoundChange(user.notifications.soundTone);
     setError(undefined);
   };
 
@@ -265,8 +277,7 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
               Nenhuma caixa de WhatsApp
             </h3>
             <p className="text-body text-muted">
-              As conexões aparecem aqui assim que existir uma caixa de entrada de WhatsApp na
-              conta.
+              As conexões aparecem aqui assim que existir uma caixa de entrada de WhatsApp na conta.
             </p>
           </Card>
         )}
@@ -413,6 +424,37 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
           />
         </div>
 
+        <fieldset className="rounded-surface border border-line bg-surface-2/60 p-3.5">
+          <legend className="px-1 text-meta font-semibold text-ink">Toque da mensagem</legend>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {NOTIFICATION_SOUND_OPTIONS.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                aria-pressed={notifications.soundTone === option.id}
+                onClick={() => chooseNotificationSound(option.id)}
+                className={cn(
+                  'flex items-center gap-2 rounded-control border px-3 py-2.5 text-left transition-colors',
+                  notifications.soundTone === option.id
+                    ? 'border-brand/40 bg-brand/10 text-brand'
+                    : 'border-line bg-surface text-ink hover:border-line-strong',
+                )}
+              >
+                <Play className="size-3.5 shrink-0 fill-current" />
+                <span className="min-w-0">
+                  <span className="block text-body font-semibold">{option.label}</span>
+                  <span className="block truncate text-[10px] text-muted">
+                    {option.description}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-[11px] text-muted">
+            Clique em uma opção para ouvir. A escolha é salva junto com o perfil.
+          </p>
+        </fieldset>
+
         <div className="divide-y divide-line-soft">
           {NOTIFICATION_ITEMS.map((item) => (
             <div key={item.key} className="flex items-center justify-between gap-3 py-2.5">
@@ -424,7 +466,6 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
               />
             </div>
           ))}
-
         </div>
 
         <div className="grid grid-cols-2 gap-3 border-t border-line-soft pt-4">
@@ -444,8 +485,8 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
         </h3>
         <p className="text-body text-muted">
           Alterne entre contas a qualquer momento, aqui ou pelo seletor no topo da tela. Cada
-          workspace tem contatos, conversas e funil próprios, e o seu papel pode ser diferente
-          em cada um.
+          workspace tem contatos, conversas e funil próprios, e o seu papel pode ser diferente em
+          cada um.
         </p>
 
         <div className="overflow-hidden rounded-surface border border-line bg-surface shadow-xs">

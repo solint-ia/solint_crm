@@ -2,7 +2,11 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Play, Volume1, Volume2, VolumeX } from 'lucide-react';
+import type { NotificationSound } from '@/core/domain/user';
+import { updateNotificationSoundAction } from '@/app/(workspace)/perfil/actions';
 import {
+  NOTIFICATION_SOUND_OPTIONS,
+  announceNotificationSoundChange,
   getNotificationVolume,
   isNotificationMuted,
   setNotificationMuted,
@@ -11,11 +15,20 @@ import {
 } from '@/features/realtime/notification-sound';
 import { cn } from '@/lib/cn';
 
-export function NotificationVolumeControl() {
+export function NotificationVolumeControl({
+  initialSound,
+}: {
+  readonly initialSound: NotificationSound;
+}) {
   const [open, setOpen] = useState(false);
   const [volume, setVolumeState] = useState(80);
   const [muted, setMutedState] = useState(false);
+  const [sound, setSound] = useState(initialSound);
+  const [savingSound, setSavingSound] = useState(false);
+  const [soundError, setSoundError] = useState<string>();
   const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => setSound(initialSound), [initialSound]);
 
   useEffect(() => {
     setVolumeState(getNotificationVolume());
@@ -58,7 +71,25 @@ export function NotificationVolumeControl() {
   };
 
   const handleTest = () => {
-    testNotificationSound(muted ? volume : undefined);
+    testNotificationSound(sound, muted ? volume : undefined);
+  };
+
+  const handleSoundChange = async (next: NotificationSound) => {
+    if (next === sound || savingSound) return;
+    const previous = sound;
+    setSound(next);
+    setSoundError(undefined);
+    setSavingSound(true);
+    announceNotificationSoundChange(next);
+    testNotificationSound(next, volume);
+
+    const result = await updateNotificationSoundAction({ soundTone: next });
+    setSavingSound(false);
+    if (result.ok) return;
+
+    setSound(previous);
+    announceNotificationSoundChange(previous);
+    setSoundError(result.error ?? 'Não foi possível salvar a escolha.');
   };
 
   return (
@@ -87,7 +118,7 @@ export function NotificationVolumeControl() {
       </button>
 
       {open && (
-        <div className="absolute top-full right-0 mt-1.5 z-40 w-64 rounded-2xl border border-line bg-surface p-3.5 shadow-xl animate-in fade-in zoom-in-95 duration-150">
+        <div className="absolute top-full right-0 mt-1.5 z-40 w-72 rounded-2xl border border-line bg-surface p-3.5 shadow-xl animate-in fade-in zoom-in-95 duration-150">
           <div className="flex items-center justify-between gap-2 pb-2 mb-2 border-b border-line-soft">
             <div className="flex items-center gap-1.5">
               <span className="text-xs font-semibold text-ink">Som de Notificação</span>
@@ -98,6 +129,39 @@ export function NotificationVolumeControl() {
           </div>
 
           <div className="space-y-3">
+            <fieldset className="space-y-1.5" disabled={savingSound}>
+              <legend className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                Escolha o toque
+              </legend>
+              <div className="grid grid-cols-2 gap-1.5">
+                {NOTIFICATION_SOUND_OPTIONS.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    aria-pressed={sound === option.id}
+                    onClick={() => void handleSoundChange(option.id)}
+                    className={cn(
+                      'rounded-xl border px-2.5 py-2 text-left transition-colors disabled:cursor-wait disabled:opacity-60',
+                      sound === option.id
+                        ? 'border-brand/40 bg-brand/10 text-brand'
+                        : 'border-line bg-surface-2 text-ink hover:bg-surface',
+                    )}
+                  >
+                    <span className="block text-xs font-semibold">{option.label}</span>
+                    <span className="mt-0.5 block text-[10px] leading-tight text-muted">
+                      {option.description}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+
+            {soundError ? (
+              <p role="alert" className="text-[10px] text-red-text">
+                {soundError}
+              </p>
+            ) : null}
+
             {/* Slider de Volume */}
             <div className="space-y-1">
               <div className="flex justify-between text-[10px] text-muted font-medium">

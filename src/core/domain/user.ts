@@ -166,6 +166,10 @@ export interface Role {
   readonly isSystem: boolean;
 }
 
+/** Timbres sintetizados oferecidos para avisos de mensagem nova. */
+export const NOTIFICATION_SOUNDS = ['classico', 'suave', 'sino', 'curto'] as const;
+export type NotificationSound = (typeof NOTIFICATION_SOUNDS)[number];
+
 /**
  * Avisos pessoais — o que interrompe a pessoa, e como.
  *
@@ -182,6 +186,8 @@ export interface NotificationPreferences {
   readonly sla: boolean;
   /** O navegador emite um som quando chega mensagem nova. */
   readonly sound: boolean;
+  /** Timbre usado pelo navegador. */
+  readonly soundTone: NotificationSound;
 }
 
 export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
@@ -191,6 +197,8 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
   // Som ligado por padrão: quem atende costuma estar noutra aba, e o aviso
   // silencioso não avisa ninguém. Desligar é um clique.
   sound: true,
+  // Preserva o aviso de duas notas que já existia antes do seletor.
+  soundTone: 'classico',
 };
 
 export interface User {
