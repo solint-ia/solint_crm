@@ -37,6 +37,9 @@ interface KanbanBoardProps {
   readonly navItems: readonly NavItem[];
   /** Etiquetas da conta, para vincular cada etapa à sua. */
   readonly labels: readonly Label[];
+  /** Pessoas que podem ser escolhidas como responsáveis, vindas da conta. */
+  readonly owners: readonly string[];
+  readonly canManagePipelines: boolean;
   readonly moveDeal: (input: {
     dealId: string;
     targetStageId: string;
@@ -52,6 +55,8 @@ export function KanbanBoard({
   notifications,
   navItems,
   labels,
+  owners,
+  canManagePipelines,
   moveDeal,
 }: KanbanBoardProps) {
   const router = useRouter();
@@ -134,7 +139,6 @@ export function KanbanBoard({
     }
   };
 
-
   // Ação de Excluir Oportunidade
   const handleDeleteDeal = async (dealId: string) => {
     board.handleOptimisticDelete(dealId);
@@ -198,6 +202,8 @@ export function KanbanBoard({
         accounts={accounts}
         notifications={notifications}
         navItems={navItems}
+        canManage={canManagePipelines}
+        currentDealCount={deals.length}
       />
 
       {/* Faixa de Resumo do Funil (KPIs) */}
@@ -207,7 +213,7 @@ export function KanbanBoard({
       <KanbanToolbar
         filters={board.filters}
         sortOption={board.sortOption}
-        owners={board.owners}
+        owners={owners}
         onFilterChange={board.setFilter}
         onSortChange={board.setSortOption}
         onClearFilters={board.clearAllFilters}
@@ -228,7 +234,10 @@ export function KanbanBoard({
 
       {/* Mensagem de Erro */}
       {board.error ? (
-        <div role="alert" className="border-b border-red-line/50 bg-red-soft px-6 py-2 text-meta text-red-text">
+        <div
+          role="alert"
+          className="border-b border-red-line/50 bg-red-soft px-6 py-2 text-meta text-red-text"
+        >
           {board.error}
         </div>
       ) : null}
@@ -371,7 +380,7 @@ export function KanbanBoard({
         }}
         stages={board.stages}
         initialStageId={board.newDealStageId}
-        owners={board.owners}
+        owners={owners}
         onSubmit={handleCreateDeal}
       />
 
@@ -380,7 +389,7 @@ export function KanbanBoard({
         open={board.editingDeal !== null}
         deal={board.editingDeal}
         stages={board.stages}
-        owners={board.owners}
+        owners={owners}
         onClose={() => board.setEditingDeal(null)}
         onSubmit={handleEditDeal}
       />

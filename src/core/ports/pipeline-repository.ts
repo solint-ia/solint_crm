@@ -3,6 +3,9 @@ import type { Id } from '../domain/shared';
 
 export interface PipelineRepository {
   listPipelines(accountId: Id): Promise<readonly Pipeline[]>;
+  createPipeline(accountId: Id, name: string): Promise<Pipeline>;
+  /** Exclui um funil personalizado e devolve quantas oportunidades saíram com ele. */
+  deletePipeline(accountId: Id, pipelineId: Id): Promise<number>;
   listDeals(accountId: Id, pipelineId: Id): Promise<readonly Deal[]>;
   moveDeal(accountId: Id, dealId: Id, targetStageId: Id): Promise<Deal>;
   createDeal(
@@ -71,5 +74,3 @@ export interface PipelineRepository {
     }[],
   ): Promise<readonly PipelineStage[]>;
 }
-
-

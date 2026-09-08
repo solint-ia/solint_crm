@@ -554,11 +554,11 @@ model Pipeline {
   name      String
   isDefault Boolean @default(false)
 
-  /// A caixa de entrada a que este funil pertence.
+  /// Vínculo legado entre funil e caixa de entrada.
   ///
-  /// `null` = funil avulso, não ligado a conexão nenhuma. É o estado de todos
-  /// os funis criados antes desta coluna existir, e continua sendo válido: um
-  /// funil que atravessa canais é uma escolha legítima do cliente.
+  /// Funis novos pertencem à conta e deixam este campo nulo. Versões anteriores
+  /// criavam um funil por conexão; a relação permanece apenas para preservar o
+  /// histórico desses registros sem apagar oportunidades.
   ///
   /// `onDelete: SetNull` e não `Cascade`: excluir uma conexão do WhatsApp já
   /// apaga conversas e mensagens daquela caixa, e levar junto o histórico

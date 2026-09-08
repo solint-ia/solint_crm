@@ -37,8 +37,11 @@ export interface BuilderVocabulary {
   readonly priorities: readonly string[];
   readonly teams: readonly string[];
   readonly agents: readonly string[];
-  /** Nomes de etapas do funil, para a ação de mover o card. */
-  readonly stages: readonly string[];
+  readonly pipelines: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly stages: readonly { readonly id: string; readonly name: string }[];
+  }[];
 }
 
 interface AutomationBuilderProps {
@@ -81,6 +84,50 @@ const PLACEHOLDER: Readonly<Record<AutomationActionType, string>> = {
 
 const DRAFT_ID = 'draft-em-edicao';
 
+/** Converte uma regra antiga por nome quando o destino pode ser deduzido sem ambiguidade. */
+const resolveLegacyKanbanTarget = (
+  action: AutomationAction,
+  vocabulary: BuilderVocabulary,
+): AutomationAction => {
+  if (action.type !== 'mover_etapa_kanban') return action;
+
+  if (action.pipelineId && action.stageId) {
+    const stage = vocabulary.pipelines
+      .find((pipeline) => pipeline.id === action.pipelineId)
+      ?.stages.find((item) => item.id === action.stageId);
+    return stage ? { ...action, value: stage.name } : action;
+  }
+
+  const pipelines = action.pipelineId
+    ? vocabulary.pipelines.filter((pipeline) => pipeline.id === action.pipelineId)
+    : vocabulary.pipelines;
+  const matches = pipelines.flatMap((pipeline) =>
+    pipeline.stages
+      .filter(
+        (stage) => stage.name.localeCompare(action.value, 'pt-BR', { sensitivity: 'base' }) === 0,
+      )
+      .map((stage) => ({ pipeline, stage })),
+  );
+  const match = matches.length === 1 ? matches[0] : undefined;
+  return match
+    ? {
+        ...action,
+        pipelineId: match.pipeline.id,
+        stageId: match.stage.id,
+        value: match.stage.name,
+      }
+    : action;
+};
+
+const hasValidKanbanTarget = (action: AutomationAction, vocabulary: BuilderVocabulary): boolean =>
+  Boolean(
+    action.pipelineId &&
+    action.stageId &&
+    vocabulary.pipelines
+      .find((pipeline) => pipeline.id === action.pipelineId)
+      ?.stages.some((stage) => stage.id === action.stageId),
+  );
+
 export function AutomationBuilder({
   open,
   onClose,
@@ -98,7 +145,9 @@ export function AutomationBuilder({
     editing ? logicOf(editing) : 'e',
   );
   const [actions, setActions] = useState<readonly AutomationAction[]>(
-    editing?.actions ?? [{ type: 'atribuir_equipe', value: '' }],
+    editing?.actions.map((action) => resolveLegacyKanbanTarget(action, vocabulary)) ?? [
+      { type: 'atribuir_equipe', value: '' },
+    ],
   );
   const [enabled, setEnabled] = useState(editing?.enabled ?? true);
   const [error, setError] = useState<string | undefined>();
@@ -131,8 +180,6 @@ export function AutomationBuilder({
         return vocabulary.priorities;
       case 'aplicar_etiqueta':
         return vocabulary.labels;
-      case 'mover_etapa_kanban':
-        return vocabulary.stages;
       default:
         return [];
     }
@@ -200,8 +247,10 @@ export function AutomationBuilder({
   const incomplete =
     name.trim().length < 3 ||
     actions.length === 0 ||
-    actions.some(
-      (action) => !VALUELESS_ACTIONS.has(action.type) && action.value.trim().length === 0,
+    actions.some((action) =>
+      action.type === 'mover_etapa_kanban'
+        ? !hasValidKanbanTarget(action, vocabulary)
+        : !VALUELESS_ACTIONS.has(action.type) && action.value.trim().length === 0,
     ) ||
     conditions.some((condition) => condition.value.trim().length === 0);
 
@@ -392,15 +441,16 @@ export function AutomationBuilder({
                   aria-label={`Ação ${index + 1}`}
                   className="w-auto min-w-44 flex-1"
                   value={action.type}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    const type = event.target.value as AutomationActionType;
                     setActions((current) =>
-                      current.map((item, position) =>
-                        position === index
-                          ? { ...item, type: event.target.value as AutomationActionType, value: '' }
-                          : item,
-                      ),
-                    )
-                  }
+                      current.map((item, position) => {
+                        if (position !== index) return item;
+                        const { pipelineId: _pipelineId, stageId: _stageId, ...base } = item;
+                        return { ...base, type, value: '' };
+                      }),
+                    );
+                  }}
                 >
                   {ACTION_OPTIONS.map((type) => (
                     <option key={type} value={type}>
@@ -409,7 +459,17 @@ export function AutomationBuilder({
                   ))}
                 </Select>
 
-                {VALUELESS_ACTIONS.has(action.type) ? (
+                {action.type === 'mover_etapa_kanban' ? (
+                  <KanbanTargetFields
+                    action={action}
+                    vocabulary={vocabulary}
+                    onChange={(next) =>
+                      setActions((current) =>
+                        current.map((item, position) => (position === index ? next : item)),
+                      )
+                    }
+                  />
+                ) : VALUELESS_ACTIONS.has(action.type) ? (
                   <span className="flex-[2] text-meta text-dim">sem complemento</span>
                 ) : (
                   <TextInput
@@ -510,6 +570,63 @@ export function AutomationBuilder({
   );
 }
 
+function KanbanTargetFields({
+  action,
+  vocabulary,
+  onChange,
+}: {
+  readonly action: AutomationAction;
+  readonly vocabulary: BuilderVocabulary;
+  readonly onChange: (action: AutomationAction) => void;
+}) {
+  const pipeline = vocabulary.pipelines.find((item) => item.id === action.pipelineId);
+
+  return (
+    <div className="grid min-w-64 flex-[2] grid-cols-1 gap-2 sm:grid-cols-2">
+      <Select
+        aria-label="Funil de destino"
+        value={action.pipelineId ?? ''}
+        onChange={(event) => {
+          const { pipelineId: _pipelineId, stageId: _stageId, ...base } = action;
+          onChange({
+            ...base,
+            value: '',
+            ...(event.target.value ? { pipelineId: event.target.value } : {}),
+          });
+        }}
+      >
+        <option value="">Selecione o funil</option>
+        {vocabulary.pipelines.map((item) => (
+          <option key={item.id} value={item.id}>
+            {item.name}
+          </option>
+        ))}
+      </Select>
+      <Select
+        aria-label="Etapa de destino"
+        value={action.stageId ?? ''}
+        disabled={!pipeline}
+        onChange={(event) => {
+          const stage = pipeline?.stages.find((item) => item.id === event.target.value);
+          const { stageId: _stageId, ...base } = action;
+          onChange({
+            ...base,
+            value: stage?.name ?? '',
+            ...(stage ? { stageId: stage.id } : {}),
+          });
+        }}
+      >
+        <option value="">{pipeline ? 'Selecione a etapa' : 'Escolha o funil primeiro'}</option>
+        {pipeline?.stages.map((stage) => (
+          <option key={stage.id} value={stage.id}>
+            {stage.name}
+          </option>
+        ))}
+      </Select>
+    </div>
+  );
+}
+
 /** Passo numerado do construtor. A numeração aqui é real: a ordem é o modelo. */
 function BuilderStep({
   index,
@@ -532,9 +649,7 @@ function BuilderStep({
         <span className="text-meta text-dim">{hint}</span>
       </div>
       {children}
-      {index < 3 ? (
-        <ArrowDown aria-hidden="true" className="mt-2 ml-1 size-3 text-line" />
-      ) : null}
+      {index < 3 ? <ArrowDown aria-hidden="true" className="mt-2 ml-1 size-3 text-line" /> : null}
     </section>
   );
 }

@@ -21,11 +21,14 @@ import { cn } from '@/lib/cn';
 export function InfoTooltip({
   text,
   label,
+  align = 'start',
   className,
 }: {
   readonly text: string;
   /** O que o balão explica, para quem ouve a tela em vez de ver. */
   readonly label: string;
+  /** Lado em que o balão ancora; `end` evita vazar na última coluna. */
+  readonly align?: 'start' | 'end';
   readonly className?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -55,7 +58,10 @@ export function InfoTooltip({
         <span
           id={id}
           role="tooltip"
-          className="absolute top-full left-0 z-50 mt-1.5 w-64 rounded-xl border border-line bg-surface/95 dark:bg-surface-2/95 p-3 text-left text-xs leading-relaxed font-normal text-ink shadow-xl backdrop-blur-md animate-in fade-in duration-100 sm:w-72"
+          className={cn(
+            'absolute top-full z-50 mt-1.5 w-64 rounded-xl border border-line bg-surface/95 p-3 text-left text-xs leading-relaxed font-normal text-ink shadow-xl backdrop-blur-md animate-in fade-in duration-100 dark:bg-surface-2/95 sm:w-72',
+            align === 'end' ? 'right-0' : 'left-0',
+          )}
         >
           {text}
         </span>

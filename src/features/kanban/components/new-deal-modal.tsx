@@ -41,7 +41,7 @@ export function NewDealModal({
   const [stageId, setStageId] = useState(initialStageId ?? stages[0]?.id ?? '');
   const [contactName, setContactName] = useState('');
   const [companyName, setCompanyName] = useState('');
-  const [ownerName, setOwnerName] = useState(owners[0] ?? '');
+  const [ownerName, setOwnerName] = useState('');
   const [priority, setPriority] = useState<'baixa' | 'media' | 'alta' | 'urgente'>('media');
   const [source, setSource] = useState('whatsapp');
   const [nextAction, setNextAction] = useState('Entrar em contato para qualificação');
@@ -160,7 +160,9 @@ export function NewDealModal({
           </div>
 
           <div>
-            <label className="mb-1 block text-meta font-semibold text-ink">Empresa / Razão Social</label>
+            <label className="mb-1 block text-meta font-semibold text-ink">
+              Empresa / Razão Social
+            </label>
             <input
               type="text"
               placeholder="Nome da empresa do cliente"
@@ -174,12 +176,15 @@ export function NewDealModal({
         {/* Vendedor + Prioridade */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label className="mb-1 block text-meta font-semibold text-ink">Vendedor Responsável</label>
+            <label className="mb-1 block text-meta font-semibold text-ink">
+              Vendedor Responsável
+            </label>
             <select
               value={ownerName}
               onChange={(e) => setOwnerName(e.target.value)}
               className="w-full rounded-control border border-line bg-surface px-3 py-2 text-body text-ink outline-none focus:border-brand"
             >
+              <option value="">Não atribuído</option>
               {owners.map((owner) => (
                 <option key={owner} value={owner}>
                   {owner}
@@ -202,7 +207,6 @@ export function NewDealModal({
               ))}
             </select>
           </div>
-
         </div>
 
         {/* Origem do Lead + Próxima Ação */}

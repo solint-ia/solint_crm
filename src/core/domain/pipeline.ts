@@ -73,14 +73,12 @@ export interface Pipeline {
   readonly id: Id;
   readonly accountId: Id;
   readonly name: string;
+  /** O funil principal da conta. Ele existe sempre e não pode ser excluído. */
+  readonly isDefault: boolean;
   readonly stages: readonly PipelineStage[];
   /**
-   * A caixa de entrada a que este funil pertence.
-   *
-   * Ausente = funil avulso, que atravessa canais. Um número de WhatsApp por
-   * funil é o padrão desde que a conta passou a poder ter mais de uma conexão:
-   * quem atende dois números costuma vender duas coisas diferentes, e misturar
-   * os dois num quadro só torna o total do funil um número sem dono.
+   * Vínculo legado com caixa de entrada. Funis novos pertencem à conta e não
+   * nascem automaticamente a partir de conexões do WhatsApp.
    */
   readonly inboxId?: Id;
   /** Nome da conexão, para o seletor dizer de qual caixa é este funil. */
@@ -90,11 +88,8 @@ export interface Pipeline {
 /**
  * Os funis que esta pessoa alcança.
  *
- * Um funil avulso é sempre visível — ele não pertence a canal nenhum, então
- * não há caixa a respeitar. Um funil de caixa segue exatamente a mesma regra
- * das conversas: quem não alcança a caixa não alcança o funil dela. Sem isto,
- * um colaborador restrito a uma equipe veria no Kanban os negócios de um canal
- * cujas conversas ele não pode abrir.
+ * Funis atuais são avulsos e sempre visíveis na conta. O recorte de caixa é
+ * mantido apenas para registros legados que ainda carreguem `inboxId`.
  */
 export const visiblePipelines = (
   pipelines: readonly Pipeline[],
@@ -159,7 +154,7 @@ export interface Deal {
   readonly amountInCents: number;
   readonly ownerName: string;
   readonly priority: Priority;
-  /** Quando o card nasceu. É por aqui que o filtro de período recorta. */
+  /** Quando o card nasceu. */
   readonly createdAt: IsoDateTime;
   readonly enteredStageAt: string;
   readonly stageAgeLabel: string;

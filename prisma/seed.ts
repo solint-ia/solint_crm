@@ -3,7 +3,8 @@ import 'dotenv/config';
 
 import crypto from 'node:crypto';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { Prisma, PrismaClient } from '../src/generated/prisma';
+import { PrismaClient } from '../src/generated/prisma';
+import type { Prisma } from '../src/generated/prisma';
 import { hashPassword } from '../src/infrastructure/auth/password';
 import { AI_AGENTS } from '../src/infrastructure/seed/ai-agents';
 import { CAMPAIGNS, SEGMENTS, TEMPLATES } from '../src/infrastructure/seed/campaigns';
@@ -279,6 +280,7 @@ async function main() {
         id: pipeline.id,
         accountId: pipeline.accountId,
         name: pipeline.name,
+        isDefault: pipeline.isDefault,
         stages: {
           create: pipeline.stages.map((stage) => ({
             id: stage.id,

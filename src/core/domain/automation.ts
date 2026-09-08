@@ -61,12 +61,11 @@ export const AUTOMATION_CONDITION_LOGICS = ['e', 'ou'] as const;
 
 export type AutomationConditionLogic = (typeof AUTOMATION_CONDITION_LOGICS)[number];
 
-export const AUTOMATION_CONDITION_LOGIC_LABELS: Readonly<
-  Record<AutomationConditionLogic, string>
-> = {
-  e: 'Todas as condições',
-  ou: 'Qualquer condição',
-};
+export const AUTOMATION_CONDITION_LOGIC_LABELS: Readonly<Record<AutomationConditionLogic, string>> =
+  {
+    e: 'Todas as condições',
+    ou: 'Qualquer condição',
+  };
 
 /** Como a frase da regra liga uma condição à seguinte. */
 export const AUTOMATION_CONDITION_LOGIC_JOINERS: Readonly<
@@ -118,6 +117,9 @@ const EXCLUSIVE_ACTIONS: ReadonlySet<AutomationActionType> = new Set([
 export interface AutomationAction {
   readonly type: AutomationActionType;
   readonly value: string;
+  /** Destino inequívoco da ação de Kanban. Ausente apenas em regras legadas. */
+  readonly pipelineId?: Id;
+  readonly stageId?: Id;
 }
 
 export interface Automation {
@@ -249,10 +251,7 @@ const satisfaz = (condition: AutomationCondition, context: AutomationContext): b
  * condição" sem nenhuma condição deixaria de disparar ao trocar de `e` para
  * `ou`, sem que nada na tela explicasse por quê.
  */
-export const automationMatches = (
-  automation: Automation,
-  context: AutomationContext,
-): boolean => {
+export const automationMatches = (automation: Automation, context: AutomationContext): boolean => {
   if (!automation.enabled) return false;
   if (automation.conditions.length === 0) return true;
 
@@ -268,7 +267,9 @@ export const automationsFor = (
   context: AutomationContext,
 ): readonly Automation[] =>
   automations
-    .filter((automation) => automation.trigger === trigger && automationMatches(automation, context))
+    .filter(
+      (automation) => automation.trigger === trigger && automationMatches(automation, context),
+    )
     .toSorted((a, b) => a.order - b.order);
 
 export type ConflictSeverity = 'sobrescrita' | 'duplicidade';
@@ -325,7 +326,10 @@ export const detectAutomationConflicts = (
         if (!rival) continue;
 
         const label = AUTOMATION_ACTION_LABELS[action.type];
-        const sameValue = rival.value.toLowerCase() === action.value.toLowerCase();
+        const sameValue =
+          action.type === 'mover_etapa_kanban' && action.stageId && rival.stageId
+            ? rival.stageId === action.stageId
+            : rival.value.toLowerCase() === action.value.toLowerCase();
 
         if (EXCLUSIVE_ACTIONS.has(action.type) && !sameValue) {
           conflicts.push({

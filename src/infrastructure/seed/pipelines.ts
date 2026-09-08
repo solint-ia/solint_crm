@@ -8,6 +8,7 @@ export const PIPELINES: readonly Pipeline[] = [
     id: 'pl-comercial',
     accountId: ACCOUNT_ID,
     name: 'Funil Comercial',
+    isDefault: true,
     stages: [
       {
         id: 'st-novo',
@@ -75,6 +76,7 @@ export const PIPELINES: readonly Pipeline[] = [
     id: 'pl-suporte',
     accountId: ACCOUNT_ID,
     name: 'Pós-venda & CS',
+    isDefault: false,
     stages: [
       {
         id: 'st-onb',
@@ -131,7 +133,12 @@ export const DEALS: readonly Deal[] = [
     source: 'whatsapp',
     history: [{ text: 'Oportunidade criada a partir da conversa WhatsApp', date: '19 ago, 09:14' }],
     tasks: [
-      { id: 'tsk-1', title: 'Enviar apresentação institucional', completed: false, dueDate: 'Hoje' },
+      {
+        id: 'tsk-1',
+        title: 'Enviar apresentação institucional',
+        completed: false,
+        dueDate: 'Hoje',
+      },
     ],
   },
   {
@@ -177,7 +184,12 @@ export const DEALS: readonly Deal[] = [
       { text: 'Reunião de descoberta realizada via Meet', date: '16 ago, 10:00' },
     ],
     tasks: [
-      { id: 'tsk-2', title: 'Follow-up de alinhamento técnico', completed: true, dueDate: '17 ago' },
+      {
+        id: 'tsk-2',
+        title: 'Follow-up de alinhamento técnico',
+        completed: true,
+        dueDate: '17 ago',
+      },
     ],
   },
   {
@@ -221,7 +233,12 @@ export const DEALS: readonly Deal[] = [
       { text: 'Apresentação para diretoria realizada', date: '15 ago, 14:00' },
     ],
     tasks: [
-      { id: 'tsk-3', title: 'Enviar minuta de contrato para jurídico', completed: false, dueDate: 'Amanhã' },
+      {
+        id: 'tsk-3',
+        title: 'Enviar minuta de contrato para jurídico',
+        completed: false,
+        dueDate: 'Amanhã',
+      },
     ],
   },
   {
@@ -264,7 +281,12 @@ export const DEALS: readonly Deal[] = [
     source: 'inbound',
     history: [{ text: 'Cliente solicitou condição de parcelamento em 12x', date: '18 ago, 13:20' }],
     tasks: [
-      { id: 'tsk-4', title: 'Aprovar condição comercial com financeiro', completed: true, dueDate: '18 ago' },
+      {
+        id: 'tsk-4',
+        title: 'Aprovar condição comercial com financeiro',
+        completed: true,
+        dueDate: '18 ago',
+      },
       { id: 'tsk-5', title: 'Gerar link de pagamento', completed: false, dueDate: 'Hoje' },
     ],
   },
@@ -286,7 +308,9 @@ export const DEALS: readonly Deal[] = [
     nextAction: 'Passar bastão para equipe de Onboarding',
     conversationId: 'cv-ana',
     source: 'site',
-    history: [{ text: 'Contrato assinado digitalmente e pagamento confirmado', date: '16 ago, 17:42' }],
+    history: [
+      { text: 'Contrato assinado digitalmente e pagamento confirmado', date: '16 ago, 17:42' },
+    ],
   },
   {
     id: 'dl-9',

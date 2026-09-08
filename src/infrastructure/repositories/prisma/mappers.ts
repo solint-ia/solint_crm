@@ -341,6 +341,7 @@ export const pipelineRow = (row: PipelineWithStages): Pipeline => ({
   id: row.id,
   accountId: row.accountId,
   name: row.name,
+  isDefault: row.isDefault,
   ...(row.inboxId ? { inboxId: row.inboxId } : {}),
   ...(row.inbox?.name ? { inboxName: row.inbox.name } : {}),
   stages: [...row.stages]

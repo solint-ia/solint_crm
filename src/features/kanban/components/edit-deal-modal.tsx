@@ -188,6 +188,7 @@ export function EditDealModal({
               onChange={(e) => setOwnerName(e.target.value)}
               className="w-full rounded-control border border-line bg-surface px-3 py-2 text-body text-ink outline-none focus:border-brand"
             >
+              <option value="Não atribuído">Não atribuído</option>
               {owners.map((owner) => (
                 <option key={owner} value={owner}>
                   {owner}
@@ -210,7 +211,6 @@ export function EditDealModal({
               ))}
             </select>
           </div>
-
         </div>
 
         {/* Origem + Próxima Ação */}

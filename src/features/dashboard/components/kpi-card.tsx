@@ -60,17 +60,6 @@ export function KpiCard({ kpi }: KpiCardProps) {
             : 'border-line hover:border-brand/40',
       )}
     >
-      {/* Faixa de cor à esquerda — o estado do cartão lido antes do número. */}
-      <span
-        aria-hidden
-        className={cn(
-          // Um pixel para dentro acompanha a borda arredondada sem vazar pelos
-          // cantos. `overflow-hidden` não serve aqui: cortaria o InfoTooltip.
-          'pointer-events-none absolute top-px bottom-px left-px w-0.5 rounded-l-xl',
-          alerta ? 'bg-amber-500' : atencao ? 'bg-blue-500' : 'bg-transparent',
-        )}
-      />
-
       <div className="flex items-start gap-2">
         <div
           className={cn(
@@ -87,7 +76,12 @@ export function KpiCard({ kpi }: KpiCardProps) {
 
         <div className="flex min-w-0 flex-1 items-start gap-1">
           <span className="text-xs leading-snug font-semibold text-muted">{kpi.label}</span>
-          <InfoTooltip text={kpi.description} label={kpi.label} className="mt-px shrink-0" />
+          <InfoTooltip
+            text={kpi.description}
+            label={kpi.label}
+            align={kpi.id === 'csat' ? 'end' : 'start'}
+            className="mt-px shrink-0"
+          />
         </div>
       </div>
 

@@ -155,23 +155,35 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
   }
 
   /**
-   * O funil da conta: o marcado como padrão, ou o primeiro que existir.
-   *
-   * O filtro era só `isDefault: true`, e nenhuma das duas telas que **criam**
-   * funis garante essa marca — o Kanban lista todos, sem preferir nenhum. Uma
-   * conta com dois funis e nenhum marcado via o painel dizer que não há funil
-   * nenhum, com dez negócios cadastrados do lado.
+   * O Comercial canônico da conta, com fallback para um padrão legado.
+   * Funis automáticos de caixas antigas não entram no Dashboard.
    */
   private funilDaConta(accountId: Id) {
     const include = {
       stages: { include: { deals: { where: { accountId } } }, orderBy: { order: 'asc' as const } },
     };
     return prisma.pipeline
-      .findFirst({ where: { accountId, isDefault: true }, include })
+      .findFirst({ where: { id: `pip-${accountId}`, accountId }, include })
+      .then(
+        (canonico) =>
+          canonico ??
+          prisma.pipeline.findFirst({
+            where: {
+              accountId,
+              isDefault: true,
+              NOT: { id: { startsWith: 'pip-ibx-' } },
+            },
+            include,
+          }),
+      )
       .then(
         (padrao) =>
           padrao ??
-          prisma.pipeline.findFirst({ where: { accountId }, include, orderBy: { name: 'asc' } }),
+          prisma.pipeline.findFirst({
+            where: { accountId, NOT: { id: { startsWith: 'pip-ibx-' } } },
+            include,
+            orderBy: { name: 'asc' },
+          }),
       );
   }
 
@@ -186,8 +198,7 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
     inboxAccess: InboxAccess,
     window: PeriodWindow,
   ): Promise<{ readonly atual: number; readonly anterior: number }> {
-    const scope =
-      inboxAccess === 'todas' ? {} : { inboxId: { in: [...inboxAccess] } };
+    const scope = inboxAccess === 'todas' ? {} : { inboxId: { in: [...inboxAccess] } };
 
     const [atual, anterior] = await Promise.all([
       prisma.conversation.count({

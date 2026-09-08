@@ -22,14 +22,7 @@ export default async function KanbanPage({
   // A rail já esconde o item; sem esta checagem, a URL direta entraria.
   if (!can(session, 'kanban:ler')) return <AccessDenied permission="kanban:ler" />;
 
-  /**
-   * Só os funis das caixas que a pessoa alcança.
-   *
-   * Mesmo eixo que já governa as conversas: `inboxAccess`. Sem isto, um
-   * colaborador restrito a uma equipe veria no Kanban os negócios de um canal
-   * cujas conversas ele não pode nem abrir — e o total do funil somaria valores
-   * de um setor que não é dele.
-   */
+  /** Funis personalizados da conta e o Comercial; legados de caixas não são listados. */
   const pipelines = visiblePipelines(
     await container.pipelines.listPipelines(session.account.id),
     session.inboxAccess,
@@ -47,6 +40,15 @@ export default async function KanbanPage({
   ]);
 
   const navItems = NAV_ITEMS.filter((item) => reachesNavItem(session.permissions, item));
+  // O seletor não depende de já existir um card: todos os membros da conta
+  // podem receber uma oportunidade. Nomes antigos ainda usados por cards são
+  // preservados para que o filtro não torne esses registros inalcançáveis.
+  const owners = [
+    ...new Set([
+      ...settings.members.map((member) => member.name),
+      ...deals.map((deal) => deal.ownerName).filter((name) => name && name !== 'Não atribuído'),
+    ]),
+  ].sort((a, b) => a.localeCompare(b));
 
   return (
     <KanbanBoard
@@ -58,8 +60,9 @@ export default async function KanbanPage({
       notifications={notifications}
       navItems={navItems}
       labels={settings.labels}
+      owners={owners}
+      canManagePipelines={can(session, 'config.equipe.papeis:escrever')}
       moveDeal={moveDealAction.bind(null, pipeline.id)}
     />
   );
 }
-

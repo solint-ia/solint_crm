@@ -102,23 +102,26 @@ export default async function ConfiguracoesPage({
    */
   const montaVocabulario = currentSection === 'automacoes';
 
-  const [settings, notifications, conversations, pipelines, activeSessions, auditRecords] = await Promise.all([
-    container.settings.get(session.account.id),
-    container.notifications.list(session.account.id, session.user.id),
-    montaVocabulario
-      ? container.conversations.list(session.account.id, session.user.id, {
-          scope: 'todas',
-          inboxAccess: session.inboxAccess,
-        })
-      : Promise.resolve([]),
-    montaVocabulario ? container.pipelines.listPipelines(session.account.id) : Promise.resolve([]),
-    currentSection === 'seguranca'
-      ? listActiveSessions(session.user.id, session.tokenId)
-      : Promise.resolve([]),
-    currentSection === 'seguranca'
-      ? new PrismaAuditRepository().list(session.account.id, { limit: 100 })
-      : Promise.resolve([]),
-  ]);
+  const [settings, notifications, conversations, pipelines, activeSessions, auditRecords] =
+    await Promise.all([
+      container.settings.get(session.account.id),
+      container.notifications.list(session.account.id, session.user.id),
+      montaVocabulario
+        ? container.conversations.list(session.account.id, session.user.id, {
+            scope: 'todas',
+            inboxAccess: session.inboxAccess,
+          })
+        : Promise.resolve([]),
+      montaVocabulario
+        ? container.pipelines.listPipelines(session.account.id)
+        : Promise.resolve([]),
+      currentSection === 'seguranca'
+        ? listActiveSessions(session.user.id, session.tokenId)
+        : Promise.resolve([]),
+      currentSection === 'seguranca'
+        ? new PrismaAuditRepository().list(session.account.id, { limit: 100 })
+        : Promise.resolve([]),
+    ]);
 
   /**
    * O efetivo de cada pessoa — papel mais a personalização dela.
@@ -148,11 +151,11 @@ export default async function ConfiguracoesPage({
     priorities: PRIORITIES.map((priority) => PRIORITY_LABEL[priority]),
     teams: settings.teams.map((team) => team.name),
     agents: settings.members.map((member) => member.name),
-    // Nomes de etapa de todos os funis, sem repetir: a ação de mover casa por
-    // nome, e dois funis podem ter uma etapa chamada igual.
-    stages: [
-      ...new Set(pipelines.flatMap((pipeline) => pipeline.stages.map((stage) => stage.name))),
-    ].sort(),
+    pipelines: pipelines.map((pipeline) => ({
+      id: pipeline.id,
+      name: pipeline.name,
+      stages: pipeline.stages.map((stage) => ({ id: stage.id, name: stage.name })),
+    })),
   };
 
   return (
@@ -210,10 +213,7 @@ export default async function ConfiguracoesPage({
           {currentSection === 'faturamento' ? <BillingSection billing={settings.billing} /> : null}
 
           {currentSection === 'seguranca' ? (
-            <SecuritySection
-              activeSessions={activeSessions}
-              auditLog={auditRecords}
-            />
+            <SecuritySection activeSessions={activeSessions} auditLog={auditRecords} />
           ) : null}
         </main>
       </div>

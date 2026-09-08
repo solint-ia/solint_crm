@@ -30,8 +30,12 @@ export interface AutomationEffects {
   resolve(accountId: Id, conversationId: Id): Promise<unknown>;
   sendMessage(accountId: Id, conversationId: Id, text: string): Promise<unknown>;
   notify(accountId: Id, conversationId: Id, text: string): Promise<unknown>;
-  /** Move o card ligado à conversa para a etapa de nome informado. */
-  moveDealToStage(accountId: Id, conversationId: Id, stageName: string): Promise<unknown>;
+  /** Move o card para o destino exato; `stageName` sustenta regras antigas. */
+  moveDealToStage(
+    accountId: Id,
+    conversationId: Id,
+    target: { readonly pipelineId?: Id; readonly stageId?: Id; readonly stageName: string },
+  ): Promise<unknown>;
 }
 
 export interface RunAutomationsInput {
@@ -154,7 +158,14 @@ const execute = async (
       return;
     case 'mover_etapa_kanban':
       if (!value) throw new Error('Ação de mover sem etapa de destino.');
-      await effects.moveDealToStage(accountId, conversationId, value);
+      if (Boolean(action.pipelineId) !== Boolean(action.stageId)) {
+        throw new Error('Ação de mover com destino incompleto.');
+      }
+      await effects.moveDealToStage(accountId, conversationId, {
+        stageName: value,
+        ...(action.pipelineId ? { pipelineId: action.pipelineId } : {}),
+        ...(action.stageId ? { stageId: action.stageId } : {}),
+      });
       return;
     default: {
       // Exaustividade: uma ação nova sem tratamento vira erro de compilação,

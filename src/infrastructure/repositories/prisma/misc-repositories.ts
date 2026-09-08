@@ -1,4 +1,5 @@
 import type { AgentFlowBlock, AiAgent } from '@/core/domain/ai-agent';
+import { randomUUID } from 'node:crypto';
 import type { AppNotification } from '@/core/domain/notification';
 import {
   DEFAULT_NEGOTIATION_WEIGHT,
@@ -8,6 +9,7 @@ import {
   type PipelineStage,
 } from '@/core/domain/pipeline';
 import { DomainError, NotFoundError, type Id } from '@/core/domain/shared';
+import { DEFAULT_PIPELINE_NAME } from '@/core/domain/account-provisioning';
 import type { AiAgentRepository, CreateAiAgentDraft } from '@/core/ports/ai-agent-repository';
 import type { NotificationRepository } from '@/core/ports/notification-repository';
 import type { PipelineRepository } from '@/core/ports/pipeline-repository';
@@ -16,78 +18,112 @@ import { aiAgentRow, dealRow, notificationRow, pipelineRow } from './mappers';
 import { dataCurtaLabel } from '@/lib/datetime';
 
 const ETAPAS_PADRAO = (pipelineId: string) => [
-  { id: `stg-1-${pipelineId}`, pipelineId, name: 'Novo Lead', order: 1, color: '#3B82F6', conversionWeight: 0 },
-  { id: `stg-2-${pipelineId}`, pipelineId, name: 'Qualificação', order: 2, color: '#F59E0B', conversionWeight: 0 },
-  { id: `stg-3-${pipelineId}`, pipelineId, name: 'Proposta Enviada', order: 3, color: '#8B5CF6', conversionWeight: 0 },
-  { id: `stg-4-${pipelineId}`, pipelineId, name: 'Negociação', order: 4, color: '#EC4899', conversionWeight: DEFAULT_NEGOTIATION_WEIGHT },
-  { id: `stg-5-${pipelineId}`, pipelineId, name: 'Fechado Ganho', order: 5, color: '#10B981', isWon: true, conversionWeight: DEFAULT_WON_WEIGHT },
-  { id: `stg-6-${pipelineId}`, pipelineId, name: 'Fechado Perdido', order: 6, color: '#64748B', isLost: true, conversionWeight: 0 },
+  {
+    id: `stg-1-${pipelineId}`,
+    pipelineId,
+    name: 'Novo Lead',
+    order: 1,
+    color: '#3B82F6',
+    conversionWeight: 0,
+  },
+  {
+    id: `stg-2-${pipelineId}`,
+    pipelineId,
+    name: 'Qualificação',
+    order: 2,
+    color: '#F59E0B',
+    conversionWeight: 0,
+  },
+  {
+    id: `stg-3-${pipelineId}`,
+    pipelineId,
+    name: 'Proposta Enviada',
+    order: 3,
+    color: '#8B5CF6',
+    conversionWeight: 0,
+  },
+  {
+    id: `stg-4-${pipelineId}`,
+    pipelineId,
+    name: 'Negociação',
+    order: 4,
+    color: '#EC4899',
+    conversionWeight: DEFAULT_NEGOTIATION_WEIGHT,
+  },
+  {
+    id: `stg-5-${pipelineId}`,
+    pipelineId,
+    name: 'Fechado Ganho',
+    order: 5,
+    color: '#10B981',
+    isWon: true,
+    conversionWeight: DEFAULT_WON_WEIGHT,
+  },
+  {
+    id: `stg-6-${pipelineId}`,
+    pipelineId,
+    name: 'Fechado Perdido',
+    order: 6,
+    color: '#64748B',
+    isLost: true,
+    conversionWeight: 0,
+  },
 ];
 
 export class PrismaPipelineRepository implements PipelineRepository {
   /**
-   * Os funis da conta — e ela sempre tem os que deveria ter.
+   * Funis administrados pela própria conta, mais o Comercial obrigatório.
    *
-   * Três curas, na ordem em que importam: conta sem funil nenhum ganha o
-   * avulso; caixa de WhatsApp sem funil próprio ganha o dela; funil sem etapas
-   * ganha as seis padrão. Todas idempotentes, e todas aqui e não num script de
-   * migração porque uma caixa nova pode ser criada a qualquer momento — a
-   * migração corrigiria o passado e deixaria o futuro quebrado.
+   * Versões anteriores criavam silenciosamente um funil para cada caixa de
+   * WhatsApp. Além de misturar canal com processo comercial, caixas apagadas
+   * deixavam abas órfãs. Esses funis legados têm prefixo determinístico
+   * `pip-ibx-` e deixam de ser expostos; não são apagados aqui para preservar
+   * qualquer oportunidade histórica que alguém possa ter registrado neles.
    */
   async listPipelines(accountId: Id): Promise<readonly Pipeline[]> {
     const recarrega = () =>
       prisma.pipeline.findMany({
-        where: { accountId },
+        where: { accountId, NOT: { id: { startsWith: 'pip-ibx-' } } },
         include: { stages: true, inbox: { select: { name: true } } },
-        orderBy: { name: 'asc' },
+        orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
       });
 
     let rows = await recarrega();
     let mexeu = false;
 
-    if (rows.length === 0) {
-      const pipelineId = `pip-${accountId}`;
+    const pipelineId = `pip-${accountId}`;
+    const defaultPipeline =
+      rows.find((row) => row.id === pipelineId) ??
+      rows.find((row) => row.isDefault) ??
+      rows.find(
+        (row) =>
+          row.name.toLocaleLowerCase('pt-BR') === DEFAULT_PIPELINE_NAME.toLocaleLowerCase('pt-BR'),
+      );
+    if (!defaultPipeline) {
       await prisma.pipeline.create({
         data: {
           id: pipelineId,
           accountId,
-          name: 'Funil Comercial',
+          name: DEFAULT_PIPELINE_NAME,
           isDefault: true,
           stages: { create: ETAPAS_PADRAO(pipelineId).map(({ pipelineId: _, ...st }) => st) },
         },
       });
       mexeu = true;
-    }
-
-    /**
-     * Um funil por conexão do WhatsApp.
-     *
-     * Conta com um número só continua vendo exatamente o que via: um funil, e o
-     * seletor invisível. Conta com dois números passa a ter dois quadros, e o
-     * seletor aparece sozinho — que é o pedido. O funil avulso que já existia
-     * não é convertido nem apagado: ele continua ali, ao lado dos novos, porque
-     * é onde estão os negócios que a conta já registrou.
-     */
-    const caixas = await prisma.inbox.findMany({
-      where: { accountId, channel: 'whatsapp' },
-      select: { id: true, name: true },
-    });
-    const jaTemFunil = new Set(rows.map((row) => row.inboxId).filter(Boolean));
-    const semFunil = caixas.filter((caixa) => !jaTemFunil.has(caixa.id));
-
-    for (const caixa of semFunil) {
-      const pipelineId = `pip-ibx-${caixa.id}`;
-      await prisma.pipeline.create({
-        data: {
-          id: pipelineId,
-          accountId,
-          inboxId: caixa.id,
-          name: `Funil de ${caixa.name}`,
-          stages: { create: ETAPAS_PADRAO(pipelineId).map(({ pipelineId: _, ...st }) => st) },
-        },
+    } else if (!defaultPipeline.isDefault) {
+      await prisma.pipeline.update({
+        where: { id: defaultPipeline.id, accountId },
+        data: { isDefault: true },
       });
       mexeu = true;
     }
+
+    const chosenDefaultId = defaultPipeline?.id ?? pipelineId;
+    const demoted = await prisma.pipeline.updateMany({
+      where: { accountId, isDefault: true, id: { not: chosenDefaultId } },
+      data: { isDefault: false },
+    });
+    if (demoted.count > 0) mexeu = true;
 
     if (mexeu) rows = await recarrega();
 
@@ -100,6 +136,40 @@ export class PrismaPipelineRepository implements PipelineRepository {
     }
 
     return rows.map(pipelineRow);
+  }
+
+  async createPipeline(accountId: Id, name: string): Promise<Pipeline> {
+    const existing = await prisma.pipeline.findFirst({
+      where: { accountId, name: { equals: name, mode: 'insensitive' } },
+      select: { id: true },
+    });
+    if (existing) throw new DomainError('Já existe um funil com esse nome.', 'DUPLICATE_PIPELINE');
+
+    const pipelineId = `pip-custom-${randomUUID()}`;
+    const row = await prisma.pipeline.create({
+      data: {
+        id: pipelineId,
+        accountId,
+        name,
+        stages: { create: ETAPAS_PADRAO(pipelineId).map(({ pipelineId: _, ...stage }) => stage) },
+      },
+      include: { stages: true, inbox: { select: { name: true } } },
+    });
+    return pipelineRow(row);
+  }
+
+  async deletePipeline(accountId: Id, pipelineId: Id): Promise<number> {
+    const pipeline = await prisma.pipeline.findFirst({
+      where: { id: pipelineId, accountId },
+      select: { id: true, isDefault: true, _count: { select: { deals: true } } },
+    });
+    if (!pipeline) throw new NotFoundError('Funil', pipelineId);
+    if (pipeline.isDefault || pipeline.id === `pip-${accountId}`) {
+      throw new DomainError('O Funil Comercial padrão não pode ser excluído.', 'DEFAULT_PIPELINE');
+    }
+
+    await prisma.pipeline.delete({ where: { id: pipelineId, accountId } });
+    return pipeline._count.deals;
   }
 
   async listDeals(accountId: Id, pipelineId: Id): Promise<readonly Deal[]> {
@@ -390,7 +460,6 @@ export class PrismaPipelineRepository implements PipelineRepository {
     return result;
   }
 }
-
 
 export class PrismaAiAgentRepository implements AiAgentRepository {
   async list(accountId: Id): Promise<readonly AiAgent[]> {

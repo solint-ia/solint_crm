@@ -15,7 +15,6 @@ import { Button } from '@/components/ui/button';
 import { DEAL_SOURCES } from '@/core/domain/pipeline';
 import { PRIORITIES } from '@/core/domain/conversation';
 import { PRIORITY_LABEL } from '@/components/domain/presentation-maps';
-import { cn } from '@/lib/cn';
 
 export type SortOption = 'recentes' | 'maior_valor' | 'menor_valor' | 'proxima_atividade';
 
@@ -81,7 +80,7 @@ export function KanbanToolbar({
   return (
     <div className="flex flex-col border-b border-line bg-surface px-4 py-2.5 sm:px-6">
       <div className="flex flex-wrap items-center justify-between gap-2.5">
-        {/* Lado Esquerdo: Campo de Busca + Filtros Rápidos */}
+        {/* Lado Esquerdo: busca, painel único de filtros e ordenação. */}
         <div className="flex flex-1 flex-wrap items-center gap-2 min-w-[260px]">
           {/* Busca no Funil */}
           <div className="relative min-w-[180px] flex-1 sm:max-w-xs">
@@ -102,66 +101,6 @@ export function KanbanToolbar({
                 <X className="size-3.5" />
               </button>
             )}
-          </div>
-
-          {/* Filtro: Responsável */}
-          <div className="hidden lg:block">
-            <select
-              aria-label="Filtrar por responsável"
-              value={filters.owner ?? ''}
-              onChange={(e) => onFilterChange('owner', e.target.value || null)}
-              className={cn(
-                'h-8.5 rounded-control border border-line bg-surface px-2.5 text-body text-ink outline-none transition-colors focus:border-brand focus:ring-1 focus:ring-brand/20',
-                filters.owner && 'border-brand bg-selected font-semibold text-brand',
-              )}
-            >
-              <option value="">Responsável: Todos</option>
-              {owners.map((owner) => (
-                <option key={owner} value={owner}>
-                  {owner}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Filtro: Origem */}
-          <div className="hidden xl:block">
-            <select
-              aria-label="Filtrar por origem"
-              value={filters.source ?? ''}
-              onChange={(e) => onFilterChange('source', e.target.value || null)}
-              className={cn(
-                'h-8.5 rounded-control border border-line bg-surface px-2.5 text-body text-ink outline-none transition-colors focus:border-brand focus:ring-1 focus:ring-brand/20',
-                filters.source && 'border-brand bg-selected font-semibold text-brand',
-              )}
-            >
-              <option value="">Origem: Todas</option>
-              {DEAL_SOURCES.map((src) => (
-                <option key={src.id} value={src.id}>
-                  {src.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Filtro: Prioridade */}
-          <div className="hidden 2xl:block">
-            <select
-              aria-label="Filtrar por prioridade"
-              value={filters.priority ?? ''}
-              onChange={(e) => onFilterChange('priority', e.target.value || null)}
-              className={cn(
-                'h-8.5 rounded-control border border-line bg-surface px-2.5 text-body text-ink outline-none transition-colors focus:border-brand focus:ring-1 focus:ring-brand/20',
-                filters.priority && 'border-brand bg-selected font-semibold text-brand',
-              )}
-            >
-              <option value="">Prioridade: Todas</option>
-              {PRIORITIES.map((prio) => (
-                <option key={prio} value={prio}>
-                  {PRIORITY_LABEL[prio]}
-                </option>
-              ))}
-            </select>
           </div>
 
           {/* Botão Gaveta / Popover de Filtros Avançados */}
@@ -249,6 +188,7 @@ export function KanbanToolbar({
                 className="w-full h-8.5 rounded-control border border-line bg-surface px-2 text-body text-ink outline-none focus:border-brand"
               >
                 <option value="">Todos os vendedores</option>
+                <option value="Não atribuído">Não atribuído</option>
                 {owners.map((owner) => (
                   <option key={owner} value={owner}>
                     {owner}

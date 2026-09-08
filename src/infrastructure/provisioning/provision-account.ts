@@ -86,7 +86,7 @@ export const provisionAccount = async (
 
   const pipelineId = `pip-${accountId}`;
   await tx.pipeline.create({
-    data: { id: pipelineId, accountId, name: DEFAULT_PIPELINE_NAME },
+    data: { id: pipelineId, accountId, name: DEFAULT_PIPELINE_NAME, isDefault: true },
   });
   await tx.pipelineStage.createMany({
     data: DEFAULT_PIPELINE_STAGES.map((stage) => ({

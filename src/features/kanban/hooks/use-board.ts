@@ -101,15 +101,6 @@ export function useBoard({ initialDeals, stages: initialStages, moveDeal }: UseB
     setFilters(INITIAL_FILTERS);
   }, []);
 
-  // Lista de vendedores únicos
-  const owners = useMemo(() => {
-    const set = new Set<string>();
-    for (const d of deals) {
-      if (d.ownerName && d.ownerName !== 'Não atribuído') set.add(d.ownerName);
-    }
-    return Array.from(set).sort();
-  }, [deals]);
-
   // Filtragem
   const filteredDeals = useMemo(() => {
     return deals.filter((deal) => {
@@ -136,24 +127,19 @@ export function useBoard({ initialDeals, stages: initialStages, moveDeal }: UseB
       if (filters.valueRange && filters.valueRange !== 'todos') {
         const val = deal.amountInCents;
         if (filters.valueRange === 'ate_5k' && val > 500_000) return false;
-        if (filters.valueRange === '5k_20k' && (val < 500_000 || val > 2_000_000)) return false;
-        if (filters.valueRange === '20k_50k' && (val < 2_000_000 || val > 5_000_000)) return false;
-        if (filters.valueRange === '50k_plus' && val < 5_000_000) return false;
+        if (filters.valueRange === '5k_20k' && (val <= 500_000 || val > 2_000_000)) return false;
+        if (filters.valueRange === '20k_50k' && (val <= 2_000_000 || val > 5_000_000)) return false;
+        if (filters.valueRange === '50k_plus' && val <= 5_000_000) return false;
       }
 
-      // 6. Período — pela criação do card, que é o que o rótulo promete.
-      //
-      // Era `enteredStageAt`, a entrada na etapa atual, porque não havia outro
-      // campo de tempo: um card de março arrastado hoje aparecia em "Criados
-      // hoje". `Deal.createdAt` existe desde a Etapa 11 e responde a pergunta
-      // que a barra de fato faz.
+      // 6. Período — pela entrada na etapa atual, como o filtro promete.
       if (filters.period && filters.period !== 'todos') {
         const corte = inicioDoPeriodo(filters.period, timezone, primeiroDia);
-        const criacao = new Date(deal.createdAt);
+        const entrada = new Date(deal.enteredStageAt);
         if (
           corte !== null &&
-          !Number.isNaN(criacao.getTime()) &&
-          inicioDoDia(criacao, timezone) < corte
+          !Number.isNaN(entrada.getTime()) &&
+          inicioDoDia(entrada, timezone) < corte
         ) {
           return false;
         }
@@ -288,7 +274,6 @@ export function useBoard({ initialDeals, stages: initialStages, moveDeal }: UseB
     stages,
     columns,
     summary,
-    owners,
     filters,
     sortOption,
     draggingId,

@@ -7,10 +7,9 @@ import { dataCurtaLabel, horaLabel } from '@/lib/datetime';
 /**
  * Os efeitos das automações, contra o Postgres.
  *
- * O motor fala em nomes ("Suporte N1", "VIP", "Proposta enviada") porque é
- * assim que o construtor de regras grava — ele oferece listas de nomes reais do
- * workspace, não ids. A tradução nome→id mora aqui: é detalhe de persistência,
- * e deixá-la no motor obrigaria o domínio a conhecer tabelas.
+ * Pessoas, equipes e etiquetas ainda chegam por nome. O destino do Kanban
+ * chega por id, porque nomes de etapas se repetem entre funis; regras antigas
+ * sem ids mantêm a resolução por nome para não mudar de comportamento.
  *
  * Nome que não casa com nada vira erro, e o motor registra a falha daquela ação
  * sem derrubar as outras. É melhor que o silêncio: uma regra apontando para uma
@@ -197,31 +196,58 @@ export const prismaAutomationEffects: AutomationEffects = {
    * escrita para atender — a automação só funcionaria depois de alguém fazer à
    * mão o trabalho que ela deveria fazer.
    */
-  async moveDealToStage(accountId: Id, conversationId: Id, stageName: string) {
+  async moveDealToStage(
+    accountId: Id,
+    conversationId: Id,
+    target: { readonly pipelineId?: Id; readonly stageId?: Id; readonly stageName: string },
+  ) {
     const now = new Date();
     const hoje = dataCurtaLabel(now);
-    const procuraPorNome = { equals: stageName, mode: 'insensitive' as const };
+    const procuraPorNome = { equals: target.stageName, mode: 'insensitive' as const };
 
     const deal = await prisma.deal.findFirst({
       where: { accountId, conversationId },
       select: { id: true, pipelineId: true, history: true },
     });
 
-    if (deal) {
-      // Card existente muda de etapa dentro do **próprio** funil: procurar a
-      // etapa pelo nome em toda a conta poderia mudar o card de quadro.
-      const stage = await prisma.pipelineStage.findFirst({
-        where: { pipelineId: deal.pipelineId, name: procuraPorNome },
-        select: { id: true, name: true },
-      });
-      if (!stage) {
-        throw new Error(`O funil desta oportunidade não tem etapa chamada "${stageName}".`);
-      }
+    const explicitTarget = target.pipelineId && target.stageId;
+    const stage = explicitTarget
+      ? await prisma.pipelineStage.findFirst({
+          where: {
+            id: target.stageId,
+            pipelineId: target.pipelineId,
+            pipeline: { accountId },
+          },
+          select: { id: true, name: true, pipelineId: true },
+        })
+      : deal
+        ? await prisma.pipelineStage.findFirst({
+            // Compatibilidade com regras antigas: o nome continua restrito ao
+            // funil em que o card já está.
+            where: { pipelineId: deal.pipelineId, name: procuraPorNome },
+            select: { id: true, name: true, pipelineId: true },
+          })
+        : await prisma.pipelineStage.findFirst({
+            // Regra antiga sem card: mantém o desempate estável anterior.
+            where: { name: procuraPorNome, pipeline: { accountId } },
+            select: { id: true, name: true, pipelineId: true },
+            orderBy: [{ pipeline: { name: 'asc' } }, { order: 'asc' }],
+          });
 
+    if (!stage) {
+      if (explicitTarget) throw new Error('O funil ou a etapa configurada não existe mais.');
+      if (deal) {
+        throw new Error(`O funil desta oportunidade não tem etapa chamada "${target.stageName}".`);
+      }
+      throw new Error(`Nenhum funil desta conta tem etapa chamada "${target.stageName}".`);
+    }
+
+    if (deal) {
       const history = Array.isArray(deal.history) ? deal.history : [];
       return prisma.deal.update({
         where: { id: deal.id },
         data: {
+          pipelineId: stage.pipelineId,
           stageId: stage.id,
           enteredStageAt: now.toISOString(),
           stageAgeLabel: 'hoje',
@@ -240,16 +266,6 @@ export const prismaAutomationEffects: AutomationEffects = {
       },
     });
     if (!conversation) throw new Error('Conversa não encontrada.');
-
-    // Sem card, a etapa é procurada nos funis da conta. `orderBy` desempata de
-    // forma estável quando dois funis têm etapa de mesmo nome — sem ele, o
-    // card cairia num quadro diferente a cada disparo.
-    const stage = await prisma.pipelineStage.findFirst({
-      where: { name: procuraPorNome, pipeline: { accountId } },
-      select: { id: true, name: true, pipelineId: true },
-      orderBy: [{ pipeline: { name: 'asc' } }, { order: 'asc' }],
-    });
-    if (!stage) throw new Error(`Nenhum funil desta conta tem etapa chamada "${stageName}".`);
 
     return prisma.deal.create({
       data: {

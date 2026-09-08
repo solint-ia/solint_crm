@@ -153,6 +153,8 @@ const conditionSchema = z.object({
 const actionSchema = z.object({
   type: z.enum(AUTOMATION_ACTION_TYPES),
   value: z.string().trim().max(160),
+  pipelineId: z.string().min(1).max(128).optional(),
+  stageId: z.string().min(1).max(128).optional(),
 });
 
 const saveAutomationSchema = z.object({
@@ -182,6 +184,26 @@ export async function saveAutomationAction(input: unknown): Promise<ActionResult
 
   try {
     const session = await assertCanWrite('config.automacoes:escrever');
+
+    for (const action of parsed.data.actions) {
+      if (action.type !== 'mover_etapa_kanban') continue;
+      if (!action.pipelineId || !action.stageId) {
+        return { ok: false, error: 'Selecione o funil e a etapa de destino da ação.' };
+      }
+
+      const stage = await prisma.pipelineStage.findFirst({
+        where: {
+          id: action.stageId,
+          pipelineId: action.pipelineId,
+          pipeline: { accountId: session.account.id },
+        },
+        select: { id: true },
+      });
+      if (!stage) {
+        return { ok: false, error: 'O funil ou a etapa selecionada não pertence a esta conta.' };
+      }
+    }
+
     const automation = await container.settings.saveAutomation(session.account.id, parsed.data);
     await writeAuditLog({
       accountId: session.account.id,

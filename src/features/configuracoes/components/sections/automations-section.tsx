@@ -86,6 +86,7 @@ export function AutomationsSection({ initialAutomations, vocabulary }: Automatio
                 name: draft.name,
                 trigger: draft.trigger,
                 conditions: draft.conditions,
+                conditionLogic: draft.conditionLogic,
                 actions: draft.actions,
                 enabled: draft.enabled,
               }
@@ -101,6 +102,7 @@ export function AutomationsSection({ initialAutomations, vocabulary }: Automatio
           name: draft.name,
           trigger: draft.trigger,
           conditions: draft.conditions,
+          conditionLogic: draft.conditionLogic,
           actions: draft.actions,
           enabled: draft.enabled,
           order: nextOrder,

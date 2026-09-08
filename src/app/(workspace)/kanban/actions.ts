@@ -5,6 +5,7 @@ import { writeAuditLog } from '@/infrastructure/audit/write-audit-log';
 import { revalidatePath } from 'next/cache';
 import type { Deal } from '@/core/domain/pipeline';
 import { contactLabelsAfterMove } from '@/core/domain/pipeline';
+import { can } from '@/core/domain/user';
 import { container } from '@/infrastructure/container';
 
 /** Resultado que devolve o card atualizado, para a tela não recarregar o quadro. */
@@ -12,6 +13,83 @@ interface DealActionResult {
   readonly ok: boolean;
   readonly error?: string;
   readonly deal?: Deal;
+}
+
+const createPipelineSchema = z.object({
+  name: z.string().trim().min(2).max(60),
+});
+
+export async function createPipelineAction(
+  input: unknown,
+): Promise<{ ok: boolean; error?: string; pipelineId?: string }> {
+  const parsed = createPipelineSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Informe um nome entre 2 e 60 caracteres.' };
+
+  try {
+    const session = await container.session.getCurrentSession();
+    if (!can(session, 'config.equipe.papeis:escrever')) {
+      return { ok: false, error: 'Apenas o administrador pode criar funis.' };
+    }
+
+    const pipeline = await container.pipelines.createPipeline(session.account.id, parsed.data.name);
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'configuracao.alterada',
+      targetType: 'configuracao',
+      targetId: pipeline.id,
+      targetName: pipeline.name,
+      metadata: { detalhe: `criou o funil ${pipeline.name}` },
+    });
+    revalidatePath('/kanban');
+    return { ok: true, pipelineId: pipeline.id };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Erro ao criar funil.' };
+  }
+}
+
+const deletePipelineSchema = z.object({
+  pipelineId: z.string().min(1).max(128),
+});
+
+export async function deletePipelineAction(
+  input: unknown,
+): Promise<{ ok: boolean; error?: string }> {
+  const parsed = deletePipelineSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Funil inválido.' };
+
+  try {
+    const session = await container.session.getCurrentSession();
+    if (!can(session, 'config.equipe.papeis:escrever')) {
+      return { ok: false, error: 'Apenas o administrador pode excluir funis.' };
+    }
+
+    const pipelines = await container.pipelines.listPipelines(session.account.id);
+    const pipeline = pipelines.find((item) => item.id === parsed.data.pipelineId);
+    if (!pipeline) return { ok: false, error: 'Funil não encontrado.' };
+    const deletedDeals = await container.pipelines.deletePipeline(
+      session.account.id,
+      parsed.data.pipelineId,
+    );
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'configuracao.alterada',
+      targetType: 'configuracao',
+      targetId: parsed.data.pipelineId,
+      targetName: pipeline.name,
+      metadata: {
+        detalhe: `excluiu o funil ${pipeline.name}`,
+        oportunidadesExcluidas: deletedDeals,
+      },
+    });
+    revalidatePath('/kanban');
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Erro ao excluir funil.' };
+  }
 }
 
 const moveDealSchema = z.object({
@@ -114,7 +192,6 @@ const createDealSchema = z.object({
 });
 
 export async function createDealAction(
-
   pipelineId: string,
   input: unknown,
 ): Promise<{ ok: boolean; error?: string; deal?: Deal }> {
@@ -138,7 +215,10 @@ export async function createDealAction(
     revalidatePath('/kanban');
     return { ok: true, deal };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : 'Erro ao criar oportunidade.' };
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro ao criar oportunidade.',
+    };
   }
 }
 
@@ -163,22 +243,26 @@ export async function updateDealAction(
 
   try {
     const session = await container.session.getCurrentSession();
-    const deal = await container.pipelines.updateDeal(session.account.id, parsed.data.dealId, parsed.data);
+    const deal = await container.pipelines.updateDeal(
+      session.account.id,
+      parsed.data.dealId,
+      parsed.data,
+    );
     revalidatePath('/kanban');
     return { ok: true, deal };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : 'Erro ao atualizar oportunidade.' };
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro ao atualizar oportunidade.',
+    };
   }
 }
-
 
 const deleteDealSchema = z.object({
   dealId: z.string().min(1),
 });
 
-export async function deleteDealAction(
-  input: unknown,
-): Promise<{ ok: boolean; error?: string }> {
+export async function deleteDealAction(input: unknown): Promise<{ ok: boolean; error?: string }> {
   const parsed = deleteDealSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Identificador inválido.' };
 
@@ -188,7 +272,10 @@ export async function deleteDealAction(
     revalidatePath('/kanban');
     return { ok: true };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : 'Erro ao excluir oportunidade.' };
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro ao excluir oportunidade.',
+    };
   }
 }
 
@@ -230,11 +317,12 @@ export async function updateStagesAction(
     revalidatePath('/kanban');
     return { ok: true };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : 'Erro ao atualizar etapas.' };
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro ao atualizar etapas.',
+    };
   }
 }
-
-
 
 /* ==========================================================================
    Checklist do card.
@@ -286,7 +374,10 @@ export async function toggleDealTaskAction(input: unknown): Promise<DealActionRe
     revalidatePath('/kanban');
     return { ok: true, deal };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : 'Erro ao atualizar tarefa.' };
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro ao atualizar tarefa.',
+    };
   }
 }
 
