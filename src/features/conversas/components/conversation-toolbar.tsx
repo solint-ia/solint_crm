@@ -395,18 +395,22 @@ export function InboxMenu({
 
   return (
     <Menu
-      label={`Caixa: ${atual?.name ?? 'atual'}`}
+      label={`Mover conversa para outra caixa. Caixa atual: ${atual?.name ?? 'atual'}`}
+      panelClassName="w-64"
       trigger={
-        <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold text-ink transition-all hover:bg-surface hover:shadow-2xs">
-          <Inbox className="size-3 text-dim" />
-          <span className="max-w-24 truncate">{atual?.name ?? 'Caixa'}</span>
-          <ChevronDown className="size-3 text-dim" />
+        <span
+          title="Mover conversa para outra caixa"
+          className="inline-flex size-8 items-center justify-center gap-1.5 rounded-xl border border-line bg-surface text-muted shadow-2xs transition-colors hover:bg-surface-2 hover:text-ink @3xl:w-auto @3xl:px-2.5"
+        >
+          <Inbox className="size-4 shrink-0" />
+          <span className="hidden text-xs font-semibold @3xl:inline">Mover conversa</span>
+          <ChevronDown className="hidden size-3 text-dim @3xl:block" />
         </span>
       }
     >
       {(close) => (
         <>
-          <MenuHeader>Mover para a caixa</MenuHeader>
+          <MenuHeader>Mover conversa para</MenuHeader>
           {inboxes.map((inbox) => (
             <MenuItem
               key={inbox.id}
@@ -416,7 +420,11 @@ export function InboxMenu({
                 close();
               }}
             >
-              {inbox.name}
+              <Inbox className="size-3.5 shrink-0 text-dim" />
+              <span className="min-w-0 flex-1 truncate">{inbox.name}</span>
+              {inbox.id === conversation.inboxId ? (
+                <Check className="size-3.5 shrink-0 text-brand" />
+              ) : null}
             </MenuItem>
           ))}
           {conversation.assigneeName ? (

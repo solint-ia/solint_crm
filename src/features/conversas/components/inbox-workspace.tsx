@@ -257,9 +257,7 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
               {props.inboxes.length > 1 && (
                 <select
                   value={caixaAtual}
-                  onChange={(event) =>
-                    inbox.setFilters((atual) => ({ ...atual, inboxId: event.target.value }))
-                  }
+                  onChange={(event) => inbox.selectInbox(event.target.value)}
                   aria-label="Trocar canal"
                   className="cursor-pointer rounded-lg border border-line-soft bg-surface-2 px-2 py-0.5 text-[11px] font-semibold text-ink outline-none transition-colors hover:border-brand/40"
                 >

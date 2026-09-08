@@ -153,17 +153,18 @@ export function useInbox({
 }: UseInboxParams) {
   const { hora } = useDatasDaConta();
   const [conversations, setConversations] = useState<readonly Conversation[]>(initialConversations);
+  const initialConversation = initialSelectedId
+    ? initialConversations.find((conversation) => conversation.id === initialSelectedId)
+    : initialInboxId
+      ? initialConversations.find((conversation) => conversation.inboxId === initialInboxId)
+      : initialConversations[0];
   const [selectedId, setSelectedId] = useState<string | undefined>(
-    initialSelectedId ?? initialConversations[0]?.id,
+    initialSelectedId ?? initialConversation?.id,
   );
   const [scope, setScope] = useState<InboxScope>(initialScope ?? 'todas');
   const [statusTab, setStatusTab] = useState<StatusTab>('todas');
   const [sort, setSort] = useState<SortKey>('recentes');
   const [search, setSearch] = useState('');
-  const initialConversation =
-    (initialSelectedId
-      ? initialConversations.find((c) => c.id === initialSelectedId)
-      : undefined) ?? initialConversations[0];
   const resolvedInitialInboxId = initialInboxId ?? initialConversation?.inboxId;
 
   const [filters, setFilters] = useState<InboxFilters>(() => ({
@@ -183,37 +184,55 @@ export function useInbox({
    * notificação trocava a URL e não trocava nada na tela: `selectedId` ficava
    * preso na conversa em que a página abriu.
    */
+  const routedSelectedId = useRef(initialSelectedId);
   useEffect(() => {
-    if (initialSelectedId) {
-      setSelectedId(initialSelectedId);
-      const alvo = conversations.find((c) => c.id === initialSelectedId);
-      if (alvo?.inboxId) {
-        setFilters((prev) => (prev.inboxId === alvo.inboxId ? prev : { ...prev, inboxId: alvo.inboxId }));
-      }
+    const mudou = routedSelectedId.current !== initialSelectedId;
+    routedSelectedId.current = initialSelectedId;
+    if (!mudou || !initialSelectedId) return;
+
+    setSelectedId(initialSelectedId);
+    const alvo = conversations.find((conversation) => conversation.id === initialSelectedId);
+    if (alvo?.inboxId) {
+      setFilters((prev) =>
+        prev.inboxId === alvo.inboxId ? prev : { ...prev, inboxId: alvo.inboxId },
+      );
     }
   }, [initialSelectedId, conversations]);
 
+  const routedInboxId = useRef(initialInboxId);
   useEffect(() => {
-    if (initialInboxId !== undefined) {
-      setFilters((prev) => ({ ...prev, inboxId: initialInboxId || undefined }));
-    }
-  }, [initialInboxId]);
+    const mudou = routedInboxId.current !== initialInboxId;
+    routedInboxId.current = initialInboxId;
+    if (!mudou || initialInboxId === undefined || initialSelectedId) return;
 
-  /**
-   * Abrir uma conversa de outra caixa sincroniza a caixa ativa para a caixa dessa conversa.
-   *
-   * Com múltiplas caixas conectadas, clicar numa notificação de uma conversa da
-   * Caixa A faz a coluna da esquerda chavear para a Caixa A com os contatos
-   * e cabeçalho corretos da Caixa A.
-   */
-  useEffect(() => {
-    if (!selectedId) return;
-    const alvo = conversations.find((conversation) => conversation.id === selectedId);
-    if (!alvo?.inboxId) return;
-    setFilters((prev) =>
-      prev.inboxId !== alvo.inboxId ? { ...prev, inboxId: alvo.inboxId } : prev,
-    );
-  }, [selectedId, conversations]);
+    // Navegar pelo seletor lateral troca o universo da lista. Uma conversa da
+    // caixa anterior não pode continuar selecionada, pois ela não pertence ao
+    // universo que a URL acabou de escolher.
+    setSelectedId((current) => {
+      const atual = conversations.find((conversation) => conversation.id === current);
+      return atual?.inboxId === initialInboxId ? current : undefined;
+    });
+    setFilters((prev) => ({ ...prev, inboxId: initialInboxId || undefined }));
+  }, [initialInboxId, initialSelectedId, conversations]);
+
+  /** Troca o universo da lista sem deixar a conversa anterior restaurá-lo. */
+  const selectInbox = useCallback((inboxId: string) => {
+    setSelectedId(undefined);
+    setFilters((prev) => (prev.inboxId === inboxId ? prev : { ...prev, inboxId }));
+  }, []);
+
+  /** Sincroniza a caixa somente quando existe um gesto explícito de seleção. */
+  const selectConversation = useCallback(
+    (conversationId: string) => {
+      setSelectedId(conversationId);
+      const alvo = conversations.find((conversation) => conversation.id === conversationId);
+      if (!alvo?.inboxId) return;
+      setFilters((prev) =>
+        prev.inboxId !== alvo.inboxId ? { ...prev, inboxId: alvo.inboxId } : prev,
+      );
+    },
+    [conversations],
+  );
 
   useEffect(() => {
     if (initialScope !== undefined) {
@@ -286,6 +305,13 @@ export function useInbox({
     // que remendar a timeline no cliente — preservando mensagens otimistas em voo.
     const incoming = payload.conversation as Conversation | undefined;
     if (incoming) {
+      // Uma movimentação real da conversa aberta acompanha a nova caixa. Eventos
+      // comuns de mensagem não conseguem mais reverter a escolha do seletor.
+      if (incoming.id === selectedId) {
+        setFilters((prev) =>
+          prev.inboxId === incoming.inboxId ? prev : { ...prev, inboxId: incoming.inboxId },
+        );
+      }
       setConversations((current) => {
         const existing = current.find((c) => c.id === incoming.id);
         if (!existing) {
@@ -360,7 +386,6 @@ export function useInbox({
       });
     });
   });
-
 
   /**
    * As conversas da caixa selecionada — o universo de tudo nesta tela.
@@ -445,7 +470,8 @@ export function useInbox({
   const counts = useMemo(
     () => ({
       minhas: naCaixa.filter((c) => matchesScope(c, 'minhas', currentUserId)).length,
-      nao_atribuidas: naCaixa.filter((c) => matchesScope(c, 'nao_atribuidas', currentUserId)).length,
+      nao_atribuidas: naCaixa.filter((c) => matchesScope(c, 'nao_atribuidas', currentUserId))
+        .length,
       todas: naCaixa.length,
       naoLidas: naCaixa.filter((c) => c.unreadCount > 0).length,
     }),
@@ -841,6 +867,7 @@ export function useInbox({
       startTransition(async () => {
         const result = await moveInbox({ conversationId, inboxId });
         if (!result.ok) setError(result.error);
+        else setFilters((prev) => ({ ...prev, inboxId }));
       });
     },
     [selected, moveInbox],
@@ -893,7 +920,8 @@ export function useInbox({
     setSearch,
     filters,
     setFilters,
-    select: setSelectedId,
+    selectInbox,
+    select: selectConversation,
     send: handleSend,
     deleteMessage: handleDeleteMessage,
     reactToMessage: handleReact,

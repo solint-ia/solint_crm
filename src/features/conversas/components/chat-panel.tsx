@@ -5,12 +5,10 @@ import Link from 'next/link';
 import {
   ArrowLeft,
   CalendarClock,
-  Check,
   CheckCircle2,
   Clock,
   Eye,
   FileCheck2,
-  Inbox,
   MoreVertical,
   PanelRight,
   PanelRightClose,
@@ -418,9 +416,6 @@ export function ChatPanel({
                 labels={catalog.labels}
                 onChange={onSetLabels}
               />
-              {inboxes.length > 1 && (
-                <InboxMenu conversation={conversation} inboxes={inboxes} onMove={onMoveInbox} />
-              )}
               <span className="h-3.5 w-px bg-line/80 mx-0.5" />
               <AssigneeButton conversation={conversation} onOpen={() => setTransferOpen(true)} />
             </div>
@@ -465,6 +460,12 @@ export function ChatPanel({
 
           {/* Utilitários, Menu Unificado de Ações e Painel Lateral */}
           <div className="flex items-center gap-1.5 pl-1 sm:pl-1.5 border-l border-line/60">
+            {/* Mover de caixa é diferente de trocar o responsável. O controle
+                permanece visível em qualquer largura e ganha texto quando há espaço. */}
+            {inboxes.length > 1 && (
+              <InboxMenu conversation={conversation} inboxes={inboxes} onMove={onMoveInbox} />
+            )}
+
             {/* Menu Dropdown de Mais Ações e Opções da Conversa */}
             <Menu
               label="Mais opções da conversa"
@@ -482,7 +483,7 @@ export function ChatPanel({
             >
               {(close) => (
                 <>
-                  <MenuHeader>Atribuição & Destino</MenuHeader>
+                  <MenuHeader>Atribuição</MenuHeader>
                   <MenuItem
                     onClick={() => {
                       setTransferOpen(true);
@@ -499,30 +500,6 @@ export function ChatPanel({
                       </span>
                     </div>
                   </MenuItem>
-
-                  {inboxes.length > 1 && (
-                    <div className="border-t border-line-soft">
-                      <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase text-dim tracking-wider">
-                        Caixa de Entrada
-                      </p>
-                      {inboxes.map((inbox) => (
-                        <MenuItem
-                          key={inbox.id}
-                          selected={inbox.id === conversation.inboxId}
-                          onClick={() => {
-                            if (inbox.id !== conversation.inboxId) onMoveInbox(inbox.id);
-                            close();
-                          }}
-                        >
-                          <Inbox className="size-3.5 text-dim shrink-0" />
-                          <span className="truncate flex-1 text-xs">{inbox.name}</span>
-                          {inbox.id === conversation.inboxId && (
-                            <Check className="size-3.5 text-brand shrink-0" />
-                          )}
-                        </MenuItem>
-                      ))}
-                    </div>
-                  )}
 
                   <MenuHeader>Status Rápido</MenuHeader>
                   <MenuItem
