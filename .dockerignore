@@ -1,0 +1,24 @@
+# Contexto do `docker build`. O que está aqui não entra em imagem nenhuma.
+
+# Gerados: a imagem gera os seus, para Linux, dentro do build.
+node_modules
+.next
+.worker
+src/generated
+*.tsbuildinfo
+
+# Segredos e estado local. `.sessions` guarda credenciais antigas de WhatsApp.
+.env
+.env.*
+!.env.example
+.sessions
+.media
+
+# Sem uso no build.
+.git
+.github
+.vscode
+legado
+scratchpad
+*.log
+*.dump

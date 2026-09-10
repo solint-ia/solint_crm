@@ -1,0 +1,106 @@
+# Solint CRM em uma VM: Postgres, site, worker de WhatsApp e Caddy (HTTPS).
+#
+# Tudo lê o mesmo `.env` da raiz — o compose para interpolar `${...}` aqui, e
+# os serviços pelo `env_file`. Modelo em `deploy/env.production.example`.
+#
+# Deploy do site SEM encostar no worker (as sessões de WhatsApp continuam):
+#   docker compose build web && docker compose up -d --no-deps web
+# Ver `deploy/README.md` para o resto da rotina.
+
+name: solint
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: solint
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      POSTGRES_DB: solint
+    # Dimensionado para 12 GB de RAM na VM; com 24 GB dá para dobrar os dois
+    # primeiros. `shm_size` porque o padrão do Docker (64 MB) quebra consultas
+    # paralelas com "could not resize shared memory segment".
+    command: >-
+      postgres
+      -c shared_buffers=2GB
+      -c effective_cache_size=6GB
+      -c work_mem=16MB
+      -c maintenance_work_mem=512MB
+      -c max_connections=100
+      -c wal_compression=on
+    shm_size: 256mb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Só na interface local: acesso de fora é por túnel SSH, nunca porta aberta.
+    ports:
+      - '127.0.0.1:5432:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U solint -d solint']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build:
+      context: .
+      target: web
+    image: solint-web
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Cache de mídia compartilhado com o worker: o que um baixou o outro serve
+    # sem ir ao Object Storage. É só cache — a fonte da verdade é o bucket.
+    volumes:
+      - media-cache:/app/.media
+    expose:
+      - '3000'
+    mem_limit: 3g
+
+  worker:
+    build:
+      context: .
+      target: worker
+    image: solint-worker
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - media-cache:/app/.media
+    # Deixa o Baileys fechar as sessões limpas antes de o contêiner morrer.
+    stop_grace_period: 30s
+    mem_limit: 3g
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:10000/ready').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?defina SITE_ADDRESS no .env}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - web
+
+volumes:
+  pgdata:
+  media-cache:
+  caddy-data:
+  caddy-config:

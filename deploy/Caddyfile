@@ -1,0 +1,21 @@
+# HTTPS na frente do site. O certificado é emitido e renovado sozinho.
+#
+# O endereço vem do `.env` (SITE_ADDRESS). Enquanto não há domínio, use o IP
+# da VM com hífens em sslip.io — ex.: 129-146-10-20.sslip.io —, que já resolve
+# para o IP e aceita certificado de verdade. Trocar pelo domínio definitivo é
+# editar a variável e rodar `docker compose up -d caddy`.
+
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	# Acompanha `serverActions.bodySizeLimit: '20mb'` do next.config.ts, com
+	# folga para o envelope multipart. Menor que isso e o envio de vídeo falha
+	# no proxy, antes de chegar à Server Action.
+	request_body {
+		max_size 25MB
+	}
+
+	# O Caddy repassa X-Forwarded-Proto/For/Host sozinho, e descarrega na hora
+	# as respostas `text/event-stream` — o tempo real (SSE) passa sem ajuste.
+	reverse_proxy web:3000
+}
