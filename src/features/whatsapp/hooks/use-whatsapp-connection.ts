@@ -132,7 +132,12 @@ export function useWhatsAppConnection(active = true, inboxId?: string) {
   }, [active, channel]);
 
   const call = useCallback(
-    async (endpoint: string, fallback: string, otimista: WhatsAppStatusPayload['status']) => {
+    async (
+      endpoint: string,
+      fallback: string,
+      otimista: WhatsAppStatusPayload['status'],
+      body?: object,
+    ) => {
       setActionError(undefined);
       setIsPending(true);
 
@@ -148,12 +153,21 @@ export function useWhatsAppConnection(active = true, inboxId?: string) {
         ...atual,
         status: otimista,
         qr: undefined,
+        pairingCode: undefined,
         error: undefined,
         updatedAt: new Date().toISOString(),
       }));
 
       try {
-        const response = await fetch(endpoint, { method: 'POST' });
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          ...(body
+            ? {
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+              }
+            : {}),
+        });
         const data = (await response.json()) as {
           ok: boolean;
           error?: string;
@@ -193,11 +207,12 @@ export function useWhatsAppConnection(active = true, inboxId?: string) {
   );
 
   const connect = useCallback(
-    () =>
+    (options: { method?: 'qr' | 'phone'; phoneNumber?: string } = {}) =>
       call(
         inboxId ? `/api/inboxes/${inboxId}/whatsapp/connect` : '/api/whatsapp/connect',
         'Erro ao iniciar conexão com WhatsApp',
         'conectando',
+        options,
       ),
     [call, inboxId],
   );
@@ -221,6 +236,8 @@ export function useWhatsAppConnection(active = true, inboxId?: string) {
       isAwaitingQR:
         statusData.status === 'aguardando_leitura' ||
         (statusData.status === 'gerando_qr' && Boolean(statusData.qr)),
+      isAwaitingPairingCode:
+        statusData.status === 'aguardando_codigo' && Boolean(statusData.pairingCode),
       isConnecting:
         statusData.status === 'conectando' ||
         (statusData.status === 'gerando_qr' && !statusData.qr) ||

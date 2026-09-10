@@ -2,7 +2,12 @@
 
 import { useMemo, useRef, useState, useTransition } from 'react';
 import { BellOff, Inbox as InboxIcon, Play, Volume2 } from 'lucide-react';
-import type { AvailabilityStatus, NotificationPreferences, Session } from '@/core/domain/user';
+import {
+  can,
+  type AvailabilityStatus,
+  type NotificationPreferences,
+  type Session,
+} from '@/core/domain/user';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -49,6 +54,7 @@ const NOTIFICATION_ITEMS = [
 
 export function ProfileView({ session, inboxes }: ProfileViewProps) {
   const { user, account, availableAccounts } = session;
+  const canManageWhatsApp = can(session, 'config.caixas:escrever');
   const { show } = useToast();
   const [saving, startSaving] = useTransition();
   const [trocandoWorkspace, startTrocaWorkspace] = useTransition();
@@ -193,11 +199,13 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
 
   return (
     <div className="grid max-w-5xl gap-5 pb-20 md:grid-cols-2">
-      <WhatsAppModal
-        open={Boolean(pairingInbox)}
-        onClose={() => setPairingInbox(null)}
-        {...(pairingInbox ? { inboxId: pairingInbox.id, inboxName: pairingInbox.name } : {})}
-      />
+      {canManageWhatsApp ? (
+        <WhatsAppModal
+          open={Boolean(pairingInbox)}
+          onClose={() => setPairingInbox(null)}
+          {...(pairingInbox ? { inboxId: pairingInbox.id, inboxName: pairingInbox.name } : {})}
+        />
+      ) : null}
 
       {/* DADOS PESSOAIS */}
       <Card className="flex flex-col gap-4 p-5">
@@ -258,7 +266,7 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
 
       {/* CANAIS DE ATENDIMENTO VINCULADOS */}
       <div className="flex flex-col gap-5">
-        {inboxes.length > 0 ? (
+        {canManageWhatsApp && inboxes.length > 0 ? (
           inboxes.map((inbox) => (
             <WhatsAppConnectionCard
               key={inbox.id}
@@ -268,7 +276,7 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
               onOpenPairing={() => setPairingInbox(inbox)}
             />
           ))
-        ) : (
+        ) : canManageWhatsApp ? (
           <Card className="flex flex-col items-start gap-2 p-5">
             <span className="flex size-10 items-center justify-center rounded-surface bg-accent-soft text-brand">
               <InboxIcon className="size-5" />
@@ -280,7 +288,7 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
               As conexões aparecem aqui assim que existir uma caixa de entrada de WhatsApp na conta.
             </p>
           </Card>
-        )}
+        ) : null}
 
         <Card className="p-5">
           <h3 className="mb-3 font-display text-title font-bold text-ink tracking-tight">

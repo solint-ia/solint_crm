@@ -9,8 +9,8 @@ import {
   Inbox as InboxIcon,
   MoonStar,
   Plus,
-  QrCode,
   Radio,
+  Smartphone,
   Star,
   Sun,
   Timer,
@@ -107,7 +107,9 @@ export function InboxesSection({ connections, canDelete }: InboxesSectionProps) 
   const handleLiveStatus = useCallback(
     (connectionId: string, status: ChannelConnection['status']) => {
       setConnectionList((prev) =>
-        prev.map((item) => (item.id === connectionId && item.status !== status ? { ...item, status } : item)),
+        prev.map((item) =>
+          item.id === connectionId && item.status !== status ? { ...item, status } : item,
+        ),
       );
       setDrafts((prev) => {
         const atual = prev[connectionId];
@@ -249,7 +251,7 @@ export function InboxesSection({ connections, canDelete }: InboxesSectionProps) 
         onCreated={handleCreated}
       />
 
-      {/* Modal Conectar WhatsApp por QR Code */}
+      {/* Modal de pareamento do WhatsApp por QR Code ou telefone */}
       {qrTarget ? (
         <WhatsAppModal
           open={Boolean(qrTarget)}
@@ -351,13 +353,13 @@ function CreateInboxModal({
         <Field label="Canal de comunicação" hint="Único canal disponível no momento.">
           <div className="flex h-10 items-center gap-2 rounded-xl border border-line bg-surface-2 px-3 text-body text-ink">
             <ChannelBadge channel="whatsapp" />
-            <span className="text-meta text-muted">Baileys · QR Code</span>
+            <span className="text-meta text-muted">Baileys · QR Code ou telefone</span>
           </div>
         </Field>
 
         <p className="text-meta text-muted">
           A caixa será configurada com horários de atendimento padrão (Segunda a Sexta, 8h às 18h)
-          prontos para personalizar e parear via QR Code.
+          prontos para personalizar e parear via QR Code ou número de telefone.
         </p>
 
         <div className="flex justify-end gap-2 border-t border-line pt-4">
@@ -633,7 +635,9 @@ function InboxDetail({
   const { firstDayOfWeek } = useRegional();
   const diasDaSemana = useMemo(() => {
     const inicio = firstWeekdayIndex(firstDayOfWeek);
-    return WEEKDAYS.map((_, indice) => WEEKDAYS[(indice + inicio) % 7] as (typeof WEEKDAYS)[number]);
+    return WEEKDAYS.map(
+      (_, indice) => WEEKDAYS[(indice + inicio) % 7] as (typeof WEEKDAYS)[number],
+    );
   }, [firstDayOfWeek]);
 
   /**
@@ -838,12 +842,10 @@ function InboxDetail({
               <Button
                 size="sm"
                 variant={connection.status === 'conectado' ? 'secondary' : 'primary'}
-                icon={<QrCode className="size-3.5" />}
+                icon={<Smartphone className="size-3.5" />}
                 onClick={() => onOpenQr(connection)}
               >
-                {connection.status === 'conectado'
-                  ? 'Gerenciar WhatsApp'
-                  : 'Conectar WhatsApp via QR Code'}
+                {connection.status === 'conectado' ? 'Gerenciar WhatsApp' : 'Conectar WhatsApp'}
               </Button>
             ) : null}
           </div>
@@ -1170,38 +1172,38 @@ function InboxDetail({
       {/* CARD 4: ZONA DE RISCO (só para quem pode excluir)            */}
       {/* ------------------------------------------------------------ */}
       {canDelete ? (
-      <div className="rounded-2xl border border-red-line/50 bg-red-soft/30 p-5">
-        <div className="flex items-center gap-2.5 border-b border-red-line/40 pb-4">
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-red-500/10 text-red-600 dark:text-red-400">
-            <TriangleAlert className="size-4" />
-          </div>
-          <div>
-            <h4 className="font-display text-sm font-bold text-ink">Zona de risco</h4>
-            <p className="text-xs text-muted">Ações daqui não podem ser desfeitas.</p>
-          </div>
-        </div>
-
-        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <p className="text-xs font-semibold text-ink">Excluir esta caixa de entrada</p>
-            <p className="mt-0.5 text-[11px] text-muted">
-              A conexão do WhatsApp é encerrada e as conversas e mensagens desta caixa são apagadas
-              junto. Os contatos permanecem na conta.
-            </p>
+        <div className="rounded-2xl border border-red-line/50 bg-red-soft/30 p-5">
+          <div className="flex items-center gap-2.5 border-b border-red-line/40 pb-4">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-red-500/10 text-red-600 dark:text-red-400">
+              <TriangleAlert className="size-4" />
+            </div>
+            <div>
+              <h4 className="font-display text-sm font-bold text-ink">Zona de risco</h4>
+              <p className="text-xs text-muted">Ações daqui não podem ser desfeitas.</p>
+            </div>
           </div>
 
-          <Button
-            type="button"
-            variant="danger"
-            size="sm"
-            icon={<Trash2 className="size-3.5" />}
-            onClick={() => setIsDeleteOpen(true)}
-            className="shrink-0"
-          >
-            Excluir caixa
-          </Button>
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-ink">Excluir esta caixa de entrada</p>
+              <p className="mt-0.5 text-[11px] text-muted">
+                A conexão do WhatsApp é encerrada e as conversas e mensagens desta caixa são
+                apagadas junto. Os contatos permanecem na conta.
+              </p>
+            </div>
+
+            <Button
+              type="button"
+              variant="danger"
+              size="sm"
+              icon={<Trash2 className="size-3.5" />}
+              onClick={() => setIsDeleteOpen(true)}
+              className="shrink-0"
+            >
+              Excluir caixa
+            </Button>
+          </div>
         </div>
-      </div>
       ) : null}
 
       <DeleteInboxModal

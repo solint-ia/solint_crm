@@ -10,17 +10,18 @@ import {
 } from '@/infrastructure/repositories/prisma/mappers';
 import { aplicarPausaDoAgente } from '@/infrastructure/repositories/prisma/conversation-repository';
 import { dispararAutomacoes } from '@/infrastructure/automations/dispatch';
-import { dispararWebhooks } from '@/infrastructure/webhooks/webhook-dispatch';
 import type {
   SolintRefs,
   WebhookEvent,
   WebhookPayloadEmMontagem,
 } from '@/infrastructure/webhooks/webhook-dispatch';
+import { CHANNELS, postgresPubSub } from '@/infrastructure/db/postgres-pubsub';
 import type { ChatIdentity } from './wa-identity';
 import { waEventBus } from './whatsapp-events';
 import { normalizeBusinessHours } from '@/core/domain/business-hours';
 import { calcularSla } from '@/core/domain/sla';
-import { novoProtocolo } from '@/infrastructure/conversations/protocols';
+import { abrirProtocolo, novoProtocolo } from '@/infrastructure/conversations/protocols';
+import { CSAT_RESPONSE_WINDOW_MS, parseCsatScore } from '@/core/domain/csat';
 import {
   classifyWhatsAppInboundIntent,
   type WhatsAppInboundIntent,
@@ -270,6 +271,8 @@ interface ExistingConversation {
   readonly inboxId: string;
   /** Nulo enquanto ninguém respondeu: decide qual dos dois prazos de SLA vale. */
   readonly firstResponseAt: Date | null;
+  readonly csatAskedAt: Date | null;
+  readonly csatScore: number | null;
   readonly inbox: { readonly businessHours: unknown } | null;
 }
 
@@ -279,6 +282,8 @@ const CONVERSATION_STATE_SELECT = {
   lastInboundAt: true,
   inboxId: true,
   firstResponseAt: true,
+  csatAskedAt: true,
+  csatScore: true,
   // O expediente da caixa é o relógio do prazo: fora dele o tempo não corre.
   inbox: { select: { businessHours: true } },
 } as const;
@@ -313,6 +318,28 @@ const findConversationState = (
 const eventoDe = (fromMe: boolean, conversaExistia: boolean): WebhookEvent => {
   if (fromMe) return 'mensagem.enviada';
   return conversaExistia ? 'mensagem.recebida' : 'conversa.criada';
+};
+
+/** Evento durável que será expandido nos destinos depois do commit da mensagem. */
+const webhookSourceFor = (input: CommitInput, conversaExistia: boolean, inboxId: string) => {
+  if (!input.webhookPayload) return undefined;
+  const event = eventoDe(input.fromMe, conversaExistia);
+  const payload = input.webhookPayload({
+    contaId: input.accountId,
+    caixaEntradaId: inboxId,
+    conversaId: input.chat.conversationId,
+    contatoId: input.contact.id,
+    mensagemId: input.message.id,
+    conversaNova: !conversaExistia,
+  });
+  return {
+    accountId: input.accountId,
+    inboxId,
+    event,
+    payload: asJson(payload),
+    dedupeKey: `${event}:${input.message.id}`,
+    status: 'pending',
+  };
 };
 
 /**
@@ -399,16 +426,35 @@ export const commitMessage = async (input: CommitInput): Promise<void> => {
   await ensureContact(input.accountId, contact, chat.isGroup);
 
   const existing = await findConversationState(input.accountId, chat.conversationId);
+  const isCsatReply = Boolean(
+    !input.fromMe &&
+    existing?.status === 'resolvida' &&
+    existing.csatAskedAt &&
+    existing.csatScore === null &&
+    Date.now() - existing.csatAskedAt.getTime() <= CSAT_RESPONSE_WINDOW_MS &&
+    input.preview &&
+    parseCsatScore(input.preview) !== undefined,
+  );
+  const reopening = existing?.status === 'resolvida' && !isCsatReply;
   let inserted: boolean;
   if (existing) {
-    inserted = await attachToConversation(input, existing);
+    inserted = await attachToConversation(input, existing, reopening);
   } else {
     inserted = await createConversationWith(input);
   }
 
   // O Baileys pode repetir o mesmo `messages.upsert` em reconexões. Sem esta
   // saída, uma duplicata incrementava não lidas e disparava IA/webhook de novo.
-  if (!inserted) return;
+  if (!inserted) {
+    // Repara uma possível queda ocorrida entre reabrir a conversa e criar seu
+    // protocolo. A operação é idempotente e duplicatas são raras.
+    if (existing?.status === 'aberta') {
+      await abrirProtocolo(input.accountId, chat.conversationId).catch(() => undefined);
+    }
+    return;
+  }
+
+  if (reopening) await abrirProtocolo(input.accountId, chat.conversationId, input.at);
 
   let complianceIntent: WhatsAppInboundIntent | undefined;
   if (!input.fromMe && !chat.isGroup) {
@@ -497,28 +543,12 @@ export const commitMessage = async (input: CommitInput): Promise<void> => {
     }
   }
 
-  // Sistemas de fora recebem o mesmo gatilho das automações internas, e pela
-  // mesma razão de ordem: quem for ler a conversa por API logo depois precisa
-  // encontrá-la no estado que o evento descreve.
-  //
-  // **Fora da trava de `fromMe`**, ao contrário das automações acima. Uma
-  // automação que respondesse ao próprio eco entraria em laço dentro do CRM;
-  // um webhook entrega a quem pediu para receber o que sai, e quem não pediu
-  // não assina `mensagem.enviada`. A responsabilidade de não responder ao
-  // próprio eco passa a ser de quem monta o fluxo — está dito na tela de
-  // integrações, ao lado da caixa que liga o evento.
+  // A intenção de webhook já foi gravada na mesma transação da mensagem. O
+  // aviso reduz latência; se ele se perder, a varredura do runner ainda entrega.
   if (input.webhookPayload) {
-    await dispararWebhooks(
-      eventoDe(input.fromMe, Boolean(existing)),
-      input.webhookPayload({
-        contaId: input.accountId,
-        ...(input.inboxId ? { caixaEntradaId: input.inboxId } : {}),
-        conversaId: chat.conversationId,
-        contatoId: contact.id,
-        mensagemId: input.message.id,
-        conversaNova: !existing,
-      }),
-    );
+    await postgresPubSub
+      .publish(CHANNELS.WEBHOOKS, { messageId: input.message.id })
+      .catch(() => undefined);
   }
 };
 
@@ -538,41 +568,49 @@ const createConversationWith = async (input: CommitInput): Promise<boolean> => {
   const targetInboxId = input.inboxId ?? `ibx-${input.accountId}`;
 
   try {
-    await prisma.conversation.create({
-      data: {
-        id: chat.conversationId,
-        accountId: input.accountId,
-        contactId: contact.id,
-        channel: 'whatsapp',
-        inboxId: targetInboxId,
-        queue: chat.isGroup ? 'Grupos' : 'Geral',
-        status: 'aberta',
-        statusLabel: 'Em andamento',
-        priority: 'baixa',
-        unreadCount: fromMe ? 0 : 1,
-        lastMessagePreview: preview,
-        lastMessageAt: message.time,
-        lastActivityAt: at,
-        lastInboundAt: fromMe ? null : nowIso(at),
-        channelThreadId: chat.jid,
-        protocols: asJson([await novoProtocolo(input.accountId, at)]),
-        messages: {
-          create: {
-            id: message.id,
-            author: message.author,
-            authorName: message.authorName ?? null,
-            contentType: message.content.type,
-            content: asJson(message.content),
-            time: message.time,
-            createdAt: at,
-            deliveryStatus: message.deliveryStatus ?? null,
-            isPrivate: message.isPrivate,
-            externalId: message.externalId ?? null,
-            origin: message.origin ?? null,
-            senderJid: message.senderJid ?? null,
+    const protocol = await novoProtocolo(input.accountId, at);
+    await prisma.$transaction(async (tx) => {
+      await tx.conversation.create({
+        data: {
+          id: chat.conversationId,
+          accountId: input.accountId,
+          contactId: contact.id,
+          channel: 'whatsapp',
+          inboxId: targetInboxId,
+          queue: chat.isGroup ? 'Grupos' : 'Geral',
+          status: 'aberta',
+          statusLabel: 'Em andamento',
+          priority: 'baixa',
+          unreadCount: fromMe ? 0 : 1,
+          lastMessagePreview: preview,
+          lastMessageAt: message.time,
+          lastActivityAt: at,
+          lastInboundAt: fromMe ? null : nowIso(at),
+          channelThreadId: chat.jid,
+          protocols: asJson([protocol]),
+          messages: {
+            create: {
+              id: message.id,
+              author: message.author,
+              authorName: message.authorName ?? null,
+              contentType: message.content.type,
+              content: asJson(message.content),
+              time: message.time,
+              createdAt: at,
+              deliveryStatus: message.deliveryStatus ?? null,
+              isPrivate: message.isPrivate,
+              externalId: message.externalId ?? null,
+              origin: message.origin ?? null,
+              senderJid: message.senderJid ?? null,
+            },
           },
         },
-      },
+      });
+
+      const webhookSource = webhookSourceFor(input, false, targetInboxId);
+      if (webhookSource) {
+        await tx.webhookEventOutbox.createMany({ data: [webhookSource], skipDuplicates: true });
+      }
     });
   } catch (error) {
     if (!isUniqueViolation(error)) throw error;
@@ -633,6 +671,7 @@ const announce = async (
 const attachToConversation = async (
   input: CommitInput,
   existing: ExistingConversation,
+  reopening = false,
 ): Promise<boolean> => {
   const { chat, message, preview, at, fromMe } = input;
 
@@ -671,6 +710,11 @@ const attachToConversation = async (
       });
       if (created.count === 0) return false;
 
+      const webhookSource = webhookSourceFor(input, true, targetInboxId);
+      if (webhookSource) {
+        await tx.webhookEventOutbox.createMany({ data: [webhookSource], skipDuplicates: true });
+      }
+
       await tx.conversation.update({
         where: { id: chat.conversationId, accountId: input.accountId },
         data: {
@@ -679,8 +723,18 @@ const attachToConversation = async (
           lastActivityAt: at,
           lastInboundAt: fromMe ? existing.lastInboundAt : nowIso(at),
           unreadCount: fromMe ? undefined : { increment: 1 },
-          status: existing.status === 'resolvida' ? 'aberta' : existing.status,
-          statusLabel: existing.status === 'resolvida' ? 'Em andamento' : undefined,
+          status: reopening ? 'aberta' : existing.status,
+          statusLabel: reopening ? 'Em andamento' : undefined,
+          ...(reopening
+            ? {
+                resolvedAt: null,
+                resolutionSecs: null,
+                csatScore: null,
+                csatComment: null,
+                csatAskedAt: null,
+                csatAnsweredAt: null,
+              }
+            : {}),
           channelThreadId: chat.jid,
           /**
            * Mensagem do contato arma o prazo de resposta.

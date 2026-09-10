@@ -76,6 +76,8 @@ export const getWhatsAppChannel = (): Promise<WhatsAppChannel> => {
 
     // No modo sem worker dedicado, este processo também entrega o outbox de
     // webhooks. A entrega continua independente da página aberta no navegador.
+    const { WebhookEventOutboxRunner } = await import('../webhooks/webhook-event-outbox-runner');
+    new WebhookEventOutboxRunner().start();
     const { WebhookDeliveryRunner } = await import('../webhooks/webhook-delivery-runner');
     new WebhookDeliveryRunner().start();
 

@@ -155,13 +155,18 @@ export class CommandConsumer {
     try {
       await this.reapExpiredCommands();
       commands = await prisma.$queryRaw<CommandRow[]>`
-        SELECT DISTINCT ON ("inboxId")
-          "id", "sequence", "inboxId", "kind", "payload", "attempts", "expiresAt"
-        FROM "WhatsAppCommand"
-        WHERE "status" = 'pending'
-          AND "availableAt" <= CURRENT_TIMESTAMP
+        WITH first_pending AS (
+          SELECT DISTINCT ON ("inboxId")
+            "id", "sequence", "inboxId", "kind", "payload", "attempts",
+            "expiresAt", "availableAt"
+          FROM "WhatsAppCommand"
+          WHERE "status" = 'pending'
+          ORDER BY "inboxId", "sequence"
+        )
+        SELECT "id", "sequence", "inboxId", "kind", "payload", "attempts", "expiresAt"
+        FROM first_pending
+        WHERE "availableAt" <= CURRENT_TIMESTAMP
           AND ("expiresAt" IS NULL OR "expiresAt" > CURRENT_TIMESTAMP)
-        ORDER BY "inboxId", "sequence"
         LIMIT 100
       `;
       this.lastSweepAt = new Date();
@@ -223,7 +228,6 @@ export class CommandConsumer {
           where: {
             inboxId: cmd.inboxId,
             status: 'pending',
-            availableAt: { lte: now },
             sequence: { lt: fresh.sequence },
           },
           select: { id: true },
@@ -501,7 +505,18 @@ export class CommandConsumer {
 
     switch (kind) {
       case 'connect': {
-        await this.sessionManager.start(inboxId);
+        const pairingMethod = payload['pairingMethod'] === 'phone' ? 'phone' : 'qr';
+        const phoneNumber = payload['phoneNumber'];
+        if (
+          pairingMethod === 'phone' &&
+          (typeof phoneNumber !== 'string' || !/^[1-9]\d{7,14}$/.test(phoneNumber))
+        ) {
+          throw new Error('Comando de pareamento sem um número internacional válido.');
+        }
+        await this.sessionManager.start(inboxId, {
+          pairingMethod,
+          ...(pairingMethod === 'phone' ? { pairingPhone: phoneNumber as string } : {}),
+        });
         break;
       }
 

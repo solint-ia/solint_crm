@@ -4,7 +4,7 @@ import {
   normalizeBusinessHours,
   type AutoReply,
 } from '@/core/domain/business-hours';
-import { DEFAULT_CSAT_QUESTION, parseCsatScore } from '@/core/domain/csat';
+import { CSAT_RESPONSE_WINDOW_MS, DEFAULT_CSAT_QUESTION, parseCsatScore } from '@/core/domain/csat';
 import { prisma } from '@/infrastructure/db/prisma';
 import { dispatchAutoMessage, type AutoMessageOrigin } from './auto-reply';
 
@@ -35,9 +35,6 @@ const AWAY_COOLDOWN_MS = 8 * 60 * 60 * 1000;
 
 /** Encerrar duas vezes seguidas é clique repetido, não dois atendimentos. */
 const CLOSING_COOLDOWN_MS = 5 * 60 * 1000;
-
-/** Depois disso, a resposta do cliente não é mais leitura da pesquisa. */
-const CSAT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 interface Destino {
   readonly accountId: string;
@@ -247,7 +244,8 @@ export const runClosingAutoReply = async (
     return { csatEnviado: false, motivo: 'ja_respondeu', encerramentoFalhou };
   }
   const jaPerguntou =
-    conversation.csatAskedAt && Date.now() - conversation.csatAskedAt.getTime() < CSAT_WINDOW_MS;
+    conversation.csatAskedAt &&
+    Date.now() - conversation.csatAskedAt.getTime() < CSAT_RESPONSE_WINDOW_MS;
   if (jaPerguntou) return { csatEnviado: false, motivo: 'ja_perguntou', encerramentoFalhou };
 
   const saida = await enviar(destino, config.csatQuestion, 'csat', 'Pesquisa de satisfação');
@@ -351,7 +349,7 @@ export const captureCsatAnswer = async (
     select: { csatAskedAt: true, csatAnsweredAt: true, csatScore: true },
   });
   if (!conversation?.csatAskedAt || conversation.csatScore !== null) return false;
-  if (Date.now() - conversation.csatAskedAt.getTime() > CSAT_WINDOW_MS) return false;
+  if (Date.now() - conversation.csatAskedAt.getTime() > CSAT_RESPONSE_WINDOW_MS) return false;
 
   const score = parseCsatScore(text);
   if (score === undefined) return false;

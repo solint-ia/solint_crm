@@ -29,7 +29,9 @@ export const createAssignConversation =
     if (!can(session, 'conversas:transferir')) {
       return fail(new DomainError('Sem permissão para transferir atendimentos.', 'FORBIDDEN'));
     }
-    return ok(await repository.assign(session.account.id, conversationId, assignee));
+    return ok(
+      await repository.assign(session.account.id, conversationId, assignee, session.inboxAccess),
+    );
   };
 
 export interface SetAiPauseInput {
@@ -58,13 +60,21 @@ export const createSetAiPause =
       return fail(new DomainError('Sem permissão para pausar o agente.', 'FORBIDDEN'));
     }
     if (!paused) {
-      return ok(await repository.resumeAiAgent(session.account.id, conversationId));
+      return ok(
+        await repository.resumeAiAgent(session.account.id, conversationId, session.inboxAccess),
+      );
     }
     return ok(
-      await repository.pauseAiAgent(session.account.id, conversationId, 'manual', {
-        id: session.user.id,
-        name: session.user.name,
-      }),
+      await repository.pauseAiAgent(
+        session.account.id,
+        conversationId,
+        'manual',
+        {
+          id: session.user.id,
+          name: session.user.name,
+        },
+        session.inboxAccess,
+      ),
     );
   };
 
@@ -84,7 +94,14 @@ export const createChangeConversationPriority =
     if (!can(session, 'conversas:responder')) {
       return fail(new DomainError('Sem permissão para alterar a prioridade.', 'FORBIDDEN'));
     }
-    return ok(await repository.changePriority(session.account.id, conversationId, priority));
+    return ok(
+      await repository.changePriority(
+        session.account.id,
+        conversationId,
+        priority,
+        session.inboxAccess,
+      ),
+    );
   };
 
 export interface SetLabelsInput {
@@ -99,5 +116,7 @@ export const createSetConversationLabels =
     if (!can(session, 'conversas:responder')) {
       return fail(new DomainError('Sem permissão para etiquetar conversas.', 'FORBIDDEN'));
     }
-    return ok(await repository.setLabels(session.account.id, conversationId, labels));
+    return ok(
+      await repository.setLabels(session.account.id, conversationId, labels, session.inboxAccess),
+    );
   };

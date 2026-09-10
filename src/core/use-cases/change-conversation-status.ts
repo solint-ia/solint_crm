@@ -20,6 +20,11 @@ export const createChangeConversationStatus =
     if (!can(session, permission)) {
       return fail(new DomainError('Sem permissão para alterar o status.', 'FORBIDDEN'));
     }
-    const conversation = await repository.changeStatus(session.account.id, conversationId, status);
+    const conversation = await repository.changeStatus(
+      session.account.id,
+      conversationId,
+      status,
+      session.inboxAccess,
+    );
     return ok(conversation);
   };

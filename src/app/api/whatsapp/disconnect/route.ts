@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { can } from '@/core/domain/user';
 import { container } from '@/infrastructure/container';
 import { getWhatsAppChannel } from '@/infrastructure/whatsapp/channel-provider';
 
@@ -10,6 +11,12 @@ export async function POST() {
     const session = await container.session.getSession();
     if (!session) {
       return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 });
+    }
+    if (!can(session, 'config.caixas:escrever')) {
+      return NextResponse.json(
+        { ok: false, error: 'Sem permissão para desconectar o WhatsApp.' },
+        { status: 403 },
+      );
     }
 
     const channel = await getWhatsAppChannel();

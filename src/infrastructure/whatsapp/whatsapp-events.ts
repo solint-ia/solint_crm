@@ -3,7 +3,12 @@ import { CHANNELS, postgresPubSub } from '../db/postgres-pubsub';
 import { waLog } from './wa-log';
 
 export type WhatsAppConnectionStatus =
-  'desconectado' | 'gerando_qr' | 'aguardando_leitura' | 'conectando' | 'conectado';
+  | 'desconectado'
+  | 'gerando_qr'
+  | 'aguardando_leitura'
+  | 'aguardando_codigo'
+  | 'conectando'
+  | 'conectado';
 
 /** Usuario do CRM que pareou o número — vincula o canal ao perfil do site. */
 export interface WhatsAppOwner {
@@ -25,6 +30,8 @@ export interface WhatsAppStatusPayload {
   readonly inboxId?: string;
   readonly status: WhatsAppConnectionStatus;
   readonly qr?: string;
+  /** Codigo de oito caracteres para vincular pelo numero, sem escanear QR. */
+  readonly pairingCode?: string;
   readonly phone?: string;
   /** Nome do perfil do WhatsApp conectado. */
   readonly name?: string;
@@ -278,7 +285,10 @@ class WhatsAppEventBus extends EventEmitter {
 
     try {
       const { loadConversationForEvent } = await import('./wa-store');
-      const conversation = await loadConversationForEvent(payload.accountId, payload.conversationId);
+      const conversation = await loadConversationForEvent(
+        payload.accountId,
+        payload.conversationId,
+      );
 
       if (!conversation) {
         this.emitLocal('conversation', payload);

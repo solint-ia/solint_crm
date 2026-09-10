@@ -1,5 +1,6 @@
 import { CHANNELS, postgresPubSub } from '@/infrastructure/db/postgres-pubsub';
 import { prisma, readJson } from '@/infrastructure/db/prisma';
+import { isApiTokenActor } from '@/core/domain/user';
 
 const SWEEP_MS = 15_000;
 const ORPHAN_AGE_MS = 30_000;
@@ -49,6 +50,9 @@ export class CommandRecoveryRunner {
           conversationId: true,
           content: true,
           contentType: true,
+          author: true,
+          authorId: true,
+          replyToId: true,
           conversation: {
             select: {
               accountId: true,
@@ -81,6 +85,20 @@ export class CommandRecoveryRunner {
         }
 
         const content = readJson<StoredContent>(message.content, {});
+        const quoted = message.replyToId
+          ? await prisma.message.findFirst({
+              where: { id: message.replyToId, conversationId: message.conversationId },
+              select: { externalId: true, author: true, content: true },
+            })
+          : null;
+        const quotedContent = quoted ? readJson<StoredContent>(quoted.content, {}) : undefined;
+        const quote = quoted?.externalId
+          ? {
+              externalId: quoted.externalId,
+              fromMe: quoted.author !== 'contact',
+              text: quotedContent?.text ?? quotedContent?.caption ?? '',
+            }
+          : undefined;
         const basePayload = {
           recipient: {
             channelThreadId: message.conversation.channelThreadId ?? undefined,
@@ -89,6 +107,11 @@ export class CommandRecoveryRunner {
           accountId: message.conversation.accountId,
           conversationId: message.conversationId,
           messageId: message.id,
+          trafficClass:
+            message.author === 'agent' && !isApiTokenActor(message.authorId ?? undefined)
+              ? 'human'
+              : 'automated',
+          ...(quote ? { quote } : {}),
         };
 
         let kind: 'send' | 'send_media';

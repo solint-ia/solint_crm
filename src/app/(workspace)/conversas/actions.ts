@@ -514,8 +514,16 @@ export async function changeConversationStatusAction(input: unknown): Promise<Ch
   }
 
   const session = await container.session.getCurrentSession();
+  const previous = await container.conversations.findById(
+    session.account.id,
+    parsed.data.conversationId,
+    session.inboxAccess,
+  );
   const result = await container.useCases.changeConversationStatus({ session, ...parsed.data });
   if (!result.ok) return { ok: false, error: result.error.message };
+  // Retry HTTP ou clique repetido não representa uma nova transição. Evita
+  // recalcular métricas e repetir fechamento, protocolo e automações.
+  if (previous?.status === parsed.data.status) return { ok: true };
 
   // Mensagem automática de encerramento (e pesquisa de satisfação, se ligada).
   // A regra inteira mora em `inbox-auto-messages`, que é o mesmo caminho usado
@@ -742,14 +750,6 @@ export async function setConversationAiPauseAction(input: unknown): Promise<Acti
     paused: parsed.data.paused,
   });
   if (!result.ok) return { ok: false, error: result.error.message };
-
-  if (parsed.data.paused && !result.value.assigneeId) {
-    await container.useCases.assignConversation({
-      session,
-      conversationId: parsed.data.conversationId,
-      assignee: { id: session.user.id, name: session.user.name },
-    });
-  }
 
   await writeAuditLog({
     accountId: session.account.id,

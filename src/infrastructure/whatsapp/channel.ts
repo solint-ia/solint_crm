@@ -77,6 +77,14 @@ export interface DispatchResult {
   readonly error?: string;
 }
 
+export interface WhatsAppPairingOptions {
+  readonly method?: 'qr' | 'phone';
+  /** Numero E.164 sem o sinal de +, exigido apenas no metodo phone. */
+  readonly phoneNumber?: string;
+  /** Caixa exata que sera pareada; ausente preserva o fluxo legado por conta. */
+  readonly inboxId?: string;
+}
+
 export interface WhatsAppChannel {
   /** Nome do motor, para diagnóstico e para a interface saber o que esperar. */
   readonly engine: 'inprocess' | 'worker';
@@ -93,9 +101,12 @@ export interface WhatsAppChannel {
    */
   getStatus(accountId: string, inboxId?: string): Promise<WhatsAppStatusPayload>;
 
-  startSession(owner: WhatsAppOwner): Promise<WhatsAppStatusPayload>;
+  startSession(
+    owner: WhatsAppOwner,
+    options?: WhatsAppPairingOptions,
+  ): Promise<WhatsAppStatusPayload>;
 
-  disconnect(accountId: string): Promise<void>;
+  disconnect(accountId: string, inboxId?: string): Promise<void>;
 
   sendText(
     context: DispatchContext,

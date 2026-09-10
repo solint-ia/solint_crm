@@ -1,6 +1,6 @@
 'use client';
 
-import { CheckCircle2, Loader2, Phone, QrCode, Unplug, Wifi } from 'lucide-react';
+import { CheckCircle2, Loader2, Phone, Smartphone, Unplug, Wifi } from 'lucide-react';
 import type { User } from '@/core/domain/user';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -21,7 +21,7 @@ interface WhatsAppConnectionCardProps {
    */
   readonly inboxId?: string;
   readonly inboxName?: string;
-  /** Abre a tela onde o QR Code e exibido (Configurações › Integrações). */
+  /** Abre a tela para escolher QR Code ou pareamento por telefone. */
   readonly onOpenPairing?: () => void;
 }
 
@@ -128,12 +128,12 @@ export function WhatsAppConnectionCard({
             {isConnecting ? (
               <Loader2 className="size-5 animate-spin" />
             ) : (
-              <QrCode className="size-5" />
+              <Smartphone className="size-5" />
             )}
           </span>
           <p className="text-body text-muted">
             {isConnecting
-              ? 'Gerando o QR Code de pareamento...'
+              ? 'Preparando o pareamento do WhatsApp...'
               : inboxName
                 ? 'Esta caixa ainda não tem número pareado. Conecte para começar a atender por ela.'
                 : 'Nenhum número vinculado a este perfil. Conecte para atender pelo seu WhatsApp.'}
@@ -141,17 +141,12 @@ export function WhatsAppConnectionCard({
           <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
-              onClick={connect}
+              onClick={onOpenPairing ?? (() => void connect())}
               disabled={isPending || isConnecting}
               icon={<Wifi className="size-3.5" />}
             >
-              {isPending ? 'Iniciando...' : inboxName ? 'Conectar número' : 'Conectar meu WhatsApp'}
+              {isPending ? 'Iniciando...' : 'Escolher método de conexão'}
             </Button>
-            {onOpenPairing ? (
-              <Button variant="secondary" size="sm" onClick={onOpenPairing}>
-                Ver QR Code
-              </Button>
-            ) : null}
           </div>
         </div>
       )}

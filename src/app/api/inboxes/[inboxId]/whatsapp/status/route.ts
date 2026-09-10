@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { can, canSeeInbox } from '@/core/domain/user';
 import { container } from '@/infrastructure/container';
 import { prisma } from '@/infrastructure/db/prisma';
 import { getWhatsAppChannel } from '@/infrastructure/whatsapp/channel-provider';
@@ -28,6 +29,12 @@ export async function GET(_request: Request, props: { params: Promise<{ inboxId:
   if (!session) {
     return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 });
   }
+  if (!can(session, 'config.caixas:escrever') || !canSeeInbox(session, inboxId)) {
+    return NextResponse.json(
+      { ok: false, error: 'Sem permissão para consultar esta conexão.' },
+      { status: 403 },
+    );
+  }
 
   const inbox = await prisma.inbox.findFirst({
     where: { id: inboxId, accountId: session.account.id },
@@ -50,6 +57,8 @@ export async function GET(_request: Request, props: { params: Promise<{ inboxId:
     ok: true,
     engine: channel.engine,
     // O QR vira imagem só aqui, na borda — ver `qr-image.ts`.
-    status: visible ? { ...status, qr: await qrImage(status.qr) } : { ...status, qr: undefined },
+    status: visible
+      ? { ...status, qr: await qrImage(status.qr) }
+      : { ...status, qr: undefined, pairingCode: undefined },
   });
 }

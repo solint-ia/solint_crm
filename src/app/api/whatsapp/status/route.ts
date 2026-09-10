@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { can } from '@/core/domain/user';
 import { container } from '@/infrastructure/container';
 import { getWhatsAppChannel } from '@/infrastructure/whatsapp/channel-provider';
 import { qrImage } from '@/infrastructure/whatsapp/qr-image';
@@ -19,6 +20,12 @@ export async function GET() {
   if (!session) {
     return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 });
   }
+  if (!can(session, 'config.caixas:escrever')) {
+    return NextResponse.json(
+      { ok: false, error: 'Sem permissão para consultar esta conexão.' },
+      { status: 403 },
+    );
+  }
 
   const channel = await getWhatsAppChannel();
   const status = await channel.getStatus(session.account.id);
@@ -32,6 +39,8 @@ export async function GET() {
     ok: true,
     engine: channel.engine,
     // O QR vira imagem só aqui, na borda — ver `qr-image.ts`.
-    status: visible ? { ...status, qr: await qrImage(status.qr) } : { ...status, qr: undefined },
+    status: visible
+      ? { ...status, qr: await qrImage(status.qr) }
+      : { ...status, qr: undefined, pairingCode: undefined },
   });
 }

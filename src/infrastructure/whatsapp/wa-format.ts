@@ -96,6 +96,7 @@ export const inboxStatusFrom = (status: WhatsAppConnectionStatus): InboxConnecti
       return 'conectado';
     case 'gerando_qr':
     case 'aguardando_leitura':
+    case 'aguardando_codigo':
     case 'conectando':
       return 'pareando';
     case 'desconectado':

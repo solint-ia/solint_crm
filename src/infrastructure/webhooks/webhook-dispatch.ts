@@ -142,6 +142,7 @@ export const entregarWebhook = async (
   webhook: LinhaWebhook,
   corpo: string,
   evento: WebhookEvent,
+  deliveryId?: string,
 ): Promise<void> => {
   const resposta = await fetch(webhook.url, {
     method: 'POST',
@@ -149,6 +150,7 @@ export const entregarWebhook = async (
       'Content-Type': 'application/json',
       'User-Agent': 'Solint-CRM-Webhook/1',
       'X-Solint-Event': evento,
+      ...(deliveryId ? { 'X-Solint-Delivery-Id': deliveryId } : {}),
       ...(webhook.secret ? { 'X-Solint-Signature': assinar(corpo, webhook.secret) } : {}),
     },
     body: corpo,
@@ -173,6 +175,7 @@ export type WebhookPayloadEmMontagem = Omit<WebhookPayload, 'destination' | 'sol
 export const dispararWebhooks = async (
   evento: WebhookEvent,
   payload: WebhookPayloadEmMontagem,
+  options: { readonly throwOnError?: boolean } = {},
 ): Promise<void> => {
   try {
     const inboxId = payload.solint.caixaEntradaId;
@@ -191,7 +194,7 @@ export const dispararWebhooks = async (
     // quem acabou de assumir a conversa.
     const pausado = Boolean(
       conversa?.aiPausedReason &&
-        (!conversa.aiPausedUntil || conversa.aiPausedUntil.getTime() > Date.now()),
+      (!conversa.aiPausedUntil || conversa.aiPausedUntil.getTime() > Date.now()),
     );
     const corpo: Omit<WebhookPayload, 'destination'> = {
       ...payload,
@@ -260,6 +263,7 @@ export const dispararWebhooks = async (
       event: evento,
     });
   } catch (erro) {
+    if (options.throwOnError) throw erro;
     console.warn('[webhooks] Falha ao consultar os webhooks da conta:', erro);
   }
 };

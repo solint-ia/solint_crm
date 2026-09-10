@@ -783,6 +783,8 @@ model WhatsAppConnection {
   lastConnectedAt    DateTime?
   /// String do QR em pareamento.
   qrPayload          String?
+  /// Codigo curto gerado pelo Baileys para pareamento por numero de telefone.
+  pairingCode        String?
   qrExpiresAt        DateTime?
   /// Contador de tentativas — evita loop de reconexão infinito após ban.
   retryCount         Int       @default(0)
@@ -1051,6 +1053,31 @@ model WebhookDelivery {
   @@index([status, leaseUntil])
   @@index([accountId, createdAt])
   @@index([webhookId, inboxId, status])
+}
+
+/// Evento-fonte gravado na mesma transação da mensagem. O runner transforma
+/// esta intenção em uma WebhookDelivery para cada destino inscrito.
+model WebhookEventOutbox {
+  id          String    @id @default(cuid())
+  sequence    BigInt    @unique @default(autoincrement())
+  accountId   String
+  inboxId     String?
+  event       String
+  payload     Json
+  dedupeKey   String    @unique
+  status      String    @default("pending") // pending | processing | completed | failed
+  attempts    Int       @default(0)
+  availableAt DateTime  @default(now())
+  workerId    String?
+  claimedAt   DateTime?
+  leaseUntil  DateTime?
+  lastError   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, availableAt, sequence])
+  @@index([status, leaseUntil])
+  @@index([accountId, sequence])
 }
 
 /// Liderança com prazo para tarefas globais (agendamentos, SLA, espera, retenção).

@@ -7,6 +7,7 @@ import type {
   DispatchResult,
   DispatchTarget,
   WhatsAppChannel,
+  WhatsAppPairingOptions,
 } from './channel';
 import type { WhatsAppOwner, WhatsAppStatusPayload } from './whatsapp-events';
 import { algumaTravaViva, filaParada, waitForWorker, workerPresence } from './worker-presence';
@@ -182,6 +183,7 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
       ...(inboxId ? { inboxId } : {}),
       status: (conn?.status as WhatsAppStatusPayload['status']) ?? 'desconectado',
       qr: conn?.qrPayload ?? undefined,
+      pairingCode: conn?.pairingCode ?? undefined,
       error: conn?.lastError ?? undefined,
       phone: conn?.phoneJid ?? undefined,
       name: conn?.profileName ?? undefined,
@@ -192,11 +194,20 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     };
   }
 
-  async startSession(owner: WhatsAppOwner): Promise<WhatsAppStatusPayload> {
-    const inboxId = await this.inboxOf(owner.accountId);
+  async startSession(
+    owner: WhatsAppOwner,
+    options: WhatsAppPairingOptions = {},
+  ): Promise<WhatsAppStatusPayload> {
+    const inboxId = options.inboxId ?? (await this.inboxOf(owner.accountId));
     if (!inboxId) {
       throw new Error('Esta conta não tem caixa de entrada de WhatsApp configurada.');
     }
+
+    const allowedInbox = await prisma.inbox.findFirst({
+      where: { id: inboxId, accountId: owner.accountId, channel: 'whatsapp' },
+      select: { id: true },
+    });
+    if (!allowedInbox) throw new Error('Caixa de entrada de WhatsApp não encontrada nesta conta.');
 
     const connection = await prisma.whatsAppConnection.findUnique({
       where: { inboxId },
@@ -224,22 +235,6 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
       };
     }
 
-    // Reaproveita a tentativa já enfileirada em vez de criar vários comandos
-    // concorrentes para a mesma credencial/sessão.
-    const pendingConnect = await prisma.whatsAppCommand.findFirst({
-      where: { inboxId, kind: 'connect', status: { in: ['pending', 'processing'] } },
-      orderBy: { createdAt: 'desc' },
-      select: { id: true },
-    });
-    if (pendingConnect) {
-      return {
-        inboxId,
-        status: 'conectando',
-        owner,
-        updatedAt: new Date().toISOString(),
-      };
-    }
-
     // Recusar cedo é melhor do que enfileirar no vazio: sem worker, o comando
     // ficaria pendente e a tela esperaria por algo que nunca vem.
     if (!(await waitForWorker())) {
@@ -248,20 +243,63 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
       );
     }
 
-    await prisma.whatsAppConnection.upsert({
-      where: { inboxId },
-      create: { inboxId, status: 'conectando', pairedByUserId: owner.userId },
-      update: { status: 'conectando', pairedByUserId: owner.userId, lastError: null },
+    const queued = await prisma.$transaction(async (tx) => {
+      // Serializa tentativas de abas/processos diferentes para que um segundo
+      // clique não invalide o QR ou o código que acabou de ser exibido.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'connect:' + inboxId}))`;
+      const pending = await tx.whatsAppCommand.findFirst({
+        where: { inboxId, kind: 'connect', status: { in: ['pending', 'processing'] } },
+        orderBy: { sequence: 'asc' },
+        select: { id: true },
+      });
+      if (pending) return { command: pending, created: false };
+
+      await tx.whatsAppConnection.upsert({
+        where: { inboxId },
+        create: { inboxId, status: 'conectando', pairedByUserId: owner.userId },
+        update: {
+          status: 'conectando',
+          pairedByUserId: owner.userId,
+          lastError: null,
+          qrPayload: null,
+          pairingCode: null,
+        },
+      });
+      const command = await tx.whatsAppCommand.create({
+        data: {
+          inboxId,
+          kind: 'connect',
+          status: 'pending',
+          payload: {
+            ...owner,
+            pairingMethod: options.method ?? 'qr',
+            ...(options.method === 'phone' ? { phoneNumber: options.phoneNumber } : {}),
+          },
+        },
+        select: { id: true },
+      });
+      return { command, created: true };
     });
 
-    await this.enqueue(inboxId, 'connect', { ...owner });
+    if (queued.created) {
+      await postgresPubSub.publish(CHANNELS.COMMANDS, {
+        inboxId,
+        kind: 'connect',
+        id: queued.command.id,
+      });
+    }
 
     return { inboxId, status: 'conectando', owner, updatedAt: new Date().toISOString() };
   }
 
-  async disconnect(accountId: string): Promise<void> {
-    const inboxId = await this.inboxOf(accountId);
+  async disconnect(accountId: string, scopedInboxId?: string): Promise<void> {
+    const inboxId = scopedInboxId ?? (await this.inboxOf(accountId));
     if (!inboxId) return;
+    const allowed = await prisma.inbox.findFirst({
+      where: { id: inboxId, accountId, channel: 'whatsapp' },
+      select: { id: true },
+    });
+    if (!allowed) throw new Error('Caixa de entrada de WhatsApp não encontrada nesta conta.');
     await this.enqueue(inboxId, 'disconnect', {});
   }
 
@@ -330,7 +368,7 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     }
 
     try {
-      await this.enqueue(
+      const commandId = await this.enqueue(
         inboxId,
         kind,
         {
@@ -348,6 +386,19 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
           ? { idempotencyKey: `message:${context.messageId}` }
           : {},
       );
+      if (kind === 'delete' || kind === 'react') {
+        const outcome = await this.waitForCommandOutcome(commandId, 15_000);
+        if (outcome.status === 'failed') return { ok: false, error: outcome.error };
+        if (outcome.status === 'timeout') {
+          return {
+            ok: false,
+            queued: true,
+            confirmed: false,
+            error: 'A operação foi enfileirada, mas o WhatsApp ainda não confirmou a execução.',
+          };
+        }
+        return { ok: true, queued: true, confirmed: true };
+      }
       return { ok: true, queued: true };
     } catch (error) {
       return {

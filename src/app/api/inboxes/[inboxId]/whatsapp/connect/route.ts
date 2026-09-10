@@ -1,17 +1,44 @@
 import { NextResponse } from 'next/server';
 import { container } from '@/infrastructure/container';
 import { prisma } from '@/infrastructure/db/prisma';
-import { CHANNELS, postgresPubSub } from '@/infrastructure/db/postgres-pubsub';
+import { PhoneNumber } from '@/core/domain/contact';
+import { can, canSeeInbox } from '@/core/domain/user';
+import { getWhatsAppChannel } from '@/infrastructure/whatsapp/channel-provider';
 
 export const dynamic = 'force-dynamic';
 
-export async function POST(_request: Request, props: { params: Promise<{ inboxId: string }> }) {
+export async function POST(request: Request, props: { params: Promise<{ inboxId: string }> }) {
   try {
     const { inboxId } = await props.params;
     const session = await container.session.getSession();
     if (!session) {
       return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 });
     }
+    if (!can(session, 'config.caixas:escrever') || !canSeeInbox(session, inboxId)) {
+      return NextResponse.json(
+        { ok: false, error: 'Sem permissão para conectar esta caixa.' },
+        { status: 403 },
+      );
+    }
+
+    const body = (await request.json().catch(() => ({}))) as {
+      method?: unknown;
+      phoneNumber?: unknown;
+    };
+    const method = body.method === 'phone' ? 'phone' : 'qr';
+    const rawPhone = typeof body.phoneNumber === 'string' ? body.phoneNumber : '';
+    const normalizedPhone = PhoneNumber.normalize(rawPhone);
+
+    if (method === 'phone' && !PhoneNumber.isValid(rawPhone)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: 'Informe um número válido com DDI e DDD (ex.: 5511999998888).',
+        },
+        { status: 400 },
+      );
+    }
+    const phoneNumber = normalizedPhone.slice(1);
 
     // 1. Confere se a caixa de entrada pertence à conta ativa
     const inbox = await prisma.inbox.findFirst({
@@ -19,14 +46,6 @@ export async function POST(_request: Request, props: { params: Promise<{ inboxId
       select: {
         id: true,
         channel: true,
-        waConnection: {
-          select: {
-            status: true,
-            credsCipher: true,
-            lockOwner: true,
-            lockExpiresAt: true,
-          },
-        },
       },
     });
 
@@ -44,86 +63,17 @@ export async function POST(_request: Request, props: { params: Promise<{ inboxId
       );
     }
 
-    const lockVivo = Boolean(
-      inbox.waConnection?.lockOwner &&
-      inbox.waConnection.lockExpiresAt &&
-      inbox.waConnection.lockExpiresAt > new Date(),
+    const channel = await getWhatsAppChannel();
+    const status = await channel.startSession(
+      {
+        userId: session.user.id,
+        userName: session.user.name,
+        accountId: session.account.id,
+      },
+      { method, inboxId, ...(method === 'phone' ? { phoneNumber } : {}) },
     );
-    if (inbox.waConnection?.credsCipher && inbox.waConnection.status === 'conectado' && lockVivo) {
-      return NextResponse.json({ ok: true, status: 'conectado', reusedSession: true });
-    }
 
-    // Dois cliques, abas ou usuários não podem criar duas tentativas para a
-    // mesma sessão. O comando existente continuará reutilizando as credenciais
-    // cifradas; nenhum QR novo é necessário.
-    const pending = await prisma.whatsAppCommand.findFirst({
-      where: { inboxId, kind: 'connect', status: { in: ['pending', 'processing'] } },
-      orderBy: { createdAt: 'desc' },
-      select: { id: true },
-    });
-    if (pending) {
-      return NextResponse.json({
-        ok: true,
-        commandId: pending.id,
-        status: 'conectando',
-        reusedSession: Boolean(inbox.waConnection?.credsCipher),
-      });
-    }
-
-    // 2. Cria o registro de conexão se não existir
-    await prisma.whatsAppConnection.upsert({
-      where: { inboxId },
-      create: {
-        inboxId,
-        status: 'conectando',
-        pairedByUserId: session.user.id,
-      },
-      update: {
-        status: 'conectando',
-        pairedByUserId: session.user.id,
-        lastError: null,
-      },
-    });
-
-    // 3. Enfileira o comando para o worker processar
-    const command = await prisma.whatsAppCommand.create({
-      data: {
-        inboxId,
-        kind: 'connect',
-        payload: {
-          userId: session.user.id,
-          userName: session.user.name,
-          accountId: session.account.id,
-        },
-        status: 'pending',
-      },
-    });
-
-    /**
-     * O aviso é o mecanismo; a varredura é só a rede de segurança.
-     *
-     * Esta rota criava a linha na fila e devolvia — sem `NOTIFY`. O worker só
-     * descobria o comando na varredura seguinte, que roda a cada 15 s
-     * (`SWEEP_INTERVAL_MS`), então o QR aparecia alguns segundos depois do
-     * clique e a tela ficava nesse meio-tempo mostrando o estado anterior. O
-     * `enqueue` do `QueueWhatsAppChannel` sempre publicou; esta rota e a de
-     * desconectar eram as duas que enfileiravam no silêncio.
-     *
-     * Esperado, e não disparado ao vento, pelo mesmo motivo documentado lá:
-     * numa função serverless a instância congela ao responder, e uma promessa
-     * solta que ainda precisava abrir conexão morre junto.
-     */
-    await postgresPubSub
-      .publish(CHANNELS.COMMANDS, { inboxId, kind: 'connect', id: command.id })
-      .catch(() => {
-        // Aviso perdido não é falha da conexão: a varredura ainda pega.
-      });
-
-    return NextResponse.json({
-      ok: true,
-      commandId: command.id,
-      status: 'conectando',
-    });
+    return NextResponse.json({ ok: true, engine: channel.engine, status });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Falha ao iniciar conexão de WhatsApp';
     return NextResponse.json({ ok: false, error: message }, { status: 500 });

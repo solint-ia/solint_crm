@@ -78,10 +78,15 @@ export class WebhookDeliveryRunner {
       });
 
       const candidates = await prisma.$queryRaw<Candidate[]>`
-        SELECT DISTINCT ON ("webhookId") "id", "webhookId"
-        FROM "WebhookDelivery"
-        WHERE "status" = 'pending' AND "availableAt" <= CURRENT_TIMESTAMP
-        ORDER BY "webhookId", "sequence"
+        WITH first_pending AS (
+          SELECT DISTINCT ON ("webhookId") "id", "webhookId", "availableAt"
+          FROM "WebhookDelivery"
+          WHERE "status" = 'pending'
+          ORDER BY "webhookId", "sequence"
+        )
+        SELECT "id", "webhookId"
+        FROM first_pending
+        WHERE "availableAt" <= CURRENT_TIMESTAMP
         LIMIT 25
       `;
       this.lastSweepAt = new Date();
@@ -160,7 +165,6 @@ export class WebhookDeliveryRunner {
           where: {
             webhookId: row.webhookId,
             status: 'pending',
-            availableAt: { lte: now },
             sequence: { lt: row.sequence },
           },
           select: { id: true },
@@ -236,7 +240,12 @@ export class WebhookDeliveryRunner {
         });
         return;
       }
-      await entregarWebhook(row.webhook, JSON.stringify(payload), row.event as WebhookEvent);
+      await entregarWebhook(
+        row.webhook,
+        JSON.stringify(payload),
+        row.event as WebhookEvent,
+        row.id,
+      );
 
       await prisma.$transaction([
         prisma.webhookDelivery.updateMany({

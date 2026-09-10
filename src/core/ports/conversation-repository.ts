@@ -71,9 +71,20 @@ export interface ConversationWriter {
     accountId: Id,
     conversationId: Id,
     status: ConversationStatus,
+    inboxAccess: InboxAccess,
   ): Promise<Conversation>;
-  changePriority(accountId: Id, conversationId: Id, priority: Priority): Promise<Conversation>;
-  assign(accountId: Id, conversationId: Id, assignee: Assignee | null): Promise<Conversation>;
+  changePriority(
+    accountId: Id,
+    conversationId: Id,
+    priority: Priority,
+    inboxAccess: InboxAccess,
+  ): Promise<Conversation>;
+  assign(
+    accountId: Id,
+    conversationId: Id,
+    assignee: Assignee | null,
+    inboxAccess: InboxAccess,
+  ): Promise<Conversation>;
   /**
    * Tira o agente de IA desta conversa por um tempo.
    *
@@ -90,9 +101,10 @@ export interface ConversationWriter {
     conversationId: Id,
     reason: AiPauseReason,
     actor?: Assignee,
+    inboxAccess?: InboxAccess,
   ): Promise<Conversation>;
   /** Devolve a conversa ao agente antes de o prazo vencer. */
-  resumeAiAgent(accountId: Id, conversationId: Id): Promise<Conversation>;
+  resumeAiAgent(accountId: Id, conversationId: Id, inboxAccess: InboxAccess): Promise<Conversation>;
   /**
    * Move o atendimento para outra caixa de entrada.
    *
@@ -115,7 +127,12 @@ export interface ConversationWriter {
    * caixa.
    */
   userReachesInbox(accountId: Id, userId: Id, inboxId: Id): Promise<boolean>;
-  setLabels(accountId: Id, conversationId: Id, labels: readonly Label[]): Promise<Conversation>;
+  setLabels(
+    accountId: Id,
+    conversationId: Id,
+    labels: readonly Label[],
+    inboxAccess: InboxAccess,
+  ): Promise<Conversation>;
   /**
    * Propaga a nova versao do contato para as conversas que carregam a copia
    * dele. Sem isso, editar as etiquetas do contato deixaria a caixa de entrada

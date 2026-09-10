@@ -5,6 +5,7 @@ import type {
   DispatchResult,
   DispatchTarget,
   WhatsAppChannel,
+  WhatsAppPairingOptions,
 } from './channel';
 import { mediaStore } from './wa-media-store';
 import { providerMessageIdFor } from './provider-message-id';
@@ -58,11 +59,19 @@ export class InProcessWhatsAppChannel implements WhatsAppChannel {
     return whatsappService.getStatus();
   }
 
-  async startSession(owner: WhatsAppOwner): Promise<WhatsAppStatusPayload> {
-    return whatsappService.startSession({ owner });
+  async startSession(
+    owner: WhatsAppOwner,
+    options: WhatsAppPairingOptions = {},
+  ): Promise<WhatsAppStatusPayload> {
+    return whatsappService.startSession({
+      owner,
+      pairingMethod: options.method ?? 'qr',
+      pairingPhone: options.phoneNumber,
+      inboxId: options.inboxId,
+    });
   }
 
-  async disconnect(_accountId: string): Promise<void> {
+  async disconnect(_accountId: string, _inboxId?: string): Promise<void> {
     await whatsappService.disconnect();
   }
 

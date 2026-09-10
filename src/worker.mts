@@ -52,6 +52,10 @@ async function main() {
 
   const { WebhookDeliveryRunner } =
     await import('./infrastructure/webhooks/webhook-delivery-runner');
+  const { WebhookEventOutboxRunner } =
+    await import('./infrastructure/webhooks/webhook-event-outbox-runner');
+  const webhookEventRunner = new WebhookEventOutboxRunner(sessionManager.workerId);
+  webhookEventRunner.start();
   const webhookRunner = new WebhookDeliveryRunner(sessionManager.workerId);
   webhookRunner.start();
 
@@ -167,7 +171,11 @@ async function main() {
         }
       }
       const ready =
-        databaseReady && commandConsumer.healthy && webhookRunner.healthy && postgresPubSub.ready;
+        databaseReady &&
+        commandConsumer.healthy &&
+        webhookEventRunner.healthy &&
+        webhookRunner.healthy &&
+        postgresPubSub.ready;
       res.writeHead(liveRoute || ready ? 200 : 503, {
         'Content-Type': 'application/json',
         'Cache-Control': 'no-store',
@@ -200,6 +208,7 @@ async function main() {
           checks: {
             database: databaseReady,
             commandConsumer: commandConsumer.healthy,
+            webhookEventOutbox: webhookEventRunner.healthy,
             webhookDelivery: webhookRunner.healthy,
             pubsub: postgresPubSub.ready,
           },
@@ -240,6 +249,7 @@ async function main() {
       await commandRecoveryRunner.stop();
       await commandConsumer.stop();
       await sessionManager.shutdown();
+      await webhookEventRunner.stop();
       await webhookRunner.stop();
       // As chaves de cache (`lid-mapping`, `tctoken`) são gravadas fora do mutex
       // do Baileys, o que significa que pode haver um lote ainda na fila neste

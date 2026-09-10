@@ -38,6 +38,9 @@ export async function GET(request: Request) {
       const onConversationUpdate = (payload: ConversationEventPayload) => {
         // O barramento é do processo, não da conta: o filtro é aqui.
         if (payload.accountId !== accountId) return;
+        // Notificação individual é sigilosa no servidor. Filtrar só no React
+        // ainda entregaria o payload aos demais navegadores conectados à caixa.
+        if (payload.userId && payload.userId !== session.user.id) return;
 
         // Conta certa não basta: dentro dela, cada pessoa alcança só as caixas
         // das suas equipes. Sem este filtro, uma conversa da Cobrança apareceria

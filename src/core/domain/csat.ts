@@ -12,6 +12,8 @@ import type { Tone } from './label';
 /** A escala é de 1 a 5. Não é configurável de propósito: CSAT comparável exige escala fixa. */
 export const CSAT_MIN = 1;
 export const CSAT_MAX = 5;
+/** Depois desta janela, uma mensagem passa a ser um novo atendimento. */
+export const CSAT_RESPONSE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export const DEFAULT_CSAT_QUESTION =
   'Como você avalia este atendimento? Responda com um número de 1 a 5, sendo 5 a nota máxima.';
@@ -66,4 +68,6 @@ export const csatTone = (average: number | undefined): Tone =>
 
 /** "4,7" no formato do produto; travessão quando não há nota nenhuma. */
 export const csatLabel = (average: number | undefined): string =>
-  average === undefined ? '—' : average.toLocaleString('pt-BR', { maximumFractionDigits: 1, minimumFractionDigits: 1 });
+  average === undefined
+    ? '—'
+    : average.toLocaleString('pt-BR', { maximumFractionDigits: 1, minimumFractionDigits: 1 });

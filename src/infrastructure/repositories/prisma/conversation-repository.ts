@@ -68,9 +68,10 @@ export const aplicarPausaDoAgente = async (
   conversationId: Id,
   reason: AiPauseReason,
   actor?: Assignee,
+  inboxAccess: InboxAccess = 'todas',
 ): Promise<void> => {
   const conversa = await prisma.conversation.findFirst({
-    where: { id: conversationId, accountId },
+    where: { id: conversationId, accountId, ...inboxScope(inboxAccess) },
     select: {
       aiPausedUntil: true,
       aiPausedReason: true,
@@ -80,15 +81,32 @@ export const aplicarPausaDoAgente = async (
   if (!conversa) throw new NotFoundError('Conversa', conversationId);
 
   if (reason === 'manual') {
-    await prisma.conversation.update({
-      where: { id: conversationId, accountId },
-      data: {
-        aiPausedUntil: null,
-        aiPausedBy: actor?.id ?? null,
-        aiPausedByName: actor?.name ?? null,
-        aiPausedReason: 'manual',
-      },
-    });
+    await prisma.$transaction([
+      prisma.conversation.updateMany({
+        where: { id: conversationId, accountId, ...inboxScope(inboxAccess) },
+        data: {
+          aiPausedUntil: null,
+          aiPausedBy: actor?.id ?? null,
+          aiPausedByName: actor?.name ?? null,
+          aiPausedReason: 'manual',
+        },
+      }),
+      // Assumir a IA também assume uma conversa sem dono. O predicado faz a
+      // disputa entre dois atendentes ser decidida no banco sem roubar de quem ganhou.
+      ...(actor
+        ? [
+            prisma.conversation.updateMany({
+              where: {
+                id: conversationId,
+                accountId,
+                ...inboxScope(inboxAccess),
+                assigneeId: null,
+              },
+              data: { assigneeId: actor.id, assigneeName: actor.name },
+            }),
+          ]
+        : []),
+    ]);
     return;
   }
 
@@ -403,11 +421,14 @@ export class PrismaConversationRepository implements ConversationRepository {
     accountId: Id,
     conversationId: Id,
     status: ConversationStatus,
+    inboxAccess: InboxAccess,
   ): Promise<Conversation> {
     const atual = await prisma.conversation.findFirst({
-      where: { id: conversationId, accountId },
-      select: { createdAt: true, status: true },
+      where: { id: conversationId, accountId, ...inboxScope(inboxAccess) },
+      include: CONVERSATION_INCLUDE,
     });
+    if (!atual) throw new NotFoundError('Conversa', conversationId);
+    if (atual.status === status) return conversationRow(atual);
 
     const agora = new Date();
     const marcas =
@@ -422,30 +443,42 @@ export class PrismaConversationRepository implements ConversationRepository {
           ? { resolvedAt: null, resolutionSecs: null }
           : {};
 
-    return this.patch(accountId, conversationId, {
-      status,
-      statusLabel: STATUS_LABELS[status],
-      ...marcas,
-    });
+    return this.patch(
+      accountId,
+      conversationId,
+      {
+        status,
+        statusLabel: STATUS_LABELS[status],
+        ...marcas,
+      },
+      inboxAccess,
+    );
   }
 
   async changePriority(
     accountId: Id,
     conversationId: Id,
     priority: Priority,
+    inboxAccess: InboxAccess,
   ): Promise<Conversation> {
-    return this.patch(accountId, conversationId, { priority });
+    return this.patch(accountId, conversationId, { priority }, inboxAccess);
   }
 
   async assign(
     accountId: Id,
     conversationId: Id,
     assignee: Assignee | null,
+    inboxAccess: InboxAccess,
   ): Promise<Conversation> {
-    return this.patch(accountId, conversationId, {
-      assigneeId: assignee?.id ?? null,
-      assigneeName: assignee?.name ?? null,
-    });
+    return this.patch(
+      accountId,
+      conversationId,
+      {
+        assigneeId: assignee?.id ?? null,
+        assigneeName: assignee?.name ?? null,
+      },
+      inboxAccess,
+    );
   }
 
   async pauseAiAgent(
@@ -453,23 +486,33 @@ export class PrismaConversationRepository implements ConversationRepository {
     conversationId: Id,
     reason: AiPauseReason,
     actor?: Assignee,
+    inboxAccess: InboxAccess = 'todas',
   ): Promise<Conversation> {
-    await aplicarPausaDoAgente(accountId, conversationId, reason, actor);
+    await aplicarPausaDoAgente(accountId, conversationId, reason, actor, inboxAccess);
     const row = await prisma.conversation.findFirst({
-      where: { id: conversationId, accountId },
+      where: { id: conversationId, accountId, ...inboxScope(inboxAccess) },
       include: CONVERSATION_INCLUDE,
     });
     if (!row) throw new NotFoundError('Conversa', conversationId);
     return conversationRow(row);
   }
 
-  async resumeAiAgent(accountId: Id, conversationId: Id): Promise<Conversation> {
-    return this.patch(accountId, conversationId, {
-      aiPausedUntil: null,
-      aiPausedBy: null,
-      aiPausedByName: null,
-      aiPausedReason: null,
-    });
+  async resumeAiAgent(
+    accountId: Id,
+    conversationId: Id,
+    inboxAccess: InboxAccess,
+  ): Promise<Conversation> {
+    return this.patch(
+      accountId,
+      conversationId,
+      {
+        aiPausedUntil: null,
+        aiPausedBy: null,
+        aiPausedByName: null,
+        aiPausedReason: null,
+      },
+      inboxAccess,
+    );
   }
 
   async moveToInbox(
@@ -531,12 +574,18 @@ export class PrismaConversationRepository implements ConversationRepository {
     accountId: Id,
     conversationId: Id,
     labels: readonly Label[],
+    inboxAccess: InboxAccess,
   ): Promise<Conversation> {
     // `set` substitui o vínculo inteiro — é a operação que a tela faz: o
     // cliente manda o conjunto final, não um delta.
-    return this.patch(accountId, conversationId, {
-      labels: { set: labels.map((label) => ({ id: label.id })) },
-    });
+    return this.patch(
+      accountId,
+      conversationId,
+      {
+        labels: { set: labels.map((label) => ({ id: label.id })) },
+      },
+      inboxAccess,
+    );
   }
 
   async markAsRead(accountId: Id, conversationId: Id): Promise<void> {
@@ -611,15 +660,16 @@ export class PrismaConversationRepository implements ConversationRepository {
     // O tipo aberto é intencional: o `patch` aceita tanto colunas quanto
     // operações de relação do Prisma (`labels: { set: [...] }`).
     data: Record<string, unknown>,
+    inboxAccess: InboxAccess = 'todas',
   ): Promise<Conversation> {
     const exists = await prisma.conversation.findFirst({
-      where: { id: conversationId, accountId },
+      where: { id: conversationId, accountId, ...inboxScope(inboxAccess) },
       select: { id: true },
     });
     if (!exists) throw new NotFoundError('Conversa', conversationId);
 
     const row = await prisma.conversation.update({
-      where: { id: conversationId, accountId },
+      where: { id: conversationId, accountId, ...inboxScope(inboxAccess) },
       data,
       include: CONVERSATION_INCLUDE,
     });

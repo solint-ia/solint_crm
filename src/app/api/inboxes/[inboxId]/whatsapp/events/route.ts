@@ -1,3 +1,4 @@
+import { can, canSeeInbox } from '@/core/domain/user';
 import { container } from '@/infrastructure/container';
 import { prisma } from '@/infrastructure/db/prisma';
 import { qrImage } from '@/infrastructure/whatsapp/qr-image';
@@ -20,6 +21,9 @@ export async function GET(request: Request, props: { params: Promise<{ inboxId: 
 
   if (!session) {
     return new Response('Não autenticado', { status: 401 });
+  }
+  if (!can(session, 'config.caixas:escrever') || !canSeeInbox(session, inboxId)) {
+    return new Response('Sem permissão para consultar esta conexão', { status: 403 });
   }
 
   // Valida que a Inbox pertence à conta
@@ -64,6 +68,7 @@ export async function GET(request: Request, props: { params: Promise<{ inboxId: 
         inboxId,
         status: (conn?.status as WhatsAppStatusPayload['status']) ?? 'desconectado',
         qr: conn?.qrPayload ?? undefined,
+        pairingCode: conn?.pairingCode ?? undefined,
         error: conn?.lastError ?? undefined,
         phone: conn?.phoneJid ?? undefined,
         name: conn?.profileName ?? 'WhatsApp',

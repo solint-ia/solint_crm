@@ -1,6 +1,7 @@
 import {
   BufferJSON,
   initAuthCreds,
+  jidDecode,
   proto,
   type AuthenticationCreds,
   type AuthenticationState,
@@ -341,12 +342,24 @@ export const flushPendingKeys = async (): Promise<void> => {
  *  - `isPaired` ficava falso na sessão, então uma queda de conexão caía no ramo
  *    de "ninguém leu o QR" em vez do backoff de reconexão.
  *
- * O sinal confiável é o `me.id`: o WhatsApp só o devolve depois que o
- * pareamento conclui. `registered` continua sendo aceito para não quebrar quem
- * pareou pelo código.
+ * O sinal confiável é o `me.id` **com número de aparelho** (`5511...:12@s.whatsapp.net`):
+ * é o JID que o `pair-success` devolve quando o pareamento conclui, e todo
+ * aparelho vinculado tem esse sufixo. `registered` continua sendo aceito — no
+ * fluxo por código ele só vira `true` no estágio `companion_finish`, quando a
+ * pessoa já digitou o código no celular.
+ *
+ * **`me.id` sozinho não basta, e o pareamento por código é o motivo.** O
+ * `requestPairingCode` do Baileys grava `me = { id: '<numero>@s.whatsapp.net',
+ * name: '~' }` e emite `creds.update` **antes** de o código ser digitado — a
+ * credencial vai para o banco com um `me.id` de marcador, sem aparelho. Aceitar
+ * qualquer `me.id` fazia uma tentativa abandonada (ou que falhou) parecer
+ * sessão pareada: o worker a religava a cada boot e nunca mais pedia QR nem
+ * código para aquela caixa.
  */
 export const isPairedCreds = (creds: AuthenticationCreds | null | undefined): boolean =>
-  Boolean(creds && (creds.registered || creds.me?.id));
+  Boolean(
+    creds && (creds.registered || (creds.me?.id && jidDecode(creds.me.id)?.device !== undefined)),
+  );
 
 /**
  * A caixa chegou a ser pareada de verdade?

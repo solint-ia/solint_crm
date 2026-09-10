@@ -209,10 +209,13 @@ async function main() {
       `${depoisDoCelular?.aiPausedUntil}`,
     );
     check('o motivo continua manual', depoisDoCelular?.aiPausedReason === 'manual');
-    check('quem assumiu continua registrado', depoisDoCelular?.aiPausedByName === 'Atendente de Teste');
+    check(
+      'quem assumiu continua registrado',
+      depoisDoCelular?.aiPausedByName === 'Atendente de Teste',
+    );
 
     console.log('\n5) Devolver ao agente limpa a pausa');
-    const devolvida = await container.conversations.resumeAiAgent(conta.id, conversa.id);
+    const devolvida = await container.conversations.resumeAiAgent(conta.id, conversa.id, 'todas');
     check('o dominio nao ve mais pausa', !isAiPaused(devolvida));
     check('sem motivo', devolvida.aiPausedReason === undefined);
     check('sem prazo', devolvida.aiPausedUntil === undefined);

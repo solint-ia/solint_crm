@@ -115,24 +115,30 @@ export class WhatsAppSessionManager {
     }
   }
 
-  async start(inboxId: string): Promise<WhatsAppSession> {
+  async start(
+    inboxId: string,
+    options: { pairingMethod?: 'qr' | 'phone'; pairingPhone?: string } = {},
+  ): Promise<WhatsAppSession> {
     if (this.shuttingDown) {
       throw new SessaoIndisponivelError('O worker está em processo de encerramento.');
     }
     const pending = this.starting.get(inboxId);
     if (pending) return pending;
 
-    const task = this.startOne(inboxId).finally(() => {
+    const task = this.startOne(inboxId, options).finally(() => {
       if (this.starting.get(inboxId) === task) this.starting.delete(inboxId);
     });
     this.starting.set(inboxId, task);
     return task;
   }
 
-  private async startOne(inboxId: string): Promise<WhatsAppSession> {
+  private async startOne(
+    inboxId: string,
+    options: { pairingMethod?: 'qr' | 'phone'; pairingPhone?: string } = {},
+  ): Promise<WhatsAppSession> {
     const existing = this.sessions.get(inboxId);
     if (existing) {
-      await existing.start();
+      await existing.start(options);
       return existing;
     }
 
@@ -186,7 +192,7 @@ export class WhatsAppSessionManager {
     this.sessions.set(inboxId, session);
 
     try {
-      await session.start();
+      await session.start(options);
       return session;
     } catch (error) {
       this.sessions.delete(inboxId);

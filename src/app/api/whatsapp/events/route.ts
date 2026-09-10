@@ -1,3 +1,4 @@
+import { can } from '@/core/domain/user';
 import { container } from '@/infrastructure/container';
 import { prisma } from '@/infrastructure/db/prisma';
 import { getWhatsAppChannel } from '@/infrastructure/whatsapp/channel-provider';
@@ -23,6 +24,9 @@ export async function GET(request: Request) {
   if (!session) {
     return new Response('Não autenticado', { status: 401 });
   }
+  if (!can(session, 'config.caixas:escrever')) {
+    return new Response('Sem permissão para consultar esta conexão', { status: 403 });
+  }
 
   const accountId = session.account.id;
   const channel = await getWhatsAppChannel();
@@ -40,7 +44,7 @@ export async function GET(request: Request) {
   const scoped = (payload: WhatsAppStatusPayload): WhatsAppStatusPayload =>
     !payload.owner || payload.owner.accountId === accountId
       ? payload
-      : { ...payload, qr: undefined };
+      : { ...payload, qr: undefined, pairingCode: undefined };
 
   const stream = new ReadableStream({
     start(controller) {

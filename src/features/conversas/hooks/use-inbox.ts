@@ -668,6 +668,11 @@ export function useInbox({
       if (!selected || !reactToMessage) return;
       setError(undefined);
       const conversationId = selected.id;
+      const previousReactions = selected.timeline.find(
+        (item) => item.kind === 'message' && item.message.id === messageId,
+      );
+      const rollbackReactions =
+        previousReactions?.kind === 'message' ? previousReactions.message.reactions : undefined;
 
       setConversations((current) =>
         current.map((conversation) =>
@@ -702,7 +707,26 @@ export function useInbox({
 
       startTransition(async () => {
         const result = await reactToMessage({ conversationId, messageId, emoji });
-        if (!result.ok) setError(result.error);
+        if (!result.ok) {
+          setError(result.error);
+          setConversations((current) =>
+            current.map((conversation) =>
+              conversation.id === conversationId
+                ? {
+                    ...conversation,
+                    timeline: conversation.timeline.map((item) =>
+                      item.kind === 'message' && item.message.id === messageId
+                        ? {
+                            ...item,
+                            message: { ...item.message, reactions: rollbackReactions },
+                          }
+                        : item,
+                    ),
+                  }
+                : conversation,
+            ),
+          );
+        }
       });
     },
     [selected, reactToMessage, currentUserName],
@@ -712,6 +736,7 @@ export function useInbox({
     (status: ConversationStatus) => {
       if (!selected) return;
       setError(undefined);
+      const previousStatus = selected.status;
       setConversations((current) =>
         current.map((conversation) =>
           conversation.id === selected.id ? { ...conversation, status } : conversation,
@@ -722,6 +747,13 @@ export function useInbox({
         const result = await changeStatus({ conversationId: selected.id, status });
         if (!result.ok) {
           setError(result.error);
+          setConversations((current) =>
+            current.map((conversation) =>
+              conversation.id === selected.id
+                ? { ...conversation, status: previousStatus }
+                : conversation,
+            ),
+          );
           return;
         }
         /**
@@ -819,7 +851,11 @@ export function useInbox({
       if (!selected || !setAiPause) return;
       const id = selected.id;
       setAiPausePending(true);
-      void setAiPause({ conversationId: id, paused }).finally(() => setAiPausePending(false));
+      void setAiPause({ conversationId: id, paused })
+        .then((result) => {
+          if (!result.ok) setError(result.error);
+        })
+        .finally(() => setAiPausePending(false));
     },
     [selected, setAiPause],
   );
