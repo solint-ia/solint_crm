@@ -8,10 +8,12 @@ import { horaLabel } from '@/lib/datetime';
  *
  * Fica gravado na coluna `origin` da mensagem, e não é só rótulo: é por ele que
  * cada regra descobre que **já disparou** nesta conversa. Sem essa marca a
- * mensagem de ausência responderia a cada mensagem da madrugada, uma por uma.
+ * saudação sairia de novo a cada mensagem de uma conversa que acabou de nascer.
+ *
+ * Mensagens antigas podem trazer `ausencia`, da mensagem fora do expediente que
+ * saiu do produto; nada novo é gravado com ela.
  */
-export type AutoMessageOrigin =
-  'saudacao' | 'ausencia' | 'encerramento' | 'espera' | 'csat' | 'automacao';
+export type AutoMessageOrigin = 'saudacao' | 'encerramento' | 'espera' | 'csat' | 'automacao';
 
 export interface AutoMessageOptions {
   readonly accountId: string;

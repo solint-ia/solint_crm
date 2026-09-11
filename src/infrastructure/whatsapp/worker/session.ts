@@ -23,7 +23,7 @@ import {
   type CustomField,
 } from '@/core/domain/contact';
 import { DB_POOL_SIZE, asJson, prisma } from '@/infrastructure/db/prisma';
-import { initPostgresAuthState, isPairedCreds } from '../auth/postgres-auth-state';
+import { initPostgresAuthState, isPairedCreds, wipeAuthState } from '../auth/postgres-auth-state';
 import { SessaoIndisponivelError } from './errors';
 import {
   applyDeliveryUpdate,
@@ -123,6 +123,12 @@ const MAX_REPLACED_RETRIES = 4;
 
 /** Recuo entre tentativas após 440, em milissegundos. */
 const REPLACED_BACKOFF_MS = [3_000, 8_000, 20_000, 45_000];
+
+/** Recuo entre reconexões após queda comum ou falha ao reabrir, em milissegundos. */
+const RECONNECT_BACKOFF_MS = [3_000, 8_000, 20_000, 60_000];
+
+/** Quanto esperar o WhatsApp aceitar a desvinculação antes de apagar o vínculo mesmo assim. */
+const LOGOUT_TIMEOUT_MS = 10_000;
 
 /**
  * Limitador de concorrência mínimo.
@@ -233,6 +239,16 @@ export class WhatsAppSession {
   private isPaired = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
   /**
+   * `stop()` ou `logout()` já rodaram: este objeto não abre mais socket.
+   *
+   * Um `start()` que estava no meio da inicialização quando a sessão foi
+   * encerrada — esperando o banco, por exemplo — terminaria abrindo um socket
+   * numa sessão que o gerenciador já descartou, e ninguém mais o fecharia.
+   */
+  private encerrada = false;
+  /** Número da chamada mais recente de `start()`; as anteriores desistem ao ver outro. */
+  private tentativaDeInicio = 0;
+  /**
    * Quantas vezes seguidas esta sessão foi substituída por outra (440).
    *
    * Zerado a cada conexão bem-sucedida. Serve só para espaçar as tentativas:
@@ -253,7 +269,15 @@ export class WhatsAppSession {
    * caixa — e aí a sessão já vai ser reiniciada.
    */
   private inboxName: string | null = null;
-  private readonly crmSentIds = new Set<string>();
+  /**
+   * Ids que o próprio CRM mandou por este socket, cada um com o id da linha do
+   * CRM que o originou (quando se sabe).
+   *
+   * O id da linha é o que permite ao eco achar a mensagem sem depender do
+   * `externalId`: esse só é gravado pelo consumidor da fila depois de o envio
+   * voltar, e o eco pode chegar antes da gravação.
+   */
+  private readonly crmSentIds = new Map<string, string | undefined>();
   private readonly lastInboundKey = new Map<string, WAMessageKey>();
   /**
    * Chats de que já pedimos presença, e a conversa de cada um.
@@ -454,6 +478,18 @@ export class WhatsAppSession {
   }
 
   /**
+   * Solta quem espera a abertura, sem mexer no socket.
+   *
+   * Usado no desligamento do worker: um envio parado em `waitUntilConnected`
+   * seguraria a fila por até trinta segundos esperando uma reconexão que o
+   * encerramento vai impedir de qualquer jeito. Solto, ele volta para a fila e o
+   * worker seguinte o executa.
+   */
+  cancelarEsperas(): void {
+    this.liberarEspera(false);
+  }
+
+  /**
    * Agenda a volta da sessão.
    *
    * É método próprio — e é chamado **antes** de qualquer gravação no banco —
@@ -472,8 +508,35 @@ export class WhatsAppSession {
    */
   private agendarReconexao(delayMs: number): void {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = setTimeout(() => void this.start(), delayMs);
+    this.reconnectTimer = setTimeout(() => {
+      // `start()` relança a falha para quem o chamou pedir. Aqui não há quem
+      // peça: solta, a rejeição derrubaria o worker inteiro — todas as caixas —
+      // por uma consulta que falhou na reconexão de uma só.
+      this.start().catch((error: unknown) => this.reconexaoFalhou(error));
+    }, delayMs);
     this.reconnectTimer.unref?.();
+  }
+
+  /**
+   * A reabertura agendada falhou antes de o socket existir — em geral, o banco.
+   *
+   * Desistir aqui deixava a caixa parada até alguém clicar em "Conectar". A
+   * falha é da infraestrutura, não da sessão, então a resposta é tentar de novo
+   * com recuo. As exceções são a posse perdida para outro worker, que o
+   * heartbeat vai tratar, e a sessão já encerrada.
+   */
+  private reconexaoFalhou(error: unknown): void {
+    if (error instanceof SessaoIndisponivelError || this.encerrada) return;
+    this.retryCount += 1;
+    const espera =
+      RECONNECT_BACKOFF_MS[Math.min(this.retryCount - 1, RECONNECT_BACKOFF_MS.length - 1)] ??
+      60_000;
+    console.error(
+      `[WhatsAppSession ${this.inboxId}] Falha ao reabrir a sessão. ` +
+        `Nova tentativa em ${Math.round(espera / 1000)}s:`,
+      error,
+    );
+    this.agendarReconexao(espera);
   }
 
   /**
@@ -530,9 +593,12 @@ export class WhatsAppSession {
     }
   }
 
-  private async registrarEstado(patch: Partial<WhatsAppStatusPayload>): Promise<void> {
+  private async registrarEstado(
+    patch: Partial<WhatsAppStatusPayload>,
+    opcoes: { readonly autoConnect?: boolean } = {},
+  ): Promise<void> {
     try {
-      await this.updateStatus(patch);
+      await this.updateStatus(patch, opcoes);
     } catch (error) {
       console.error(
         `[WhatsAppSession ${this.inboxId}] Falha ao gravar o estado ` +
@@ -542,7 +608,15 @@ export class WhatsAppSession {
     }
   }
 
-  private async updateStatus(patch: Partial<WhatsAppStatusPayload>) {
+  /**
+   * Grava o estado do socket e, quando `opcoes.autoConnect` vem, a intenção de
+   * conexão junto — na mesma escrita cercada pela posse, para as duas nunca
+   * divergirem.
+   */
+  private async updateStatus(
+    patch: Partial<WhatsAppStatusPayload>,
+    opcoes: { readonly autoConnect?: boolean } = {},
+  ) {
     this.currentStatus = {
       ...this.currentStatus,
       ...patch,
@@ -586,6 +660,7 @@ export class WhatsAppSession {
         ...(this.currentStatus.status === 'conectado'
           ? { lastConnectedAt: new Date(), retryCount: 0 }
           : {}),
+        ...(opcoes.autoConnect !== undefined ? { autoConnect: opcoes.autoConnect } : {}),
       },
     });
     if (count !== 1) {
@@ -622,6 +697,13 @@ export class WhatsAppSession {
     waEventBus.emitStatus(this.currentStatus);
   }
 
+  /** O pedido escolhe um método de pareamento diferente do que está em curso? */
+  private trocaDeMetodo(options: { pairingMethod?: 'qr' | 'phone'; pairingPhone?: string }) {
+    if (options.pairingMethod === 'phone') return options.pairingPhone !== this.pairingPhone;
+    if (options.pairingMethod === 'qr') return this.pairingPhone !== undefined;
+    return false;
+  }
+
   async start(
     options: { pairingMethod?: 'qr' | 'phone'; pairingPhone?: string } = {},
   ): Promise<WhatsAppStatusPayload> {
@@ -635,7 +717,10 @@ export class WhatsAppSession {
       await this.updateStatus({});
       return this.currentStatus;
     }
-    if (this.isInitializing) {
+    // Subindo, mas com outro método de pareamento pedido: o pedido novo vence.
+    // Sem isto, escolher "código" enquanto o QR ainda estava sendo gerado não
+    // fazia nada, e o código nunca chegava.
+    if (this.isInitializing && !this.trocaDeMetodo(options)) {
       await this.updateStatus({});
       return this.currentStatus;
     }
@@ -649,6 +734,7 @@ export class WhatsAppSession {
     }
 
     this.isInitializing = true;
+    const tentativa = ++this.tentativaDeInicio;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -675,6 +761,14 @@ export class WhatsAppSession {
       // que caía ia parar no ramo do QR em vez de reconectar.
       this.isPaired = isPairedCreds(state.creds);
       const version = await waVersion();
+
+      // Encerrada, ou atropelada por um `start()` mais novo, enquanto esperava o
+      // banco ou a rede: abrir o socket agora criaria uma conexão que ninguém
+      // mais fecharia. A tentativa mais nova é a que vale.
+      if (this.encerrada || tentativa !== this.tentativaDeInicio) {
+        if (tentativa === this.tentativaDeInicio) this.isInitializing = false;
+        return this.currentStatus;
+      }
 
       this.socket = makeWASocket({
         version,
@@ -759,6 +853,8 @@ export class WhatsAppSession {
       // o handshake terminou. Ver `solicitarCodigoDePareamento`.
       return this.currentStatus;
     } catch (error) {
+      // Uma tentativa já superada não mexe no estado: ele pertence à mais nova.
+      if (this.encerrada || tentativa !== this.tentativaDeInicio) return this.currentStatus;
       this.isInitializing = false;
       this.pairingPhone = undefined;
       this.teardownSocket();
@@ -900,12 +996,18 @@ export class WhatsAppSession {
             this.replacedCount += 1;
 
             if (this.replacedCount > MAX_REPLACED_RETRIES) {
-              await this.registrarEstado({
-                status: 'desconectado',
-                error:
-                  'Outro dispositivo assumiu este número. Feche o WhatsApp Web e conecte novamente.',
-                qr: undefined,
-              });
+              // A intenção desliga junto: sem isso, o próximo envio ou o próximo
+              // boot religava a caixa e recomeçava o cabo de guerra que este teto
+              // existe para encerrar.
+              await this.registrarEstado(
+                {
+                  status: 'desconectado',
+                  error:
+                    'Outro dispositivo assumiu este número. Feche o WhatsApp Web e conecte novamente.',
+                  qr: undefined,
+                },
+                { autoConnect: false },
+              );
               return;
             }
 
@@ -929,22 +1031,9 @@ export class WhatsAppSession {
             // que a tela precisa mostrar, e não pode ser o que impede a caixa de
             // ser marcada como desconectada.
             try {
-              await prisma.$transaction(async (tx) => {
-                const { count } = await tx.whatsAppConnection.updateMany({
-                  where: {
-                    inboxId: this.inboxId,
-                    lockOwner: this.workerId,
-                    lockVersion: this.lockVersion,
-                  },
-                  data: {
-                    credsCipher: null,
-                    credsIv: null,
-                    credsTag: null,
-                    status: 'desconectado',
-                  },
-                });
-                if (count !== 1) return;
-                await tx.whatsAppKey.deleteMany({ where: { inboxId: this.inboxId } });
+              await wipeAuthState(this.inboxId, {
+                workerId: this.workerId,
+                lockVersion: this.lockVersion,
               });
             } catch (error) {
               console.error(
@@ -952,33 +1041,52 @@ export class WhatsAppSession {
                 error,
               );
             }
-            await this.registrarEstado({
-              status: 'desconectado',
-              error: 'Desconectado no aparelho do WhatsApp.',
-              qr: undefined,
-            });
+            await this.registrarEstado(
+              {
+                status: 'desconectado',
+                error: 'Desconectado no aparelho do WhatsApp.',
+                qr: undefined,
+              },
+              { autoConnect: false },
+            );
             return;
           }
 
-          if (statusCode === DisconnectReason.badSession || statusCode === 500) {
-            // Mesmo motivo: uma falha ao apagar as chaves não pode engolir a
-            // reconexão que vem logo abaixo.
-            try {
-              await prisma.$executeRaw`
-                DELETE FROM "WhatsAppKey" AS k
-                USING "WhatsAppConnection" AS c
-                WHERE k."inboxId" = ${this.inboxId}
-                  AND c."inboxId" = k."inboxId"
-                  AND c."lockOwner" = ${this.workerId}
-                  AND c."lockVersion" = ${this.lockVersion}
-              `;
-            } catch (error) {
-              console.error(
-                `[WhatsAppSession ${this.inboxId}] Falha ao descartar as chaves da sessão inválida:`,
-                error,
-              );
-            }
+          /**
+           * 403 — o servidor do WhatsApp recusou o login deste número.
+           *
+           * É a resposta a uma conta restringida ou banida, não a uma queda. Ela
+           * caía no ramo genérico de reconexão, e o worker insistia no login a
+           * cada minuto, por horas — o que não ajuda e pode pesar contra o
+           * número —, enquanto a tela dizia "Conexão perdida. Reconectando...",
+           * escondendo a causa. As credenciais ficam: se a restrição for
+           * temporária, "Conectar" volta sem QR depois que ela acabar.
+           */
+          if (statusCode === DisconnectReason.forbidden) {
+            console.warn(
+              `[WhatsAppSession ${this.inboxId}] O WhatsApp recusou o login deste número (403). ` +
+                'Tentativas automáticas encerradas.',
+            );
+            await this.registrarEstado(
+              {
+                status: 'desconectado',
+                qr: undefined,
+                pairingCode: undefined,
+                error:
+                  'O WhatsApp recusou a conexão deste número (código 403). Abra o WhatsApp no ' +
+                  'celular para ver se a conta foi restringida ou banida.',
+              },
+              { autoConnect: false },
+            );
+            return;
           }
+
+          // 500 (`badSession`) segue o caminho das quedas comuns, sem apagar
+          // nada. O Baileys dá esse código a qualquer `stream:error` de motivo
+          // que ele não reconhece, e apagar as chaves do Signal por causa de um
+          // erro transitório corrompia uma sessão saudável — com o dano
+          // escondido pelo cache em memória até o reinício seguinte. Uma sessão
+          // de fato inválida se resolve desconectando e pareando de novo.
 
           // Handshake transitório inicial do WebSocket WhatsApp para sessões não pareadas:
           // O servidor WhatsApp rotineiramente encerra o primeiro socket (código 428/515)
@@ -1019,9 +1127,10 @@ export class WhatsAppSession {
 
           if (shouldReconnect) {
             this.retryCount += 1;
-            const delays = [3000, 8000, 20000, 60000];
             const delay =
-              (delays[Math.min(this.retryCount - 1, delays.length - 1)] ?? 60000) +
+              (RECONNECT_BACKOFF_MS[
+                Math.min(this.retryCount - 1, RECONNECT_BACKOFF_MS.length - 1)
+              ] ?? 60_000) +
               Math.random() * 1000;
 
             // Armado antes da gravação, e não depois: ver `agendarReconexao`.
@@ -1952,10 +2061,12 @@ export class WhatsAppSession {
   /**
    * Anuncia a mensagem que o próprio CRM enviou, sem regravá-la.
    *
-   * Os ids do CRM vêm de uma consulta pelo `externalId` porque este caminho não
-   * passa pela gravação — que é quem normalmente os conhece. A linha existe: o
-   * caso de uso grava antes de mandar para o socket, e só depois de o socket
-   * responder é que o id entra em `crmSentIds`.
+   * A linha existe: o caso de uso grava antes de mandar para o socket. Ela é
+   * achada pelo id que o envio deixou em `crmSentIds`, e não pelo `externalId`:
+   * esse só é carimbado pelo consumidor da fila depois de o envio voltar, e o
+   * eco — que o Baileys emite logo em seguida — podia procurar antes do carimbo,
+   * não achar nada e sair sem webhook. A busca por `externalId` fica para os
+   * envios que não informaram a linha de origem.
    *
    * A mídia não vai em base64 aqui de propósito: são bytes que este processo
    * acabou de subir para o WhatsApp, e baixá-los de volta para devolvê-los a um
@@ -1964,9 +2075,10 @@ export class WhatsAppSession {
    */
   private async dispararEcoDoCrm(msg: WAMessage, messageId: string): Promise<void> {
     try {
+      const idNoCrm = this.crmSentIds.get(messageId);
       const gravada = await prisma.message.findFirst({
         where: {
-          externalId: messageId,
+          ...(idNoCrm ? { id: idNoCrm } : { externalId: messageId }),
           conversation: { accountId: this.accountId, inboxId: this.inboxId },
         },
         select: {
@@ -2184,12 +2296,11 @@ export class WhatsAppSession {
       this.armDrainIdle();
     }
 
-    // Resolvidos antes da gravação porque os dois são consulta, e fazê-los
-    // dentro da função que monta o corpo obrigaria a montá-la assíncrona — num
-    // ponto em que quem chama já está dentro da transação de gravação.
+    // Resolvido antes da gravação porque é consulta, e fazê-la dentro da função
+    // que monta o corpo obrigaria a montá-la assíncrona — num ponto em que quem
+    // chama já está dentro da transação de gravação. O base64, ao contrário,
+    // fica dentro dela: só é produzido se algum webhook for mesmo receber.
     const instance = await this.nomeDaCaixa();
-    const base64 = base64ParaWebhook(midia.bytes);
-    const mediaUrl = base64 ? undefined : mediaUrlAbsoluta(midia.url);
 
     const medir = waLog.timer(`[sessão ${this.inboxId}] commitMessage`);
     // O socket pode ter sido substituído enquanto mídia/contato eram
@@ -2204,8 +2315,10 @@ export class WhatsAppSession {
       preview: decoded.preview,
       at,
       fromMe,
-      webhookPayload: (solint) =>
-        buildUpsertPayload({
+      webhookPayload: (solint) => {
+        const base64 = base64ParaWebhook(midia.bytes);
+        const mediaUrl = base64 ? undefined : mediaUrlAbsoluta(midia.url);
+        return buildUpsertPayload({
           raw: msg,
           instance,
           instanceId: this.inboxId,
@@ -2213,7 +2326,8 @@ export class WhatsAppSession {
           solint,
           ...(base64 ? { base64 } : {}),
           ...(mediaUrl ? { mediaUrl } : {}),
-        }),
+        });
+      },
       ...(draining ? { silent: true } : {}),
     });
     medir(`${fromMe ? 'saída' : 'entrada'} em ${chat.conversationId}`);
@@ -2490,9 +2604,11 @@ export class WhatsAppSession {
       this.avatarCache.set(chat.jid, { url: ownUrl, at: Date.now() });
       await patchContact(chat.conversationId, { avatarUrl: ownUrl });
     } catch {
-      // Foto privada ou indisponivel: mantem a copia que ja existir.
+      // Foto privada ou indisponivel: mantem a copia que ja existir. A consulta
+      // tem o proprio `catch` porque quem chama isto nao espera o resultado:
+      // uma falha de banco aqui viraria rejeicao solta e derrubaria o worker.
       const avatarScope = { accountId: this.accountId, kind: 'avatar' as const };
-      const publicId = await mediaStore.publicId(mediaId, avatarScope);
+      const publicId = await mediaStore.publicId(mediaId, avatarScope).catch(() => undefined);
       const fallback = publicId ? mediaUrlFor(publicId) : undefined;
       this.avatarCache.set(chat.jid, { url: fallback, at: Date.now() });
     }
@@ -2569,6 +2685,8 @@ export class WhatsAppSession {
     options: {
       quote?: { externalId: string; fromMe: boolean; text: string };
       providerMessageId?: string;
+      /** Id da linha do CRM que originou o envio. Ver `crmSentIds`. */
+      crmMessageId?: string;
     } = {},
   ): Promise<string> {
     if (!this.socket || !this.isAuthenticated) {
@@ -2613,7 +2731,7 @@ export class WhatsAppSession {
     const msgId = result?.key.id;
     if (!msgId) throw new Error('O WhatsApp não confirmou o identificador da mensagem enviada.');
 
-    this.trackSentId(msgId);
+    this.trackSentId(msgId, options.crmMessageId);
     return msgId;
   }
 
@@ -2671,6 +2789,8 @@ export class WhatsAppSession {
       voice?: boolean;
       quote?: { externalId: string; fromMe: boolean; text: string };
       providerMessageId?: string;
+      /** Id da linha do CRM que originou o envio. Ver `crmSentIds`. */
+      crmMessageId?: string;
     },
   ): Promise<string> {
     if (!this.socket || !this.isAuthenticated) {
@@ -2718,15 +2838,15 @@ export class WhatsAppSession {
 
     const msgId = result?.key.id;
     if (!msgId) throw new Error('O WhatsApp não confirmou o identificador do anexo enviado.');
-    this.trackSentId(msgId);
+    this.trackSentId(msgId, media.crmMessageId);
     return msgId;
   }
 
   /** Janela deslizante: so o passado recente de envios precisa ser deduplicado. */
-  private trackSentId(msgId: string): void {
-    this.crmSentIds.add(msgId);
+  private trackSentId(msgId: string, crmMessageId?: string): void {
+    this.crmSentIds.set(msgId, crmMessageId);
     if (this.crmSentIds.size > MAX_TRACKED_SENT_IDS) {
-      const oldest = this.crmSentIds.values().next().value;
+      const oldest = this.crmSentIds.keys().next().value;
       if (oldest) this.crmSentIds.delete(oldest);
     }
   }
@@ -2800,7 +2920,100 @@ export class WhatsAppSession {
     this.pendingNotificationsDone = false;
   }
 
+  /**
+   * Desliga a caixa de verdade: avisa o WhatsApp, apaga o vínculo e grava a
+   * intenção de ficar desconectada.
+   *
+   * `stop()` só fecha o socket — é o que um reinício do worker precisa, e ali as
+   * credenciais têm de sobreviver. Um "Desconectar" pedido na tela é outra
+   * coisa, e era tratado como se fosse o mesmo: com as credenciais no banco, o
+   * worker seguinte religava a caixa sozinho, abrir uma conversa dela também, e
+   * o celular continuava listando o CRM entre os aparelhos conectados.
+   *
+   * O aviso ao WhatsApp só é possível com a sessão aberta. Sem ela — ou sem
+   * resposta a tempo — o vínculo é apagado deste lado mesmo assim, e a tela diz
+   * como terminar pelo celular.
+   */
+  async logout(): Promise<void> {
+    const socket = this.socket;
+    const podiaAvisar = Boolean(socket && this.isAuthenticated);
+    this.encerrada = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    await this.finishDrain('caixa desconectada');
+
+    let avisou = false;
+    if (socket && podiaAvisar) {
+      // Os ouvintes deste socket ficam inertes antes do aviso: o `logout` do
+      // Baileys fecha a conexão com 401, e o tratador de queda leria isso como
+      // "desconectado no aparelho".
+      this.socketGeneration += 1;
+      let prazo: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([
+          socket.logout(),
+          new Promise<never>((_, reject) => {
+            prazo = setTimeout(
+              () => reject(new Error(`sem resposta em ${LOGOUT_TIMEOUT_MS / 1000}s`)),
+              LOGOUT_TIMEOUT_MS,
+            );
+          }),
+        ]);
+        avisou = true;
+      } catch (error) {
+        console.warn(
+          `[WhatsAppSession ${this.inboxId}] O WhatsApp não confirmou a desvinculação:`,
+          error,
+        );
+      } finally {
+        if (prazo) clearTimeout(prazo);
+      }
+    }
+
+    this.teardownSocket();
+    this.isAuthenticated = false;
+    this.isInitializing = false;
+    this.liberarEspera(false);
+    this.qrAttempts = 0;
+    this.qrCycles = 0;
+    this.pairingPhone = undefined;
+
+    const apagou = await wipeAuthState(this.inboxId, {
+      workerId: this.workerId,
+      lockVersion: this.lockVersion,
+    });
+    if (!apagou) {
+      throw new SessaoIndisponivelError(
+        `A posse da sessão ${this.inboxId} mudou para outro worker antes da desconexão.`,
+      );
+    }
+
+    await this.updateStatus(
+      {
+        status: 'desconectado',
+        qr: undefined,
+        pairingCode: undefined,
+        phone: undefined,
+        name: undefined,
+        connectedAt: undefined,
+        owner: undefined,
+        error: avisou
+          ? undefined
+          : 'Desconectado neste CRM. Se "Solint CRM" ainda aparecer em Aparelhos ' +
+            'conectados no celular, remova-o por lá.',
+      },
+      { autoConnect: false },
+    );
+    console.log(
+      `[WhatsAppSession ${this.inboxId}] Caixa desconectada` +
+        (avisou ? ' e desvinculada no WhatsApp.' : '; o WhatsApp não foi avisado.'),
+    );
+  }
+
   async stop(options: { persistStatus?: boolean } = {}): Promise<void> {
+    this.encerrada = true;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

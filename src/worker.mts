@@ -58,6 +58,10 @@ async function main() {
   webhookEventRunner.start();
   const webhookRunner = new WebhookDeliveryRunner(sessionManager.workerId);
   webhookRunner.start();
+  const { WebhookRetentionRunner } =
+    await import('./infrastructure/webhooks/webhook-retention-runner');
+  const webhookRetentionRunner = new WebhookRetentionRunner(sessionManager.workerId);
+  webhookRetentionRunner.start();
 
   /**
    * Varredor das mensagens agendadas.
@@ -235,34 +239,87 @@ async function main() {
 
   const { flushPendingKeys } = await import('./infrastructure/whatsapp/auth/postgres-auth-state');
 
+  /**
+   * Prazo total do encerramento.
+   *
+   * Tem de caber, com folga, no `stop_grace_period` do contêiner: passado este
+   * prazo o processo sai por conta própria, com o que tiver conseguido fazer, em
+   * vez de ser morto pelo `SIGKILL` no meio de uma gravação. Ver
+   * `docker-compose.yml`.
+   */
+  const SHUTDOWN_MAX_MS = 30_000;
+
+  /** Espera `promessa` até `ms`; passado isso, segue sem ela. Nunca rejeita. */
+  const noPrazo = async (promessa: Promise<unknown>, ms: number): Promise<void> => {
+    let prazo: NodeJS.Timeout | undefined;
+    await Promise.race([
+      promessa.catch((error: unknown) => {
+        console.warn('[Worker] Falha durante o encerramento:', error);
+      }),
+      new Promise<void>((resolve) => {
+        prazo = setTimeout(resolve, ms);
+      }),
+    ]);
+    if (prazo) clearTimeout(prazo);
+  };
+
   let shutdownPromise: Promise<void> | null = null;
   const handleShutdown = (signal: string, exitCode = 0): Promise<void> => {
     if (shutdownPromise) return shutdownPromise;
     shutdownPromise = (async () => {
       console.log(`\n[Worker] Recebido sinal ${signal}. Encerrando sessões com segurança...`);
+      // Um encerramento por falha precisa sair diferente de zero: é o código de
+      // saída que diz ao supervisor se aquilo foi um desligamento pedido ou um
+      // problema.
+      const saidaForcada = setTimeout(() => {
+        console.error(`[Worker] Encerramento passou de ${SHUTDOWN_MAX_MS / 1000}s; saindo assim.`);
+        process.exit(exitCode || 1);
+      }, SHUTDOWN_MAX_MS);
+      saidaForcada.unref();
+
       clearInterval(beat);
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      await scheduledRunner.stop();
-      await waitingRunner.stop();
-      await auditRetentionRunner.stop();
-      await slaRunner.stop();
-      await commandRecoveryRunner.stop();
-      await commandConsumer.stop();
-      await sessionManager.shutdown();
-      await webhookEventRunner.stop();
-      await webhookRunner.stop();
+      server.close();
+      server.closeAllConnections();
+
+      /**
+       * A ordem é a de quem produz trabalho para quem.
+       *
+       * Antes era tudo em série, e cada etapa podia gastar até trinta segundos —
+       * a soma passava do prazo do Docker, o processo era morto antes de as
+       * sessões soltarem a trava, e o worker seguinte esperava a trava vencer
+       * para restaurá-las. Agora:
+       *
+       *  1. os varredores, que só enfileiram, param juntos;
+       *  2. a fila para de pegar comandos e solta quem espera sessão — o que
+       *     estiver de fato enviando termina;
+       *  3. as sessões fecham e soltam a trava, que é o que o próximo worker
+       *     precisa;
+       *  4. os webhooks param por último, porque as sessões ainda gravam
+       *     mensagens até o socket fechar.
+       */
+      await noPrazo(
+        Promise.allSettled([
+          scheduledRunner.stop(),
+          waitingRunner.stop(),
+          auditRetentionRunner.stop(),
+          slaRunner.stop(),
+          commandRecoveryRunner.stop(),
+          webhookRetentionRunner.stop(),
+        ]),
+        5_000,
+      );
+      await noPrazo(commandConsumer.stop(10_000), 10_000);
+      await noPrazo(sessionManager.shutdown(), 10_000);
+      await noPrazo(Promise.allSettled([webhookEventRunner.stop(), webhookRunner.stop()]), 5_000);
       // As chaves de cache (`lid-mapping`, `tctoken`) são gravadas fora do mutex
       // do Baileys, o que significa que pode haver um lote ainda na fila neste
       // instante. Perdê-lo não quebra a sessão — o Baileys refaz por USync —, mas
       // custaria uma rodada de consultas na próxima conexão sem necessidade.
-      await flushPendingKeys();
-      await postgresPubSub.shutdown();
+      await noPrazo(flushPendingKeys(), 3_000);
+      await noPrazo(postgresPubSub.shutdown(), 2_000);
       const { closePrisma } = await import('./infrastructure/db/prisma');
-      await closePrisma();
+      await noPrazo(closePrisma(), 2_000);
       console.log('[Worker] Todas as conexões encerradas. Tchau!');
-      // Um encerramento por falha precisa sair diferente de zero: é o código de
-      // saída que diz ao supervisor do Render se aquilo foi um desligamento
-      // pedido ou um problema.
       process.exit(exitCode);
     })();
     return shutdownPromise;
@@ -274,19 +331,17 @@ async function main() {
   /**
    * Rede de segurança para falhas que escapam de todo o resto.
    *
-   * Os dois casos são tratados de formas deliberadamente diferentes.
+   * **Os dois casos encerram o processo**, pelo caminho limpo que libera a trava
+   * das conexões no banco, e o supervisor do contêiner sobe um worker novo.
+   * Morrer com a trava presa é o que fazia o worker seguinte esperar o TTL de
+   * 30s vencer antes de restaurar a sessão.
    *
-   * **Rejeição não tratada** quase sempre vem de uma operação isolada — uma
-   * consulta que falhou, uma chamada de rede que caiu — e derrubar a sessão
-   * inteira do WhatsApp por causa dela é um preço alto demais. Desde o Node 15
-   * o padrão é justamente esse: encerrar o processo. Aqui ela é registrada e a
-   * vida segue.
-   *
-   * **Exceção não capturada** é outra história: o processo pode ter ficado num
-   * estado inconsistente, e insistir seria pior. Ele encerra — mas encerra
-   * pelo caminho limpo, que libera a trava da conexão no banco. Morrer com a
-   * trava presa é o que fazia o worker seguinte esperar o TTL de 30s vencer
-   * antes de restaurar a sessão.
+   * A rejeição não tratada já foi apenas registrada, com o processo seguindo.
+   * Isso escondia promessas soltas que deixavam uma sessão sem reconexão e sem
+   * ninguém saber. Encerrar as expõe — e o preço é alto: todas as caixas
+   * reconectam. Por isso toda promessa disparada sem `await` no worker precisa
+   * do próprio `.catch`, e a regra aqui continua valendo só para o que escapar
+   * a isso.
    */
   process.on('unhandledRejection', (reason) => {
     console.error('[Worker] Rejeição não tratada. Encerrando de forma limpa:', reason);

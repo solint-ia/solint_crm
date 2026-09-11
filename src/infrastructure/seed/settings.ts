@@ -131,10 +131,7 @@ export const SETTINGS: SeedWorkspaceSettings = {
       provider: 'API oficial (Cloud API)',
       teamName: 'Comercial',
       businessHours: hours('08:00', '18:00', WEEK),
-      awayMessage: {
-        enabled: true,
-        text: 'Olá! Nosso horário de atendimento comercial é de segunda a sexta, das 8h às 18h. Deixe sua mensagem que respondemos no próximo dia útil.',
-      },
+      aiAgentSchedule: { enabled: false, hours: hours('08:00', '18:00', WEEK) },
       greeting: {
         enabled: true,
         text: 'Olá! Recebemos sua mensagem e um consultor vai te responder em instantes 🙂',
@@ -153,10 +150,7 @@ export const SETTINGS: SeedWorkspaceSettings = {
       provider: 'QR Code (sessão Web)',
       teamName: 'Suporte N1',
       businessHours: hours('08:00', '22:00', EVERY_DAY),
-      awayMessage: {
-        enabled: true,
-        text: 'O suporte atende todos os dias das 8h às 22h. Sua mensagem entrou na fila e será respondida na abertura.',
-      },
+      aiAgentSchedule: { enabled: false, hours: hours('08:00', '22:00', EVERY_DAY) },
       greeting: { enabled: false, text: '' },
       waitingMessageDelayMinutes: 5,
       aiPauseChannelReplyMinutes: 10,

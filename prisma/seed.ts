@@ -211,7 +211,7 @@ async function main() {
       status: connection.status,
       provider: connection.provider,
       businessHours: json(connection.businessHours),
-      awayMessage: json(connection.awayMessage),
+      aiAgentSchedule: json(connection.aiAgentSchedule),
       greeting: json(connection.greeting),
       webhookUrl: connection.webhookUrl ?? null,
       teamName: connection.teamName ?? null,

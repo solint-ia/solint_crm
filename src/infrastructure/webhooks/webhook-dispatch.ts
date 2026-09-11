@@ -1,5 +1,7 @@
 import { createHash, createHmac } from 'node:crypto';
 
+import { agentWorksAt, normalizeAgentSchedule } from '@/core/domain/agent-schedule';
+import { normalizeBusinessHours } from '@/core/domain/business-hours';
 import { asJson, prisma, readJson } from '@/infrastructure/db/prisma';
 import { CHANNELS, postgresPubSub } from '@/infrastructure/db/postgres-pubsub';
 
@@ -138,6 +140,30 @@ export interface WebhookPayload {
 const assinar = (corpo: string, secret: string): string =>
   `sha256=${createHmac('sha256', secret).update(corpo).digest('hex')}`;
 
+/** Respostas 4xx que ainda dizem "tente de novo mais tarde". */
+const REPETIVEIS = new Set([408, 425, 429]);
+
+/**
+ * O destino respondeu, e não com sucesso.
+ *
+ * `permanente` separa as duas famílias de recusa, que pedem respostas opostas.
+ * Um 5xx, um 429 ou um timeout dizem "agora não": repetir com recuo é o certo.
+ * Um 404 (fluxo do n8n desativado), um 400 ou um 413 dizem "isto nunca vai
+ * passar": repetir oito vezes só segurava, na ordem estrita do webhook, todas
+ * as entregas que vinham atrás desta.
+ */
+export class EntregaWebhookError extends Error {
+  readonly status: number;
+  readonly permanente: boolean;
+
+  constructor(status: number) {
+    super(`destino respondeu ${status}`);
+    this.name = 'EntregaWebhookError';
+    this.status = status;
+    this.permanente = status < 500 && !REPETIVEIS.has(status);
+  }
+}
+
 export const entregarWebhook = async (
   webhook: LinhaWebhook,
   corpo: string,
@@ -157,7 +183,96 @@ export const entregarWebhook = async (
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
 
-  if (!resposta.ok) throw new Error(`destino respondeu ${resposta.status}`);
+  if (!resposta.ok) throw new EntregaWebhookError(resposta.status);
+};
+
+/**
+ * Webhooks ativos da conta que alcançam esta caixa, com os eventos de cada um.
+ *
+ * O filtro por evento fica com quem chama: `events` é uma coluna JSON de
+ * strings, e procurar dentro dela custaria SQL específico do Postgres para uma
+ * lista que tem meia dúzia de itens por conta.
+ */
+const webhooksDaCaixa = (accountId: string, inboxId: string | undefined) =>
+  prisma.webhook.findMany({
+    where: {
+      accountId,
+      isActive: true,
+      ...(inboxId
+        ? {
+            OR: [
+              { allInboxes: true },
+              {
+                allInboxes: false,
+                inboxes: { some: { inboxId, inbox: { accountId } } },
+              },
+            ],
+          }
+        : { allInboxes: true }),
+    },
+    select: { id: true, url: true, secret: true, events: true },
+  });
+
+const assina = (webhook: { readonly events: unknown }, eventos: readonly WebhookEvent[]) =>
+  readJson<readonly string[]>(webhook.events as never, []).some((evento) =>
+    (eventos as readonly string[]).includes(evento),
+  );
+
+/**
+ * Algum webhook desta caixa assina algum destes eventos?
+ *
+ * Existe para quem grava o evento-fonte perguntar **antes**: sem assinante, não
+ * há o que entregar, e gravar o corpo mesmo assim enchia a outbox com uma linha
+ * por mensagem — com a mídia em base64 dentro — em contas que nunca cadastraram
+ * webhook nenhum.
+ */
+export const algumWebhookInscrito = async (
+  accountId: string,
+  inboxId: string | undefined,
+  eventos: readonly WebhookEvent[],
+): Promise<boolean> =>
+  (await webhooksDaCaixa(accountId, inboxId)).some((webhook) => assina(webhook, eventos));
+
+/**
+ * O agente de IA desta caixa atendia no instante `quando`?
+ *
+ * É a regra do horário do agente, configurado em Caixas de entrada: fora dele o
+ * webhook da caixa não é disparado. Diferente da pausa, que entrega o evento
+ * marcado com `agentePausado` para o agente guardar na memória, aqui nada sai —
+ * foi o pedido: o fluxo do n8n nem é acordado fora do horário.
+ *
+ * Sem caixa (evento que não nasceu de uma conversa) ou caixa sem horário
+ * ligado, a resposta é sim: é o comportamento de antes da regra existir.
+ */
+export const agenteAtendeEm = async (
+  accountId: string,
+  inboxId: string | undefined,
+  quando: Date,
+): Promise<boolean> => {
+  if (!inboxId) return true;
+  const caixa = await prisma.inbox.findFirst({
+    where: { id: inboxId, accountId },
+    select: { aiAgentSchedule: true, businessHours: true },
+  });
+  if (!caixa) return true;
+  const agenda = normalizeAgentSchedule(
+    caixa.aiAgentSchedule,
+    normalizeBusinessHours(caixa.businessHours),
+  );
+  return agentWorksAt(agenda, quando);
+};
+
+/**
+ * O instante que o horário do agente julga: o da mensagem, não o do disparo.
+ *
+ * Os dois costumam coincidir, mas não quando o worker esteve fora: a fila
+ * represada chega de uma vez na volta, e uma mensagem das 23h entregue às 8h
+ * seria julgada pelo horário das 8h — acordando o agente para o que chegou
+ * quando ele não atendia.
+ */
+const momentoDaMensagem = (payload: WebhookPayloadEmMontagem): Date => {
+  const segundos = Number(payload.data?.messageTimestamp);
+  return Number.isFinite(segundos) && segundos > 0 ? new Date(segundos * 1000) : new Date();
 };
 
 /**
@@ -179,6 +294,12 @@ export const dispararWebhooks = async (
 ): Promise<void> => {
   try {
     const inboxId = payload.solint.caixaEntradaId;
+
+    // Fora do horário do agente, nada sai — nem para os outros webhooks da
+    // caixa. Ver `agenteAtendeEm`.
+    if (!(await agenteAtendeEm(payload.solint.contaId, inboxId, momentoDaMensagem(payload)))) {
+      return;
+    }
 
     // A pausa é lida aqui, e não em cada um dos três pontos que montam corpo:
     // é a mesma pergunta em todos, e a resposta muda entre um disparo e o
@@ -207,36 +328,8 @@ export const dispararWebhooks = async (
       },
     };
 
-    const inscritos = await prisma.webhook.findMany({
-      where: {
-        accountId: payload.solint.contaId,
-        isActive: true,
-        ...(inboxId
-          ? {
-              OR: [
-                { allInboxes: true },
-                {
-                  allInboxes: false,
-                  inboxes: {
-                    some: {
-                      inboxId,
-                      inbox: { accountId: payload.solint.contaId },
-                    },
-                  },
-                },
-              ],
-            }
-          : { allInboxes: true }),
-      },
-      select: { id: true, url: true, secret: true, events: true },
-    });
-
-    // O filtro por evento é feito aqui, e não no `where`: `events` é uma coluna
-    // JSON de strings, e procurar dentro dela custaria SQL específico do
-    // Postgres para uma lista que tem meia dúzia de itens por conta.
-    const alvos = inscritos.filter((webhook) =>
-      readJson<readonly string[]>(webhook.events, []).includes(evento),
-    );
+    const inscritos = await webhooksDaCaixa(payload.solint.contaId, inboxId);
+    const alvos = inscritos.filter((webhook) => assina(webhook, [evento]));
     if (alvos.length === 0) return;
 
     const payloadHash = createHash('sha256').update(JSON.stringify(corpo)).digest('hex');

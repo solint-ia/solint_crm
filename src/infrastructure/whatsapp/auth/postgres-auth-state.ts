@@ -318,6 +318,50 @@ export const flushPendingKeys = async (): Promise<void> => {
   await flushing;
 };
 
+/**
+ * Esquece o que este processo guarda das chaves de uma caixa: o cache L1 e a
+ * fila adiada.
+ *
+ * Sem isto, apagar as chaves no banco não bastaria: o L1 continuaria servindo o
+ * material antigo ao socket seguinte, e a fila adiada o regravaria no banco na
+ * próxima descarga.
+ */
+const forgetInMemoryKeys = (inboxId: string): void => {
+  for (const k of keyL1Cache.keys()) {
+    if (k.startsWith(`${inboxId}:`)) keyL1Cache.delete(k);
+  }
+  for (const [k, row] of pendingWrites) {
+    if (row.inboxId === inboxId) pendingWrites.delete(k);
+  }
+};
+
+/**
+ * Apaga o vínculo da caixa: credenciais, chaves e o que houver delas em memória.
+ *
+ * É o desfecho de um "Desconectar" explícito e de um 401. Com as credenciais no
+ * banco, o worker seguinte as encontraria pareadas e religaria a caixa sozinho —
+ * que é exatamente o contrário do que foi pedido.
+ *
+ * Cercado pela trava de posse: só quem opera a sessão apaga o material dela.
+ * Devolve `false` quando a posse mudou no caminho e nada foi apagado.
+ */
+export async function wipeAuthState(
+  inboxId: string,
+  fence: { readonly workerId: string; readonly lockVersion: number },
+): Promise<boolean> {
+  const apagou = await prisma.$transaction(async (tx) => {
+    const { count } = await tx.whatsAppConnection.updateMany({
+      where: { inboxId, lockOwner: fence.workerId, lockVersion: fence.lockVersion },
+      data: { credsCipher: null, credsIv: null, credsTag: null, credsKeyId: null },
+    });
+    if (count !== 1) return false;
+    await tx.whatsAppKey.deleteMany({ where: { inboxId } });
+    return true;
+  });
+  if (apagou) forgetInMemoryKeys(inboxId);
+  return apagou;
+}
+
 /* ==========================================================================
    Credenciais
    ========================================================================== */
@@ -430,16 +474,7 @@ export async function initPostgresAuthState(
   // Inicializa novas credenciais apenas se não houver nenhuma salva ou se for forçado
   if (!creds) {
     creds = initAuthCreds();
-    for (const k of keyL1Cache.keys()) {
-      if (k.startsWith(`${inboxId}:`)) {
-        keyL1Cache.delete(k);
-      }
-    }
-    // A fila adiada pode ter chaves da sessão que acabou de ser descartada.
-    // Descarregá-las depois recriaria material que este ramo existe para apagar.
-    for (const [k, row] of pendingWrites) {
-      if (row.inboxId === inboxId) pendingWrites.delete(k);
-    }
+    forgetInMemoryKeys(inboxId);
     await prisma.whatsAppKey.deleteMany({ where: { inboxId } }).catch(() => {});
   }
 

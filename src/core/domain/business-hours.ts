@@ -2,9 +2,10 @@
  * Horário comercial de uma caixa de entrada.
  *
  * O produto precisa responder duas perguntas com este dado: "estamos abertos
- * agora?" (decide se a mensagem de ausência dispara) e "qual é o resumo legível
- * disso?" (o que a tela mostra). As duas são puras e moram aqui — nenhuma tela
- * recalcula expediente por conta própria.
+ * agora?" (decide o prazo de resposta, a mensagem de espera e as condições de
+ * automação) e "qual é o resumo legível disso?" (o que a tela mostra). As duas
+ * são puras e moram aqui — nenhuma tela recalcula expediente por conta própria.
+ * A mesma grade serve ao horário do agente de IA; ver `agent-schedule.ts`.
  */
 
 export const WEEKDAYS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'] as const;
@@ -185,8 +186,8 @@ export const dayOf = (hours: BusinessHours, day: Weekday): BusinessHoursDay | un
  * UTC em produção (Vercel, Render) — o mesmo defeito de origem que o topo de
  * `lib/datetime.ts` documenta, sobrevivendo aqui. Um expediente de 8h às 18h em
  * São Paulo era avaliado como 8h às 18h UTC: entre 18h e 21h de Brasília o
- * sistema ainda se achava aberto e engolia a mensagem de ausência; entre 5h e
- * 8h da manhã ele a disparava com o atendimento já começando.
+ * sistema ainda se achava aberto; entre 5h e 8h da manhã ele se achava fechado
+ * com o atendimento já começando.
  *
  * O fuso é o do próprio `BusinessHours` — que a tela sempre mostrou ao lado da
  * tabela e ninguém lia.

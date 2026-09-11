@@ -1,12 +1,12 @@
 import { CHANNELS, postgresPubSub } from '@/infrastructure/db/postgres-pubsub';
 import { prisma } from '@/infrastructure/db/prisma';
-import { pruneCacheKeys } from '../auth/postgres-auth-state';
+import { hasPairedSession, pruneCacheKeys } from '../auth/postgres-auth-state';
 import { mediaStore } from '../wa-media-store';
 import { providerMessageIdFor } from '../provider-message-id';
 import { waLog } from '../wa-log';
 import { loadConversationForEvent } from '../wa-store';
 import { waEventBus } from '../whatsapp-events';
-import { SessaoIndisponivelError } from './errors';
+import { CaixaDesconectadaError, SessaoIndisponivelError } from './errors';
 import type { WhatsAppSession } from './session';
 import type { WhatsAppSessionManager } from './session-manager';
 
@@ -181,13 +181,22 @@ export class CommandConsumer {
 
       const chave = cmd.inboxId;
       const anterior = this.lanes.get(chave) ?? Promise.resolve();
+      let executou = false;
       const corrente = anterior
         .then(() => this.runCommand(cmd))
+        .then((reivindicado) => {
+          executou = reivindicado;
+        })
         .catch(() => undefined)
         .finally(() => {
           this.inFlight.delete(cmd.id);
           if (this.lanes.get(chave) === corrente) this.lanes.delete(chave);
-          if (this.isRunning) void this.dispatchPending();
+          // Só volta à fila na hora quem de fato executou. Um comando que não
+          // pôde ser reivindicado — outro ainda em andamento com lease vivo, ou
+          // a trava da caixa com um worker que morreu sem soltá-la — seria
+          // encontrado de novo pela consulta seguinte, e o laço giraria sem
+          // pausa até o prazo vencer. A varredura e o `NOTIFY` o trazem de volta.
+          if (this.isRunning && executou) void this.dispatchPending();
         });
       this.lanes.set(chave, corrente);
     }
@@ -323,12 +332,17 @@ export class CommandConsumer {
     ]);
   }
 
-  /** Executa um comando e registra o desfecho na linha da fila. */
-  private async runCommand(cmd: CommandRow): Promise<void> {
-    if (!this.isRunning) return;
+  /**
+   * Executa um comando e registra o desfecho na linha da fila.
+   *
+   * Devolve `true` quando o comando foi reivindicado por este worker, qualquer
+   * que tenha sido o desfecho; `false` quando outro o impediu de começar.
+   */
+  private async runCommand(cmd: CommandRow): Promise<boolean> {
+    if (!this.isRunning) return false;
 
     const claimed = await this.claimCommand(cmd);
-    if (!claimed) return;
+    if (!claimed) return false;
 
     const leaseTimer = setInterval(() => {
       void this.renewLease(claimed.id).catch((error: unknown) => {
@@ -389,10 +403,17 @@ export class CommandConsumer {
         // Só sai daqui se a linha realmente voltou para a fila. Se a gravação
         // falhou, o comando ficaria preso em `processing` para sempre — e a
         // bolha, em "enviando", sem ninguém para desmenti-la.
-        if (devolvido > 0) return;
+        if (devolvido > 0) return true;
       }
 
-      console.error(`[CommandConsumer] Erro no comando ${claimed.id} (${claimed.kind}):`, error);
+      if (error instanceof CaixaDesconectadaError) {
+        // Desfecho esperado, não defeito: a caixa foi desligada de propósito.
+        console.warn(
+          `[CommandConsumer] Comando ${claimed.id} (${claimed.kind}) recusado: ${errorMessage}`,
+        );
+      } else {
+        console.error(`[CommandConsumer] Erro no comando ${claimed.id} (${claimed.kind}):`, error);
+      }
       await prisma.whatsAppCommand
         .updateMany({
           where: { id: claimed.id, status: 'processing', workerId: this.workerId },
@@ -408,6 +429,7 @@ export class CommandConsumer {
     } finally {
       clearInterval(leaseTimer);
     }
+    return true;
   }
 
   /**
@@ -456,13 +478,27 @@ export class CommandConsumer {
    * outro defeito: reiniciar por cima de uma tentativa em curso atropelaria o
    * recuo do 440, que existe justamente para não brigar com um WhatsApp Web
    * aberto do outro lado.
+   *
+   * E "parada" só é religada se deveria estar de pé — ver `exigirCaixaLigavel`.
    */
   private async sessaoPronta(inboxId: string): Promise<WhatsAppSession> {
     const atual = this.sessionManager.get(inboxId);
     if (atual?.isConnected) return atual;
 
+    // Encerrando: nada de abrir sessão nem de esperar uma. O comando volta para
+    // a fila e o worker seguinte o executa.
+    if (!this.isRunning) {
+      throw new SessaoIndisponivelError('O worker está encerrando; o comando volta para a fila.');
+    }
+
     // Sem sessão no processo, ou parada e sem ninguém para levantá-la.
-    const sessao = atual?.isReconnecting ? atual : await this.sessionManager.start(inboxId);
+    let sessao: WhatsAppSession;
+    if (atual?.isReconnecting) {
+      sessao = atual;
+    } else {
+      await this.exigirCaixaLigavel(inboxId);
+      sessao = await this.sessionManager.start(inboxId);
+    }
     if (sessao.isConnected) return sessao;
 
     if (await sessao.waitUntilConnected(ESPERA_SESSAO_MS)) return sessao;
@@ -470,6 +506,33 @@ export class CommandConsumer {
     throw new SessaoIndisponivelError(
       `Sessão WhatsApp ${inboxId} não ficou pronta em ${Math.round(ESPERA_SESSAO_MS / 1000)}s.`,
     );
+  }
+
+  /**
+   * Um comando pode religar esta caixa?
+   *
+   * Só se alguém quer que ela esteja conectada (`autoConnect`) e se há sessão
+   * pareada para retomar. Sem esta pergunta, qualquer envio — inclusive um
+   * automático, de agendamento ou do n8n — religava a caixa que alguém tinha
+   * desconectado; numa caixa sem credenciais, abria um socket que ficava
+   * emitindo QR Codes que ninguém pediu, e recomeçava o cabo de guerra de um
+   * 440 que o próprio teto de substituições tinha encerrado.
+   */
+  private async exigirCaixaLigavel(inboxId: string): Promise<void> {
+    const conexao = await prisma.whatsAppConnection.findUnique({
+      where: { inboxId },
+      select: { autoConnect: true },
+    });
+    if (!conexao?.autoConnect) {
+      throw new CaixaDesconectadaError(
+        'A caixa de WhatsApp está desconectada. Conecte-a de novo em Configurações.',
+      );
+    }
+    if (!(await hasPairedSession(inboxId))) {
+      throw new CaixaDesconectadaError(
+        'A caixa de WhatsApp não está pareada. Conecte-a em Configurações.',
+      );
+    }
   }
 
   private async paceOutbound(inboxId: string, trafficClass: unknown): Promise<void> {
@@ -513,6 +576,14 @@ export class CommandConsumer {
         ) {
           throw new Error('Comando de pareamento sem um número internacional válido.');
         }
+        // A tela já gravou a intenção ao enfileirar, mas um "Desconectar"
+        // processado logo antes deste comando a desligou de novo. A raia da
+        // caixa executa os dois na ordem em que foram pedidos, e o pedido de
+        // conexão, sendo o mais recente, é o que vale.
+        await prisma.whatsAppConnection.updateMany({
+          where: { inboxId },
+          data: { autoConnect: true },
+        });
         await this.sessionManager.start(inboxId, {
           pairingMethod,
           ...(pairingMethod === 'phone' ? { pairingPhone: phoneNumber as string } : {}),
@@ -521,7 +592,9 @@ export class CommandConsumer {
       }
 
       case 'disconnect': {
-        await this.sessionManager.stop(inboxId);
+        // Desconectar é desvincular: `stop()` só fecharia o socket, e as
+        // credenciais que ficassem religariam a caixa no próximo boot.
+        await this.sessionManager.disconnect(inboxId);
         break;
       }
 
@@ -541,7 +614,10 @@ export class CommandConsumer {
           {
             ...(quote ? { quote } : {}),
             ...(typeof payload['messageId'] === 'string'
-              ? { providerMessageId: providerMessageIdFor(payload['messageId']) }
+              ? {
+                  providerMessageId: providerMessageIdFor(payload['messageId']),
+                  crmMessageId: payload['messageId'],
+                }
               : {}),
           },
         );
@@ -643,7 +719,10 @@ export class CommandConsumer {
             ...(media.voice ? { voice: true } : {}),
             ...(mediaQuote ? { quote: mediaQuote } : {}),
             ...(typeof payload['messageId'] === 'string'
-              ? { providerMessageId: providerMessageIdFor(payload['messageId']) }
+              ? {
+                  providerMessageId: providerMessageIdFor(payload['messageId']),
+                  crmMessageId: payload['messageId'],
+                }
               : {}),
           },
         );
@@ -655,7 +734,12 @@ export class CommandConsumer {
         if (typeof payload['conversationId'] !== 'string') {
           throw new Error('Comando de leitura sem identificação da conversa.');
         }
-        const session = await this.sessaoPronta(inboxId);
+        // A confirmação de leitura é cortesia: sem sessão de pé, ela é
+        // descartada. Esperar a sessão — ou pior, levantá-la — prendia a raia
+        // da caixa por até trinta segundos a cada tentativa, atrasando envios
+        // de verdade, e abrir uma conversa de caixa desconectada a religava.
+        const session = this.sessionManager.get(inboxId);
+        if (!session?.isConnected) break;
         await session.markAsRead(payload['conversationId']);
         break;
       }
@@ -832,7 +916,16 @@ export class CommandConsumer {
     });
   }
 
-  async stop(): Promise<void> {
+  /**
+   * Para de pegar comandos e espera os que estão em andamento, até `prazoMs`.
+   *
+   * Quem está esperando uma sessão abrir é solto antes da espera: sem isso, um
+   * envio parado numa reconexão segurava o encerramento pelos trinta segundos
+   * inteiros — o prazo todo que o Docker dá antes de matar o processo — e as
+   * sessões não chegavam a soltar a trava. Solto, o comando volta para a fila
+   * como `SessaoIndisponivelError` e o worker seguinte o executa.
+   */
+  async stop(prazoMs = 15_000): Promise<void> {
     this.isRunning = false;
     if (this.sweepTimer) {
       clearInterval(this.sweepTimer);
@@ -840,9 +933,14 @@ export class CommandConsumer {
     }
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.sessionManager.cancelarEsperas();
+    let prazo: NodeJS.Timeout | undefined;
     await Promise.race([
       Promise.allSettled([...this.lanes.values()]),
-      new Promise<void>((resolve) => setTimeout(resolve, 30_000)),
+      new Promise<void>((resolve) => {
+        prazo = setTimeout(resolve, prazoMs);
+      }),
     ]);
+    if (prazo) clearTimeout(prazo);
   }
 }

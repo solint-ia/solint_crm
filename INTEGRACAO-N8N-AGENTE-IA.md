@@ -112,13 +112,37 @@ distingue é a inscrição.
 compatibilidade com quem já os marcou, mas **nenhuma linha do código os emite**:
 o único ponto de disparo é o caminho da mensagem.
 
+### Horário de funcionamento do agente
+
+Cada caixa pode limitar o agente de IA a um horário (Configurações › Caixas de
+entrada › Agente de IA). Com o horário ligado, **uma mensagem fora dele não
+dispara webhook nenhum daquela caixa**, em nenhum dos três assuntos: o n8n nem é
+acordado, e ela também não chega à memória do agente. Quem julga é o horário da
+mensagem, não o da entrega, então uma fila represada que chega depois continua
+respeitando a grade.
+
+É o oposto da pausa por conversa (`agentePausado`): pausado, o evento é entregue
+e o fluxo decide não responder; fora do horário, o evento não existe. Com o
+horário desligado, o agente atende a qualquer hora.
+
 ### Entrega e tolerância a falhas
 
 O CRM grava cada entrega em uma outbox persistente e um runner faz o `POST` JSON,
-esperando no máximo 5 segundos pela resposta do destino. Falhas são repetidas com
-backoff; depois do limite de 8 tentativas, a entrega fica registrada como
-`dead`. As entregas de um mesmo webhook são ordenadas e webhooks distintos podem
-avançar em paralelo.
+esperando no máximo 5 segundos pela resposta do destino. As entregas de um mesmo
+webhook são ordenadas e webhooks distintos podem avançar em paralelo.
+
+A resposta do destino decide o que acontece com uma entrega que falhou:
+
+- **Temporária** (5xx, 408, 425, 429, timeout ou erro de rede): repetida com
+  backoff de 5 s dobrando a cada vez (5 s, 10 s, 20 s... até 320 s). Depois de 8
+  tentativas, cerca de 11 minutos no total, a entrega fica registrada como
+  `failed`.
+- **Definitiva** (os demais 4xx, como 400, 404 e 413): registrada como `failed`
+  na primeira resposta, sem repetir. Um fluxo do n8n desativado responde 404, e
+  repeti-lo só seguraria as entregas seguintes do mesmo webhook.
+
+Entregas concluídas ou canceladas são apagadas depois de 3 dias, e as que
+falharam, depois de 14.
 
 No Webhook node do n8n, use a resposta **imediata**. O agente de IA pode continuar
 o workflow depois disso, sem manter o recebimento do CRM esperando pela geração

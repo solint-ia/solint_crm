@@ -325,28 +325,29 @@ export async function createInboxAction(
   }
 }
 
+/** A grade semanal, igual para o expediente e para o horário do agente de IA. */
+const weeklyHoursSchema = z.preprocess(
+  // Idem: os sete dias saem do normalizador, não da boa vontade de quem chamou.
+  (value) => (value === undefined ? undefined : normalizeBusinessHours(value)),
+  z.object({
+    timezone: z.string().trim().min(1).max(64),
+    days: z
+      .array(
+        z.object({
+          day: z.enum(WEEKDAYS),
+          enabled: z.boolean(),
+          opensAt: z.string().regex(TIME, 'Horário inválido'),
+          closesAt: z.string().regex(TIME, 'Horário inválido'),
+        }),
+      )
+      .length(7),
+  }),
+);
+
 const updateInboxSchema = z.object({
   connectionId: z.string().min(1).max(64),
-  // Idem: os sete dias saem do normalizador, não da boa vontade de quem chamou.
-  businessHours: z
-    .preprocess(
-      (value) => (value === undefined ? undefined : normalizeBusinessHours(value)),
-      z.object({
-        timezone: z.string().trim().min(1).max(64),
-        days: z
-          .array(
-            z.object({
-              day: z.enum(WEEKDAYS),
-              enabled: z.boolean(),
-              opensAt: z.string().regex(TIME, 'Horário inválido'),
-              closesAt: z.string().regex(TIME, 'Horário inválido'),
-            }),
-          )
-          .length(7),
-      }),
-    )
-    .optional(),
-  awayMessage: autoReplySchema.optional(),
+  businessHours: weeklyHoursSchema.optional(),
+  aiAgentSchedule: z.object({ enabled: z.boolean(), hours: weeklyHoursSchema }).optional(),
   greeting: autoReplySchema.optional(),
   closingMessage: autoReplySchema.optional(),
   waitingMessage: autoReplySchema.optional(),
@@ -366,7 +367,7 @@ const updateInboxSchema = z.object({
 /** Nome legível do campo, para o erro dizer **onde** o problema está. */
 const INBOX_FIELD_LABELS: Readonly<Record<string, string>> = {
   businessHours: 'o horário de atendimento',
-  awayMessage: 'a mensagem fora do expediente',
+  aiAgentSchedule: 'o horário do agente de IA',
   greeting: 'a mensagem de saudação',
   closingMessage: 'a mensagem de encerramento',
   waitingMessage: 'a mensagem de espera',

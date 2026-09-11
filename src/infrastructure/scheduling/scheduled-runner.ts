@@ -185,10 +185,17 @@ export class ScheduledMessageRunner {
 
         try {
           const renew = setInterval(() => {
-            void prisma.scheduledMessage.updateMany({
-              where: { id: linha.id, status: 'sending', workerId: this.workerId },
-              data: { leaseUntil: new Date(Date.now() + LEASE_MS) },
-            });
+            // O `.catch` não é enfeite: a consulta do Prisma é preguiçosa e só
+            // executa quando alguém a assina. Com `void` sozinho, a renovação
+            // nunca chegava ao banco.
+            void prisma.scheduledMessage
+              .updateMany({
+                where: { id: linha.id, status: 'sending', workerId: this.workerId },
+                data: { leaseUntil: new Date(Date.now() + LEASE_MS) },
+              })
+              .catch((error: unknown) => {
+                console.warn('[ScheduledMessages] Falha ao renovar o lease do envio:', error);
+              });
           }, LEASE_RENEW_MS);
           renew.unref?.();
           try {

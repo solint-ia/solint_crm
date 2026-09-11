@@ -79,7 +79,12 @@ export class SlaRunner {
       lease = await acquireBackgroundLease('sla', this.owner, 5 * 60_000);
       if (!lease) return;
       const ownedLease = lease;
-      renew = setInterval(() => void renewBackgroundLease(ownedLease), 60_000);
+      // O `catch` é obrigatório: solta, uma falha de banco na renovação virava
+      // rejeição não tratada, e o worker encerra o processo nesse caso.
+      renew = setInterval(
+        () => void renewBackgroundLease(ownedLease).catch(() => undefined),
+        60_000,
+      );
       renew.unref?.();
       const agora = new Date();
       const desde = new Date(agora.getTime() - JANELA_MS);

@@ -78,7 +78,12 @@ export class WaitingMessageRunner {
       lease = await acquireBackgroundLease('waiting-messages', this.owner, 2 * 60_000);
       if (!lease) return;
       const ownedLease = lease;
-      renew = setInterval(() => void renewBackgroundLease(ownedLease), 30_000);
+      // O `catch` é obrigatório: solta, uma falha de banco na renovação virava
+      // rejeição não tratada, e o worker encerra o processo nesse caso.
+      renew = setInterval(
+        () => void renewBackgroundLease(ownedLease).catch(() => undefined),
+        30_000,
+      );
       renew.unref?.();
       /**
        * Só as caixas que ligaram a mensagem entram na conta.

@@ -1,4 +1,5 @@
 import type { Automation, AutomationConditionLogic } from '../domain/automation';
+import type { AgentSchedule } from '../domain/agent-schedule';
 import type { AutoReply, BusinessHours } from '../domain/business-hours';
 import type { KnowledgeArticle, KnowledgeBase, KnowledgeCategory } from '../domain/knowledge';
 import type { Label, Tone } from '../domain/label';
@@ -58,7 +59,7 @@ export interface InboxDraft {
 /** Ajustes operacionais de uma caixa de entrada (§15). */
 export interface InboxSettingsPatch {
   readonly businessHours?: BusinessHours;
-  readonly awayMessage?: AutoReply;
+  readonly aiAgentSchedule?: AgentSchedule;
   readonly greeting?: AutoReply;
   readonly closingMessage?: AutoReply;
   readonly waitingMessage?: AutoReply;

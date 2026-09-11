@@ -9,29 +9,21 @@ import { prisma } from '@/infrastructure/db/prisma';
 import { dispatchAutoMessage, type AutoMessageOrigin } from './auto-reply';
 
 /**
- * As quatro mensagens automáticas da caixa de entrada, num lugar só.
+ * As mensagens automáticas da caixa de entrada, num lugar só.
  *
- * Elas estavam espalhadas: saudação e ausência dentro do gravador de mensagens
- * do WhatsApp, encerramento dentro da Server Action de status, e a de espera
- * **em lugar nenhum** — o cartão existia na tela, o texto era salvo no banco e
- * nada no sistema jamais o lia. Além disso, nenhuma delas tinha trava: a de
- * ausência saía a cada mensagem recebida fora do expediente, então um cliente
- * que mandasse cinco frases às onze da noite recebia cinco vezes o mesmo aviso.
+ * Elas estavam espalhadas: saudação dentro do gravador de mensagens do
+ * WhatsApp, encerramento dentro da Server Action de status, e a de espera **em
+ * lugar nenhum** — o cartão existia na tela, o texto era salvo no banco e nada
+ * no sistema jamais o lia. Além disso, nenhuma delas tinha trava.
  *
  * Aqui cada regra responde duas perguntas — "o texto está ligado e preenchido?"
  * e "eu já disparei nesta conversa?" — e a segunda é respondida pela coluna
  * `origin` das mensagens já gravadas, não por memória de processo: o worker
  * reinicia, e uma trava que vive na RAM some junto.
- */
-
-/**
- * Quanto tempo a mensagem de ausência espera antes de poder repetir.
  *
- * Uma noite inteira de mensagens é um episódio só do ponto de vista de quem
- * escreve. Oito horas cobre a madrugada e ainda deixa o aviso sair de novo no
- * dia seguinte, se o cliente voltar a escrever com o atendimento fechado.
+ * A mensagem fora do expediente saiu do produto: o que acontece fora do horário
+ * agora é decidido pelo horário do agente de IA (`agent-schedule.ts`).
  */
-const AWAY_COOLDOWN_MS = 8 * 60 * 60 * 1000;
 
 /** Encerrar duas vezes seguidas é clique repetido, não dois atendimentos. */
 const CLOSING_COOLDOWN_MS = 5 * 60 * 1000;
@@ -80,7 +72,6 @@ const enviar = async (
 
 const CONFIG_SELECT = {
   businessHours: true,
-  awayMessage: true,
   greeting: true,
   closingMessage: true,
   waitingMessage: true,
@@ -91,7 +82,6 @@ const CONFIG_SELECT = {
 
 export interface InboxAutoConfig {
   readonly greeting: AutoReply;
-  readonly away: AutoReply;
   readonly closing: AutoReply;
   readonly waiting: AutoReply;
   readonly waitingDelayMinutes: number;
@@ -113,7 +103,6 @@ export const loadInboxAutoConfig = async (
   const hours = normalizeBusinessHours(inbox.businessHours);
   return {
     greeting: normalizeAutoReply(inbox.greeting),
-    away: normalizeAutoReply(inbox.awayMessage),
     closing: normalizeAutoReply(inbox.closingMessage),
     waiting: normalizeAutoReply(inbox.waitingMessage),
     waitingDelayMinutes: Math.max(1, inbox.waitingMessageDelayMinutes || 5),
@@ -124,7 +113,7 @@ export const loadInboxAutoConfig = async (
 };
 
 /* ==========================================================================
-   1 e 2 — Saudação e ausência, no caminho da mensagem recebida.
+   1 — Saudação, no caminho da mensagem recebida.
    ========================================================================== */
 
 export interface InboundAutoInput extends Destino {
@@ -132,29 +121,12 @@ export interface InboundAutoInput extends Destino {
   readonly isNewConversation: boolean;
 }
 
-/**
- * Decide entre saudação e ausência para uma mensagem recebida.
- *
- * A ordem importa e é deliberada: fora do expediente, o aviso de ausência
- * substitui a saudação em vez de acompanhá-la — duas mensagens automáticas
- * seguidas para quem escreveu uma só é ruído, e a de ausência é a que carrega
- * a informação útil ("ninguém vai responder agora").
- */
+/** Saúda a conversa nova, uma vez. */
 export const runInboundAutoReplies = async (input: InboundAutoInput): Promise<void> => {
+  if (!input.isNewConversation) return;
+
   const config = await loadInboxAutoConfig(input.accountId, input.inboxId);
-  if (!config) return;
-
-  if (!config.isOpenNow() && utilizavel(config.away)) {
-    const ultimo = await ultimoDisparo(input.conversationId, 'ausencia');
-    if (!ultimo || Date.now() - ultimo.getTime() > AWAY_COOLDOWN_MS) {
-      await enviar(input, config.away.text, 'ausencia', 'Mensagem de ausência');
-      return;
-    }
-    // Já avisamos há pouco, e a conversa não é nova se ela já recebeu o aviso.
-    if (!input.isNewConversation) return;
-  }
-
-  if (!input.isNewConversation || !utilizavel(config.greeting)) return;
+  if (!config || !utilizavel(config.greeting)) return;
 
   // Uma saudação por conversa, para sempre. Duas mensagens chegando juntas
   // fazem os dois gravadores acharem que a conversa é nova (a mesma corrida que
@@ -293,7 +265,7 @@ export const runWaitingAutoReply = async (
   const config = await loadInboxAutoConfig(accountId, conversation.inboxId);
   if (!config || !utilizavel(config.waiting)) return false;
 
-  // Fora do expediente quem fala é a mensagem de ausência. Avisar que "os
+  // Fora do expediente não há atendente para estar ocupado. Avisar que "os
   // atendentes estão ocupados" às três da manhã é falso, e soa pior que o
   // silêncio.
   if (!config.isOpenNow()) return false;
@@ -334,8 +306,8 @@ export const runWaitingAutoReply = async (
 /**
  * Registra a nota quando a mensagem recebida for a resposta da pesquisa.
  *
- * Devolve `true` quando consumiu a mensagem — nesse caso a saudação e a
- * ausência não devem rodar: quem respondeu "5" não está começando uma conversa.
+ * Devolve `true` quando consumiu a mensagem — nesse caso a saudação não deve
+ * rodar: quem respondeu "5" não está começando uma conversa.
  */
 export const captureCsatAnswer = async (
   accountId: string,

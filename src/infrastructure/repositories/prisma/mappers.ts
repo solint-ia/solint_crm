@@ -12,6 +12,7 @@ import type {
   AutomationConditionLogic,
 } from '@/core/domain/automation';
 import { AUTOMATION_CONDITION_LOGICS } from '@/core/domain/automation';
+import { normalizeAgentSchedule } from '@/core/domain/agent-schedule';
 import { normalizeAutoReply, normalizeBusinessHours } from '@/core/domain/business-hours';
 import type { Channel } from '@/core/domain/channel';
 import type { Contact, ContactPartner, CustomField, TimelineEvent } from '@/core/domain/contact';
@@ -449,31 +450,35 @@ export const automationRow = (row: DbAutomation): Automation => ({
   order: row.order,
 });
 
-export const connectionRow = (row: DbInbox): ChannelConnection => ({
-  id: row.id,
-  name: row.name,
-  channel: row.channel as Channel,
-  identifier: row.identifier,
-  status: row.status as ChannelConnection['status'],
-  provider: row.provider,
+export const connectionRow = (row: DbInbox): ChannelConnection => {
   // Normaliza a forma, não só a ausência: uma caixa gravada por versão antiga
   // do cadastro trazia `schedule` no lugar de `days`, passava pelo `readJson`
   // por ser um objeto válido, e derrubava a tela de Configurações inteira.
-  businessHours: normalizeBusinessHours(row.businessHours),
-  // `readJson` devolvia o objeto guardado inteiro, e o cadastro gravava
-  // `{ enabled, message }`. A caixa chegava na tela sem `text` e o salvamento
-  // era recusado inteiro — ver `normalizeAutoReply`.
-  awayMessage: normalizeAutoReply(row.awayMessage),
-  greeting: normalizeAutoReply(row.greeting),
-  closingMessage: normalizeAutoReply(row.closingMessage),
-  waitingMessage: normalizeAutoReply(row.waitingMessage),
-  waitingMessageDelayMinutes: row.waitingMessageDelayMinutes || 5,
-  aiPauseChannelReplyMinutes: row.aiPauseChannelReplyMinutes || 10,
-  csatEnabled: row.csatEnabled,
-  ...(row.csatQuestion ? { csatQuestion: row.csatQuestion } : {}),
-  ...(row.webhookUrl ? { webhookUrl: row.webhookUrl } : {}),
-  ...(row.teamName ? { teamName: row.teamName } : {}),
-});
+  const businessHours = normalizeBusinessHours(row.businessHours);
+  return {
+    id: row.id,
+    name: row.name,
+    channel: row.channel as Channel,
+    identifier: row.identifier,
+    status: row.status as ChannelConnection['status'],
+    provider: row.provider,
+    businessHours,
+    // A caixa que nunca configurou o agente começa com a grade do expediente.
+    aiAgentSchedule: normalizeAgentSchedule(row.aiAgentSchedule, businessHours),
+    // `readJson` devolvia o objeto guardado inteiro, e o cadastro gravava
+    // `{ enabled, message }`. A caixa chegava na tela sem `text` e o salvamento
+    // era recusado inteiro — ver `normalizeAutoReply`.
+    greeting: normalizeAutoReply(row.greeting),
+    closingMessage: normalizeAutoReply(row.closingMessage),
+    waitingMessage: normalizeAutoReply(row.waitingMessage),
+    waitingMessageDelayMinutes: row.waitingMessageDelayMinutes || 5,
+    aiPauseChannelReplyMinutes: row.aiPauseChannelReplyMinutes || 10,
+    csatEnabled: row.csatEnabled,
+    ...(row.csatQuestion ? { csatQuestion: row.csatQuestion } : {}),
+    ...(row.webhookUrl ? { webhookUrl: row.webhookUrl } : {}),
+    ...(row.teamName ? { teamName: row.teamName } : {}),
+  };
+};
 
 export const categoryRow = (row: DbCategory): KnowledgeCategory => ({
   id: row.id,

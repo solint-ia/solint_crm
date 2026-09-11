@@ -70,8 +70,10 @@ services:
         condition: service_healthy
     volumes:
       - media-cache:/app/.media
-    # Deixa o Baileys fechar as sessões limpas antes de o contêiner morrer.
-    stop_grace_period: 30s
+    # Deixa o Baileys fechar as sessões limpas antes de o contêiner morrer. O
+    # worker se impõe um prazo de 30s (SHUTDOWN_MAX_MS em src/worker.mts); a
+    # folga daqui é para ele nunca ser morto no meio desse prazo.
+    stop_grace_period: 45s
     mem_limit: 3g
     healthcheck:
       test:

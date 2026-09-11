@@ -77,7 +77,6 @@ export const provisionAccount = async (
       status: 'ativo',
       provider: 'baileys',
       businessHours: asJson(defaultBusinessHours()),
-      awayMessage: asJson({ enabled: false, text: '' }),
       greeting: asJson({ enabled: false, text: '' }),
       closingMessage: asJson({ enabled: false, text: '' }),
       waitingMessage: asJson({ enabled: false, text: '' }),

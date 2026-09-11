@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto';
 
 import { CHANNELS, postgresPubSub } from '@/infrastructure/db/postgres-pubsub';
 import { prisma, readJson } from '@/infrastructure/db/prisma';
-import { entregarWebhook, type WebhookEvent, type WebhookPayload } from './webhook-dispatch';
+import {
+  EntregaWebhookError,
+  entregarWebhook,
+  type WebhookEvent,
+  type WebhookPayload,
+} from './webhook-dispatch';
 
 const SWEEP_MS = 5_000;
 const LEASE_MS = 30_000;
@@ -93,7 +98,11 @@ export class WebhookDeliveryRunner {
 
       for (const candidate of candidates) {
         if (this.lanes.has(candidate.webhookId)) continue;
+        let entregou = false;
         const task = this.run(candidate)
+          .then((reivindicada) => {
+            entregou = reivindicada;
+          })
           .catch((error: unknown) => {
             console.warn('[webhooks] Falha inesperada no entregador:', error);
           })
@@ -101,7 +110,12 @@ export class WebhookDeliveryRunner {
             if (this.lanes.get(candidate.webhookId) === task) {
               this.lanes.delete(candidate.webhookId);
             }
-            if (this.running) void this.dispatch();
+            // Só volta à fila na hora quem de fato trabalhou. Uma entrega que
+            // não pôde ser reivindicada — outra ainda em andamento, com lease
+            // vivo — seria encontrada de novo pela consulta seguinte, e o laço
+            // giraria sem pausa até o lease vencer. A varredura periódica e o
+            // `NOTIFY` a trazem de volta quando fizer sentido.
+            if (this.running && entregou) void this.dispatch();
           });
         this.lanes.set(candidate.webhookId, task);
       }
@@ -186,9 +200,10 @@ export class WebhookDeliveryRunner {
     });
   }
 
-  private async run(candidate: Candidate): Promise<void> {
+  /** Devolve `true` quando a entrega foi reivindicada e processada, qualquer que seja o desfecho. */
+  private async run(candidate: Candidate): Promise<boolean> {
     const row = await this.claim(candidate);
-    if (!row) return;
+    if (!row) return false;
 
     const renew = setInterval(() => {
       void prisma.$executeRaw`
@@ -238,7 +253,7 @@ export class WebhookDeliveryRunner {
             lastError: 'Entrega cancelada porque o escopo do webhook foi alterado.',
           },
         });
-        return;
+        return true;
       }
       await entregarWebhook(
         row.webhook,
@@ -265,11 +280,20 @@ export class WebhookDeliveryRunner {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'falha desconhecida';
       const attempts = row.attempts + 1;
-      const failed = attempts >= MAX_ATTEMPTS;
+      // Resposta definitiva (404, 400, 413...) encerra na primeira: repetir não
+      // mudaria a resposta e seguraria as entregas seguintes deste webhook.
+      const permanente = error instanceof EntregaWebhookError && error.permanente;
+      const failed = permanente || attempts >= MAX_ATTEMPTS;
       const backoffMs = Math.min(5_000 * 2 ** row.attempts, 15 * 60_000);
       console.warn(
         `[webhooks] ${row.webhook.url} não recebeu ${row.event}; ` +
-          `${failed ? 'entrega encerrada' : `nova tentativa em ${Math.round(backoffMs / 1000)}s`}: ${message}`,
+          `${
+            permanente
+              ? 'resposta definitiva, entrega encerrada'
+              : failed
+                ? 'entrega encerrada'
+                : `nova tentativa em ${Math.round(backoffMs / 1000)}s`
+          }: ${message}`,
       );
       await prisma
         .$transaction([
@@ -296,6 +320,7 @@ export class WebhookDeliveryRunner {
     } finally {
       clearInterval(renew);
     }
+    return true;
   }
 
   async stop(): Promise<void> {

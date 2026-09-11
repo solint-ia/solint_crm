@@ -17,6 +17,7 @@ import {
   Trash2,
   TriangleAlert,
 } from 'lucide-react';
+import { agentWorksAt, type AgentSchedule } from '@/core/domain/agent-schedule';
 import type { BusinessHours, Weekday } from '@/core/domain/business-hours';
 import {
   isWithinBusinessHours,
@@ -681,7 +682,7 @@ function InboxDetail({
 
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [hours, setHours] = useState<BusinessHours>(connection.businessHours);
-  const [away, setAway] = useState(connection.awayMessage);
+  const [agentSchedule, setAgentSchedule] = useState<AgentSchedule>(connection.aiAgentSchedule);
   const [greeting, setGreeting] = useState(connection.greeting);
   const [closingMessage, setClosingMessage] = useState(
     connection.closingMessage ?? {
@@ -707,7 +708,7 @@ function InboxDetail({
   // Detecta se houve modificação
   const dirty =
     JSON.stringify(hours) !== JSON.stringify(connection.businessHours) ||
-    JSON.stringify(away) !== JSON.stringify(connection.awayMessage) ||
+    JSON.stringify(agentSchedule) !== JSON.stringify(connection.aiAgentSchedule) ||
     JSON.stringify(greeting) !== JSON.stringify(connection.greeting) ||
     JSON.stringify(closingMessage) !==
       JSON.stringify(
@@ -729,19 +730,15 @@ function InboxDetail({
     csatQuestion !== (connection.csatQuestion ?? '');
 
   const summary = useMemo(() => summarizeBusinessHours(hours), [hours]);
-
-  const patchDay = (
-    day: Weekday,
-    patch: Partial<{ enabled: boolean; opensAt: string; closesAt: string }>,
-  ) =>
-    setHours((current) => ({
-      ...current,
-      days: current.days.map((entry) => (entry.day === day ? { ...entry, ...patch } : entry)),
-    }));
+  const agentSummary = useMemo(
+    () => summarizeBusinessHours(agentSchedule.hours),
+    [agentSchedule.hours],
+  );
+  const agentSemDia = agentSchedule.hours.days.every((day) => !day.enabled);
 
   const handleDiscard = () => {
     setHours(connection.businessHours);
-    setAway(connection.awayMessage);
+    setAgentSchedule(connection.aiAgentSchedule);
     setGreeting(connection.greeting);
     setClosingMessage(
       connection.closingMessage ?? {
@@ -768,7 +765,7 @@ function InboxDetail({
     const result = await updateInboxAction({
       connectionId: connection.id,
       businessHours: hours,
-      awayMessage: away,
+      aiAgentSchedule: agentSchedule,
       greeting,
       closingMessage,
       waitingMessage,
@@ -792,7 +789,7 @@ function InboxDetail({
     onSaved({
       ...connection,
       businessHours: hours,
-      awayMessage: away,
+      aiAgentSchedule: agentSchedule,
       greeting,
       closingMessage,
       waitingMessage,
@@ -863,8 +860,9 @@ function InboxDetail({
           </div>
           <div className="flex flex-col">
             <span className="text-[11px] font-semibold uppercase text-dim">Disponibilidade</span>
-            <div className="mt-1">
+            <div className="mt-1 flex flex-col gap-0.5">
               <OpenNowDot hours={hours} />
+              <AgentNowDot schedule={agentSchedule} />
             </div>
           </div>
           {/* Aqui havia "Última sincronização" e "Carga semanal". A primeira
@@ -908,65 +906,17 @@ function InboxDetail({
           </div>
         </div>
 
-        {/* Tabela semanal, começando no dia que a conta escolheu em Empresa ›
-            Preferências regionais. A lista sempre abriu no domingo porque
-            `WEEKDAYS` está na ordem de `Date.getDay()`, e "Início da semana"
-            era uma preferência sem consumidor nenhum. */}
-        <div className="mt-4 overflow-hidden rounded-xl border border-line bg-surface">
-          <ul className="divide-y divide-line-soft">
-            {diasDaSemana.map((day) => {
-              const entry = hours.days.find((item) => item.day === day);
-              if (!entry) return null;
-              return (
-                <li
-                  key={day}
-                  className={cn(
-                    'flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 transition-colors',
-                    !entry.enabled && 'bg-surface-2/60 opacity-80',
-                  )}
-                >
-                  <div className="flex items-center gap-3">
-                    <Toggle
-                      checked={entry.enabled}
-                      onChange={(enabled) => patchDay(day, { enabled })}
-                      label={`Atender ${WEEKDAY_LABELS[day]}`}
-                    />
-                    <span
-                      className={cn(
-                        'w-24 text-sm font-semibold',
-                        entry.enabled ? 'text-ink' : 'text-dim',
-                      )}
-                    >
-                      {WEEKDAY_LABELS[day]}
-                    </span>
-                  </div>
-
-                  {entry.enabled ? (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="time"
-                        aria-label={`Abertura de ${WEEKDAY_LABELS[day]}`}
-                        value={entry.opensAt}
-                        onChange={(event) => patchDay(day, { opensAt: event.target.value })}
-                        className="h-8 rounded-lg border border-line bg-surface px-2.5 font-mono text-xs text-ink outline-none focus:border-brand shadow-2xs"
-                      />
-                      <span className="text-xs text-dim">às</span>
-                      <input
-                        type="time"
-                        aria-label={`Fechamento de ${WEEKDAY_LABELS[day]}`}
-                        value={entry.closesAt}
-                        onChange={(event) => patchDay(day, { closesAt: event.target.value })}
-                        className="h-8 rounded-lg border border-line bg-surface px-2.5 font-mono text-xs text-ink outline-none focus:border-brand shadow-2xs"
-                      />
-                    </div>
-                  ) : (
-                    <span className="text-xs text-dim font-medium italic">Sem atendimento</span>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+        <WeeklyHoursTable
+          hours={hours}
+          onChange={setHours}
+          diasDaSemana={diasDaSemana}
+          rotulos={{
+            ativar: (dia) => `Atender ${dia}`,
+            inicio: 'Abertura',
+            fim: 'Fechamento',
+            desligado: 'Sem atendimento',
+          }}
+        />
       </div>
 
       {/* ------------------------------------------------------------ */}
@@ -981,16 +931,6 @@ function InboxDetail({
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">
-          {/* Mensagem Fora de Expediente */}
-          <MessageCard
-            title="Mensagem fora do expediente"
-            description="Enviada automaticamente quando o cliente escreve fora dos horários configurados."
-            value={away}
-            onChange={setAway}
-            placeholder="Nosso atendimento é de segunda a sexta, das 8h às 18h. Deixe sua mensagem que responderemos assim que retornarmos."
-            id={`away-${connection.id}`}
-          />
-
           {/* Mensagem de Saudação */}
           <MessageCard
             title="Mensagem de saudação"
@@ -1051,12 +991,73 @@ function InboxDetail({
             <div>
               <h4 className="text-sm font-bold text-ink">Agente de IA</h4>
               <p className="text-xs text-muted">
-                Quando o agente sai da conversa porque um atendente entrou nela.
+                Quando o agente atende esta caixa e quando ele sai da conversa porque um atendente
+                entrou nela.
               </p>
             </div>
           </div>
 
-          <div className="mt-3.5 flex flex-col gap-3">
+          {/* Horário de funcionamento do agente: a mesma grade do expediente,
+              com outro significado. Fora dela o webhook da caixa não sai. */}
+          <div className="mt-3.5 flex flex-col gap-3 border-b border-line-soft pb-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-ink">Horário de funcionamento</p>
+                <p className="mt-0.5 text-xs text-muted">
+                  {agentSchedule.enabled
+                    ? `${agentSummary} · Fuso: ${agentSchedule.hours.timezone}`
+                    : 'O agente atende a qualquer hora.'}
+                </p>
+              </div>
+              <Toggle
+                checked={agentSchedule.enabled}
+                onChange={(enabled) => setAgentSchedule((atual) => ({ ...atual, enabled }))}
+                label="Limitar o agente de IA a um horário"
+              />
+            </div>
+
+            {agentSchedule.enabled ? (
+              <>
+                <WeeklyHoursTable
+                  hours={agentSchedule.hours}
+                  onChange={(novas) => setAgentSchedule((atual) => ({ ...atual, hours: novas }))}
+                  diasDaSemana={diasDaSemana}
+                  rotulos={{
+                    ativar: (dia) => `Agente atende ${dia}`,
+                    inicio: 'Início do agente',
+                    fim: 'Fim do agente',
+                    desligado: 'Agente desligado',
+                  }}
+                />
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <AgentNowDot schedule={agentSchedule} />
+                  <button
+                    type="button"
+                    onClick={() => setAgentSchedule((atual) => ({ ...atual, hours }))}
+                    className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    Copiar o horário de atendimento
+                  </button>
+                </div>
+                {agentSemDia ? (
+                  <p className="flex items-start gap-1.5 rounded-xl border border-amber-line/50 bg-amber-soft/40 p-2.5 text-[11px] text-amber-text">
+                    <TriangleAlert className="mt-px size-3.5 shrink-0" />
+                    <span>
+                      Nenhum dia ligado: o agente não vai receber nenhuma mensagem desta caixa.
+                    </span>
+                  </p>
+                ) : null}
+              </>
+            ) : null}
+
+            <p className="rounded-xl border border-line bg-surface-2/60 px-3 py-2 text-[11px] text-muted">
+              Fora do horário, as mensagens desta caixa não são enviadas ao webhook: o agente não as
+              recebe, não responde e elas não entram na memória dele. O atendimento fica com a
+              equipe.
+            </p>
+          </div>
+
+          <div className="mt-4 flex flex-col gap-3">
             <p className="text-xs text-muted">
               Quando alguém clica em <strong className="text-ink">Pausar IA</strong> na conversa, o
               agente fica fora dela até que alguém clique em{' '}
@@ -1084,7 +1085,8 @@ function InboxDetail({
             </label>
 
             <p className="rounded-xl border border-line bg-surface-2/60 px-3 py-2 text-[11px] text-muted">
-              Nesse período o webhook continua entregando as mensagens, marcadas com
+              Durante a pausa, diferente de fora do horário, o webhook continua entregando as
+              mensagens, marcadas com
               <code className="mx-1 font-mono">agentePausado: true</code>. Elas seguem alimentando a
               memória do agente; o que ele não faz é responder.
             </p>
@@ -1224,6 +1226,126 @@ function InboxDetail({
         message="Alterações não salvas nas configurações desta caixa."
       />
     </div>
+  );
+}
+
+/**
+ * A grade semanal: uma linha por dia, com o dia ligado ou não e o intervalo.
+ *
+ * Serve ao horário de atendimento e ao horário do agente de IA, que têm a mesma
+ * forma e só mudam o que cada linha quer dizer — daí os rótulos por parâmetro.
+ *
+ * Começa no dia que a conta escolheu em Empresa › Preferências regionais. A
+ * lista sempre abriu no domingo porque `WEEKDAYS` está na ordem de
+ * `Date.getDay()`, e "Início da semana" era uma preferência sem consumidor.
+ */
+function WeeklyHoursTable({
+  hours,
+  onChange,
+  diasDaSemana,
+  rotulos,
+}: {
+  readonly hours: BusinessHours;
+  readonly onChange: (hours: BusinessHours) => void;
+  readonly diasDaSemana: readonly Weekday[];
+  readonly rotulos: {
+    readonly ativar: (dia: string) => string;
+    readonly inicio: string;
+    readonly fim: string;
+    readonly desligado: string;
+  };
+}) {
+  const patchDay = (
+    day: Weekday,
+    patch: Partial<{ enabled: boolean; opensAt: string; closesAt: string }>,
+  ) =>
+    onChange({
+      ...hours,
+      days: hours.days.map((entry) => (entry.day === day ? { ...entry, ...patch } : entry)),
+    });
+
+  return (
+    <div className="mt-4 overflow-hidden rounded-xl border border-line bg-surface">
+      <ul className="divide-y divide-line-soft">
+        {diasDaSemana.map((day) => {
+          const entry = hours.days.find((item) => item.day === day);
+          if (!entry) return null;
+          return (
+            <li
+              key={day}
+              className={cn(
+                'flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 transition-colors',
+                !entry.enabled && 'bg-surface-2/60 opacity-80',
+              )}
+            >
+              <div className="flex items-center gap-3">
+                <Toggle
+                  checked={entry.enabled}
+                  onChange={(enabled) => patchDay(day, { enabled })}
+                  label={rotulos.ativar(WEEKDAY_LABELS[day])}
+                />
+                <span
+                  className={cn(
+                    'w-24 text-sm font-semibold',
+                    entry.enabled ? 'text-ink' : 'text-dim',
+                  )}
+                >
+                  {WEEKDAY_LABELS[day]}
+                </span>
+              </div>
+
+              {entry.enabled ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="time"
+                    aria-label={`${rotulos.inicio} de ${WEEKDAY_LABELS[day]}`}
+                    value={entry.opensAt}
+                    onChange={(event) => patchDay(day, { opensAt: event.target.value })}
+                    className="h-8 rounded-lg border border-line bg-surface px-2.5 font-mono text-xs text-ink outline-none focus:border-brand shadow-2xs"
+                  />
+                  <span className="text-xs text-dim">às</span>
+                  <input
+                    type="time"
+                    aria-label={`${rotulos.fim} de ${WEEKDAY_LABELS[day]}`}
+                    value={entry.closesAt}
+                    onChange={(event) => patchDay(day, { closesAt: event.target.value })}
+                    className="h-8 rounded-lg border border-line bg-surface px-2.5 font-mono text-xs text-ink outline-none focus:border-brand shadow-2xs"
+                  />
+                </div>
+              ) : (
+                <span className="text-xs text-dim font-medium italic">{rotulos.desligado}</span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+/** "Agente atendendo" ou "fora do horário", recalculado de minuto em minuto. */
+function AgentNowDot({ schedule }: { readonly schedule: AgentSchedule }) {
+  const [ativo, setAtivo] = useState<boolean | undefined>();
+
+  useEffect(() => {
+    const check = () => setAtivo(agentWorksAt(schedule, new Date()));
+    check();
+    const timer = setInterval(check, 60_000);
+    return () => clearInterval(timer);
+  }, [schedule]);
+
+  if (ativo === undefined) return null;
+
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 text-[11px] font-semibold',
+        ativo ? 'text-violet-600 dark:text-violet-400' : 'text-dim',
+      )}
+    >
+      <Bot className="size-3" />
+      {ativo ? 'Agente atendendo' : 'Agente fora do horário'}
+    </span>
   );
 }
 

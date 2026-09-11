@@ -243,6 +243,9 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
       );
     }
 
+    const pairingMethod = options.method ?? 'qr';
+    const phoneNumber = pairingMethod === 'phone' ? options.phoneNumber : undefined;
+
     const queued = await prisma.$transaction(async (tx) => {
       // Serializa tentativas de abas/processos diferentes para que um segundo
       // clique não invalide o QR ou o código que acabou de ser exibido.
@@ -250,19 +253,48 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
       const pending = await tx.whatsAppCommand.findFirst({
         where: { inboxId, kind: 'connect', status: { in: ['pending', 'processing'] } },
         orderBy: { sequence: 'asc' },
-        select: { id: true },
+        select: { id: true, status: true, payload: true },
       });
-      if (pending) return { command: pending, created: false };
 
+      /**
+       * O mesmo pedido reaproveita o que já está na fila; um pedido diferente,
+       * não.
+       *
+       * A deduplicação reaproveitava qualquer `connect` pendente, e um pedido
+       * por código feito enquanto o de QR ainda esperava na fila simplesmente
+       * sumia: a tela esperava um código que nunca vinha. Pendente e diferente,
+       * o antigo é cancelado; já em execução, o novo entra atrás dele na raia da
+       * caixa e o worker troca o método ao executá-lo.
+       */
+      if (pending) {
+        const anterior = (pending.payload ?? {}) as {
+          pairingMethod?: string;
+          phoneNumber?: string;
+        };
+        const mesmoPedido =
+          (anterior.pairingMethod ?? 'qr') === pairingMethod &&
+          (anterior.phoneNumber ?? undefined) === phoneNumber;
+        if (mesmoPedido) return { command: { id: pending.id }, created: false };
+        if (pending.status === 'pending') {
+          await tx.whatsAppCommand.updateMany({
+            where: { id: pending.id, status: 'pending' },
+            data: { status: 'failed', error: 'Substituído por um novo pedido de conexão.' },
+          });
+        }
+      }
+
+      // O clique em "Conectar" é o único caminho que liga a intenção de volta:
+      // é ele que diz que a caixa deve ficar de pé. Ver `autoConnect`.
       await tx.whatsAppConnection.upsert({
         where: { inboxId },
-        create: { inboxId, status: 'conectando', pairedByUserId: owner.userId },
+        create: { inboxId, status: 'conectando', pairedByUserId: owner.userId, autoConnect: true },
         update: {
           status: 'conectando',
           pairedByUserId: owner.userId,
           lastError: null,
           qrPayload: null,
           pairingCode: null,
+          autoConnect: true,
         },
       });
       const command = await tx.whatsAppCommand.create({
@@ -272,8 +304,8 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
           status: 'pending',
           payload: {
             ...owner,
-            pairingMethod: options.method ?? 'qr',
-            ...(options.method === 'phone' ? { phoneNumber: options.phoneNumber } : {}),
+            pairingMethod,
+            ...(phoneNumber ? { phoneNumber } : {}),
           },
         },
         select: { id: true },
@@ -300,6 +332,13 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
       select: { id: true },
     });
     if (!allowed) throw new Error('Caixa de entrada de WhatsApp não encontrada nesta conta.');
+    // A intenção é gravada aqui, antes do comando: com o worker fora do ar, o
+    // comando espera na fila, mas nenhum envio nem boot religa a caixa enquanto
+    // isso. Quem desvincula no WhatsApp e apaga as credenciais é o worker.
+    await prisma.whatsAppConnection.updateMany({
+      where: { inboxId },
+      data: { autoConnect: false },
+    });
     await this.enqueue(inboxId, 'disconnect', {});
   }
 

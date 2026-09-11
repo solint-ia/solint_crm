@@ -10,10 +10,12 @@ import {
 } from '@/infrastructure/repositories/prisma/mappers';
 import { aplicarPausaDoAgente } from '@/infrastructure/repositories/prisma/conversation-repository';
 import { dispararAutomacoes } from '@/infrastructure/automations/dispatch';
-import type {
-  SolintRefs,
-  WebhookEvent,
-  WebhookPayloadEmMontagem,
+import {
+  agenteAtendeEm,
+  algumWebhookInscrito,
+  type SolintRefs,
+  type WebhookEvent,
+  type WebhookPayloadEmMontagem,
 } from '@/infrastructure/webhooks/webhook-dispatch';
 import { CHANNELS, postgresPubSub } from '@/infrastructure/db/postgres-pubsub';
 import type { ChatIdentity } from './wa-identity';
@@ -420,12 +422,35 @@ const applyInboundComplianceIntent = async (
 /**
  * Anexa a mensagem à conversa (criando-a se preciso) e publica o resultado.
  */
-export const commitMessage = async (input: CommitInput): Promise<void> => {
-  const { chat, contact } = input;
+export const commitMessage = async (entrada: CommitInput): Promise<void> => {
+  const { chat, contact } = entrada;
 
-  await ensureContact(input.accountId, contact, chat.isGroup);
+  await ensureContact(entrada.accountId, contact, chat.isGroup);
 
-  const existing = await findConversationState(input.accountId, chat.conversationId);
+  const existing = await findConversationState(entrada.accountId, chat.conversationId);
+
+  /**
+   * O corpo do webhook só é montado — e gravado na outbox — se alguém o assina.
+   *
+   * Toda mensagem gerava um evento-fonte, com a mídia em base64 dentro, mesmo em
+   * conta sem webhook nenhum. A linha era concluída sem entregar nada e ficava
+   * no banco para sempre. Os dois eventos de mensagem recebida entram na
+   * pergunta porque qual deles vale só se decide na gravação: a conversa pode
+   * ter sido criada por outra mensagem no meio do caminho.
+   *
+   * Fora do horário do agente de IA também não há o que gravar: o despachante
+   * descartaria o evento de qualquer jeito. Ver `agenteAtendeEm`.
+   */
+  const caixaDoEvento = existing?.inboxId ?? entrada.inboxId ?? `ibx-${entrada.accountId}`;
+  const assinado =
+    entrada.webhookPayload !== undefined &&
+    (await agenteAtendeEm(entrada.accountId, caixaDoEvento, entrada.at)) &&
+    (await algumWebhookInscrito(
+      entrada.accountId,
+      caixaDoEvento,
+      entrada.fromMe ? ['mensagem.enviada'] : ['mensagem.recebida', 'conversa.criada'],
+    ));
+  const input: CommitInput = assinado ? entrada : { ...entrada, webhookPayload: undefined };
   const isCsatReply = Boolean(
     !input.fromMe &&
     existing?.status === 'resolvida' &&

@@ -733,8 +733,13 @@ model Inbox {
   teamName                   String?
   /// JSON: BusinessHours
   businessHours              Json
-  /// JSON: AutoReply
-  awayMessage                Json
+  /// JSON: AgentSchedule. Quando o agente de IA atende esta caixa; fora dele o
+  /// webhook não é disparado. Nulo = o agente atende a qualquer hora.
+  aiAgentSchedule            Json?
+  /// Sem uso: a mensagem fora do expediente foi removida do produto. A coluna
+  /// fica para não apagar o texto que cada caixa tinha; nada mais a lê nem a
+  /// grava, e pode sair numa migração futura.
+  awayMessage                Json    @default("{}")
   /// JSON: AutoReply
   greeting                   Json
   /// JSON: AutoReply
@@ -788,6 +793,11 @@ model WhatsAppConnection {
   qrExpiresAt        DateTime?
   /// Contador de tentativas — evita loop de reconexão infinito após ban.
   retryCount         Int       @default(0)
+  /// A caixa deve ficar conectada? É a intenção, não o estado do socket: só um
+  /// pedido explícito de conexão a liga, e desconectar ou uma recusa definitiva
+  /// do WhatsApp (401, 403, substituição persistente) a desliga. O worker não
+  /// restaura nem religa por conta própria uma caixa com `false`.
+  autoConnect        Boolean   @default(true)
   /// Início da última sincronização manual da agenda. Também funciona como
   /// trava temporal contra cliques repetidos que forçariam novos app-state syncs.
   lastContactsSyncAt DateTime?

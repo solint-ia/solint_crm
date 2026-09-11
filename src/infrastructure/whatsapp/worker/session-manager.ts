@@ -1,6 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import { prisma } from '@/infrastructure/db/prisma';
-import { hasPairedSession } from '../auth/postgres-auth-state';
+import { hasPairedSession, wipeAuthState } from '../auth/postgres-auth-state';
+import { inboxStatusFrom } from '../wa-format';
+import { waEventBus } from '../whatsapp-events';
 import { SessaoIndisponivelError } from './errors';
 import { WhatsAppSession } from './session';
 
@@ -14,6 +16,12 @@ const HEARTBEAT_INTERVAL_MS = 15_000;
  * transformar uma disputa legítima entre dois workers vivos num laço eterno.
  */
 const RESTORE_MAX_ATTEMPTS = 3;
+
+/**
+ * Espera entre tentativas de listar as sessões no boot, quando o banco não
+ * responde. Cresce até o teto e fica nele até o banco voltar.
+ */
+const RESTORE_LIST_BACKOFF_MS = [2_000, 5_000, 10_000, 30_000];
 
 export class WhatsAppSessionManager {
   readonly workerId: string;
@@ -206,10 +214,87 @@ export class WhatsAppSessionManager {
     if (starting) await starting.catch(() => undefined);
     const session = this.sessions.get(inboxId);
     if (session) {
-      await session.stop();
-      this.sessions.delete(inboxId);
-      await this.releaseLock(inboxId, session.lockVersion);
+      // A trava é liberada mesmo se o encerramento falhar no meio: presa, ela
+      // faria o worker seguinte esperar o prazo vencer para restaurar a caixa.
+      try {
+        await session.stop();
+      } finally {
+        this.sessions.delete(inboxId);
+        await this.releaseLock(inboxId, session.lockVersion);
+      }
     }
+  }
+
+  /**
+   * "Desconectar" pedido por alguém: desvincula no WhatsApp e apaga o vínculo.
+   *
+   * Diferente de `stop()`, que só fecha o socket e é o que um reinício precisa.
+   * Sem sessão neste processo — worker recém-reiniciado, ou caixa já caída —
+   * ainda assim o vínculo é apagado, sob a trava, para que nada volte a
+   * religá-la sozinho.
+   */
+  async disconnect(inboxId: string): Promise<void> {
+    const starting = this.starting.get(inboxId);
+    if (starting) await starting.catch(() => undefined);
+
+    const session = this.sessions.get(inboxId);
+    if (session) {
+      try {
+        await session.logout();
+      } finally {
+        this.sessions.delete(inboxId);
+        await this.releaseLock(inboxId, session.lockVersion);
+      }
+      return;
+    }
+
+    const caixa = await prisma.inbox.findUnique({
+      where: { id: inboxId },
+      select: { accountId: true, waConnection: { select: { inboxId: true } } },
+    });
+    if (!caixa?.waConnection) return;
+
+    const lockVersion = await this.acquireLock(inboxId);
+    if (lockVersion === null) {
+      throw new SessaoIndisponivelError(
+        `Outro worker está operando a sessão da caixa ${inboxId}; a desconexão volta para a fila.`,
+      );
+    }
+    const aviso =
+      'Desconectado neste CRM. Se "Solint CRM" ainda aparecer em Aparelhos conectados ' +
+      'no celular, remova-o por lá.';
+    try {
+      await wipeAuthState(inboxId, { workerId: this.workerId, lockVersion });
+      await prisma.whatsAppConnection.updateMany({
+        where: { inboxId, lockOwner: this.workerId, lockVersion },
+        data: {
+          autoConnect: false,
+          status: 'desconectado',
+          qrPayload: null,
+          pairingCode: null,
+          phoneJid: null,
+          profileName: null,
+          lastError: aviso,
+        },
+      });
+      await prisma.inbox.updateMany({
+        where: { id: inboxId, accountId: caixa.accountId },
+        data: { status: inboxStatusFrom('desconectado') },
+      });
+    } finally {
+      await this.releaseLock(inboxId, lockVersion);
+    }
+    waEventBus.emitStatus({
+      inboxId,
+      status: 'desconectado',
+      error: aviso,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  /** Solta todo envio que espera uma sessão abrir. Ver `WhatsAppSession.cancelarEsperas`. */
+  cancelarEsperas(): void {
+    for (const session of this.sessions.values()) session.cancelarEsperas();
   }
 
   get(inboxId: string): WhatsAppSession | undefined {
@@ -219,11 +304,15 @@ export class WhatsAppSessionManager {
   /**
    * Restaura todas as sessões salvas no Postgres na inicialização do worker.
    */
-  private async restorePersistedSessions(): Promise<void> {
+  private async restorePersistedSessions(tentativa = 0): Promise<void> {
     try {
+      // `autoConnect: false` é a caixa desconectada de propósito, ou recusada em
+      // definitivo pelo WhatsApp: as credenciais podem estar lá (403, 440), mas
+      // religá-la sozinho desfaria a decisão de quem a desligou.
       const persisted = await prisma.whatsAppConnection.findMany({
         where: {
           credsCipher: { not: null },
+          autoConnect: true,
         },
         select: { inboxId: true },
       });
@@ -263,7 +352,27 @@ export class WhatsAppSessionManager {
        */
       await Promise.allSettled(paired.map((conn) => this.restoreOne(conn.inboxId, 0)));
     } catch (err) {
-      console.error('[WhatsAppSessionManager] Erro ao listar sessões salvas:', err);
+      /**
+       * Sem o banco não há o que restaurar — ainda. Desistir aqui deixava o
+       * worker no ar com zero sessões até alguém reiniciá-lo: num reboot da VM,
+       * o Docker religa os contêineres sem esperar o Postgres ficar pronto, e o
+       * worker podia perguntar antes da hora. A lista é pedida de novo até o
+       * banco responder.
+       */
+      if (this.shuttingDown) return;
+      const espera =
+        RESTORE_LIST_BACKOFF_MS[Math.min(tentativa, RESTORE_LIST_BACKOFF_MS.length - 1)] ?? 30_000;
+      console.error(
+        `[WhatsAppSessionManager] Erro ao listar sessões salvas. ` +
+          `Nova tentativa em ${Math.round(espera / 1000)}s:`,
+        err,
+      );
+      const timer = setTimeout(() => {
+        this.restoreTimers.delete(timer);
+        if (!this.shuttingDown) void this.restorePersistedSessions(tentativa + 1);
+      }, espera);
+      this.restoreTimers.add(timer);
+      timer.unref?.();
     }
   }
 

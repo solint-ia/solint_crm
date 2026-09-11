@@ -142,10 +142,33 @@ async function applyDispatch(
   }
 
   if (sent.ok && sent.queued) {
+    // Nunca rebaixar o que o worker já confirmou. O `NOTIFY` acorda o worker na
+    // hora, e o envio pode ter sido carimbado como "enviado" antes desta linha
+    // rodar — gravar "enviando" por cima deixava a bolha presa, porque para a
+    // fila aquele comando já estava concluído.
     await prisma.message.updateMany({
-      where: { id: message.id, conversationId, conversation: { accountId } },
+      where: {
+        id: message.id,
+        conversationId,
+        conversation: { accountId },
+        deliveryStatus: { notIn: ['enviado', 'entregue', 'lido'] },
+      },
       data: { deliveryStatus: 'enviando', dispatchError: null },
     });
+    const atual = await prisma.message.findFirst({
+      where: { id: message.id, conversationId, conversation: { accountId } },
+      select: { deliveryStatus: true, externalId: true },
+    });
+    const status = atual?.deliveryStatus;
+    if (status === 'enviado' || status === 'entregue' || status === 'lido') {
+      return {
+        message: {
+          ...message,
+          deliveryStatus: status,
+          ...(atual?.externalId ? { externalId: atual.externalId } : {}),
+        },
+      };
+    }
     return { message: { ...message, deliveryStatus: 'enviando' } };
   }
 

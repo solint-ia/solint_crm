@@ -1,3 +1,4 @@
+import type { AgentSchedule } from './agent-schedule';
 import type { AutoReply, BusinessHours } from './business-hours';
 import type { Channel, InboxConnectionStatus } from './channel';
 import type { Id } from './shared';
@@ -24,7 +25,7 @@ export interface CannedResponse {
  * Conexão e operação moram juntas de propósito: quem abre a caixa quer saber,
  * na mesma tela, se ela está online E se está dentro do expediente. Separar as
  * duas coisas obrigaria o supervisor a cruzar telas para responder "por que o
- * cliente recebeu a mensagem de ausência às 15h?".
+ * agente não respondeu o cliente às 23h?".
  */
 export interface ChannelConnection {
   readonly id: Id;
@@ -34,8 +35,8 @@ export interface ChannelConnection {
   readonly status: InboxConnectionStatus;
   readonly provider: string;
   readonly businessHours: BusinessHours;
-  /** Disparada quando chega mensagem fora do expediente. */
-  readonly awayMessage: AutoReply;
+  /** Quando o agente de IA atende; fora disso o webhook da caixa não sai. */
+  readonly aiAgentSchedule: AgentSchedule;
   /** Disparada na primeira mensagem de uma conversa nova. */
   readonly greeting: AutoReply;
   /** Disparada quando o atendimento é finalizado/resolvido. */

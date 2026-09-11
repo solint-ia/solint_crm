@@ -24,3 +24,18 @@ export class SessaoIndisponivelError extends Error {
     this.name = 'SessaoIndisponivelError';
   }
 }
+
+/**
+ * A caixa não deve estar conectada: foi desconectada de propósito, o WhatsApp a
+ * recusou em definitivo, ou ela nunca foi pareada.
+ *
+ * Diferente de `SessaoIndisponivelError`, não há o que esperar — repetir o
+ * comando só adiaria a mesma resposta, e religar a sessão para atendê-lo
+ * desfaria a decisão de quem a desligou. O comando falha na hora, com o motivo.
+ */
+export class CaixaDesconectadaError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CaixaDesconectadaError';
+  }
+}
