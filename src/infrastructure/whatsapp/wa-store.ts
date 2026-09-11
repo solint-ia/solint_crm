@@ -11,7 +11,6 @@ import {
 import { aplicarPausaDoAgente } from '@/infrastructure/repositories/prisma/conversation-repository';
 import { dispararAutomacoes } from '@/infrastructure/automations/dispatch';
 import {
-  agenteAtendeEm,
   algumWebhookInscrito,
   type SolintRefs,
   type WebhookEvent,
@@ -437,14 +436,10 @@ export const commitMessage = async (entrada: CommitInput): Promise<void> => {
    * no banco para sempre. Os dois eventos de mensagem recebida entram na
    * pergunta porque qual deles vale só se decide na gravação: a conversa pode
    * ter sido criada por outra mensagem no meio do caminho.
-   *
-   * Fora do horário do agente de IA também não há o que gravar: o despachante
-   * descartaria o evento de qualquer jeito. Ver `agenteAtendeEm`.
    */
   const caixaDoEvento = existing?.inboxId ?? entrada.inboxId ?? `ibx-${entrada.accountId}`;
   const assinado =
     entrada.webhookPayload !== undefined &&
-    (await agenteAtendeEm(entrada.accountId, caixaDoEvento, entrada.at)) &&
     (await algumWebhookInscrito(
       entrada.accountId,
       caixaDoEvento,

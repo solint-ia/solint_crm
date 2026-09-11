@@ -1043,18 +1043,12 @@ function InboxDetail({
                   <p className="flex items-start gap-1.5 rounded-xl border border-amber-line/50 bg-amber-soft/40 p-2.5 text-[11px] text-amber-text">
                     <TriangleAlert className="mt-px size-3.5 shrink-0" />
                     <span>
-                      Nenhum dia ligado: o agente não vai receber nenhuma mensagem desta caixa.
+                      Nenhum dia ligado: o agente não responderá às mensagens desta caixa.
                     </span>
                   </p>
                 ) : null}
               </>
             ) : null}
-
-            <p className="rounded-xl border border-line bg-surface-2/60 px-3 py-2 text-[11px] text-muted">
-              Fora do horário, as mensagens desta caixa não são enviadas ao webhook: o agente não as
-              recebe, não responde e elas não entram na memória dele. O atendimento fica com a
-              equipe.
-            </p>
           </div>
 
           <div className="mt-4 flex flex-col gap-3">
@@ -1083,13 +1077,6 @@ function InboxDetail({
               />
               <span>minutos</span>
             </label>
-
-            <p className="rounded-xl border border-line bg-surface-2/60 px-3 py-2 text-[11px] text-muted">
-              Durante a pausa, diferente de fora do horário, o webhook continua entregando as
-              mensagens, marcadas com
-              <code className="mx-1 font-mono">agentePausado: true</code>. Elas seguem alimentando a
-              memória do agente; o que ele não faz é responder.
-            </p>
           </div>
         </div>
 

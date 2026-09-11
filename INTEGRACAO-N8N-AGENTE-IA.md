@@ -115,15 +115,20 @@ o único ponto de disparo é o caminho da mensagem.
 ### Horário de funcionamento do agente
 
 Cada caixa pode limitar o agente de IA a um horário (Configurações › Caixas de
-entrada › Agente de IA). Com o horário ligado, **uma mensagem fora dele não
-dispara webhook nenhum daquela caixa**, em nenhum dos três assuntos: o n8n nem é
-acordado, e ela também não chega à memória do agente. Quem julga é o horário da
-mensagem, não o da entrega, então uma fila represada que chega depois continua
-respeitando a grade.
+entrada › Agente de IA). Com o horário ligado, **as mensagens fora dele continuam
+sendo entregues via webhook**, mas marcadas com `agentePausado: true` e
+`agenteNoHorario: false`.
 
-É o oposto da pausa por conversa (`agentePausado`): pausado, o evento é entregue
-e o fluxo decide não responder; fora do horário, o evento não existe. Com o
-horário desligado, o agente atende a qualquer hora.
+Isso foi desenhado especialmente para fluxos com **Redis / memória de longo prazo**:
+o n8n recebe a mensagem, atualiza a instância Redis do contato para manter o
+contexto da conversa em dia (inclusive sobre o que os atendentes humanos
+responderam durante o dia), mas **não gera resposta automática**. Quando o agente
+assume o atendimento no seu turno (à noite ou no fim de semana), ele já possui
+todo o contexto do que aconteceu durante o expediente.
+
+Quem julga é o horário da mensagem, não o da entrega, então uma fila represada
+que chega depois continua respeitando a grade. Com o horário desligado, o agente
+atende a qualquer hora (`agenteNoHorario: true`).
 
 ### Entrega e tolerância a falhas
 

@@ -13,6 +13,7 @@ import {
   hasConversationTarget,
   resolveApiConversationId,
 } from '../_shared/conversation-target';
+import { agenteAtendeEm } from '@/infrastructure/webhooks/webhook-dispatch';
 
 export const dynamic = 'force-dynamic';
 
@@ -168,18 +169,22 @@ export async function POST(request: Request) {
   if (isApiTokenActor(session.user.id)) {
     const conversa = await prisma.conversation.findFirst({
       where: { id: conversationId, accountId: session.account.id },
-      select: { aiPausedUntil: true, aiPausedReason: true },
+      select: { inboxId: true, aiPausedUntil: true, aiPausedReason: true },
     });
-    const pausado =
+    const foraDoHorario = !(await agenteAtendeEm(session.account.id, conversa?.inboxId, new Date()));
+    const pausadoPorConversa = Boolean(
       conversa?.aiPausedReason &&
-      (!conversa.aiPausedUntil || conversa.aiPausedUntil.getTime() > Date.now());
-    if (pausado) {
+      (!conversa.aiPausedUntil || conversa.aiPausedUntil.getTime() > Date.now()),
+    );
+    if (foraDoHorario || pausadoPorConversa) {
       return NextResponse.json(
         {
           ok: false,
-          erro: 'Conversa assumida por um atendente: o agente esta pausado.',
+          erro: foraDoHorario
+            ? 'Fora do horário de atendimento do agente de IA para esta caixa.'
+            : 'Conversa assumida por um atendente: o agente esta pausado.',
           agentePausado: true,
-          ...(conversa.aiPausedUntil
+          ...(pausadoPorConversa && conversa?.aiPausedUntil
             ? { agentePausadoAte: conversa.aiPausedUntil.toISOString() }
             : {}),
         },

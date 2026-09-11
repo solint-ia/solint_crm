@@ -102,6 +102,11 @@ export interface SolintRefsEntregues extends SolintRefs {
    * ela dura até esse alguém devolver. `agentePausado` é o campo que decide.
    */
   readonly agentePausadoAte?: string;
+  /**
+   * Indica se a mensagem ocorreu dentro da grade de funcionamento do agente de IA.
+   * `false` quando fora do horário de atendimento do agente.
+   */
+  readonly agenteNoHorario?: boolean;
 }
 
 /** O bloco `data`, na forma em que o Baileys entrega a mensagem. */
@@ -236,10 +241,12 @@ export const algumWebhookInscrito = async (
 /**
  * O agente de IA desta caixa atendia no instante `quando`?
  *
- * É a regra do horário do agente, configurado em Caixas de entrada: fora dele o
- * webhook da caixa não é disparado. Diferente da pausa, que entrega o evento
- * marcado com `agentePausado` para o agente guardar na memória, aqui nada sai —
- * foi o pedido: o fluxo do n8n nem é acordado fora do horário.
+ * É a regra do horário do agente, configurado em Caixas de entrada: fora dele,
+ * os webhooks continuam sendo entregues, porém marcados com `agentePausado: true`
+ * e `agenteNoHorario: false`. Isso garante que o n8n/Redis receba o histórico e
+ * guarde o contexto da conversa na memória durante o dia, para que quando o agente
+ * assumir no seu turno (à noite ou fim de semana), ele já saiba tudo o que foi
+ * conversado entre o cliente e a equipe humana.
  *
  * Sem caixa (evento que não nasceu de uma conversa) ou caixa sem horário
  * ligado, a resposta é sim: é o comportamento de antes da regra existir.
@@ -295,11 +302,11 @@ export const dispararWebhooks = async (
   try {
     const inboxId = payload.solint.caixaEntradaId;
 
-    // Fora do horário do agente, nada sai — nem para os outros webhooks da
-    // caixa. Ver `agenteAtendeEm`.
-    if (!(await agenteAtendeEm(payload.solint.contaId, inboxId, momentoDaMensagem(payload)))) {
-      return;
-    }
+    const noHorario = await agenteAtendeEm(
+      payload.solint.contaId,
+      inboxId,
+      momentoDaMensagem(payload),
+    );
 
     // A pausa é lida aqui, e não em cada um dos três pontos que montam corpo:
     // é a mesma pergunta em todos, e a resposta muda entre um disparo e o
@@ -313,16 +320,22 @@ export const dispararWebhooks = async (
     // vence sozinha. Quem integra decide por `agentePausado`, e não pela data:
     // ler "sem prazo" como "sem pausa" faria o agente responder por cima de
     // quem acabou de assumir a conversa.
-    const pausado = Boolean(
+    //
+    // Fora do horário do agente de IA, `agentePausado` também é `true`: o webhook
+    // é entregue para alimentar a memória/Redis do n8n, mas o bot não responde.
+    const pausadoPorConversa = Boolean(
       conversa?.aiPausedReason &&
       (!conversa.aiPausedUntil || conversa.aiPausedUntil.getTime() > Date.now()),
     );
+    const pausado = !noHorario || pausadoPorConversa;
+
     const corpo: Omit<WebhookPayload, 'destination'> = {
       ...payload,
       solint: {
         ...payload.solint,
         agentePausado: pausado,
-        ...(pausado && conversa?.aiPausedUntil
+        agenteNoHorario: noHorario,
+        ...(pausadoPorConversa && conversa?.aiPausedUntil
           ? { agentePausadoAte: conversa.aiPausedUntil.toISOString() }
           : {}),
       },

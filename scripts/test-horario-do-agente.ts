@@ -3,12 +3,13 @@
  *
  * O que ele prova, em ordem de importância:
  *
- *  1. fora do horário **nenhuma entrega é criada** para a caixa — nem para um
- *     segundo webhook dela. É o pedido: o fluxo do n8n nem é acordado;
- *  2. o que decide é o instante **da mensagem**, e não o do disparo: uma fila
+ *  1. fora do horário **o webhook é entregue com agentePausado: true** e
+ *     `agenteNoHorario: false` para que o n8n/Redis alimente a memória do contato
+ *     sem gerar resposta automática;
+ *  2. dentro do horário, o webhook é entregue com `agentePausado: false` e
+ *     `agenteNoHorario: true`;
+ *  3. o que decide é o instante **da mensagem**, e não o do disparo: uma fila
  *     represada que chega às 9h não acorda o agente pelo que entrou às 23h;
- *  3. a mensagem de fora do horário continua sendo gravada no CRM — só o
- *     evento-fonte do webhook deixa de existir;
  *  4. a grade é lida no fuso dela, e a caixa que nunca configurou nada segue
  *     como antes (agente sempre ligado).
  *
@@ -301,35 +302,52 @@ const banco = async () => {
   check('evento sem caixa: sim, como antes', await agenteAtendeEm(CONTA, undefined, TER_MEIO_DIA));
   check('caixa de outra conta não empresta a agenda', await agenteAtendeEm('acc-outra', caixa, TER_MEIO_DIA));
 
-  console.log('\n4) Disparo: fora do horário nada é enfileirado');
-  const dentro = await entregasDo('mensagem.recebida', payloadDe(caixa, conversaDaCaixa, contatoId, SEG_MEIO_DIA));
+  console.log('\n4) Disparo: fora do horário entrega com agentePausado: true');
+  const payloadSegunda = payloadDe(caixa, conversaDaCaixa, contatoId, SEG_MEIO_DIA);
+  const dentro = await entregasDo('mensagem.recebida', payloadSegunda);
   check('dentro do horário: uma entrega por webhook', dentro === 2, `${dentro}`);
-  const fora = await entregasDo('mensagem.recebida', payloadDe(caixa, conversaDaCaixa, contatoId, TER_MEIO_DIA));
-  check('fora do horário: nenhuma entrega, nem para o segundo webhook', fora === 0, `${fora}`);
+  const entregaDentro = await prisma.webhookDelivery.findFirst({
+    where: { accountId: CONTA, dedupeKey: `mensagem.recebida:${payloadSegunda.solint.mensagemId}` },
+  });
+  const corpoDentro = JSON.parse(entregaDentro?.payload as string);
+  check('dentro do horário: agentePausado é false', corpoDentro.solint.agentePausado === false);
+  check('dentro do horário: agenteNoHorario é true', corpoDentro.solint.agenteNoHorario === true);
+
+  const payloadTerca = payloadDe(caixa, conversaDaCaixa, contatoId, TER_MEIO_DIA);
+  const fora = await entregasDo('mensagem.recebida', payloadTerca);
+  check('fora do horário: webhook É entregue para alimentar o Redis', fora === 2, `${fora}`);
+  const entregaFora = await prisma.webhookDelivery.findFirst({
+    where: { accountId: CONTA, dedupeKey: `mensagem.recebida:${payloadTerca.solint.mensagemId}` },
+  });
+  const corpoFora = JSON.parse(entregaFora?.payload as string);
+  check('fora do horário: agentePausado é true', corpoFora.solint.agentePausado === true);
+  check('fora do horário: agenteNoHorario é false', corpoFora.solint.agenteNoHorario === false);
+
   const foraCriada = await entregasDo('conversa.criada', payloadDe(caixa, conversaDaCaixa, contatoId, TER_MEIO_DIA));
-  check('conversa.criada fora do horário: nada', foraCriada === 0, `${foraCriada}`);
-  const foraResolvida = await entregasDo('conversa.resolvida', payloadDe(caixa, conversaDaCaixa, contatoId, TER_MEIO_DIA));
-  check('conversa.resolvida fora do horário: nada', foraResolvida === 0, `${foraResolvida}`);
+  check('conversa.criada fora do horário: entrega', foraCriada === 2, `${foraCriada}`);
   const outra = await entregasDo('mensagem.recebida', payloadDe(outraCaixa, conversaDaOutra, contatoId, TER_MEIO_DIA));
-  check('a outra caixa, sem horário, continua recebendo', outra === 2, `${outra}`);
+  check('a outra caixa, sem horário, continua recebendo normalmente', outra === 2, `${outra}`);
 
   // Sem `messageTimestamp`, vale o relógio. Com nenhum dia ligado, "agora" é
-  // sempre fora; desligando a agenda, a mesma mensagem passa.
+  // sempre fora (agentePausado: true).
   await container.settings.updateInbox(CONTA, caixa, { aiAgentSchedule: NENHUM_DIA });
-  const semHora = await entregasDo('mensagem.recebida', payloadDe(caixa, conversaDaCaixa, contatoId, null));
-  check('sem hora na mensagem vale o agora (fora)', semHora === 0, `${semHora}`);
-  await container.settings.updateInbox(CONTA, caixa, { aiAgentSchedule: { ...NENHUM_DIA, enabled: false } });
-  const desligada = await entregasDo('mensagem.recebida', payloadDe(caixa, conversaDaCaixa, contatoId, null));
-  check('agenda desligada: entrega de novo', desligada === 2, `${desligada}`);
+  const payloadSemHora = payloadDe(caixa, conversaDaCaixa, contatoId, null);
+  const semHora = await entregasDo('mensagem.recebida', payloadSemHora);
+  check('sem hora na mensagem: webhook entregue', semHora === 2, `${semHora}`);
+  const entregaSemHora = await prisma.webhookDelivery.findFirst({
+    where: { accountId: CONTA, dedupeKey: `mensagem.recebida:${payloadSemHora.solint.mensagemId}` },
+  });
+  const corpoSemHora = JSON.parse(entregaSemHora?.payload as string);
+  check('sem hora na mensagem: agentePausado é true (fora)', corpoSemHora.solint.agentePausado === true);
 
   console.log('\n5) Mensagem gravada pelo worker (commitMessage)');
   await container.settings.updateInbox(CONTA, caixa, { aiAgentSchedule: SO_SEGUNDA });
   const foraDoHorario = await receber(caixa, 'mensagem da terça', TER_MEIO_DIA);
   check('fora do horário: a mensagem entra no CRM', foraDoHorario.gravada === 1);
-  check('fora do horário: nenhum evento-fonte na outbox', foraDoHorario.fontes === 0, `${foraDoHorario.fontes}`);
+  check('fora do horário: evento-fonte na outbox (para alimentar memória)', foraDoHorario.fontes === 1, `${foraDoHorario.fontes}`);
   const noHorario = await receber(caixa, 'mensagem da segunda', SEG_MEIO_DIA);
   check('no horário: a mensagem entra no CRM', noHorario.gravada === 1);
-  check('no horário: um evento-fonte na outbox', noHorario.fontes === 1, `${noHorario.fontes}`);
+  check('no horário: evento-fonte na outbox', noHorario.fontes === 1, `${noHorario.fontes}`);
 };
 
 async function main() {
