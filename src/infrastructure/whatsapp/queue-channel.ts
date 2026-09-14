@@ -507,6 +507,15 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
     await this.enqueue(inboxId, 'read', { conversationId });
   }
 
+  async markReadMany(
+    _accountId: string,
+    inboxId: string,
+    conversationIds: readonly string[],
+  ): Promise<void> {
+    if (conversationIds.length === 0 || !(await this.workerOnline(inboxId))) return;
+    await this.enqueue(inboxId, 'read', { conversationIds: [...conversationIds] });
+  }
+
   async sendPresence(
     context: { accountId: string; inboxId: string; conversationId: string },
     target: DispatchTarget,

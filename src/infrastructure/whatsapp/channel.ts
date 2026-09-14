@@ -167,6 +167,18 @@ export interface WhatsAppChannel {
   markRead(accountId: string, conversationId: string, inboxId?: string): Promise<void>;
 
   /**
+   * Confirma a leitura de várias conversas **da mesma caixa** num comando só.
+   *
+   * Um comando por conversa encheria a fila da caixa com centenas de linhas
+   * atrás das quais um envio de verdade esperaria a vez.
+   */
+  markReadMany(
+    accountId: string,
+    inboxId: string,
+    conversationIds: readonly string[],
+  ): Promise<void>;
+
+  /**
    * Envia sinal de presença (digitando / gravando áudio / pausado) ao contato.
    *
    * `durationMs` sustenta o indicador pelo tempo pedido e manda `paused` no

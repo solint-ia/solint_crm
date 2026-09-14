@@ -595,6 +595,64 @@ export class PrismaConversationRepository implements ConversationRepository {
     });
   }
 
+  async markManyAsRead(
+    accountId: Id,
+    seen: readonly { readonly conversationId: Id; readonly unreadCount: number }[],
+    inboxAccess: InboxAccess,
+  ) {
+    // O mesmo id repetido vale pela maior contagem vista: é a leitura mais
+    // recente que a tela mostrou dele.
+    const vistas = new Map<Id, number>();
+    for (const { conversationId, unreadCount } of seen) {
+      vistas.set(conversationId, Math.max(unreadCount, vistas.get(conversationId) ?? 0));
+    }
+    if (vistas.size === 0) return { marked: [], remaining: [] };
+
+    // Uma escrita por contagem distinta, e não uma por conversa: numa caixa
+    // cheia as contagens se repetem muito (1, 2, 3...), e a trava do "só até
+    // onde a pessoa viu" precisa ir no `WHERE` de cada uma.
+    const porContagem = new Map<number, Id[]>();
+    for (const [conversationId, unreadCount] of vistas) {
+      porContagem.set(unreadCount, [...(porContagem.get(unreadCount) ?? []), conversationId]);
+    }
+
+    const lotes = await prisma.$transaction(
+      [...porContagem].map(([unreadCount, ids]) =>
+        prisma.conversation.updateManyAndReturn({
+          where: {
+            accountId,
+            id: { in: ids },
+            unreadCount: { gt: 0, lte: unreadCount },
+            ...inboxScope(inboxAccess),
+          },
+          data: { unreadCount: 0 },
+          select: { id: true, inboxId: true, channel: true },
+        }),
+      ),
+    );
+    const marked = lotes.flat();
+
+    const zeradas = new Set(marked.map((row) => row.id));
+    const deFora = [...vistas.keys()].filter((id) => !zeradas.has(id));
+    const remaining =
+      deFora.length === 0
+        ? []
+        : await prisma.conversation.findMany({
+            where: {
+              accountId,
+              id: { in: deFora },
+              unreadCount: { gt: 0 },
+              ...inboxScope(inboxAccess),
+            },
+            select: { id: true, unreadCount: true },
+          });
+
+    return {
+      marked,
+      remaining: remaining.map((row) => ({ conversationId: row.id, unreadCount: row.unreadCount })),
+    };
+  }
+
   async findMessage(accountId: Id, conversationId: Id, messageId: Id): Promise<Message | null> {
     // A conta entra pela relação, como em `attachExternalId`: um id de outra
     // conta não casa linha nenhuma e responde "não existe", que é a resposta

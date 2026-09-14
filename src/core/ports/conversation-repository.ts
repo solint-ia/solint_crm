@@ -150,6 +150,25 @@ export interface ConversationWriter {
     authorId: Id,
   ): Promise<Message>;
   markAsRead(accountId: Id, conversationId: Id): Promise<void>;
+  /**
+   * Zera o não-lido de várias conversas de uma vez, **só até onde a pessoa viu**.
+   *
+   * Cada item traz a contagem que estava na tela no momento do clique. A
+   * conversa só é zerada se a contagem no banco não passou dela: a mensagem
+   * que chega enquanto a pessoa clica em "marcar todas" continua não lida, em
+   * vez de sumir numa leitura que ninguém fez.
+   *
+   * `marked` são as que foram de fato zeradas; `remaining`, as que ficaram de
+   * fora por terem recebido mensagem nova, com a contagem atual.
+   */
+  markManyAsRead(
+    accountId: Id,
+    seen: readonly { readonly conversationId: Id; readonly unreadCount: number }[],
+    inboxAccess: InboxAccess,
+  ): Promise<{
+    readonly marked: readonly { readonly id: Id; readonly inboxId: Id; readonly channel: string }[];
+    readonly remaining: readonly { readonly conversationId: Id; readonly unreadCount: number }[];
+  }>;
   /** Uma mensagem da conversa, escopada pela conta. `null` quando não existe. */
   findMessage(accountId: Id, conversationId: Id, messageId: Id): Promise<Message | null>;
   /**

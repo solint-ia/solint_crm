@@ -35,6 +35,13 @@ export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
  */
 export const CONVERSATION_ID_MAX_LENGTH = 128;
 
+/**
+ * Teto de conversas por chamada de "marcar todas como lidas".
+ *
+ * A tela fatia a lista em lotes deste tamanho; o servidor recusa lote maior.
+ */
+export const MARK_READ_BATCH_LIMIT = 500;
+
 export const PRIORITIES = ['baixa', 'media', 'alta', 'urgente'] as const;
 export type Priority = (typeof PRIORITIES)[number];
 

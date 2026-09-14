@@ -611,4 +611,42 @@ export class PrismaNotificationRepository implements NotificationRepository {
       data: { read: true },
     });
   }
+
+  /**
+   * Casa no processo, e não num `OR` de prefixos.
+   *
+   * Centenas de `startsWith` num `OR` viram uma consulta enorme para achar uma
+   * dúzia de linhas: os avisos não lidos de uma pessoa são poucos, então é mais
+   * barato trazê-los e conferir o id da conversa em cada `href`.
+   */
+  async markConversationsAsRead(
+    accountId: Id,
+    userId: Id,
+    conversationIds: readonly Id[],
+  ): Promise<void> {
+    if (conversationIds.length === 0) return;
+    const alvo = new Set(conversationIds);
+    const avisos = await prisma.notification.findMany({
+      where: {
+        accountId,
+        OR: [{ userId }, { userId: null }],
+        read: false,
+        href: { startsWith: '/conversas/' },
+      },
+      select: { id: true, href: true },
+    });
+    const ids = avisos
+      .filter((aviso) => {
+        const conversationId = aviso.href?.slice('/conversas/'.length).split(/[/?#]/)[0];
+        // Sem decodificar, como o `startsWith` da conversa única: o link é
+        // montado com o id cru, e um `%` solto faria `decodeURIComponent` lançar.
+        return conversationId !== undefined && alvo.has(conversationId);
+      })
+      .map((aviso) => aviso.id);
+    if (ids.length === 0) return;
+    await prisma.notification.updateMany({
+      where: { accountId, id: { in: ids } },
+      data: { read: true },
+    });
+  }
 }

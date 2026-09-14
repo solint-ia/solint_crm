@@ -60,6 +60,14 @@ export type ConversationEventType =
    */
   | 'typing'
   /**
+   * Várias conversas de uma caixa foram marcadas como lidas de uma vez.
+   *
+   * Leva só os ids, em `conversationIds`. Mandar a conversa inteira de cada uma,
+   * como faz `conversation_updated`, poria centenas de timelines no fio para
+   * dizer a mesma coisa a todas: o não-lido virou zero.
+   */
+  | 'conversations_read'
+  /**
    * Um aviso do sininho, gravado pelo servidor.
    *
    * Diferente dos demais: não descreve mudança na conversa, e sim algo que
@@ -89,6 +97,13 @@ export interface ConversationEventPayload {
   readonly conversation?: unknown;
   /** Só em `type: 'typing'`: se o contato está escrevendo agora. */
   readonly isTyping?: boolean;
+  /**
+   * Só em `type: 'conversations_read'`: as conversas zeradas, todas de `inboxId`.
+   *
+   * Quem emite fatia em lotes pequenos: o evento atravessa o `NOTIFY`, que tem
+   * teto de 8000 bytes — ver `CONVERSATIONS_READ_BATCH`.
+   */
+  readonly conversationIds?: readonly string[];
   /**
    * Só em `type: 'notification'`: para quem é o aviso.
    *
@@ -150,11 +165,22 @@ const thin = (payload: ConversationEventPayload) => ({
   // `isTyping` é o evento inteiro, não um enfeite dele: sem este campo o
   // "digitando" atravessaria o `NOTIFY` sem dizer se começou ou parou.
   ...(payload.type === 'typing' ? { isTyping: payload.isTyping === true } : {}),
+  // Os ids são o evento inteiro, como `isTyping` acima.
+  ...(payload.conversationIds ? { conversationIds: payload.conversationIds } : {}),
   // O aviso em si não cabe no `NOTIFY` junto com o resto, mas o destinatário
   // cabe e é o que decide quem o recebe do outro lado.
   ...(payload.userId ? { userId: payload.userId } : {}),
   ...(payload.notificationId ? { notificationId: payload.notificationId } : {}),
 });
+
+/**
+ * Ids por evento de `conversations_read`.
+ *
+ * O `NOTIFY` aceita até 8000 bytes e o id de uma conversa pode ter até 128
+ * caracteres (`CONVERSATION_ID_MAX_LENGTH`): quarenta deles, no pior caso, dão
+ * perto de 5,3 KB, com folga para o resto do evento.
+ */
+export const CONVERSATIONS_READ_BATCH = 40;
 
 class WhatsAppEventBus extends EventEmitter {
   /** Cancelamentos das assinaturas de `LISTEN`, enquanto elas existirem. */
@@ -238,7 +264,12 @@ class WhatsAppEventBus extends EventEmitter {
 
     // "Digitando" já está inteiro no payload: ir ao banco buscar a conversa
     // custaria uma consulta por tecla do contato para não acrescentar nada.
-    if (payload.conversation || payload.message || payload.type === 'typing') {
+    if (
+      payload.conversation ||
+      payload.message ||
+      payload.type === 'typing' ||
+      payload.type === 'conversations_read'
+    ) {
       this.emitLocal('conversation', payload);
       return;
     }
@@ -364,6 +395,25 @@ class WhatsAppEventBus extends EventEmitter {
     postgresPubSub.publish(CHANNELS.CONVERSATIONS, thin(completo)).catch((err) => {
       console.warn('[WhatsAppEventBus] Falha ao publicar conversa no Postgres:', err);
     });
+  }
+
+  /**
+   * Anuncia uma leitura em lote de uma caixa, fatiada para caber no `NOTIFY`.
+   *
+   * O `conversationId` vai vazio: o evento não é de uma conversa só, e quem o
+   * consome lê `conversationIds`. A caixa, essa sim, é obrigatória — é por ela
+   * que a rota de SSE decide quem pode receber.
+   */
+  emitConversationsRead(accountId: string, inboxId: string, conversationIds: readonly string[]) {
+    for (let inicio = 0; inicio < conversationIds.length; inicio += CONVERSATIONS_READ_BATCH) {
+      this.emitConversation({
+        type: 'conversations_read',
+        accountId,
+        inboxId,
+        conversationId: '',
+        conversationIds: conversationIds.slice(inicio, inicio + CONVERSATIONS_READ_BATCH),
+      });
+    }
   }
 }
 

@@ -8,7 +8,12 @@ import type {
   Priority,
 } from '@/core/domain/conversation';
 import type { Channel } from '@/core/domain/channel';
-import { activityTimeOf, matchesScope, PRIORITY_WEIGHT } from '@/core/domain/conversation';
+import {
+  activityTimeOf,
+  MARK_READ_BATCH_LIMIT,
+  matchesScope,
+  PRIORITY_WEIGHT,
+} from '@/core/domain/conversation';
 import type { Label } from '@/core/domain/label';
 import type { Message, MessageReaction } from '@/core/domain/message';
 import { previewOfMessage } from '@/core/domain/message';
@@ -83,6 +88,17 @@ interface UseInboxParams {
     conversationId: string;
     inboxId: string;
   }) => Promise<{ ok: boolean; error?: string }>;
+  /**
+   * "Marcar todas como lidas". Cada item leva a contagem que a tela mostrava,
+   * e o servidor só zera até ela.
+   */
+  readonly markManyAsRead?: (input: {
+    conversations: readonly { conversationId: string; unreadCount: number }[];
+  }) => Promise<{
+    ok: boolean;
+    error?: string;
+    remaining?: readonly { conversationId: string; unreadCount: number }[];
+  }>;
   /** Conversa aberta ao carregar — vem da URL em /conversas/[id]. */
   readonly initialSelectedId?: string;
   readonly initialInboxId?: string;
@@ -138,6 +154,7 @@ export function useInbox({
   reactToMessage,
   changeStatus,
   markAsRead,
+  markManyAsRead,
   assign,
   changePriority,
   setAiPause,
@@ -298,6 +315,21 @@ export function useInbox({
     // do contato reordenar a caixa de entrada.
     if (payload.type === 'typing') {
       markTyping(payload.conversationId, payload.isTyping === true);
+      return;
+    }
+
+    // Leitura em lote — de outra pessoa, ou desta mesma em outra aba. Só os ids
+    // atravessam; a conversa inteira de cada uma não mudou em nada além disso.
+    if (payload.type === 'conversations_read') {
+      const lidas = new Set(payload.conversationIds ?? []);
+      if (lidas.size === 0) return;
+      setConversations((current) =>
+        current.some((c) => lidas.has(c.id) && c.unreadCount > 0)
+          ? current.map((c) =>
+              lidas.has(c.id) && c.unreadCount > 0 ? { ...c, unreadCount: 0 } : c,
+            )
+          : current,
+      );
       return;
     }
 
@@ -493,6 +525,98 @@ export function useInbox({
     }
     return mapa;
   }, [conversations]);
+
+  /** Não lidas da lista na tela — o alcance de "marcar todas como lidas". */
+  const visibleUnreadCount = useMemo(
+    () => visibleConversations.filter((conversation) => conversation.unreadCount > 0).length,
+    [visibleConversations],
+  );
+
+  const [markingAllRead, setMarkingAllRead] = useState(false);
+
+  /**
+   * "Marcar todas como lidas" sobre a lista que está na tela.
+   *
+   * Vale o recorte visível — caixa, aba, filtros e busca —, porque é isso que a
+   * pessoa está olhando quando clica. Otimista: zera na hora; se o servidor
+   * recusar, devolve a contagem somada ao que tiver chegado nesse meio-tempo.
+   *
+   * Devolve os ids que o servidor de fato zerou.
+   */
+  const markVisibleAsRead = useCallback(async (): Promise<readonly string[]> => {
+    if (!markManyAsRead) return [];
+    const vistas = visibleConversations
+      .filter((conversation) => conversation.unreadCount > 0)
+      .map((conversation) => ({
+        conversationId: conversation.id,
+        unreadCount: conversation.unreadCount,
+      }));
+    if (vistas.length === 0) return [];
+
+    const alvo = new Set(vistas.map((vista) => vista.conversationId));
+    setConversations((current) =>
+      current.map((conversation) =>
+        alvo.has(conversation.id) ? { ...conversation, unreadCount: 0 } : conversation,
+      ),
+    );
+    setMarkingAllRead(true);
+
+    const zeradas: string[] = [];
+    try {
+      for (let inicio = 0; inicio < vistas.length; inicio += MARK_READ_BATCH_LIMIT) {
+        const lote = vistas.slice(inicio, inicio + MARK_READ_BATCH_LIMIT);
+        const result = await markManyAsRead({ conversations: lote }).catch(() => ({
+          ok: false as const,
+          error: undefined,
+          remaining: undefined,
+        }));
+
+        if (!result.ok) {
+          // Este lote e os que nem chegaram a sair voltam a contar. Soma, e não
+          // substitui: o que chegou depois do clique já está na contagem atual.
+          const naoFeitas = new Map(
+            vistas.slice(inicio).map((vista) => [vista.conversationId, vista.unreadCount]),
+          );
+          setConversations((current) =>
+            current.map((conversation) => {
+              const antes = naoFeitas.get(conversation.id);
+              return antes
+                ? { ...conversation, unreadCount: conversation.unreadCount + antes }
+                : conversation;
+            }),
+          );
+          show({
+            tone: 'erro',
+            title: 'Não foi possível marcar como lidas',
+            description: result.error ?? 'Tente de novo em instantes.',
+          });
+          break;
+        }
+
+        // Receberam mensagem nova no caminho: o servidor não as zerou, e a
+        // contagem dele já inclui o que talvez ainda não tenha chegado aqui.
+        const restantes = new Map(
+          (result.remaining ?? []).map((item) => [item.conversationId, item.unreadCount]),
+        );
+        if (restantes.size > 0) {
+          setConversations((current) =>
+            current.map((conversation) => {
+              const atual = restantes.get(conversation.id);
+              return atual === undefined
+                ? conversation
+                : { ...conversation, unreadCount: Math.max(conversation.unreadCount, atual) };
+            }),
+          );
+        }
+        for (const vista of lote) {
+          if (!restantes.has(vista.conversationId)) zeradas.push(vista.conversationId);
+        }
+      }
+    } finally {
+      setMarkingAllRead(false);
+    }
+    return zeradas;
+  }, [markManyAsRead, visibleConversations, show]);
 
   // Abrir a conversa confirma a leitura e subscreve a presença no WhatsApp
   const readSignalled = useRef(new Set<string>());
@@ -944,6 +1068,9 @@ export function useInbox({
     selected,
     counts,
     unreadByInbox,
+    visibleUnreadCount,
+    markVisibleAsRead,
+    markingAllRead,
     scope,
     statusTab,
     sort,

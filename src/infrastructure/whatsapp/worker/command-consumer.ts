@@ -731,7 +731,15 @@ export class CommandConsumer {
       }
 
       case 'read': {
-        if (typeof payload['conversationId'] !== 'string') {
+        // Uma conversa (abrir no CRM) ou várias ("marcar todas como lidas").
+        const lote = payload['conversationIds'];
+        const conversationIds =
+          typeof payload['conversationId'] === 'string'
+            ? [payload['conversationId']]
+            : Array.isArray(lote) && lote.every((id) => typeof id === 'string')
+              ? (lote as string[])
+              : null;
+        if (!conversationIds?.length) {
           throw new Error('Comando de leitura sem identificação da conversa.');
         }
         // A confirmação de leitura é cortesia: sem sessão de pé, ela é
@@ -739,8 +747,11 @@ export class CommandConsumer {
         // da caixa por até trinta segundos a cada tentativa, atrasando envios
         // de verdade, e abrir uma conversa de caixa desconectada a religava.
         const session = this.sessionManager.get(inboxId);
-        if (!session?.isConnected) break;
-        await session.markAsRead(payload['conversationId']);
+        for (const conversationId of conversationIds) {
+          // Conferido a cada volta: a sessão pode cair no meio de um lote.
+          if (!session?.isConnected) break;
+          await session.markAsRead(conversationId);
+        }
         break;
       }
 

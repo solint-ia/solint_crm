@@ -6,6 +6,7 @@ import { z } from 'zod';
 import {
   CONVERSATION_ID_MAX_LENGTH,
   CONVERSATION_STATUSES,
+  MARK_READ_BATCH_LIMIT,
   PRIORITIES,
   currentProtocol,
   type Protocol,
@@ -646,6 +647,92 @@ export async function markConversationReadAction(input: unknown): Promise<Action
   }
 
   return { ok: true };
+}
+
+const markConversationsReadSchema = z.object({
+  conversations: z
+    .array(
+      z.object({
+        conversationId: z.string().min(1).max(CONVERSATION_ID_MAX_LENGTH),
+        /** A contagem que a tela mostrava: o limite do que pode ser zerado. */
+        unreadCount: z.number().int().min(1),
+      }),
+    )
+    .min(1)
+    .max(MARK_READ_BATCH_LIMIT),
+});
+
+export interface MarkConversationsReadResult extends ActionResult {
+  readonly marked?: number;
+  /** As que receberam mensagem nova no caminho e continuam não lidas. */
+  readonly remaining?: readonly { conversationId: string; unreadCount: number }[];
+}
+
+/**
+ * "Marcar todas como lidas", na lista de conversas.
+ *
+ * Faz de uma vez o que abrir cada conversa faria: zera o não-lido, apaga os
+ * avisos do sininho que apontam para ela e confirma a leitura no WhatsApp. O
+ * alcance é o que a pessoa enxerga — o recorte por caixa vai no `WHERE`, então
+ * um id de outra equipe enviado à mão simplesmente não casa linha nenhuma.
+ */
+export async function markConversationsReadAction(
+  input: unknown,
+): Promise<MarkConversationsReadResult> {
+  const parsed = markConversationsReadSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: 'Não foi possível marcar como lidas: dados inválidos.' };
+  }
+
+  const session = await container.session.getCurrentSession();
+  if (!can(session, 'conversas:ler')) {
+    return { ok: false, error: 'Você não tem permissão para ler conversas.' };
+  }
+
+  const { marked, remaining } = await container.conversations.markManyAsRead(
+    session.account.id,
+    parsed.data.conversations,
+    session.inboxAccess,
+  );
+  if (marked.length === 0) return { ok: true, marked: 0, remaining };
+
+  const porCaixa = new Map<string, { todas: string[]; whatsapp: string[] }>();
+  for (const row of marked) {
+    const caixa = porCaixa.get(row.inboxId) ?? { todas: [], whatsapp: [] };
+    caixa.todas.push(row.id);
+    if (row.channel === 'whatsapp') caixa.whatsapp.push(row.id);
+    porCaixa.set(row.inboxId, caixa);
+  }
+
+  // O anúncio sai logo depois da escrita, antes de qualquer outra ida ao banco:
+  // quanto menor a janela, menor a chance de ele chegar à tela de alguém depois
+  // de uma mensagem nova e apagar o não-lido dela.
+  for (const [inboxId, caixa] of porCaixa) {
+    waEventBus.emitConversationsRead(session.account.id, inboxId, caixa.todas);
+  }
+
+  await container.notifications.markConversationsAsRead(
+    session.account.id,
+    session.user.id,
+    marked.map((row) => row.id),
+  );
+
+  // A leitura no CRM já está gravada e anunciada. Uma falha ao confirmar no
+  // WhatsApp não pode virar erro na tela — a tela desfaria uma leitura que
+  // aconteceu.
+  const comWhatsApp = [...porCaixa].filter(([, caixa]) => caixa.whatsapp.length > 0);
+  if (comWhatsApp.length > 0) {
+    try {
+      const channel = await getWhatsAppChannel();
+      for (const [inboxId, caixa] of comWhatsApp) {
+        await channel.markReadMany(session.account.id, inboxId, caixa.whatsapp);
+      }
+    } catch (error) {
+      console.warn('[conversas] Falha ao confirmar leitura em lote no WhatsApp:', error);
+    }
+  }
+
+  return { ok: true, marked: marked.length, remaining };
 }
 
 /* ==========================================================================

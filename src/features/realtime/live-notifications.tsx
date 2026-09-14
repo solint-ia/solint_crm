@@ -42,6 +42,8 @@ interface LiveNotificationsApi {
   readonly markAllRead: () => void;
   /** Abrir a conversa apaga os avisos dela. */
   readonly markConversationRead: (conversationId: string) => void;
+  /** O mesmo, para as conversas marcadas como lidas de uma vez na lista. */
+  readonly markConversationsRead: (conversationIds: readonly string[]) => void;
   /**
    * Diz qual conversa está aberta na tela.
    *
@@ -232,13 +234,37 @@ export function LiveNotificationsProvider({
     });
   }, []);
 
+  const markConversationsRead = useCallback((conversationIds: readonly string[]) => {
+    const alvos = new Set(conversationIds.map((id) => `/conversas/${id}`));
+    setItems((current) => {
+      if (!current.some((item) => !item.read && item.href && alvos.has(item.href))) return current;
+      return current.map((item) =>
+        item.href && alvos.has(item.href) ? { ...item, read: true } : item,
+      );
+    });
+  }, []);
+
   const setActiveConversation = useCallback((conversationId: string | undefined) => {
     conversaAberta.current = conversationId;
   }, []);
 
   const api = useMemo<LiveNotificationsApi>(
-    () => ({ items, markRead, markAllRead, markConversationRead, setActiveConversation }),
-    [items, markRead, markAllRead, markConversationRead, setActiveConversation],
+    () => ({
+      items,
+      markRead,
+      markAllRead,
+      markConversationRead,
+      markConversationsRead,
+      setActiveConversation,
+    }),
+    [
+      items,
+      markRead,
+      markAllRead,
+      markConversationRead,
+      markConversationsRead,
+      setActiveConversation,
+    ],
   );
 
   return (
@@ -257,6 +283,7 @@ const VAZIO: LiveNotificationsApi = {
   markRead: () => undefined,
   markAllRead: () => undefined,
   markConversationRead: () => undefined,
+  markConversationsRead: () => undefined,
   setActiveConversation: () => undefined,
 };
 

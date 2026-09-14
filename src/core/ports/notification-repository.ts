@@ -13,4 +13,6 @@ export interface NotificationRepository {
    * deixá-lo aceso obriga a pessoa a repetir na mão o que ela acabou de fazer.
    */
   markConversationAsRead(accountId: Id, userId: Id, conversationId: Id): Promise<void>;
+  /** O mesmo, para as conversas marcadas como lidas de uma vez na lista. */
+  markConversationsAsRead(accountId: Id, userId: Id, conversationIds: readonly Id[]): Promise<void>;
 }

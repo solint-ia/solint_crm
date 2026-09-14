@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ArrowLeft, MessageSquare, Search, X } from 'lucide-react';
+import { ArrowLeft, CheckCheck, Loader2, MessageSquare, Search, X } from 'lucide-react';
 import type {
   Conversation,
   ConversationStatus,
@@ -65,6 +65,13 @@ interface InboxWorkspaceProps {
     status: ConversationStatus;
   }) => Promise<{ ok: boolean; error?: string }>;
   readonly markAsRead: (input: { conversationId: string }) => Promise<{ ok: boolean }>;
+  readonly markManyAsRead: (input: {
+    conversations: readonly { conversationId: string; unreadCount: number }[];
+  }) => Promise<{
+    ok: boolean;
+    error?: string;
+    remaining?: readonly { conversationId: string; unreadCount: number }[];
+  }>;
   readonly assign: (input: {
     conversationId: string;
     assigneeId: string | null;
@@ -157,6 +164,7 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
     reactToMessage: props.reactToMessage,
     changeStatus: props.changeStatus,
     markAsRead: props.markAsRead,
+    markManyAsRead: props.markManyAsRead,
     assign: props.assign,
     changePriority: props.changePriority,
     setAiPause: props.setAiPause,
@@ -198,7 +206,8 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
    * `setActiveConversation` faz o outro lado do mesmo trabalho: enquanto esta
    * conversa está na tela, mensagem nova dela não vira aviso nenhum.
    */
-  const { markConversationRead, setActiveConversation } = useLiveNotifications();
+  const { markConversationRead, markConversationsRead, setActiveConversation } =
+    useLiveNotifications();
   const conversaAbertaId = inbox.selected?.id;
 
   useEffect(() => {
@@ -215,6 +224,30 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
   const filterCount = activeFilterCount(inbox.filters);
   const hasNarrowing =
     filterCount > 0 || inbox.search.trim().length > 0 || inbox.statusTab !== 'todas';
+
+  /**
+   * Confirmação do "marcar todas como lidas", presa ao recorte em que foi pedida.
+   *
+   * Um "sim" guardado sozinho continuaria valendo depois de a pessoa trocar de
+   * caixa, aba ou filtro — e o clique seguinte marcaria outra lista, que ela não
+   * confirmou. Comparando o recorte, mexer em qualquer um desfaz o pedido.
+   */
+  const recorteDaLista = JSON.stringify([
+    caixaAtual,
+    inbox.scope,
+    inbox.statusTab,
+    inbox.search,
+    inbox.filters,
+  ]);
+  const [confirmandoLeituraEm, setConfirmandoLeituraEm] = useState<string>();
+  const confirmandoLeitura = confirmandoLeituraEm === recorteDaLista;
+  const naoLidasNaLista = inbox.visibleUnreadCount;
+
+  const marcarListaComoLida = async () => {
+    setConfirmandoLeituraEm(undefined);
+    const zeradas = await inbox.markVisibleAsRead();
+    if (zeradas.length > 0) markConversationsRead(zeradas);
+  };
 
   if (semCanais) {
     return <InboxDisconnectedState />;
@@ -349,6 +382,61 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
               );
             })}
           </div>
+
+          {/* Linha 4: Marcar como lidas as não lidas desta lista */}
+          {naoLidasNaLista > 0 && (
+            <div className="flex min-h-8 items-center justify-between gap-2 rounded-xl border border-line-soft bg-surface px-2.5 py-1">
+              {confirmandoLeitura ? (
+                <>
+                  <span className="min-w-0 truncate text-[11px] font-semibold text-ink">
+                    Marcar {naoLidasNaLista} conversas como lidas?
+                  </span>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmandoLeituraEm(undefined)}
+                      className="rounded-lg px-2 py-1 text-[11px] font-semibold text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void marcarListaComoLida()}
+                      className="rounded-lg bg-brand px-2 py-1 text-[11px] font-semibold text-white shadow-xs transition-colors hover:bg-brand/90"
+                    >
+                      Confirmar
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <span className="min-w-0 truncate text-[11px] text-muted">
+                    {naoLidasNaLista === 1 ? '1 não lida' : `${naoLidasNaLista} não lidas`}
+                    {hasNarrowing ? ' neste filtro' : ''}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={inbox.markingAllRead}
+                    // Uma só não precisa de confirmação: é o mesmo que abri-la.
+                    onClick={() =>
+                      naoLidasNaLista === 1
+                        ? void marcarListaComoLida()
+                        : setConfirmandoLeituraEm(recorteDaLista)
+                    }
+                    title="Marca como lidas as conversas desta lista. No WhatsApp, a leitura é confirmada como se cada uma tivesse sido aberta."
+                    className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold text-brand transition-colors hover:bg-brand/10 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {inbox.markingAllRead ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <CheckCheck className="size-3.5" />
+                    )}
+                    {naoLidasNaLista === 1 ? 'Marcar como lida' : 'Marcar todas como lidas'}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Lista Rolável de Conversas */}
