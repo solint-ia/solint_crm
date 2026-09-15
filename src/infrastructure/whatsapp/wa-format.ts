@@ -74,6 +74,43 @@ export const nomeUtilizavel = (nome: string | null | undefined): string | undefi
   return limpo;
 };
 
+/** O nome provisório de `fallbackPersonName` para quem não tem telefone conhecido. */
+const NOME_PROVISORIO = /^Contato \d{1,6}$/;
+
+/**
+ * Qual nome o contato de uma conversa individual deve ter.
+ *
+ * A ordem é a do próprio WhatsApp: o nome que o dono do número salvou na agenda
+ * vence o que a pessoa escolheu para si. Antes o nome do perfil vinha primeiro,
+ * e como ele chega em toda mensagem recebida, o nome da conversa alternava:
+ * "João Oficina" depois de sincronizar a agenda, "João Silva" na mensagem
+ * seguinte dele.
+ *
+ * O cadastro fica no meio de propósito. Um nome já gravado (por um atendente,
+ * por uma sincronização antiga, pela primeira mensagem) não é trocado pelo nome
+ * do perfil: só a agenda tem autoridade para substituí-lo. O perfil preenche
+ * apenas quem ainda não tem nome, ou tem o número ou o nome provisório no lugar.
+ */
+export const nomeDoContato = (fontes: {
+  /** Nome salvo na agenda do celular pareado. */
+  readonly agenda?: string | null;
+  /** Nome que o contato já tem no CRM. */
+  readonly cadastro?: string | null;
+  /** Nome que a pessoa publica no WhatsApp. Ausente em mensagem enviada por nós. */
+  readonly perfil?: string | null;
+  /** Último recurso: telefone formatado ou nome provisório. */
+  readonly reserva: string;
+}): string => {
+  const cadastro = nomeUtilizavel(fontes.cadastro);
+  const cadastroReal =
+    cadastro && cadastro !== fontes.reserva && !NOME_PROVISORIO.test(cadastro)
+      ? cadastro
+      : undefined;
+  return (
+    nomeUtilizavel(fontes.agenda) ?? cadastroReal ?? nomeUtilizavel(fontes.perfil) ?? fontes.reserva
+  );
+};
+
 export const GROUP_METADATA_TTL_MS = 10 * 60 * 1000;
 export const AVATAR_TTL_MS = 60 * 60 * 1000;
 export const MAX_TRACKED_SENT_IDS = 500;

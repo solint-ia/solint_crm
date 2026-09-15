@@ -82,6 +82,7 @@ import {
   inboxStatusFrom,
   MAX_INLINE_MEDIA_BYTES,
   MAX_TRACKED_SENT_IDS,
+  nomeDoContato,
   nomeUtilizavel,
   timeLabel,
   toneFor,
@@ -2805,12 +2806,13 @@ export class WhatsAppSession {
       };
     }
 
-    const inboundName = fromMe
-      ? undefined
-      : (nomeUtilizavel(msg.pushName) ?? nomeUtilizavel(msg.verifiedBizName));
-    const storedName = nomeUtilizavel(this.contactsStore.get(jidNormalizedUser(chat.jid))?.name);
-    const name =
-      inboundName || storedName || existing?.name || fallbackPersonName(chat.phone, chat.jid);
+    // Agenda, depois cadastro, depois perfil: ver `nomeDoContato`.
+    const name = nomeDoContato({
+      agenda: this.contactsStore.get(jidNormalizedUser(chat.jid))?.name,
+      cadastro: existing?.name,
+      perfil: fromMe ? undefined : (nomeUtilizavel(msg.pushName) ?? msg.verifiedBizName),
+      reserva: fallbackPersonName(chat.phone, chat.jid),
+    });
 
     return {
       ...base,

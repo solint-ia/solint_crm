@@ -67,6 +67,7 @@ import {
   inboxStatusFrom,
   MAX_INLINE_MEDIA_BYTES,
   MAX_TRACKED_SENT_IDS,
+  nomeDoContato,
   timeLabel,
   toneFor,
 } from './wa-format';
@@ -1185,10 +1186,13 @@ export class WhatsAppService {
       };
     }
 
-    const inboundName = fromMe ? undefined : msg.pushName?.trim() || msg.verifiedBizName?.trim();
-    const storedName = this.contactsStore.get(jidNormalizedUser(chat.jid))?.name?.trim();
-    const name =
-      inboundName || storedName || existing?.name || fallbackPersonName(chat.phone, chat.jid);
+    // Mesma ordem do motor worker: agenda, depois cadastro, depois perfil.
+    const name = nomeDoContato({
+      agenda: this.contactsStore.get(jidNormalizedUser(chat.jid))?.name,
+      cadastro: existing?.name,
+      perfil: fromMe ? undefined : msg.pushName?.trim() || msg.verifiedBizName?.trim(),
+      reserva: fallbackPersonName(chat.phone, chat.jid),
+    });
 
     return {
       ...base,
