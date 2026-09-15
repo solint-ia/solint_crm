@@ -38,7 +38,16 @@ export async function GET(_request: Request, props: { params: Promise<{ inboxId:
 
   const inbox = await prisma.inbox.findFirst({
     where: { id: inboxId, accountId: session.account.id },
-    select: { id: true },
+    select: {
+      id: true,
+      waConnection: {
+        select: {
+          credsCipher: true,
+          historyImportStatus: true,
+          historyImportStats: true,
+        },
+      },
+    },
   });
   if (!inbox) {
     return NextResponse.json(
@@ -58,7 +67,13 @@ export async function GET(_request: Request, props: { params: Promise<{ inboxId:
     engine: channel.engine,
     // O QR vira imagem só aqui, na borda — ver `qr-image.ts`.
     status: visible
-      ? { ...status, qr: await qrImage(status.qr) }
+      ? {
+          ...status,
+          qr: await qrImage(status.qr),
+          paired: Boolean(inbox.waConnection?.credsCipher),
+          historyImportEnabled:
+            process.env.WA_HISTORY_IMPORT === '1' && channel.engine === 'worker',
+        }
       : { ...status, qr: undefined, pairingCode: undefined },
   });
 }

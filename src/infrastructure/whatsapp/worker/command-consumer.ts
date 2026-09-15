@@ -103,6 +103,8 @@ export class CommandConsumer {
    * outro comando já emendou no intervalo.
    */
   private readonly lanes = new Map<string, Promise<void>>();
+  /** Downloads históricos são paralelos à raia de envio, mas nunca passam de dois. */
+  private mediaFetches = 0;
 
   /**
    * Comandos já entregues a uma raia.
@@ -177,7 +179,23 @@ export class CommandConsumer {
 
     for (const cmd of commands) {
       if (this.inFlight.has(cmd.id)) continue;
+      if (cmd.kind === 'media_fetch' && this.mediaFetches >= 2) continue;
       this.inFlight.add(cmd.id);
+
+      if (cmd.kind === 'media_fetch') {
+        this.mediaFetches += 1;
+        void this.runCommand(cmd)
+          .catch(() => undefined)
+          .finally(() => {
+            this.mediaFetches -= 1;
+            this.inFlight.delete(cmd.id);
+            if (this.isRunning) void this.dispatchPending();
+          });
+        setImmediate(() => {
+          if (this.isRunning) void this.dispatchPending();
+        });
+        continue;
+      }
 
       const chave = cmd.inboxId;
       const anterior = this.lanes.get(chave) ?? Promise.resolve();
@@ -230,6 +248,7 @@ export class CommandConsumer {
             inboxId: cmd.inboxId,
             status: 'processing',
             leaseUntil: { gt: now },
+            kind: { not: 'media_fetch' },
           },
           select: { id: true },
         }),
@@ -595,6 +614,26 @@ export class CommandConsumer {
         // Desconectar é desvincular: `stop()` só fecharia o socket, e as
         // credenciais que ficassem religariam a caixa no próximo boot.
         await this.sessionManager.disconnect(inboxId);
+        break;
+      }
+
+      case 'media_fetch': {
+        const messageId = payload['messageId'];
+        if (typeof messageId !== 'string' || !messageId) {
+          throw new Error('Comando de mídia pendente sem messageId.');
+        }
+        const session = await this.sessaoPronta(inboxId);
+        await session.materializePendingMedia(messageId);
+        break;
+      }
+
+      case 'history_fetch': {
+        const conversationId = payload['conversationId'];
+        if (typeof conversationId !== 'string' || !conversationId) {
+          throw new Error('Comando de histórico sem conversationId.');
+        }
+        const session = await this.sessaoPronta(inboxId);
+        await session.fetchEarlierHistory(conversationId);
         break;
       }
 

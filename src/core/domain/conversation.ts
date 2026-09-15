@@ -133,6 +133,8 @@ export interface Conversation {
    * enderecado por LID quebraria.
    */
   readonly channelThreadId?: string;
+  /** A conversa nasceu da importação silenciosa do histórico do WhatsApp. */
+  readonly importedAt?: IsoDateTime;
   /**
    * Quando a pausa vence sozinha. Ausente na pausa que não vence.
    *

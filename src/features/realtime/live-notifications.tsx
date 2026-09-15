@@ -137,7 +137,13 @@ export function LiveNotificationsProvider({
 
   useConversationEvents((payload) => {
     // "Digitando" e recibo de entrega não são novidade para ninguém.
-    if (payload.type === 'typing' || payload.type === 'message_updated') return;
+    if (
+      payload.type === 'typing' ||
+      payload.type === 'message_updated' ||
+      payload.type === 'conversations_imported' ||
+      payload.type === 'history_fetch_status'
+    )
+      return;
 
     /**
      * Aviso gravado pelo servidor: atribuição, menção, prazo estourando.

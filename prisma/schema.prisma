@@ -107,6 +107,7 @@ model Account {
   tasks                Task[]
   mediaObjects         MediaObject[]
   mediaBlobs           MediaBlob[]
+  pendingMedia         PendingMedia[]
   scheduledMessages    ScheduledMessage[]
   contactImportBatches ContactImportBatch[]
   webhookDeliveries    WebhookDelivery[]
@@ -435,6 +436,8 @@ model Conversation {
   channelOffline     Boolean?
   /// JID do WhatsApp. É o destino canônico de envio.
   channelThreadId    String?
+  /// Criada pela importação silenciosa do histórico. Nunca é limpa.
+  importedAt         DateTime?
 
   /// Ate quando o agente de IA fica fora desta conversa. Vazio = agente ativo.
   ///
@@ -465,6 +468,7 @@ model Conversation {
   @@index([accountId, lastActivityAt])
   /// O painel recorta por janela de tempo, sempre a partir da criação.
   @@index([accountId, createdAt])
+  @@index([accountId, importedAt])
   /// A varredura da mensagem de espera procura por conversa parada em aberto.
   @@index([status, lastInboundAt])
   @@index([contactId])
@@ -526,7 +530,8 @@ model Message {
   /// Último erro operacional do despacho. O status continua próprio para filtro/UI.
   dispatchError  String?
 
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversation Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  pendingMedia PendingMedia?
 
   /// Deduplicacao por construcao, e nao por sorte de agendamento.
   ///
@@ -765,6 +770,7 @@ model Inbox {
   waConnection      WhatsAppConnection?
   campaigns         Campaign[]
   mediaObjects      MediaObject[]
+  pendingMedia      PendingMedia[]
   teamInboxes       TeamInbox[]
   pipelines         Pipeline[]
   whatsappCommands  WhatsAppCommand[]
@@ -803,6 +809,16 @@ model WhatsAppConnection {
   /// trava temporal contra cliques repetidos que forçariam novos app-state syncs.
   lastContactsSyncAt DateTime?
 
+  /// Janela solicitada no último pareamento. Nulo ou zero não importa.
+  historyImportDays      Int?
+  historyImportCutoff    DateTime?
+  historyImportStatus    String?
+  historyImportStartedAt DateTime?
+  historyImportEndedAt   DateTime?
+  historyImportStats     Json?
+  /// Dono do histórico. Não é apagado no logout.
+  historyOwnerPhoneJid   String?
+
   /// `creds.json` do Baileys, cifrado com AES-256-GCM.
   credsCipher Bytes?
   credsIv     Bytes?
@@ -820,6 +836,30 @@ model WhatsAppConnection {
 
   inbox Inbox         @relation(fields: [inboxId], references: [id], onDelete: Cascade)
   keys  WhatsAppKey[]
+}
+
+/// Referência cifrada para materializar mídia histórica somente quando solicitada.
+model PendingMedia {
+  messageId String   @id
+  accountId String
+  inboxId   String
+  kind      String
+  mimeType  String
+  sizeBytes Int
+  cipher    Bytes
+  iv        Bytes
+  tag       Bytes
+  keyId     String?
+  status    String   @default("pendente")
+  attempts  Int      @default(0)
+  lastError String?
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  inbox   Inbox   @relation(fields: [inboxId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, inboxId, status])
 }
 
 /// Material criptográfico de sessão. Milhares de linhas pequenas por conexão,

@@ -1,5 +1,6 @@
 import { CHANNELS, postgresPubSub } from '../db/postgres-pubsub';
 import { prisma } from '../db/prisma';
+import { Prisma } from '@/generated/prisma';
 import type {
   DispatchContext,
   DispatchMedia,
@@ -190,6 +191,29 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
       owner: conn?.pairedByUserId
         ? { userId: conn.pairedByUserId, userName: conn.profileName ?? 'WhatsApp', accountId }
         : undefined,
+      paired: Boolean(conn?.credsCipher),
+      historyImportEnabled: process.env.WA_HISTORY_IMPORT === '1',
+      ...(conn?.historyImportStatus
+        ? {
+            historyImport: {
+              status: conn.historyImportStatus as NonNullable<
+                WhatsAppStatusPayload['historyImport']
+              >['status'],
+              progresso:
+                Number((conn.historyImportStats as Record<string, unknown> | null)?.progresso) || 0,
+              mensagens:
+                Number((conn.historyImportStats as Record<string, unknown> | null)?.mensagens) || 0,
+              conversas:
+                Number(
+                  (conn.historyImportStats as Record<string, unknown> | null)?.conversasCriadas,
+                ) +
+                  Number(
+                    (conn.historyImportStats as Record<string, unknown> | null)
+                      ?.conversasAtualizadas,
+                  ) || 0,
+            },
+          }
+        : {}),
       updatedAt,
     };
   }
@@ -218,6 +242,8 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
         lockExpiresAt: true,
         phoneJid: true,
         profileName: true,
+        historyImportStatus: true,
+        historyImportStats: true,
       },
     });
 
@@ -245,6 +271,7 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
 
     const pairingMethod = options.method ?? 'qr';
     const phoneNumber = pairingMethod === 'phone' ? options.phoneNumber : undefined;
+    const historyDays = options.historyDays ?? 0;
 
     const queued = await prisma.$transaction(async (tx) => {
       // Serializa tentativas de abas/processos diferentes para que um segundo
@@ -270,10 +297,12 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
         const anterior = (pending.payload ?? {}) as {
           pairingMethod?: string;
           phoneNumber?: string;
+          historyDays?: number;
         };
         const mesmoPedido =
           (anterior.pairingMethod ?? 'qr') === pairingMethod &&
-          (anterior.phoneNumber ?? undefined) === phoneNumber;
+          (anterior.phoneNumber ?? undefined) === phoneNumber &&
+          (anterior.historyDays ?? 0) === historyDays;
         if (mesmoPedido) return { command: { id: pending.id }, created: false };
         if (pending.status === 'pending') {
           await tx.whatsAppCommand.updateMany({
@@ -285,9 +314,35 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
 
       // O clique em "Conectar" é o único caminho que liga a intenção de volta:
       // é ele que diz que a caixa deve ficar de pé. Ver `autoConnect`.
+      const historyRequest =
+        !connection?.credsCipher && historyDays > 0
+          ? {
+              historyImportDays: historyDays,
+              historyImportCutoff: new Date(Date.now() - historyDays * 86_400_000),
+              historyImportStatus: 'aguardando',
+              historyImportStats: Prisma.DbNull,
+              historyImportStartedAt: null,
+              historyImportEndedAt: null,
+            }
+          : !connection?.credsCipher && historyDays === 0
+            ? {
+                historyImportDays: null,
+                historyImportCutoff: null,
+                historyImportStatus: null,
+                historyImportStats: Prisma.DbNull,
+                historyImportStartedAt: null,
+                historyImportEndedAt: null,
+              }
+            : {};
       await tx.whatsAppConnection.upsert({
         where: { inboxId },
-        create: { inboxId, status: 'conectando', pairedByUserId: owner.userId, autoConnect: true },
+        create: {
+          inboxId,
+          status: 'conectando',
+          pairedByUserId: owner.userId,
+          autoConnect: true,
+          ...historyRequest,
+        },
         update: {
           status: 'conectando',
           pairedByUserId: owner.userId,
@@ -295,6 +350,7 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
           qrPayload: null,
           pairingCode: null,
           autoConnect: true,
+          ...historyRequest,
         },
       });
       const command = await tx.whatsAppCommand.create({
@@ -305,6 +361,7 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
           payload: {
             ...owner,
             pairingMethod,
+            historyDays,
             ...(phoneNumber ? { phoneNumber } : {}),
           },
         },

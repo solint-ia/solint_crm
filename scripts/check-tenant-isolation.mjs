@@ -52,6 +52,8 @@ const SCOPED = new Set([
   'invite',
   'task',
   'mediaObject',
+  'mediaBlob',
+  'pendingMedia',
   'scheduledMessage',
   'contactImportBatch',
 ]);

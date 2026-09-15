@@ -9,7 +9,9 @@ import {
   setConversationAiPauseAction,
   changeConversationStatusAction,
   deleteMessageAction,
+  fetchEarlierWhatsAppHistoryAction,
   listScheduledMessagesAction,
+  listMessagesBeforeAction,
   markConversationReadAction,
   markConversationsReadAction,
   moveConversationToInboxAction,
@@ -88,6 +90,10 @@ export async function InboxData({
       reactToMessage={reactToMessageAction}
       scheduleMessage={scheduleMessageAction}
       listScheduledMessages={listScheduledMessagesAction}
+      listMessagesBefore={listMessagesBeforeAction}
+      {...(process.env.WA_HISTORY_ON_DEMAND === '1'
+        ? { fetchEarlierWhatsAppHistory: fetchEarlierWhatsAppHistoryAction }
+        : {})}
       cancelScheduledMessage={cancelScheduledMessageAction}
       changeStatus={changeConversationStatusAction}
       markAsRead={markConversationReadAction}

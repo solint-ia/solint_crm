@@ -248,6 +248,7 @@ export const conversationRow = (row: ConversationWithRelations): Conversation =>
   ...(row.assigneeId ? { assigneeId: row.assigneeId } : {}),
   ...(row.assigneeName ? { assigneeName: row.assigneeName } : {}),
   ...(row.lastActivityAt ? { lastActivityAt: row.lastActivityAt.toISOString() } : {}),
+  ...(row.importedAt ? { importedAt: row.importedAt.toISOString() } : {}),
   ...(row.slaDeadlineAt ? { slaDeadlineAt: row.slaDeadlineAt } : {}),
   ...(row.slaLabel ? { slaLabel: row.slaLabel } : {}),
   ...(row.slaBreached === null ? {} : { slaBreached: row.slaBreached }),

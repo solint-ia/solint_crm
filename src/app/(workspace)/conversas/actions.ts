@@ -24,6 +24,7 @@ import { can, canSeeInbox, withSignature, type Session } from '@/core/domain/use
 import { canSendFreeText, MAX_MESSAGE_LENGTH } from '@/core/use-cases/send-message';
 import { container } from '@/infrastructure/container';
 import { prisma, readJson } from '@/infrastructure/db/prisma';
+import { CHANNELS, postgresPubSub } from '@/infrastructure/db/postgres-pubsub';
 import { dispararAutomacoes } from '@/infrastructure/automations/dispatch';
 import type { DispatchResult } from '@/infrastructure/whatsapp/channel';
 import { getWhatsAppChannel } from '@/infrastructure/whatsapp/channel-provider';
@@ -42,6 +43,87 @@ import type { ClosingResult } from '@/infrastructure/whatsapp/inbox-auto-message
 export interface ActionResult {
   readonly ok: boolean;
   readonly error?: string;
+}
+
+export interface OlderMessagesResult extends ActionResult {
+  readonly items?: readonly Message[];
+  readonly hasMore?: boolean;
+}
+
+export async function listMessagesBeforeAction(input: {
+  conversationId: string;
+  cursor: { createdAt: string; id: string };
+}): Promise<OlderMessagesResult> {
+  const session = await container.session.getCurrentSession();
+  if (!can(session, 'conversas:ler')) return { ok: false, error: 'Sem permissão.' };
+  const items = await container.conversations.listMessagesBefore(
+    session.account.id,
+    input.conversationId,
+    input.cursor,
+    100,
+    session.inboxAccess,
+  );
+  return { ok: true, items, hasMore: items.length === 100 };
+}
+
+export async function fetchEarlierWhatsAppHistoryAction(input: {
+  conversationId: string;
+}): Promise<ActionResult> {
+  if (process.env.WA_HISTORY_ON_DEMAND !== '1') {
+    return { ok: false, error: 'Busca no celular está desabilitada.' };
+  }
+  const session = await container.session.getCurrentSession();
+  if (!can(session, 'conversas:ler')) return { ok: false, error: 'Sem permissão.' };
+  const conversation = await prisma.conversation.findFirst({
+    where: { id: input.conversationId, accountId: session.account.id },
+    select: { inboxId: true },
+  });
+  if (!conversation || !canSeeInbox(session, conversation.inboxId)) {
+    return { ok: false, error: 'Conversa não encontrada.' };
+  }
+
+  const now = new Date();
+  const [recentConversation, recentInbox] = await Promise.all([
+    prisma.whatsAppCommand.count({
+      where: {
+        inboxId: conversation.inboxId,
+        kind: 'history_fetch',
+        createdAt: { gte: new Date(now.getTime() - 30_000) },
+        payload: { path: ['conversationId'], equals: input.conversationId },
+      },
+    }),
+    prisma.whatsAppCommand.count({
+      where: {
+        inboxId: conversation.inboxId,
+        kind: 'history_fetch',
+        createdAt: { gte: new Date(now.getTime() - 10 * 60_000) },
+      },
+    }),
+  ]);
+  if (recentConversation > 0) {
+    return { ok: false, error: 'Aguarde 30 segundos antes de tentar novamente nesta conversa.' };
+  }
+  if (recentInbox >= 10) {
+    return {
+      ok: false,
+      error: 'Limite temporário da caixa atingido. Tente novamente mais tarde.',
+    };
+  }
+
+  const command = await prisma.whatsAppCommand.create({
+    data: {
+      inboxId: conversation.inboxId,
+      kind: 'history_fetch',
+      payload: { accountId: session.account.id, conversationId: input.conversationId },
+    },
+    select: { id: true },
+  });
+  await postgresPubSub.publish(CHANNELS.COMMANDS, {
+    id: command.id,
+    inboxId: conversation.inboxId,
+    kind: 'history_fetch',
+  });
+  return { ok: true };
 }
 
 /**

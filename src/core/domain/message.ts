@@ -7,7 +7,7 @@ export type MessageAuthorKind = 'contact' | 'agent' | 'ai' | 'system';
  * `crm` = digitada nesta plataforma; `canal` = enviada direto pelo celular/app do canal.
  * Distinguir os dois evita atribuir ao agente logado algo que ele não escreveu.
  */
-export type MessageOrigin = 'crm' | 'canal';
+export type MessageOrigin = 'crm' | 'canal' | 'historico';
 
 export type DeliveryStatus = 'enviando' | 'enviado' | 'entregue' | 'lido' | 'falha';
 
@@ -40,6 +40,18 @@ export type MessageContent =
       readonly fileName: string;
       readonly size: string;
       readonly url?: string;
+    }
+  | {
+      readonly type: 'pending_media';
+      readonly kind: 'image' | 'video' | 'audio' | 'document' | 'sticker';
+      readonly mimeType: string;
+      readonly sizeBytes: number;
+      readonly caption?: string;
+      readonly fileName?: string;
+      readonly duration?: string;
+      /** Miniatura JPEG do WhatsApp, limitada a 6 KB na importação. */
+      readonly thumb?: string;
+      readonly unavailable?: boolean;
     }
   | { readonly type: 'template'; readonly templateName: string; readonly text: string }
   | { readonly type: 'system'; readonly text: string };
@@ -199,5 +211,7 @@ export const previewOfMessage = (message: Message): string => {
       return '🩹 Figurinha';
     case 'document':
       return `📎 ${content.fileName}`;
+    case 'pending_media':
+      return content.caption || (content.unavailable ? 'Mídia indisponível' : 'Mídia pendente');
   }
 };

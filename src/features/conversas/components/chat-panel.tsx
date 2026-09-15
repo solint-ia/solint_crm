@@ -100,6 +100,18 @@ interface ChatPanelProps {
     scheduledFor: string;
   }) => Promise<ScheduledResult>;
   readonly listScheduledMessages?: (input: { conversationId: string }) => Promise<ScheduledResult>;
+  readonly listMessagesBefore?: (input: {
+    conversationId: string;
+    cursor: { createdAt: string; id: string };
+  }) => Promise<{
+    ok: boolean;
+    error?: string;
+    items?: readonly Message[];
+    hasMore?: boolean;
+  }>;
+  readonly fetchEarlierWhatsAppHistory?: (input: {
+    conversationId: string;
+  }) => Promise<{ ok: boolean; error?: string }>;
   readonly cancelScheduledMessage?: (input: {
     conversationId: string;
     scheduledMessageId: string;
@@ -133,6 +145,8 @@ export function ChatPanel({
   onReactToMessage,
   scheduleMessage,
   listScheduledMessages,
+  listMessagesBefore,
+  fetchEarlierWhatsAppHistory,
   cancelScheduledMessage,
   onSendMedia,
   onTyping,
@@ -157,6 +171,13 @@ export function ChatPanel({
   const [agendadas, setAgendadas] = useState<readonly ScheduledMessage[]>([]);
   const [agendaErro, setAgendaErro] = useState<string | undefined>();
   const [fotoAberta, setFotoAberta] = useState(false);
+  const [olderMessages, setOlderMessages] = useState<readonly Message[]>([]);
+  const [hasOlderMessages, setHasOlderMessages] = useState(
+    conversation.timeline.filter((item) => item.kind === 'message').length >= 200,
+  );
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [fetchingPhoneHistory, setFetchingPhoneHistory] = useState(false);
+  const [phoneHistoryError, setPhoneHistoryError] = useState<string>();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const prevConversationIdRef = useRef<string | null>(null);
@@ -228,7 +249,63 @@ export function ChatPanel({
   useEffect(() => {
     setReplyTo(undefined);
     setPendingDelete(undefined);
+    setOlderMessages([]);
+    setHasOlderMessages(
+      conversation.timeline.filter((item) => item.kind === 'message').length >= 200,
+    );
+    setFetchingPhoneHistory(false);
+    setPhoneHistoryError(undefined);
+    // A timeline muda com mensagens ao vivo; este reset pertence apenas à troca de conversa.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversation.id]);
+
+  useConversationEvents((payload) => {
+    if (payload.type !== 'history_fetch_status' || payload.conversationId !== conversation.id)
+      return;
+    setFetchingPhoneHistory(false);
+    setPhoneHistoryError(payload.operationStatus === 'failed' ? payload.error : undefined);
+  });
+
+  const fetchFromPhone = useCallback(async () => {
+    if (!fetchEarlierWhatsAppHistory || fetchingPhoneHistory) return;
+    setFetchingPhoneHistory(true);
+    setPhoneHistoryError(undefined);
+    const result = await fetchEarlierWhatsAppHistory({ conversationId: conversation.id });
+    if (!result.ok) {
+      setFetchingPhoneHistory(false);
+      setPhoneHistoryError(result.error ?? 'Não foi possível solicitar o histórico.');
+    }
+  }, [conversation.id, fetchEarlierWhatsAppHistory, fetchingPhoneHistory]);
+
+  const loadOlder = useCallback(async () => {
+    if (!listMessagesBefore || loadingOlder) return;
+    const current = messagesContainerRef.current;
+    const beforeHeight = current?.scrollHeight ?? 0;
+    const firstLoaded =
+      olderMessages[0] ?? conversation.timeline.find((item) => item.kind === 'message')?.message;
+    if (!firstLoaded?.createdAt) {
+      setHasOlderMessages(false);
+      return;
+    }
+    setLoadingOlder(true);
+    try {
+      const result = await listMessagesBefore({
+        conversationId: conversation.id,
+        cursor: { createdAt: firstLoaded.createdAt, id: firstLoaded.id },
+      });
+      if (!result.ok || !result.items) return;
+      setOlderMessages((existing) => [
+        ...result.items!.filter((message) => !existing.some((item) => item.id === message.id)),
+        ...existing,
+      ]);
+      setHasOlderMessages(result.hasMore === true);
+      requestAnimationFrame(() => {
+        if (current) current.scrollTop += current.scrollHeight - beforeHeight;
+      });
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [conversation.id, conversation.timeline, listMessagesBefore, loadingOlder, olderMessages]);
 
   /**
    * Os agendamentos desta conversa.
@@ -590,6 +667,49 @@ export function ChatPanel({
         ref={messagesContainerRef}
         className="flex flex-1 flex-col gap-3 overflow-y-auto p-4 sm:p-6"
       >
+        {hasOlderMessages ? (
+          <button
+            type="button"
+            onClick={() => void loadOlder()}
+            disabled={loadingOlder}
+            className="mx-auto rounded-full border border-line bg-surface px-3 py-1 text-meta font-semibold text-muted hover:text-ink disabled:opacity-60"
+          >
+            {loadingOlder ? 'Carregando...' : 'Carregar mensagens anteriores'}
+          </button>
+        ) : fetchEarlierWhatsAppHistory ? (
+          <div className="mx-auto flex flex-col items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => void fetchFromPhone()}
+              disabled={fetchingPhoneHistory}
+              className="rounded-full border border-line bg-surface px-3 py-1 text-meta font-semibold text-muted hover:text-ink disabled:opacity-60"
+            >
+              {fetchingPhoneHistory
+                ? 'Aguardando o celular...'
+                : 'Buscar mensagens anteriores no celular'}
+            </button>
+            {phoneHistoryError ? (
+              <p className="max-w-sm text-center text-[11px] text-red-500">{phoneHistoryError}</p>
+            ) : null}
+          </div>
+        ) : null}
+        {olderMessages.map((message) => (
+          <MessageBubble
+            key={message.id}
+            message={message}
+            showAuthorName={isGroup}
+            mentionCandidates={catalog.members}
+            currentUserId={currentUserId}
+            {...(message.replyToId && byId.has(message.replyToId)
+              ? { quoted: byId.get(message.replyToId) }
+              : {})}
+            onReply={setReplyTo}
+            {...(onDeleteMessage ? { onDelete: setPendingDelete } : {})}
+            {...(onReactToMessage
+              ? { onReact: (target: Message, emoji: string) => onReactToMessage(target.id, emoji) }
+              : {})}
+          />
+        ))}
         {conversation.timeline.map((item) =>
           item.kind === 'divider' ? (
             <div key={`divider-${item.label}`} className="my-3 flex items-center justify-center">

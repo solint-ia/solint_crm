@@ -273,9 +273,10 @@ export const runWaitingAutoReply = async (
   const ultima = await prisma.message.findFirst({
     where: { conversationId, isPrivate: false, deletedAt: null },
     orderBy: { createdAt: 'desc' },
-    select: { author: true, createdAt: true },
+    select: { author: true, createdAt: true, origin: true },
   });
   if (!ultima) return false;
+  if (ultima.origin === 'historico') return false;
 
   // A própria mensagem de espera passa a ser a última quando ela sai: é assim
   // que a regra não se repete a cada rodada do varredor.

@@ -167,6 +167,27 @@ export class PrismaConversationRepository implements ConversationRepository {
     return row ? conversationRow(row) : null;
   }
 
+  async listMessagesBefore(
+    accountId: Id,
+    conversationId: Id,
+    cursor: { readonly createdAt: string; readonly id: Id },
+    limit = 100,
+    inboxAccess: InboxAccess,
+  ): Promise<readonly Message[]> {
+    const createdAt = new Date(cursor.createdAt);
+    if (Number.isNaN(createdAt.getTime())) return [];
+    const rows = await prisma.message.findMany({
+      where: {
+        conversationId,
+        conversation: { accountId, ...inboxScope(inboxAccess) },
+        OR: [{ createdAt: { lt: createdAt } }, { createdAt, id: { lt: cursor.id } }],
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: Math.min(Math.max(limit, 1), 100),
+    });
+    return rows.reverse().map(messageRow);
+  }
+
   async appendMessage(input: NewMessageInput): Promise<Message> {
     const message: Message = {
       id: input.messageId ?? `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -257,7 +278,12 @@ export class PrismaConversationRepository implements ConversationRepository {
 
     if (message.author === 'agent' && !message.isPrivate && !exists.firstResponseAt) {
       const primeiraDoContato = await prisma.message.findFirst({
-        where: { conversationId, author: 'contact', isPrivate: false },
+        where: {
+          conversationId,
+          author: 'contact',
+          isPrivate: false,
+          OR: [{ origin: null }, { origin: { not: 'historico' } }],
+        },
         orderBy: { createdAt: 'asc' },
         select: { createdAt: true },
       });

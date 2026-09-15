@@ -140,6 +140,7 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
       // óbvio que ver a conversa, e vaza a mesma informação.
       where: {
         accountId,
+        importedAt: null,
         ...(inboxAccess === 'todas' ? {} : { inboxId: { in: [...inboxAccess] } }),
         createdAt: { gte: window.previousFrom, lte: window.to },
       },

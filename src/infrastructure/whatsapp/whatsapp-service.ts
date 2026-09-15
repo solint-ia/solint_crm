@@ -8,6 +8,7 @@ import makeWASocket, {
   isJidGroup,
   isLidUser,
   jidNormalizedUser,
+  proto,
   type Contact as WAContact,
   type WASocket,
   type WAMessage,
@@ -383,6 +384,10 @@ export class WhatsAppService {
         browser: ['Solint CRM', 'Chrome', '1.0.0'],
 
         syncFullHistory: false,
+        // O motor in-process nunca importa FULL, mas precisa aceitar RECENT
+        // explicitamente para preservar os mapeamentos LID enviados no bloco.
+        shouldSyncHistoryMessage: ({ syncType }) =>
+          syncType !== proto.HistorySync.HistorySyncType.FULL,
         generateHighQualityLinkPreview: true,
         // Mesma razão do motor worker (ver a nota extensa em `worker/session.ts`):
         // declarar-se online o tempo todo faz o servidor do WhatsApp parar de

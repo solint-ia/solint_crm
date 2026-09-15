@@ -56,6 +56,18 @@ interface InboxWorkspaceProps {
     scheduledFor: string;
   }) => Promise<ScheduledResult>;
   readonly listScheduledMessages: (input: { conversationId: string }) => Promise<ScheduledResult>;
+  readonly listMessagesBefore: (input: {
+    conversationId: string;
+    cursor: { createdAt: string; id: string };
+  }) => Promise<{
+    ok: boolean;
+    error?: string;
+    items?: readonly Message[];
+    hasMore?: boolean;
+  }>;
+  readonly fetchEarlierWhatsAppHistory?: (input: {
+    conversationId: string;
+  }) => Promise<{ ok: boolean; error?: string }>;
   readonly cancelScheduledMessage: (input: {
     conversationId: string;
     scheduledMessageId: string;
@@ -521,6 +533,8 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
               onReactToMessage={inbox.reactToMessage}
               scheduleMessage={props.scheduleMessage}
               listScheduledMessages={props.listScheduledMessages}
+              listMessagesBefore={props.listMessagesBefore}
+              fetchEarlierWhatsAppHistory={props.fetchEarlierWhatsAppHistory}
               cancelScheduledMessage={props.cancelScheduledMessage}
               onSendMedia={inbox.sendMedia}
               onTyping={(conversationId, isTyping) =>

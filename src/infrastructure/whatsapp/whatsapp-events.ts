@@ -40,6 +40,23 @@ export interface WhatsAppStatusPayload {
   readonly owner?: WhatsAppOwner;
   readonly connectedAt?: string;
   readonly error?: string;
+  /** A tela só oferece a importação quando web e worker foram ativados. */
+  readonly historyImportEnabled?: boolean;
+  /** Já existem credenciais; histórico só pode ser pedido em novo pareamento. */
+  readonly paired?: boolean;
+  readonly historyImport?: {
+    readonly status:
+      | 'aguardando'
+      | 'importando'
+      | 'concluida'
+      | 'parcial'
+      | 'nao_disponivel'
+      | 'numero_diferente'
+      | 'falha';
+    readonly progresso: number;
+    readonly mensagens: number;
+    readonly conversas: number;
+  };
   readonly updatedAt: string;
 }
 
@@ -67,6 +84,10 @@ export type ConversationEventType =
    * dizer a mesma coisa a todas: o não-lido virou zero.
    */
   | 'conversations_read'
+  /** Lote silencioso de conversas alteradas pela importação do histórico. */
+  | 'conversations_imported'
+  /** Resultado da busca experimental de mensagens anteriores no celular. */
+  | 'history_fetch_status'
   /**
    * Um aviso do sininho, gravado pelo servidor.
    *
@@ -104,6 +125,10 @@ export interface ConversationEventPayload {
    * teto de 8000 bytes — ver `CONVERSATIONS_READ_BATCH`.
    */
   readonly conversationIds?: readonly string[];
+  /** Somente em `history_fetch_status`. */
+  readonly operationStatus?: 'completed' | 'failed';
+  /** Somente em `history_fetch_status`. */
+  readonly error?: string;
   /**
    * Só em `type: 'notification'`: para quem é o aviso.
    *
@@ -268,7 +293,9 @@ class WhatsAppEventBus extends EventEmitter {
       payload.conversation ||
       payload.message ||
       payload.type === 'typing' ||
-      payload.type === 'conversations_read'
+      payload.type === 'conversations_read' ||
+      payload.type === 'conversations_imported' ||
+      payload.type === 'history_fetch_status'
     ) {
       this.emitLocal('conversation', payload);
       return;
@@ -412,6 +439,22 @@ class WhatsAppEventBus extends EventEmitter {
         inboxId,
         conversationId: '',
         conversationIds: conversationIds.slice(inicio, inicio + CONVERSATIONS_READ_BATCH),
+      });
+    }
+  }
+
+  emitConversationsImported(
+    accountId: string,
+    inboxId: string,
+    conversationIds: readonly string[],
+  ) {
+    for (let start = 0; start < conversationIds.length; start += CONVERSATIONS_READ_BATCH) {
+      this.emitConversation({
+        type: 'conversations_imported',
+        accountId,
+        inboxId,
+        conversationId: '',
+        conversationIds: conversationIds.slice(start, start + CONVERSATIONS_READ_BATCH),
       });
     }
   }

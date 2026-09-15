@@ -34,7 +34,9 @@ const createStatusChannel = (inboxId?: string): StatusChannel => {
   let last: WhatsAppStatusPayload = INITIAL;
 
   const notifyAll = (payload: WhatsAppStatusPayload) => {
-    last = payload;
+    // Eventos do worker carregam o estado mutável; a leitura HTTP acrescenta
+    // capacidades estáticas como a flag e se já há credenciais.
+    last = { ...last, ...payload };
     for (const listener of listeners) listener(last);
   };
 
@@ -207,7 +209,13 @@ export function useWhatsAppConnection(active = true, inboxId?: string) {
   );
 
   const connect = useCallback(
-    (options: { method?: 'qr' | 'phone'; phoneNumber?: string } = {}) =>
+    (
+      options: {
+        method?: 'qr' | 'phone';
+        phoneNumber?: string;
+        historyDays?: 0 | 7 | 15 | 30 | 90;
+      } = {},
+    ) =>
       call(
         inboxId ? `/api/inboxes/${inboxId}/whatsapp/connect` : '/api/whatsapp/connect',
         'Erro ao iniciar conexão com WhatsApp',

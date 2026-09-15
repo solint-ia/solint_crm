@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import type {
   Conversation,
   ConversationStatus,
@@ -191,6 +192,27 @@ export function useInbox({
   const [error, setError] = useState<string | undefined>();
   const [pending, startTransition] = useTransition();
   const { show } = useToast();
+  const router = useRouter();
+
+  useEffect(() => {
+    setConversations((current) => {
+      const optimistic = current.flatMap((conversation) =>
+        conversation.timeline.filter(
+          (item) => item.kind === 'message' && item.message.id.startsWith('local-'),
+        ),
+      );
+      if (optimistic.length === 0) return initialConversations;
+      return initialConversations.map((conversation) => ({
+        ...conversation,
+        timeline: [
+          ...conversation.timeline,
+          ...optimistic.filter(
+            (item) => item.kind === 'message' && item.message.conversationId === conversation.id,
+          ),
+        ],
+      }));
+    });
+  }, [initialConversations]);
 
   /**
    * A conversa pedida pela URL passa a valer também depois da montagem.
@@ -310,6 +332,10 @@ export function useInbox({
 
   // Tempo real vem do barramento compartilhado do workspace (uma unica conexao SSE).
   useConversationEvents((payload) => {
+    if (payload.type === 'conversations_imported') {
+      router.refresh();
+      return;
+    }
     // Presença não mexe na timeline nem na ordem da lista: é um estado à parte,
     // com relógio próprio, e tratá-lo como os demais eventos faria cada tecla
     // do contato reordenar a caixa de entrada.

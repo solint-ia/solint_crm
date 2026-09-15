@@ -6,7 +6,9 @@ import {
   jidNormalizedUser,
   makeCacheableSignalKeyStore,
   makeWASocket,
+  proto,
   type Contact as WAContact,
+  type BaileysEventMap,
   type WAMessage,
   type WAMessageKey,
   type WASocket,
@@ -24,6 +26,7 @@ import {
 } from '@/core/domain/contact';
 import { DB_POOL_SIZE, asJson, prisma } from '@/infrastructure/db/prisma';
 import { initPostgresAuthState, isPairedCreds, wipeAuthState } from '../auth/postgres-auth-state';
+import { open } from '../auth/crypto';
 import { SessaoIndisponivelError } from './errors';
 import {
   applyDeliveryUpdate,
@@ -62,6 +65,7 @@ import { isSafeMediaId, mediaStore, mediaUrlFor } from '../wa-media-store';
 import { deletionKey, quotedStub } from '../wa-quote';
 import { baileysLogLevel, waLog } from '../wa-log';
 import { waVersion } from '../wa-version';
+import { HistoryImporter, type HistoryImportStats } from './history-import';
 
 import { waEventBus, type WhatsAppStatusPayload } from '../whatsapp-events';
 import {
@@ -257,6 +261,20 @@ export class WhatsAppSession {
    */
   private replacedCount = 0;
   private currentStatus: WhatsAppStatusPayload;
+  private historyImporter: HistoryImporter | null = null;
+  private readonly onDemandHistory = new Map<
+    string,
+    { conversationId: string; importer: HistoryImporter; timer: NodeJS.Timeout }
+  >();
+  private historyConfig: {
+    days: number;
+    cutoff: Date;
+    status: 'aguardando' | 'importando' | 'concluida' | 'parcial';
+    ownerPhoneJid: string | null;
+    startedAt: Date | null;
+  } | null = null;
+  private historyIdleTimer: NodeJS.Timeout | null = null;
+  private historyStatsWrittenAt = 0;
 
   private readonly groupCache = new Map<string, { subject: string; size: number; at: number }>();
   private readonly avatarCache = new Map<string, { url?: string; at: number }>();
@@ -417,6 +435,234 @@ export class WhatsAppSession {
 
   getStatus(): WhatsAppStatusPayload {
     return this.currentStatus;
+  }
+
+  async fetchEarlierHistory(conversationId: string): Promise<void> {
+    if (process.env.WA_HISTORY_ON_DEMAND !== '1') {
+      throw new Error('Busca de histórico no celular está desabilitada.');
+    }
+    const socket = this.socket;
+    if (!socket?.user || !this.isConnected) {
+      throw new SessaoIndisponivelError('Conecte a caixa para buscar mensagens no celular.');
+    }
+    const conversation = await prisma.conversation.findFirst({
+      where: { id: conversationId, accountId: this.accountId, inboxId: this.inboxId },
+      select: {
+        channelThreadId: true,
+        contact: { select: { kind: true } },
+        messages: {
+          where: { externalId: { not: null } },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          take: 1,
+          select: { externalId: true, author: true, createdAt: true },
+        },
+      },
+    });
+    const oldest = conversation?.messages[0];
+    if (
+      !conversation ||
+      conversation.contact.kind === 'grupo' ||
+      !conversation.channelThreadId ||
+      !oldest?.externalId
+    ) {
+      throw new Error('Não há uma mensagem de referência para buscar o histórico anterior.');
+    }
+
+    const requestId = await socket.fetchMessageHistory(
+      50,
+      {
+        remoteJid: conversation.channelThreadId,
+        id: oldest.externalId,
+        fromMe: oldest.author !== 'contact',
+      },
+      oldest.createdAt.getTime(),
+    );
+    const importer = new HistoryImporter({
+      accountId: this.accountId,
+      inboxId: this.inboxId,
+      cutoff: new Date(0),
+      resolveIdentity: (message) =>
+        resolveChatIdentity(socket, message.key, {
+          accountId: this.accountId,
+          inboxId: this.inboxId,
+        }),
+      onBatch: (report) => {
+        if (report.conversationIds.length > 0) {
+          waEventBus.emitConversationsImported(
+            this.accountId,
+            this.inboxId,
+            report.conversationIds,
+          );
+        }
+      },
+    });
+    const timer = setTimeout(() => {
+      const pending = this.onDemandHistory.get(requestId);
+      if (!pending) return;
+      pending.importer.stop();
+      this.onDemandHistory.delete(requestId);
+      waEventBus.emitConversation({
+        type: 'history_fetch_status',
+        accountId: this.accountId,
+        inboxId: this.inboxId,
+        conversationId,
+        operationStatus: 'failed',
+        error: 'O celular não respondeu. Mantenha o WhatsApp aberto no celular e tente de novo.',
+      });
+    }, 30_000);
+    timer.unref?.();
+    this.onDemandHistory.set(requestId, { conversationId, importer, timer });
+  }
+
+  private async receiveOnDemandHistory(
+    history: BaileysEventMap['messaging-history.set'],
+  ): Promise<boolean> {
+    if (history.syncType !== proto.HistorySync.HistorySyncType.ON_DEMAND) return false;
+    const requestId = history.peerDataRequestSessionId;
+    const pending = requestId ? this.onDemandHistory.get(requestId) : undefined;
+    if (!pending) return true;
+    clearTimeout(pending.timer);
+    await pending.importer.enqueue(history, { onDemand: true });
+    await pending.importer.drain();
+    pending.importer.stop();
+    this.onDemandHistory.delete(requestId!);
+    waEventBus.emitConversation({
+      type: 'history_fetch_status',
+      accountId: this.accountId,
+      inboxId: this.inboxId,
+      conversationId: pending.conversationId,
+      operationStatus: 'completed',
+    });
+    return true;
+  }
+
+  private historyImportWantsFull(): boolean {
+    return Boolean(
+      process.env.WA_HISTORY_IMPORT === '1' &&
+      this.historyConfig &&
+      this.historyConfig.days === 90 &&
+      (this.historyConfig.status === 'aguardando' || this.historyConfig.status === 'importando'),
+    );
+  }
+
+  private async writeHistoryStats(stats: Readonly<HistoryImportStats>, force = false) {
+    if (!force && Date.now() - this.historyStatsWrittenAt < 5_000) return;
+    this.historyStatsWrittenAt = Date.now();
+    await prisma.whatsAppConnection.updateMany({
+      where: { inboxId: this.inboxId, lockOwner: this.workerId, lockVersion: this.lockVersion },
+      data: { historyImportStats: asJson(stats) },
+    });
+    this.currentStatus = {
+      ...this.currentStatus,
+      historyImport: {
+        status: this.historyConfig?.status ?? 'importando',
+        progresso: stats.progresso,
+        mensagens: stats.mensagens,
+        conversas: stats.conversasCriadas + stats.conversasAtualizadas,
+      },
+      updatedAt: new Date().toISOString(),
+    };
+    waEventBus.emitStatus(this.currentStatus);
+  }
+
+  private armHistoryIdle(generation: number): void {
+    if (this.historyIdleTimer) clearTimeout(this.historyIdleTimer);
+    this.historyIdleTimer = setTimeout(() => {
+      if (generation === this.socketGeneration) void this.finishHistoryImport();
+    }, 3 * 60_000);
+    this.historyIdleTimer.unref?.();
+  }
+
+  private async finishHistoryImport(): Promise<void> {
+    const importer = this.historyImporter;
+    if (!importer || !this.historyConfig) return;
+    await importer.drain();
+    const status = importer.stats.falhas > 0 ? 'parcial' : 'concluida';
+    this.historyConfig = { ...this.historyConfig, status };
+    await this.writeHistoryStats(importer.stats, true);
+    await prisma.whatsAppConnection.updateMany({
+      where: { inboxId: this.inboxId, lockOwner: this.workerId, lockVersion: this.lockVersion },
+      data: { historyImportStatus: status, historyImportEndedAt: new Date() },
+    });
+    if (this.historyIdleTimer) clearTimeout(this.historyIdleTimer);
+    this.historyIdleTimer = null;
+  }
+
+  private async receiveHistory(
+    history: BaileysEventMap['messaging-history.set'],
+    generation: number,
+  ): Promise<void> {
+    if (await this.receiveOnDemandHistory(history)) return;
+    if (
+      generation !== this.socketGeneration ||
+      !this.historyConfig ||
+      !['aguardando', 'importando', 'concluida'].includes(this.historyConfig.status)
+    )
+      return;
+    if (
+      this.historyConfig.status === 'concluida' &&
+      (!this.historyConfig.startedAt ||
+        Date.now() - this.historyConfig.startedAt.getTime() > 24 * 60 * 60 * 1000)
+    )
+      return;
+    const socket = this.socket;
+    if (!socket) return;
+    const ownJid = socket.user?.id ? jidNormalizedUser(socket.user.id) : null;
+    if (
+      ownJid &&
+      this.historyConfig.ownerPhoneJid &&
+      ownJid !== jidNormalizedUser(this.historyConfig.ownerPhoneJid)
+    ) {
+      await prisma.whatsAppConnection.updateMany({
+        where: { inboxId: this.inboxId, lockOwner: this.workerId, lockVersion: this.lockVersion },
+        data: { historyImportStatus: 'numero_diferente', historyImportEndedAt: new Date() },
+      });
+      this.historyConfig = null;
+      return;
+    }
+
+    if (this.historyConfig.status === 'aguardando') {
+      const startedAt = new Date();
+      await prisma.whatsAppConnection.updateMany({
+        where: { inboxId: this.inboxId, lockOwner: this.workerId, lockVersion: this.lockVersion },
+        data: {
+          historyImportStatus: 'importando',
+          historyImportStartedAt: startedAt,
+          ...(ownJid ? { historyOwnerPhoneJid: ownJid } : {}),
+        },
+      });
+      this.historyConfig = {
+        ...this.historyConfig,
+        status: 'importando',
+        startedAt,
+        ownerPhoneJid: ownJid ?? this.historyConfig.ownerPhoneJid,
+      };
+    }
+
+    if (!this.historyImporter) {
+      this.historyImporter = new HistoryImporter({
+        accountId: this.accountId,
+        inboxId: this.inboxId,
+        cutoff: this.historyConfig.cutoff,
+        resolveIdentity: (message) =>
+          resolveChatIdentity(socket, message.key, {
+            accountId: this.accountId,
+            inboxId: this.inboxId,
+          }),
+        onBatch: async (report, stats) => {
+          await this.writeHistoryStats(stats);
+          if (report.conversationIds.length > 0) {
+            waEventBus.emitConversationsImported(
+              this.accountId,
+              this.inboxId,
+              report.conversationIds,
+            );
+          }
+        },
+      });
+    }
+    await this.historyImporter.enqueue(history);
+    this.armHistoryIdle(generation);
   }
 
   /**
@@ -756,6 +1002,45 @@ export class WhatsAppSession {
         workerId: this.workerId,
         lockVersion: this.lockVersion,
       });
+      const historyRow =
+        process.env.WA_HISTORY_IMPORT === '1'
+          ? await prisma.whatsAppConnection.findUnique({
+              where: { inboxId: this.inboxId },
+              select: {
+                historyImportDays: true,
+                historyImportCutoff: true,
+                historyImportStatus: true,
+                historyOwnerPhoneJid: true,
+                historyImportStartedAt: true,
+              },
+            })
+          : null;
+      const historyStatus = historyRow?.historyImportStatus;
+      this.historyConfig =
+        historyRow?.historyImportDays &&
+        historyRow.historyImportCutoff &&
+        (historyStatus === 'aguardando' ||
+          historyStatus === 'importando' ||
+          historyStatus === 'concluida' ||
+          historyStatus === 'parcial')
+          ? {
+              days: historyRow.historyImportDays,
+              cutoff: historyRow.historyImportCutoff,
+              status: historyStatus,
+              ownerPhoneJid: historyRow.historyOwnerPhoneJid,
+              startedAt: historyRow.historyImportStartedAt,
+            }
+          : null;
+      if (
+        this.historyConfig?.status === 'aguardando' &&
+        Number(state.creds.accountSyncCounter ?? 0) > 0
+      ) {
+        await prisma.whatsAppConnection.updateMany({
+          where: { inboxId: this.inboxId, lockOwner: this.workerId, lockVersion: this.lockVersion },
+          data: { historyImportStatus: 'nao_disponivel', historyImportEndedAt: new Date() },
+        });
+        this.historyConfig = null;
+      }
       // `registered` sozinho não responde a esta pergunta para quem pareou por
       // QR — ver a nota em `isPairedCreds`. Era por isso que uma sessão pareada
       // que caía ia parar no ramo do QR em vez de reconectar.
@@ -801,7 +1086,12 @@ export class WhatsAppSession {
         browser: ['Solint CRM', 'Chrome', '1.0.0'],
 
         logger: this.logger,
-        syncFullHistory: false,
+        syncFullHistory: this.historyImportWantsFull(),
+        // Declarar o callback evita que versões rc do Baileys descartem também
+        // os blocos RECENT necessários aos mapeamentos LID. FULL só será aceito
+        // quando a importação explícita de 90 dias estiver ativa.
+        shouldSyncHistoryMessage: ({ syncType }) =>
+          syncType !== proto.HistorySync.HistorySyncType.FULL || this.historyImportWantsFull(),
         generateHighQualityLinkPreview: true,
         /**
          * O CRM é um aparelho vinculado, não a pessoa.
@@ -1240,6 +1530,18 @@ export class WhatsAppSession {
           }
           if (history.contacts.length > 0) this.hasAddressBookSnapshot = true;
         }
+        await this.receiveHistory(history, generation);
+      }),
+    );
+
+    this.socket.ev.on(
+      'messaging-history.status',
+      this.guarded('messaging-history.status', async ({ syncType, status }) => {
+        if (status !== 'complete' && status !== 'paused') return;
+        const expected =
+          syncType === proto.HistorySync.HistorySyncType.RECENT ||
+          (syncType === proto.HistorySync.HistorySyncType.FULL && this.historyImportWantsFull());
+        if (expected) await this.finishHistoryImport();
       }),
     );
 
@@ -2703,6 +3005,111 @@ export class WhatsAppSession {
     }
   }
 
+  async materializePendingMedia(messageId: string): Promise<void> {
+    const pending = await prisma.pendingMedia.findFirst({
+      where: { messageId, accountId: this.accountId, inboxId: this.inboxId },
+    });
+    if (!pending) return;
+    const row = await prisma.message.findFirst({
+      where: {
+        id: messageId,
+        conversation: { accountId: this.accountId, inboxId: this.inboxId },
+      },
+      select: { id: true, conversationId: true, content: true },
+    });
+    if (!row) return;
+    const fallback = row.content as unknown as MessageContent;
+    if (fallback.type !== 'pending_media') {
+      await prisma.pendingMedia.deleteMany({
+        where: { messageId, accountId: this.accountId, inboxId: this.inboxId },
+      });
+      return;
+    }
+
+    await prisma.pendingMedia.updateMany({
+      where: { messageId, accountId: this.accountId, inboxId: this.inboxId },
+      data: { status: 'baixando' },
+    });
+    try {
+      const plain = open(
+        Buffer.from(pending.cipher),
+        Buffer.from(pending.iv),
+        Buffer.from(pending.tag),
+        {
+          aad: messageId,
+          keyId: pending.keyId,
+        },
+      );
+      const raw = proto.WebMessageInfo.decode(plain) as WAMessage;
+      const decoded = decodeWaMessage(raw);
+      if (!decoded?.media) throw new Error('A referência não contém mídia compatível.');
+      const materialized = await this.materializeMedia(raw, messageId, decoded.media, fallback);
+      if (materialized.content.type === 'pending_media') {
+        throw new Error('O celular não disponibilizou os bytes da mídia.');
+      }
+      const { count } = await prisma.message.updateMany({
+        where: {
+          id: messageId,
+          conversationId: row.conversationId,
+          conversation: { accountId: this.accountId, inboxId: this.inboxId },
+          content: { path: ['type'], equals: 'pending_media' },
+        },
+        data: {
+          contentType: materialized.content.type,
+          content: asJson(materialized.content),
+        },
+      });
+      if (count > 0) {
+        await prisma.pendingMedia.deleteMany({
+          where: { messageId, accountId: this.accountId, inboxId: this.inboxId },
+        });
+        waEventBus.emitConversation({
+          type: 'message_updated',
+          accountId: this.accountId,
+          inboxId: this.inboxId,
+          conversationId: row.conversationId,
+          messageId,
+        });
+      }
+    } catch (error) {
+      const lastError = error instanceof Error ? error.message : 'Falha ao baixar mídia';
+      const attempts = pending.attempts + 1;
+      await prisma.$transaction([
+        prisma.pendingMedia.updateMany({
+          where: { messageId, accountId: this.accountId, inboxId: this.inboxId },
+          data: {
+            attempts: { increment: 1 },
+            lastError,
+            status: attempts >= 3 ? 'indisponivel' : 'pendente',
+          },
+        }),
+        ...(attempts >= 3
+          ? [
+              prisma.message.updateMany({
+                where: {
+                  id: messageId,
+                  conversationId: row.conversationId,
+                  conversation: { accountId: this.accountId, inboxId: this.inboxId },
+                  content: { path: ['type'], equals: 'pending_media' },
+                },
+                data: { content: asJson({ ...fallback, unavailable: true }) },
+              }),
+            ]
+          : []),
+      ]);
+      if (attempts >= 3) {
+        waEventBus.emitConversation({
+          type: 'message_updated',
+          accountId: this.accountId,
+          inboxId: this.inboxId,
+          conversationId: row.conversationId,
+          messageId,
+        });
+      }
+      throw error;
+    }
+  }
+
   async sendMessage(
     recipient: { phone?: string; jid?: string; channelThreadId?: string },
     content: { text?: string },
@@ -2924,6 +3331,7 @@ export class WhatsAppSession {
       this.socket.ev.removeAllListeners('messages.update');
       this.socket.ev.removeAllListeners('message-receipt.update');
       this.socket.ev.removeAllListeners('messaging-history.set');
+      this.socket.ev.removeAllListeners('messaging-history.status');
       this.socket.ev.removeAllListeners('messages.reaction');
       this.socket.ev.removeAllListeners('contacts.upsert');
       this.socket.ev.removeAllListeners('contacts.update');
@@ -2933,6 +3341,15 @@ export class WhatsAppSession {
       // Ignora erro ao fechar socket
     }
     this.socket = null;
+    this.historyImporter?.stop();
+    this.historyImporter = null;
+    for (const pending of this.onDemandHistory.values()) {
+      clearTimeout(pending.timer);
+      pending.importer.stop();
+    }
+    this.onDemandHistory.clear();
+    if (this.historyIdleTimer) clearTimeout(this.historyIdleTimer);
+    this.historyIdleTimer = null;
     // As assinaturas de presença morrem com o socket: guardá-las faria a sessão
     // seguinte achar que já assinou o que ninguém assinou, e o "digitando"
     // simplesmente pararia de chegar depois da primeira reconexão.

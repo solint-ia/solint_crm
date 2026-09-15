@@ -365,7 +365,11 @@ export function MessageBubble({
                 {isInbound ? 'Esta mensagem foi apagada' : 'Você apagou esta mensagem'}
               </p>
             ) : (
-              <MediaContent content={message.content} onOpenLightbox={setLightboxMedia} />
+              <MediaContent
+                messageId={message.id}
+                content={message.content}
+                onOpenLightbox={setLightboxMedia}
+              />
             )}
 
             <footer
@@ -597,9 +601,11 @@ function QuotedPreview({
 }
 
 function MediaContent({
+  messageId,
   content,
   onOpenLightbox,
 }: {
+  readonly messageId: string;
   readonly content: MessageContent;
   readonly onOpenLightbox: (media: LightboxMedia) => void;
 }) {
@@ -696,7 +702,70 @@ function MediaContent({
         />
       );
 
+    case 'pending_media':
+      return <PendingMedia messageId={messageId} content={content} />;
+
     default:
       return <p className="italic text-xs opacity-75">Mídia não suportada</p>;
   }
+}
+
+function PendingMedia({
+  messageId,
+  content,
+}: {
+  readonly messageId: string;
+  readonly content: Extract<MessageContent, { readonly type: 'pending_media' }>;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>();
+  const label =
+    content.kind === 'image'
+      ? 'foto'
+      : content.kind === 'video'
+        ? 'vídeo'
+        : content.kind === 'audio'
+          ? 'áudio'
+          : content.kind === 'sticker'
+            ? 'figurinha'
+            : 'documento';
+
+  const download = async () => {
+    setLoading(true);
+    setError(undefined);
+    try {
+      const response = await fetch(`/api/whatsapp/media/pending/${encodeURIComponent(messageId)}`, {
+        method: 'POST',
+      });
+      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? 'Não foi possível solicitar a mídia.');
+    } catch (cause) {
+      setLoading(false);
+      setError(cause instanceof Error ? cause.message : 'Não foi possível solicitar a mídia.');
+    }
+  };
+
+  if (content.unavailable) {
+    return (
+      <p className="text-xs italic opacity-75">Esta {label} não está mais disponível no celular.</p>
+    );
+  }
+
+  return (
+    <div className="flex min-w-[210px] flex-col gap-2 rounded-xl bg-black/10 p-3 dark:bg-white/10">
+      <div className="flex items-center gap-2">
+        <Download className="size-4 shrink-0 opacity-70" />
+        <span className="text-xs">{loading ? `Baixando ${label}…` : `${label} do histórico`}</span>
+      </div>
+      {error ? <p className="max-w-64 text-[11px] text-red-500">{error}</p> : null}
+      <button
+        type="button"
+        disabled={loading}
+        onClick={() => void download()}
+        className="rounded-lg bg-black/10 px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-black/15 disabled:opacity-50 dark:bg-white/10 dark:hover:bg-white/15"
+      >
+        {loading ? 'Aguardando o WhatsApp…' : 'Baixar mídia'}
+      </button>
+    </div>
+  );
 }

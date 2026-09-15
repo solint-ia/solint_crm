@@ -306,6 +306,12 @@ export class WhatsAppSessionManager {
    */
   private async restorePersistedSessions(tentativa = 0): Promise<void> {
     try {
+      // Um worker que caiu no meio da importação não pode deixar a tela
+      // prometendo progresso para sempre. O que já foi persistido permanece.
+      await prisma.whatsAppConnection.updateMany({
+        where: { historyImportStatus: 'importando' },
+        data: { historyImportStatus: 'parcial', historyImportEndedAt: new Date() },
+      });
       // `autoConnect: false` é a caixa desconectada de propósito, ou recusada em
       // definitivo pelo WhatsApp: as credenciais podem estar lá (403, 440), mas
       // religá-la sozinho desfaria a decisão de quem a desligou.

@@ -51,6 +51,13 @@ export interface ConversationReader {
     conversationId: Id,
     inboxAccess: InboxAccess,
   ): Promise<Conversation | null>;
+  listMessagesBefore(
+    accountId: Id,
+    conversationId: Id,
+    cursor: { readonly createdAt: string; readonly id: Id },
+    limit: number,
+    inboxAccess: InboxAccess,
+  ): Promise<readonly Message[]>;
 }
 
 /** Escrita de conversas. */

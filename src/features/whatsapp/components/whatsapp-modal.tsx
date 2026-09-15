@@ -28,6 +28,7 @@ interface WhatsAppModalProps {
 }
 
 type PairingMethod = 'qr' | 'phone';
+type HistoryDays = 0 | 7 | 15 | 30 | 90;
 
 const displayPairingCode = (code: string | undefined): string => {
   const clean = code?.replace(/[^A-Z0-9]/gi, '').toUpperCase() ?? '';
@@ -38,6 +39,7 @@ export function WhatsAppModal({ open, onClose, inboxId, inboxName }: WhatsAppMod
   const [pairingMethod, setPairingMethod] = useState<PairingMethod>('qr');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [phoneError, setPhoneError] = useState<string>();
+  const [historyDays, setHistoryDays] = useState<HistoryDays>(0);
   const {
     statusData,
     errorMessage,
@@ -70,12 +72,12 @@ export function WhatsAppModal({ open, onClose, inboxId, inboxName }: WhatsAppMod
         return;
       }
       setPhoneError(undefined);
-      void connect({ method: 'phone', phoneNumber });
+      void connect({ method: 'phone', phoneNumber, historyDays });
       return;
     }
 
     setPhoneError(undefined);
-    void connect({ method: 'qr' });
+    void connect({ method: 'qr', historyDays });
   };
 
   return (
@@ -110,6 +112,23 @@ export function WhatsAppModal({ open, onClose, inboxId, inboxName }: WhatsAppMod
             </Badge>
           )}
         </div>
+
+        {statusData.historyImport ? (
+          <p className="w-full rounded-control border border-line bg-surface-2 px-3 py-2 text-center text-meta text-muted">
+            {statusData.historyImport.status === 'importando' ||
+            statusData.historyImport.status === 'aguardando'
+              ? `Importando histórico: ${Math.round(statusData.historyImport.progresso)}%`
+              : statusData.historyImport.status === 'concluida'
+                ? `Histórico importado: ${statusData.historyImport.mensagens.toLocaleString('pt-BR')} mensagens em ${statusData.historyImport.conversas.toLocaleString('pt-BR')} conversas`
+                : statusData.historyImport.status === 'numero_diferente'
+                  ? 'Não importado: número diferente do anterior.'
+                  : statusData.historyImport.status === 'nao_disponivel'
+                    ? 'Histórico não disponível neste vínculo.'
+                    : statusData.historyImport.status === 'parcial'
+                      ? 'Importação parcial. Parte do histórico foi preservada.'
+                      : 'Não foi possível importar o histórico.'}
+          </p>
+        ) : null}
 
         {(phoneError || errorMessage) && !isConnecting && !isConnected ? (
           <p className="w-full rounded-control border border-red-line bg-red-soft px-3 py-2 text-center text-body text-red-text">
@@ -309,6 +328,32 @@ export function WhatsAppModal({ open, onClose, inboxId, inboxName }: WhatsAppMod
                     if (event.key === 'Enter') handleConnect();
                   }}
                 />
+              </Field>
+            ) : null}
+
+            {statusData.historyImportEnabled ? (
+              <Field
+                label="Importar histórico"
+                htmlFor="whatsapp-history-days"
+                hint={
+                  statusData.paired
+                    ? 'Esta caixa já está pareada. Para importar, desconecte e conecte de novo.'
+                    : 'O celular decide quanto enviar, então o período pode vir incompleto. Mídias são baixadas quando alguém abrir.'
+                }
+              >
+                <select
+                  id="whatsapp-history-days"
+                  value={historyDays}
+                  disabled={statusData.paired}
+                  onChange={(event) => setHistoryDays(Number(event.target.value) as HistoryDays)}
+                  className="h-10 w-full rounded-control border border-line bg-surface px-3 text-body text-ink outline-none focus:border-brand disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <option value={0}>Não importar</option>
+                  <option value={7}>Últimos 7 dias</option>
+                  <option value={15}>Últimos 15 dias</option>
+                  <option value={30}>Últimos 30 dias</option>
+                  <option value={90}>Últimos 90 dias, sincronização completa</option>
+                </select>
               </Field>
             ) : null}
 

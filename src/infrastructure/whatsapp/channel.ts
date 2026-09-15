@@ -83,6 +83,8 @@ export interface WhatsAppPairingOptions {
   readonly phoneNumber?: string;
   /** Caixa exata que sera pareada; ausente preserva o fluxo legado por conta. */
   readonly inboxId?: string;
+  /** Janela explícita solicitada no primeiro pareamento. Zero não importa. */
+  readonly historyDays?: 0 | 7 | 15 | 30 | 90;
 }
 
 export interface WhatsAppChannel {
