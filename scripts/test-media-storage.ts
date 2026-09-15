@@ -150,10 +150,10 @@ main()
         : `\n${failures.length} falha(s): ${failures.join(', ')}\n`,
     );
     await prisma.$disconnect();
-    process.exit(failures.length === 0 ? 0 : 1);
+    process.exitCode = failures.length === 0 ? 0 : 1;
   })
   .catch(async (err) => {
     console.error('\nErro no teste:', err);
     await prisma.$disconnect();
-    process.exit(1);
+    process.exitCode = 1;
   });

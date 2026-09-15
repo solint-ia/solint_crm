@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import { sessionFromApiToken } from '@/infrastructure/auth/api-token';
 import { container } from '@/infrastructure/container';
+import {
+  contentDispositionFor,
+  RENDERABLE_MEDIA,
+  respondWithMedia,
+} from '@/infrastructure/whatsapp/media-response';
 import { isSafeMediaId, mediaStore } from '@/infrastructure/whatsapp/wa-media-store';
 
 export const dynamic = 'force-dynamic';
@@ -10,18 +15,6 @@ const cacheControlFor = (id: string): string =>
   id.startsWith('pp-')
     ? 'private, max-age=3600, must-revalidate'
     : 'private, max-age=31536000, immutable';
-
-/**
- * So imagem, video e áudio podem ser renderizados na propria origem.
- * Um "documento" recebido pode ser um HTML: exibi-lo inline o faria executar
- * no contexto da aplicacao. Qualquer outro tipo e forcado a virar download.
- */
-const RENDERABLE = /^(image|video|audio)\//;
-
-const dispositionFor = (mimeType: string, fileName?: string): string => {
-  const mode = RENDERABLE.test(mimeType) ? 'inline' : 'attachment';
-  return fileName ? `${mode}; filename*=UTF-8''${encodeURIComponent(fileName)}` : mode;
-};
 
 /**
  * Serve a midia do WhatsApp ja decifrada.
@@ -43,10 +36,27 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   // navegador. Sem a segunda, um fluxo de automacao que precise transcrever um
   // audio ou ler uma imagem recebida simplesmente nao tinha como baixar os
   // bytes: HTTP servidor-a-servidor nao carrega cookie de sessao.
-  const session =
-    (await container.session.getSession()) ?? (await sessionFromApiToken(request));
+  const cookieSession = await container.session.getSession();
+  const session = cookieSession ?? (await sessionFromApiToken(request));
   if (!session) {
     return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 });
+  }
+
+  // Navegadores ganham uma URL por conteúdo, e portanto um único item de
+  // cache mesmo quando a figurinha aparece em dez mensagens. Integrações por
+  // token continuam recebendo bytes aqui: alguns clientes descartam o
+  // `Authorization` quando seguem redirecionamentos.
+  if (cookieSession && !id.startsWith('pp-')) {
+    const resolved = await mediaStore.resolveBlob(id, session.account.id);
+    if (resolved && RENDERABLE_MEDIA.test(resolved.mimeType)) {
+      return new Response(null, {
+        status: 302,
+        headers: {
+          Location: `/api/whatsapp/media/b/${resolved.blobId}`,
+          'Cache-Control': 'private, max-age=31536000, immutable',
+        },
+      });
+    }
   }
 
   // Sessão válida diz *quem* é, não *de quem é o arquivo*. Sem o escopo abaixo,
@@ -63,13 +73,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   // memória quando vieram do Storage. Esta rota roda numa função serverless,
   // onde o cache nunca pode ser gravado — abrir o arquivo aqui era o que fazia
   // toda mídia responder `404` em produção.
-  return new Response(media.stream(), {
-    headers: {
-      'Content-Type': media.mimeType,
-      'Content-Length': String(media.size),
-      'Cache-Control': cacheControlFor(id),
-      'Content-Disposition': dispositionFor(media.mimeType, media.fileName),
-      'X-Content-Type-Options': 'nosniff',
-    },
+  return respondWithMedia(request, media, {
+    'Content-Type': media.mimeType,
+    'Cache-Control': cacheControlFor(id),
+    'Content-Disposition': contentDispositionFor(media.mimeType, media.fileName),
+    'X-Content-Type-Options': 'nosniff',
   });
 }

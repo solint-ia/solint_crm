@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 
+import { Prisma } from '@/generated/prisma';
 import { prisma } from '@/infrastructure/db/prisma';
 import {
   BUCKETS,
@@ -105,6 +106,8 @@ export interface StoredMedia {
   readonly bytes: () => Promise<Buffer>;
   /** Os mesmos bytes em fluxo, para a rota HTTP não carregar 25 MB de uma vez. */
   readonly stream: () => ReadableStream<Uint8Array>;
+  /** Faixa inclusiva dos bytes, para vídeo sob demanda e seek HTTP. */
+  readonly streamRange: (start: number, end: number) => ReadableStream<Uint8Array>;
 }
 
 interface MediaMeta {
@@ -157,6 +160,13 @@ const pathsFor = (id: string): { bin: string; meta: string } | null => {
 const fileStream = (filePath: string): ReadableStream<Uint8Array> =>
   Readable.toWeb(fs.createReadStream(filePath)) as ReadableStream<Uint8Array>;
 
+const fileRangeStream = (
+  filePath: string,
+  start: number,
+  end: number,
+): ReadableStream<Uint8Array> =>
+  Readable.toWeb(fs.createReadStream(filePath, { start, end })) as ReadableStream<Uint8Array>;
+
 /** Fluxo de um buffer já em memória — mesma forma, outra origem. */
 const bufferStream = (data: Buffer): ReadableStream<Uint8Array> =>
   new ReadableStream<Uint8Array>({
@@ -165,6 +175,9 @@ const bufferStream = (data: Buffer): ReadableStream<Uint8Array> =>
       controller.close();
     },
   });
+
+const bufferRangeStream = (data: Buffer, start: number, end: number): ReadableStream<Uint8Array> =>
+  bufferStream(data.subarray(start, end + 1));
 
 /** URL pública servida por `/api/whatsapp/media/[id]`. */
 export const mediaUrlFor = (id: string): string => `/api/whatsapp/media/${id}`;
@@ -182,6 +195,11 @@ const EXTENSIONS: Readonly<Record<string, string>> = {
 
 const extensionFor = (mimeType: string): string =>
   EXTENSIONS[mimeType.split(';')[0] ?? ''] ?? 'bin';
+
+const checksumFor = (data: Buffer): string => createHash('sha256').update(data).digest('hex');
+
+const isUniqueViolation = (error: unknown): boolean =>
+  error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 
 const bucketFor = (scope: MediaScope): BucketName =>
   scope.kind === 'avatar' ? BUCKETS.AVATARS : BUCKETS.MEDIA;
@@ -227,6 +245,7 @@ const readCache = async (id: string): Promise<StoredMedia | null> => {
       size: stat.size,
       bytes: () => fsp.readFile(paths.bin),
       stream: () => fileStream(paths.bin),
+      streamRange: (start, end) => fileRangeStream(paths.bin, start, end),
     };
   } catch {
     return null;
@@ -240,6 +259,7 @@ const fromBuffer = (data: Buffer, meta: MediaMeta): StoredMedia => ({
   size: data.length,
   bytes: async () => data,
   stream: () => bufferStream(data),
+  streamRange: (start, end) => bufferRangeStream(data, start, end),
 });
 
 export const mediaStore = {
@@ -306,6 +326,7 @@ export const mediaStore = {
     }
 
     const mimeType = meta.mimeType || 'application/octet-stream';
+    const checksum = checksumFor(data);
     let id = scopedMediaId(sourceId, scope);
 
     /** A mídia ficou onde qualquer processo consegue lê-la depois? */
@@ -319,45 +340,134 @@ export const mediaStore = {
       });
       if (existing) id = existing.id;
       const bucket = bucketFor(scope);
-      const objectPath = bucketPathFor(id, scope, mimeType);
 
-      if (await storage.upload(bucket, objectPath, data, mimeType)) {
-        try {
-          const checksum = createHash('sha256').update(data).digest('hex');
-          await prisma.mediaObject.upsert({
-            where: { id },
-            create: {
-              id,
-              accountId: scope.accountId,
-              inboxId: scope.inboxId ?? null,
-              bucketPath: `${bucket}/${objectPath}`,
-              mimeType,
-              fileName: meta.fileName ?? null,
-              sizeBytes: data.length,
-              checksum,
-              sourceId,
-              scopeKey: scopeKeyFor(scope),
-              mediaKind: mediaKindFor(scope),
-            },
-            update: {
-              accountId: scope.accountId,
-              inboxId: scope.inboxId ?? null,
-              bucketPath: `${bucket}/${objectPath}`,
-              mimeType,
-              fileName: meta.fileName ?? null,
-              sizeBytes: data.length,
-              checksum,
-              sourceId,
-              scopeKey: scopeKeyFor(scope),
-              mediaKind: mediaKindFor(scope),
-            },
+      if (mediaKindFor(scope) === 'mensagem') {
+        // Reentrega da mesma mensagem não precisa nem tocar no banco. Além de
+        // economizar o PUT, isto preserva os metadados da primeira
+        // materialização do evento.
+        if (existing?.checksum === checksum && existing.blobId) {
+          await writeCache(id, data, {
+            mimeType: existing.mimeType,
+            ...(existing.fileName ? { fileName: existing.fileName } : {}),
           });
-          // O registro é o que torna a mídia localizável: o objeto no bucket
-          // sem a linha no banco não é servível, porque `read` confere a posse
-          // pela linha. Só depois dela a mídia conta como durável.
-          durable = true;
-        } catch (error) {
-          console.warn('[wa-media-store] Mídia gravada, mas o registro falhou:', error);
+          return mediaUrlFor(id);
+        }
+
+        let blob = await prisma.mediaBlob.findUnique({
+          where: { accountId_checksum: { accountId: scope.accountId, checksum } },
+        });
+
+        if (!blob) {
+          const objectPath = `${scope.accountId}/blobs/${checksum.slice(0, 2)}/${checksum}.${extensionFor(mimeType)}`;
+          if (await storage.upload(BUCKETS.MEDIA, objectPath, data, mimeType)) {
+            try {
+              blob = await prisma.mediaBlob.create({
+                data: {
+                  accountId: scope.accountId,
+                  checksum,
+                  bucketPath: `${BUCKETS.MEDIA}/${objectPath}`,
+                  mimeType,
+                  sizeBytes: data.length,
+                },
+              });
+            } catch (error) {
+              if (isUniqueViolation(error)) {
+                // Dois workers podem concluir o mesmo hash juntos. Ambos
+                // gravaram os mesmos bytes no mesmo caminho; a linha vencedora
+                // é a identidade que os dois devem referenciar.
+                blob = await prisma.mediaBlob.findUnique({
+                  where: { accountId_checksum: { accountId: scope.accountId, checksum } },
+                });
+              } else {
+                console.warn('[wa-media-store] Objeto gravado, mas o blob falhou:', error);
+              }
+            }
+          }
+        }
+
+        if (blob) {
+          try {
+            await prisma.mediaObject.upsert({
+              where: { id },
+              create: {
+                id,
+                accountId: scope.accountId,
+                inboxId: scope.inboxId ?? null,
+                blobId: blob.id,
+                bucketPath: blob.bucketPath,
+                mimeType,
+                fileName: meta.fileName ?? null,
+                sizeBytes: data.length,
+                checksum,
+                sourceId,
+                scopeKey: scopeKeyFor(scope),
+                mediaKind: mediaKindFor(scope),
+              },
+              update: {
+                accountId: scope.accountId,
+                inboxId: scope.inboxId ?? null,
+                blobId: blob.id,
+                bucketPath: blob.bucketPath,
+                mimeType,
+                fileName: meta.fileName ?? null,
+                sizeBytes: data.length,
+                checksum,
+                sourceId,
+                scopeKey: scopeKeyFor(scope),
+                mediaKind: mediaKindFor(scope),
+              },
+            });
+            durable = true;
+          } catch (error) {
+            console.warn('[wa-media-store] Mídia gravada, mas o registro falhou:', error);
+          }
+        }
+      } else {
+        const objectPath = bucketPathFor(id, scope, mimeType);
+        const bucketPath = `${bucket}/${objectPath}`;
+
+        // A consulta periódica de avatar costuma devolver os mesmos bytes. O
+        // caminho é estável; conteúdo e caminho iguais tornam outro PUT puro
+        // desperdício de banda.
+        const unchanged = existing?.checksum === checksum && existing.bucketPath === bucketPath;
+        if (unchanged || (await storage.upload(bucket, objectPath, data, mimeType))) {
+          try {
+            if (!unchanged) {
+              await prisma.mediaObject.upsert({
+                where: { id },
+                create: {
+                  id,
+                  accountId: scope.accountId,
+                  inboxId: scope.inboxId ?? null,
+                  blobId: null,
+                  bucketPath,
+                  mimeType,
+                  fileName: meta.fileName ?? null,
+                  sizeBytes: data.length,
+                  checksum,
+                  sourceId,
+                  scopeKey: scopeKeyFor(scope),
+                  mediaKind: mediaKindFor(scope),
+                },
+                update: {
+                  accountId: scope.accountId,
+                  inboxId: scope.inboxId ?? null,
+                  blobId: null,
+                  bucketPath,
+                  mimeType,
+                  fileName: meta.fileName ?? null,
+                  sizeBytes: data.length,
+                  checksum,
+                  sourceId,
+                  scopeKey: scopeKeyFor(scope),
+                  mediaKind: mediaKindFor(scope),
+                },
+              });
+            }
+            durable = true;
+          } catch (error) {
+            console.warn('[wa-media-store] Mídia gravada, mas o registro falhou:', error);
+          }
         }
       }
     }
@@ -452,6 +562,45 @@ export const mediaStore = {
     // depender de uma gravação que é opcional por definição — e que é sempre
     // impossível no sistema de arquivos somente leitura da função serverless.
     await writeCache(resolvedId, data, meta);
+    return fromBuffer(data, meta);
+  },
+
+  /** Resolve a identidade por conteúdo sem baixar os bytes. */
+  async resolveBlob(
+    id: string,
+    accountId: string,
+  ): Promise<{ readonly blobId: string; readonly mimeType: string } | null> {
+    if (!isSafeMediaId(id)) return null;
+    const object = await prisma.mediaObject.findFirst({
+      where: { id, accountId },
+      select: { blobId: true, mimeType: true },
+    });
+    return object?.blobId ? { blobId: object.blobId, mimeType: object.mimeType } : null;
+  },
+
+  /** Lê o objeto canônico depois de provar que o blob pertence à conta. */
+  async readBlob(blobId: string, accountId: string): Promise<StoredMedia | null> {
+    if (!isSafeMediaId(blobId)) return null;
+    const blob = await prisma.mediaBlob.findFirst({ where: { id: blobId, accountId } });
+    if (!blob) return null;
+
+    // A posse vem antes do cache: a chave não carrega o tenant e poderia ser
+    // reaproveitada por quem descobrisse o id de outra conta.
+    const cacheId = `blob-${blobId}`;
+    const cached = await readCache(cacheId);
+    if (cached) return cached;
+    if (!isStorageConfigured()) return null;
+
+    const slash = blob.bucketPath.indexOf('/');
+    if (slash < 0) return null;
+    const bucket = blob.bucketPath.slice(0, slash) as BucketName;
+    const objectPath = blob.bucketPath.slice(slash + 1);
+    if (!objectPath.startsWith(`${accountId}/`)) return null;
+
+    const data = await storage.download(bucket, objectPath);
+    if (!data) return null;
+    const meta: MediaMeta = { mimeType: blob.mimeType };
+    await writeCache(cacheId, data, meta);
     return fromBuffer(data, meta);
   },
 

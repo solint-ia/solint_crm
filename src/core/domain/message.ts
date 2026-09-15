@@ -29,6 +29,8 @@ export type MessageContent =
       readonly url: string;
       readonly caption?: string;
       readonly mimeType?: string;
+      /** Miniatura JPEG entregue pelo WhatsApp, sem baixar o vídeo. */
+      readonly posterUrl?: string;
       /** GIF do WhatsApp: e um video curto sem som, exibido em laco. */
       readonly gif?: boolean;
     }
@@ -70,7 +72,12 @@ export interface MessageReaction {
 /** Agrupa as reações por emoji, na ordem em que cada emoji apareceu. */
 export const groupReactions = (
   reactions: readonly MessageReaction[] | undefined,
-): readonly { readonly emoji: string; readonly count: number; readonly mine: boolean; readonly names: readonly string[] }[] => {
+): readonly {
+  readonly emoji: string;
+  readonly count: number;
+  readonly mine: boolean;
+  readonly names: readonly string[];
+}[] => {
   if (!reactions || reactions.length === 0) return [];
   const ordem: string[] = [];
   const mapa = new Map<string, { count: number; mine: boolean; names: string[] }>();

@@ -53,6 +53,8 @@ export interface MediaRef {
   readonly voice?: boolean;
   /** Video sem som exibido em laco — o "GIF" do WhatsApp. */
   readonly gif?: boolean;
+  /** Miniatura JPEG que acompanha o vídeo no próprio payload. */
+  readonly jpegThumbnail?: Uint8Array;
   readonly animated?: boolean;
   /** Tamanho legivel, usado no fallback quando o download falha. */
   readonly sizeLabel: string;
@@ -122,6 +124,7 @@ export const decodeWaMessage = (raw: WAMessage): DecodedMessage | null => {
   if (message.videoMessage) {
     const gif = Boolean(message.videoMessage.gifPlayback);
     const caption = message.videoMessage.caption?.trim() || undefined;
+    const jpegThumbnail = message.videoMessage.jpegThumbnail;
     const label = gif ? '🎞️ GIF' : '🎬 Vídeo';
     return {
       ...asAttachmentText(label, caption),
@@ -133,6 +136,7 @@ export const decodeWaMessage = (raw: WAMessage): DecodedMessage | null => {
         sizeLabel: formatBytes(Number(message.videoMessage.fileLength ?? 0)),
         caption,
         gif,
+        ...(jpegThumbnail?.length ? { jpegThumbnail } : {}),
       },
     };
   }
@@ -213,7 +217,7 @@ export const decodeWaMessage = (raw: WAMessage): DecodedMessage | null => {
 };
 
 /** Conteudo definitivo depois que a midia foi decifrada e ficou disponível. */
-export const mediaContent = (media: MediaRef, url: string): MessageContent => {
+export const mediaContent = (media: MediaRef, url: string, posterUrl?: string): MessageContent => {
   switch (media.kind) {
     case 'image':
       return { type: 'image', url, caption: media.caption };
@@ -224,6 +228,7 @@ export const mediaContent = (media: MediaRef, url: string): MessageContent => {
         caption: media.caption,
         mimeType: media.mimeType,
         gif: media.gif,
+        ...(posterUrl ? { posterUrl } : {}),
       };
     case 'sticker':
       return { type: 'sticker', url, animated: media.animated };

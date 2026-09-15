@@ -52,7 +52,7 @@ import {
   timestampOf,
   type MediaRef,
 } from './wa-message-content';
-import { mediaStore, mediaUrlFor } from './wa-media-store';
+import { isSafeMediaId, mediaStore, mediaUrlFor } from './wa-media-store';
 import { deletionKey, quotedStub } from './wa-quote';
 import { waVersion } from './wa-version';
 import { silenceNoisyLibsignalLogs } from './wa-console-filter';
@@ -1077,13 +1077,23 @@ export class WhatsAppService {
 
     // Reprocessamento da mesma mensagem (reconexão, `append`) reusa o arquivo.
     const mediaScope = { accountId, inboxId, kind: 'mensagem' as const };
+    const posterSourceId = `${messageId}-poster`;
     if (await mediaStore.has(messageId, mediaScope)) {
       const publicId = await mediaStore.publicId(messageId, mediaScope);
       if (!publicId) return { content: fallback };
       const url = mediaUrlFor(publicId);
       const guardada = await mediaStore.read(messageId, mediaScope).catch(() => null);
       const bytes = guardada ? await guardada.bytes().catch(() => undefined) : undefined;
-      return { content: mediaContent(media, url), url, ...(bytes ? { bytes } : {}) };
+      const posterPublicId =
+        media.kind === 'video' && isSafeMediaId(posterSourceId)
+          ? await mediaStore.publicId(posterSourceId, mediaScope).catch(() => null)
+          : null;
+      const posterUrl = posterPublicId ? mediaUrlFor(posterPublicId) : undefined;
+      return {
+        content: mediaContent(media, url, posterUrl),
+        url,
+        ...(bytes ? { bytes } : {}),
+      };
     }
 
     const socket = this.socket;
@@ -1102,8 +1112,22 @@ export class WhatsAppService {
         { mimeType: media.mimeType, ...(media.fileName ? { fileName: media.fileName } : {}) },
         { accountId, inboxId, kind: 'mensagem' },
       );
+      const posterUrl =
+        url &&
+        media.kind === 'video' &&
+        media.jpegThumbnail?.length &&
+        isSafeMediaId(posterSourceId)
+          ? await mediaStore
+              .save(
+                posterSourceId,
+                Buffer.from(media.jpegThumbnail),
+                { mimeType: 'image/jpeg' },
+                mediaScope,
+              )
+              .catch(() => undefined)
+          : undefined;
       return {
-        content: url ? mediaContent(media, url) : fallback,
+        content: url ? mediaContent(media, url, posterUrl) : fallback,
         bytes: buffer,
         ...(url ? { url } : {}),
       };

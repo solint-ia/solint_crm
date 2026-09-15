@@ -58,7 +58,7 @@ import {
 import { base64ParaWebhook, buildUpsertPayload, mediaUrlAbsoluta } from '../wa-webhook-payload';
 import { isApiTokenActor } from '@/core/domain/user';
 import { dispararWebhooks } from '@/infrastructure/webhooks/webhook-dispatch';
-import { mediaStore, mediaUrlFor } from '../wa-media-store';
+import { isSafeMediaId, mediaStore, mediaUrlFor } from '../wa-media-store';
 import { deletionKey, quotedStub } from '../wa-quote';
 import { baileysLogLevel, waLog } from '../wa-log';
 import { waVersion } from '../wa-version';
@@ -2635,6 +2635,7 @@ export class WhatsAppSession {
       inboxId: this.inboxId,
       kind: 'mensagem' as const,
     };
+    const posterSourceId = `${messageId}-poster`;
     if (await mediaStore.has(messageId, mediaScope)) {
       const publicId = await mediaStore.publicId(messageId, mediaScope);
       if (!publicId) return { content: fallback };
@@ -2647,7 +2648,16 @@ export class WhatsAppSession {
           ? await mediaStore.read(messageId, mediaScope).catch(() => null)
           : null;
       const bytes = guardada ? await guardada.bytes().catch(() => undefined) : undefined;
-      return { content: mediaContent(media, url), url, ...(bytes ? { bytes } : {}) };
+      const posterPublicId =
+        media.kind === 'video' && isSafeMediaId(posterSourceId)
+          ? await mediaStore.publicId(posterSourceId, mediaScope).catch(() => null)
+          : null;
+      const posterUrl = posterPublicId ? mediaUrlFor(posterPublicId) : undefined;
+      return {
+        content: mediaContent(media, url, posterUrl),
+        url,
+        ...(bytes ? { bytes } : {}),
+      };
     }
 
     const socket = this.socket;
@@ -2666,10 +2676,24 @@ export class WhatsAppSession {
         { mimeType: media.mimeType, ...(media.fileName ? { fileName: media.fileName } : {}) },
         { accountId: this.accountId, inboxId: this.inboxId, kind: 'mensagem' },
       );
+      const posterUrl =
+        url &&
+        media.kind === 'video' &&
+        media.jpegThumbnail?.length &&
+        isSafeMediaId(posterSourceId)
+          ? await mediaStore
+              .save(
+                posterSourceId,
+                Buffer.from(media.jpegThumbnail),
+                { mimeType: 'image/jpeg' },
+                mediaScope,
+              )
+              .catch(() => undefined)
+          : undefined;
       // Os bytes seguem mesmo quando a gravação foi recusada: o conteúdo cai
       // para o texto de reserva na tela, mas quem integra ainda recebe a mídia.
       return {
-        content: url ? mediaContent(media, url) : fallback,
+        content: url ? mediaContent(media, url, posterUrl) : fallback,
         bytes: buffer,
         ...(url ? { url } : {}),
       };

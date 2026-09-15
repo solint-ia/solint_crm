@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Ban,
   Download,
@@ -10,6 +10,7 @@ import {
   Mic,
   Music,
   Plus,
+  Play,
   Reply,
   Smartphone,
   SmilePlus,
@@ -30,6 +31,116 @@ import { useDatasDaConta } from '@/components/layout/regional-provider';
 import { DeliveryTicks } from './delivery-ticks';
 
 const AUDIO_LABEL = 'Mensagem de áudio';
+
+type VideoContent = Extract<MessageContent, { readonly type: 'video' }>;
+
+/** GIF só consome banda e movimento enquanto ocupa uma parte útil da tela. */
+function GifVideo({ content }: { readonly content: VideoContent }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [reducedMotion, setReducedMotion] = useState(false);
+
+  useEffect(() => {
+    const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const update = () => setReducedMotion(preference.matches);
+    update();
+    preference.addEventListener('change', update);
+    return () => preference.removeEventListener('change', update);
+  }, []);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (reducedMotion) {
+      video.pause();
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting && entry.intersectionRatio >= 0.5) {
+          void video.play().catch(() => undefined);
+        } else {
+          video.pause();
+        }
+      },
+      { threshold: 0.5 },
+    );
+    observer.observe(video);
+    return () => observer.disconnect();
+  }, [reducedMotion]);
+
+  return (
+    <video
+      ref={videoRef}
+      src={content.url}
+      poster={content.posterUrl}
+      muted
+      loop
+      playsInline
+      preload="none"
+      aria-label={content.caption ?? 'GIF recebido'}
+      onClick={
+        reducedMotion
+          ? () => {
+              const video = videoRef.current;
+              if (!video) return;
+              if (video.paused) void video.play().catch(() => undefined);
+              else video.pause();
+            }
+          : undefined
+      }
+      className="max-h-80 w-full cursor-pointer rounded-xl bg-surface-2"
+    />
+  );
+}
+
+function DemandVideo({
+  content,
+  onOpenLightbox,
+}: {
+  readonly content: VideoContent;
+  readonly onOpenLightbox: (media: LightboxMedia) => void;
+}) {
+  const [started, setStarted] = useState(false);
+
+  return (
+    <div className="relative rounded-xl bg-surface-2">
+      <video
+        src={content.url}
+        poster={content.posterUrl}
+        preload="none"
+        controls
+        playsInline
+        onPlay={() => setStarted(true)}
+        className="max-h-80 w-full rounded-xl"
+      />
+      {!content.posterUrl && !started && (
+        <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <span className="rounded-full bg-black/60 p-3 text-white shadow-md">
+            <Play className="size-5 fill-current" />
+          </span>
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenLightbox({
+            type: 'video',
+            url: content.url,
+            caption: content.caption,
+            isGif: content.gif,
+          });
+        }}
+        aria-label="Ver vídeo em tela cheia"
+        title="Ver em tela cheia"
+        className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-white backdrop-blur-xs shadow-md transition-all opacity-80 hover:opacity-100"
+      >
+        <Maximize2 className="size-3.5" />
+      </button>
+    </div>
+  );
+}
 
 interface MessageBubbleProps {
   readonly message: Message;
@@ -227,7 +338,8 @@ export function MessageBubble({
                     !isInbound &&
                       !isAi &&
                       'rounded-tr-xs bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-xs shadow-blue-600/15',
-                    isAi && 'rounded-tr-xs border border-cyan-500/30 bg-cyan-500/10 text-cyan-800 dark:text-cyan-200',
+                    isAi &&
+                      'rounded-tr-xs border border-cyan-500/30 bg-cyan-500/10 text-cyan-800 dark:text-cyan-200',
                   ),
               !frameless && message.content.type === 'image' && 'p-1.5',
             )}
@@ -236,7 +348,9 @@ export function MessageBubble({
               <p
                 className={cn(
                   'text-[11px] font-bold tracking-tight opacity-90',
-                  message.content.type === 'image' ? 'px-2.5 pt-1.5' : 'mb-1 text-cyan-600 dark:text-cyan-400',
+                  message.content.type === 'image'
+                    ? 'px-2.5 pt-1.5'
+                    : 'mb-1 text-cyan-600 dark:text-cyan-400',
                 )}
               >
                 {authorLabel}
@@ -502,7 +616,9 @@ function MediaContent({
     case 'image':
       return (
         <figure
-          onClick={() => onOpenLightbox({ type: 'image', url: content.url, caption: content.caption })}
+          onClick={() =>
+            onOpenLightbox({ type: 'image', url: content.url, caption: content.caption })
+          }
           className="group/media relative cursor-pointer overflow-hidden rounded-xl"
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -510,6 +626,7 @@ function MediaContent({
             src={content.url}
             alt={content.caption ?? 'Foto recebida'}
             loading="lazy"
+            decoding="async"
             className="max-h-80 w-full rounded-xl object-cover transition-transform duration-300 group-hover/media:scale-[1.02]"
           />
           <div className="absolute inset-0 bg-black/0 group-hover/media:bg-black/20 transition-colors flex items-center justify-center pointer-events-none">
@@ -518,9 +635,7 @@ function MediaContent({
             </span>
           </div>
           {content.caption && (
-            <figcaption className="px-2 pt-2 text-xs leading-relaxed">
-              {content.caption}
-            </figcaption>
+            <figcaption className="px-2 pt-2 text-xs leading-relaxed">{content.caption}</figcaption>
           )}
         </figure>
       );
@@ -528,37 +643,13 @@ function MediaContent({
     case 'video':
       return (
         <figure className="group/media relative overflow-hidden rounded-xl">
-          <video
-            src={content.url}
-            controls={!content.gif}
-            autoPlay={Boolean(content.gif)}
-            loop={Boolean(content.gif)}
-            muted={Boolean(content.gif)}
-            playsInline
-            className="max-h-80 w-full rounded-xl"
-          />
-          {!content.gif && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenLightbox({
-                  type: 'video',
-                  url: content.url,
-                  caption: content.caption,
-                  isGif: content.gif,
-                });
-              }}
-              title="Ver em tela cheia"
-              className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-white backdrop-blur-xs shadow-md transition-all opacity-80 hover:opacity-100"
-            >
-              <Maximize2 className="size-3.5" />
-            </button>
+          {content.gif ? (
+            <GifVideo content={content} />
+          ) : (
+            <DemandVideo content={content} onOpenLightbox={onOpenLightbox} />
           )}
           {content.caption && (
-            <figcaption className="px-2 pt-2 text-xs leading-relaxed">
-              {content.caption}
-            </figcaption>
+            <figcaption className="px-2 pt-2 text-xs leading-relaxed">{content.caption}</figcaption>
           )}
         </figure>
       );
@@ -600,6 +691,7 @@ function MediaContent({
           src={content.url}
           alt="Figurinha"
           loading="lazy"
+          decoding="async"
           className="size-36 object-contain"
         />
       );

@@ -106,6 +106,7 @@ model Account {
   invites              Invite[]
   tasks                Task[]
   mediaObjects         MediaObject[]
+  mediaBlobs           MediaBlob[]
   scheduledMessages    ScheduledMessage[]
   contactImportBatches ContactImportBatch[]
   webhookDeliveries    WebhookDelivery[]
@@ -1388,7 +1389,8 @@ model MediaObject {
   id         String   @id @default(cuid())
   accountId  String
   inboxId    String?
-  bucketPath String   @unique
+  blobId     String?
+  bucketPath String
   mimeType   String
   fileName   String?
   sizeBytes  Int
@@ -1401,9 +1403,31 @@ model MediaObject {
   mediaKind  String
   createdAt  DateTime @default(now())
 
-  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  inbox   Inbox?  @relation(fields: [inboxId], references: [id], onDelete: SetNull)
+  account Account    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  inbox   Inbox?     @relation(fields: [inboxId], references: [id], onDelete: SetNull)
+  blob    MediaBlob? @relation(fields: [blobId], references: [id], onDelete: SetNull)
 
   @@unique([accountId, scopeKey, mediaKind, sourceId])
   @@index([accountId, createdAt])
+  @@index([bucketPath])
+  @@index([blobId])
+}
+
+model MediaBlob {
+  id         String   @id @default(cuid())
+  accountId  String
+  /// SHA-256 (hex) dos bytes decifrados.
+  checksum   String
+  /// Mesmo formato de `MediaObject.bucketPath`: "{bucket}/{caminho}".
+  bucketPath String   @unique
+  /// Do primeiro upload. Serve à extensão e à rota por conteúdo; cada mensagem
+  /// mantém o próprio `mimeType`/`fileName` em `MediaObject`.
+  mimeType   String
+  sizeBytes  Int
+  createdAt  DateTime @default(now())
+
+  account Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  objects MediaObject[]
+
+  @@unique([accountId, checksum])
 }
