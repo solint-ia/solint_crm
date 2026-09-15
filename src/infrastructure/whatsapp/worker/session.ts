@@ -66,6 +66,12 @@ import { deletionKey, quotedStub } from '../wa-quote';
 import { baileysLogLevel, waLog } from '../wa-log';
 import { waVersion } from '../wa-version';
 import { HistoryImporter, type HistoryImportStats } from './history-import';
+import {
+  ADDRESS_BOOK_FLUSH_MS,
+  ADDRESS_BOOK_RETRY_MS,
+  loadAddressBookNames,
+  saveAddressBookNames,
+} from '../wa-address-book';
 
 import { waEventBus, type WhatsAppStatusPayload } from '../whatsapp-events';
 import {
@@ -320,6 +326,18 @@ export class WhatsAppSession {
   private readonly contactsStore = new Map<string, Partial<WAContact>>();
   /** A agenda completa já passou por esta sessão ou ainda exige resync manual? */
   private hasAddressBookSnapshot = false;
+  /**
+   * Nomes da agenda ainda não gravados no banco, por contato.
+   *
+   * Acumulados e gravados em lote: o pareamento entrega a agenda inteira de uma
+   * vez, em milhares de eventos, e uma ida ao banco por contato disputaria o
+   * pool com as mensagens. Ver `wa-address-book.ts`.
+   */
+  private readonly pendingAddressBook = new Map<string, string>();
+  private addressBookTimer: NodeJS.Timeout | null = null;
+  private addressBookFlush: Promise<void> | null = null;
+  /** Número cuja agenda já voltou do banco nesta sessão. */
+  private addressBookLoadedFor: string | null = null;
   /**
    * Nome já resolvido de cada participante de grupo.
    *
@@ -1002,6 +1020,10 @@ export class WhatsAppSession {
         workerId: this.workerId,
         lockVersion: this.lockVersion,
       });
+      // A agenda volta do banco antes do socket abrir. Sem isto, a fila represada
+      // chegaria com a memória vazia e o nome salvo no celular perderia para o
+      // nome do perfil até alguém sincronizar os contatos de novo.
+      await this.loadAddressBook(state.creds.me?.id);
       const historyRow =
         process.env.WA_HISTORY_IMPORT === '1'
           ? await prisma.whatsAppConnection.findUnique({
@@ -1811,12 +1833,18 @@ export class WhatsAppSession {
   }
 
   /**
-   * Mantém o retrato recebido do WhatsApp apenas na memória da sessão.
+   * Mantém o retrato recebido do WhatsApp na memória da sessão.
    *
    * Os eventos de agenda chegam no pareamento, em reconexões e em alterações
-   * feitas no celular. Persistir daqui transformava todos esses eventos numa
-   * sincronização automática do CRM. A única rotina autorizada a gravar a
-   * agenda agora é `syncAllStoredContacts`, chamada pelo botão explícito.
+   * feitas no celular. Persistir daqui no **cadastro de contatos** transformava
+   * todos esses eventos numa sincronização automática do CRM; a única rotina
+   * autorizada a gravar contatos continua sendo `syncAllStoredContacts`,
+   * chamada pelo botão explícito.
+   *
+   * O que vai ao banco é só o nome salvo na agenda, numa tabela à parte que
+   * ninguém exibe (`wa-address-book.ts`). A memória morre a cada reinício do
+   * worker, e com ela o nome salvo: até alguém sincronizar de novo, toda
+   * conversa voltava a mostrar o nome do perfil.
    */
   private rememberContact(contact: Partial<WAContact>): void {
     const rawJid = contact.phoneNumber ?? contact.id;
@@ -1838,6 +1866,105 @@ export class WhatsAppSession {
     const jid = jidNormalizedUser(rawJid);
     const existingStored = this.contactsStore.get(jid);
     this.contactsStore.set(jid, { ...existingStored, ...contact });
+
+    // Só `name` é a agenda. `notify` é o nome que a pessoa escolheu para si e
+    // chega em toda mensagem: guardá-lo aqui o faria passar por nome salvo.
+    const nomeNaAgenda = nomeUtilizavel(contact.name);
+    if (nomeNaAgenda) {
+      this.pendingAddressBook.set(jid, nomeNaAgenda);
+      this.scheduleAddressBookFlush();
+    }
+  }
+
+  /** Arma a gravação em lote dos nomes da agenda. */
+  private scheduleAddressBookFlush(delayMs = ADDRESS_BOOK_FLUSH_MS): void {
+    if (this.addressBookTimer || this.encerrada) return;
+    const timer = setTimeout(() => {
+      this.addressBookTimer = null;
+      void this.flushAddressBook();
+    }, delayMs);
+    timer.unref?.();
+    this.addressBookTimer = timer;
+  }
+
+  /**
+   * Grava os nomes pendentes da agenda.
+   *
+   * Uma gravação por vez: a agenda do pareamento chega em rajadas, e duas
+   * gravações simultâneas só disputariam as mesmas linhas. A falha não derruba
+   * nada: o nome continua na memória desta sessão, e o celular o manda de novo
+   * na próxima sincronização.
+   */
+  private async flushAddressBook(): Promise<void> {
+    if (this.addressBookFlush) return this.addressBookFlush;
+    if (this.pendingAddressBook.size === 0) return;
+
+    // A agenda é do número pareado. Antes de o socket saber quem é, não há a
+    // quem atribuir os nomes: eles esperam, e a tentativa volta daqui a pouco.
+    const ownerJid = this.ownJid;
+    if (!ownerJid) {
+      this.scheduleAddressBookFlush(ADDRESS_BOOK_RETRY_MS);
+      return;
+    }
+
+    const entries = [...this.pendingAddressBook.entries()].map(([jid, name]) => ({ jid, name }));
+    this.pendingAddressBook.clear();
+
+    this.addressBookFlush = saveAddressBookNames(
+      { accountId: this.accountId, inboxId: this.inboxId, ownerJid },
+      entries,
+    )
+      .then(({ created, updated }) => {
+        if (created > 0 || updated > 0) {
+          waLog.debug(
+            `[sessão ${this.inboxId}] Agenda gravada: ${created} novo(s), ${updated} alterado(s).`,
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        waLog.warn(`[sessão ${this.inboxId}] Nomes da agenda não gravados:`, error);
+      })
+      .finally(() => {
+        this.addressBookFlush = null;
+        if (this.pendingAddressBook.size > 0) this.scheduleAddressBookFlush();
+      });
+    return this.addressBookFlush;
+  }
+
+  /**
+   * Devolve à memória os nomes da agenda gravados para o número pareado.
+   *
+   * Só preenche quem a memória ainda não conhece com nome: o que chegou do
+   * celular nesta sessão é mais novo que o do banco. Sessão ainda não pareada
+   * não tem número, e portanto não tem agenda a restaurar.
+   */
+  private async loadAddressBook(meId: string | undefined): Promise<void> {
+    if (!meId) return;
+    const ownerJid = jidNormalizedUser(meId);
+    if (this.addressBookLoadedFor === ownerJid) return;
+
+    try {
+      const rows = await loadAddressBookNames({
+        accountId: this.accountId,
+        inboxId: this.inboxId,
+        ownerJid,
+      });
+      for (const { jid, name } of rows) {
+        const stored = this.contactsStore.get(jid);
+        if (nomeUtilizavel(stored?.name)) continue;
+        this.contactsStore.set(jid, { ...stored, id: stored?.id ?? jid, name });
+      }
+      this.addressBookLoadedFor = ownerJid;
+      if (rows.length > 0) {
+        waLog.debug(
+          `[sessão ${this.inboxId}] ${rows.length} nome(s) da agenda restaurado(s) do banco.`,
+        );
+      }
+    } catch (error) {
+      // Sem a agenda do banco a sessão ainda funciona: só volta ao comportamento
+      // antigo, com o nome do perfil até a próxima sincronização.
+      waLog.warn(`[sessão ${this.inboxId}] Agenda não restaurada do banco:`, error);
+    }
   }
 
   /**
@@ -3463,6 +3590,14 @@ export class WhatsAppSession {
     // não foi anunciado, e desligar sem isso deixaria as telas abertas sem
     // saber das mensagens que acabaram de entrar.
     await this.finishDrain('sessão encerrada');
+    // Grava a agenda pendente enquanto o socket ainda sabe qual é o número: é
+    // esta gravação que o próximo boot vai ler. Um deploy cai exatamente aqui.
+    if (this.addressBookTimer) {
+      clearTimeout(this.addressBookTimer);
+      this.addressBookTimer = null;
+    }
+    await this.flushAddressBook();
+    if (this.pendingAddressBook.size > 0) await this.flushAddressBook();
     this.teardownSocket();
     this.isAuthenticated = false;
     this.isInitializing = false;

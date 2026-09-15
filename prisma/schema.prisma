@@ -108,6 +108,7 @@ model Account {
   mediaObjects         MediaObject[]
   mediaBlobs           MediaBlob[]
   pendingMedia         PendingMedia[]
+  addressBookNames     WhatsAppAddressBookName[]
   scheduledMessages    ScheduledMessage[]
   contactImportBatches ContactImportBatch[]
   webhookDeliveries    WebhookDelivery[]
@@ -771,6 +772,7 @@ model Inbox {
   campaigns         Campaign[]
   mediaObjects      MediaObject[]
   pendingMedia      PendingMedia[]
+  addressBookNames  WhatsAppAddressBookName[]
   teamInboxes       TeamInbox[]
   pipelines         Pipeline[]
   whatsappCommands  WhatsAppCommand[]
@@ -860,6 +862,29 @@ model PendingMedia {
   inbox   Inbox   @relation(fields: [inboxId], references: [id], onDelete: Cascade)
 
   @@index([accountId, inboxId, status])
+}
+
+/// Nome salvo na agenda do celular pareado, por contato.
+///
+/// Existe porque a agenda chega do WhatsApp só no pareamento e em alterações
+/// feitas no celular, e vivia apenas na memória do worker: cada reinício a
+/// apagava e o nome do perfil voltava a vencer. Não é o cadastro de contatos
+/// e nada o exibe; ver `wa-address-book.ts`.
+model WhatsAppAddressBookName {
+  accountId String
+  inboxId   String
+  /// Número pareado dono desta agenda. Outro número na mesma caixa não a herda.
+  ownerJid  String
+  /// Contato, normalizado como a sessão guarda na memória.
+  jid       String
+  name      String
+  updatedAt DateTime @updatedAt
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  inbox   Inbox   @relation(fields: [inboxId], references: [id], onDelete: Cascade)
+
+  @@id([inboxId, ownerJid, jid])
+  @@index([accountId])
 }
 
 /// Material criptográfico de sessão. Milhares de linhas pequenas por conexão,

@@ -54,6 +54,7 @@ const SCOPED = new Set([
   'mediaObject',
   'mediaBlob',
   'pendingMedia',
+  'whatsAppAddressBookName',
   'scheduledMessage',
   'contactImportBatch',
 ]);
