@@ -16,8 +16,13 @@ FROM node:22-bookworm-slim AS base
 # diferentes fazem o worker morrer no boot sem achar o Prisma.
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
+# `ffmpeg` converte o áudio gravado no navegador (WebM no Chrome, MP4 no Safari)
+# para OGG/Opus, o único formato que o WhatsApp entrega como nota de voz. Ver
+# `src/infrastructure/whatsapp/wa-audio.ts`. Fica na base, e não no estágio do
+# worker, para ser instalado uma vez e ficar em cache: no worker ele viria depois
+# do `COPY . .` e seria reinstalado a cada mudança de código.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && apt-get install -y --no-install-recommends openssl ca-certificates ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 
 # --- dependências: só invalida quando o lockfile ou o schema mudam ----------

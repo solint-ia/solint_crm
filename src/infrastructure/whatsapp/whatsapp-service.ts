@@ -71,6 +71,7 @@ import {
   timeLabel,
   toneFor,
 } from './wa-format';
+import { VOICE_NOTE_MIME, converterParaNotaDeVoz, precisaConverterAudio } from './wa-audio';
 
 const SESSIONS_DIR = path.resolve(process.cwd(), '.sessions', 'whatsapp-default');
 
@@ -1646,21 +1647,37 @@ export class WhatsAppService {
 
     const caption = media.caption?.trim() || undefined;
 
-    const payload =
-      media.kind === 'image'
-        ? { image: media.data, mimetype: media.mimeType, ...(caption ? { caption } : {}) }
-        : media.kind === 'video'
-          ? { video: media.data, mimetype: media.mimeType, ...(caption ? { caption } : {}) }
-          : media.kind === 'audio'
-            ? { audio: media.data, mimetype: media.mimeType, ptt: media.voice === true }
-            : {
-                document: media.data,
-                mimetype: media.mimeType,
-                fileName: media.fileName ?? 'arquivo',
-                ...(caption ? { caption } : {}),
-              };
-
     try {
+      // Mesma conversão do motor worker: o WhatsApp só entrega nota de voz em
+      // OGG/Opus. Ver `wa-audio.ts`.
+      const voz = media.kind === 'audio' && media.voice === true;
+      const conteudoDeAudio =
+        media.kind !== 'audio'
+          ? undefined
+          : precisaConverterAudio(media.mimeType, voz)
+            ? await converterParaNotaDeVoz(media.data).then((nota) => ({
+                audio: nota.data,
+                mimetype: VOICE_NOTE_MIME,
+                ptt: voz,
+                ...(nota.seconds ? { seconds: nota.seconds } : {}),
+                ...(voz && nota.waveform ? { waveform: nota.waveform } : {}),
+              }))
+            : { audio: media.data, mimetype: media.mimeType, ptt: voz };
+
+      const payload =
+        media.kind === 'image'
+          ? { image: media.data, mimetype: media.mimeType, ...(caption ? { caption } : {}) }
+          : media.kind === 'video'
+            ? { video: media.data, mimetype: media.mimeType, ...(caption ? { caption } : {}) }
+            : conteudoDeAudio
+              ? conteudoDeAudio
+              : {
+                  document: media.data,
+                  mimetype: media.mimeType,
+                  fileName: media.fileName ?? 'arquivo',
+                  ...(caption ? { caption } : {}),
+                };
+
       await this.finishOutboundPresence(jid, socket);
       const sent = await socket.sendMessage(jid, payload, {
         ...(media.quote ? { quoted: quotedStub(jid, media.quote) } : {}),

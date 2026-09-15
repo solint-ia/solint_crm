@@ -66,6 +66,7 @@ import { deletionKey, quotedStub } from '../wa-quote';
 import { baileysLogLevel, waLog } from '../wa-log';
 import { waVersion } from '../wa-version';
 import { HistoryImporter, type HistoryImportStats } from './history-import';
+import { VOICE_NOTE_MIME, converterParaNotaDeVoz, precisaConverterAudio } from '../wa-audio';
 import {
   ADDRESS_BOOK_FLUSH_MS,
   ADDRESS_BOOK_RETRY_MS,
@@ -3559,13 +3560,33 @@ export class WhatsAppSession {
     }
 
     const caption = media.caption?.trim() || undefined;
+
+    // O áudio sai em OGG/Opus: é o formato que o WhatsApp entrega. Ver `wa-audio.ts`.
+    // Uma falha aqui sobe e marca a mensagem como falha, que é a verdade: mandar
+    // o arquivo original produziria um "enviado" que o contato nunca recebe.
+    const voz = media.kind === 'audio' && media.voice === true;
+    const conteudoDeAudio =
+      media.kind !== 'audio'
+        ? undefined
+        : precisaConverterAudio(media.mimeType, voz)
+          ? await converterParaNotaDeVoz(media.data).then((nota) => ({
+              audio: nota.data,
+              mimetype: VOICE_NOTE_MIME,
+              ptt: voz,
+              ...(nota.seconds ? { seconds: nota.seconds } : {}),
+              // `waveform` não está no tipo do Baileys, mas ele o usa quando vem:
+              // sem ele, e sem o pacote opcional que o calcularia, a barra sai lisa.
+              ...(voz && nota.waveform ? { waveform: nota.waveform } : {}),
+            }))
+          : { audio: media.data, mimetype: media.mimeType, ptt: voz };
+
     const payload =
       media.kind === 'image'
         ? { image: media.data, mimetype: media.mimeType, ...(caption ? { caption } : {}) }
         : media.kind === 'video'
           ? { video: media.data, mimetype: media.mimeType, ...(caption ? { caption } : {}) }
-          : media.kind === 'audio'
-            ? { audio: media.data, mimetype: media.mimeType, ptt: media.voice === true }
+          : conteudoDeAudio
+            ? conteudoDeAudio
             : {
                 document: media.data,
                 mimetype: media.mimeType,
