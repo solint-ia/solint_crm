@@ -157,18 +157,26 @@ export class CommandConsumer {
     try {
       await this.reapExpiredCommands();
       commands = await prisma.$queryRaw<CommandRow[]>`
-        WITH first_pending AS (
+        WITH normal_pending AS (
           SELECT DISTINCT ON ("inboxId")
             "id", "sequence", "inboxId", "kind", "payload", "attempts",
             "expiresAt", "availableAt"
           FROM "WhatsAppCommand"
-          WHERE "status" = 'pending'
+          WHERE "status" = 'pending' AND "kind" <> 'media_fetch'
           ORDER BY "inboxId", "sequence"
+        ), candidates AS (
+          SELECT * FROM normal_pending
+          UNION ALL
+          SELECT "id", "sequence", "inboxId", "kind", "payload", "attempts",
+            "expiresAt", "availableAt"
+          FROM "WhatsAppCommand"
+          WHERE "status" = 'pending' AND "kind" = 'media_fetch'
         )
         SELECT "id", "sequence", "inboxId", "kind", "payload", "attempts", "expiresAt"
-        FROM first_pending
+        FROM candidates
         WHERE "availableAt" <= CURRENT_TIMESTAMP
           AND ("expiresAt" IS NULL OR "expiresAt" > CURRENT_TIMESTAMP)
+        ORDER BY "sequence"
         LIMIT 100
       `;
       this.lastSweepAt = new Date();
@@ -242,24 +250,30 @@ export class CommandConsumer {
       });
       if (!fresh) return null;
 
+      const isMediaFetch = fresh.kind === 'media_fetch';
       const [active, older, connection] = await Promise.all([
-        tx.whatsAppCommand.findFirst({
-          where: {
-            inboxId: cmd.inboxId,
-            status: 'processing',
-            leaseUntil: { gt: now },
-            kind: { not: 'media_fetch' },
-          },
-          select: { id: true },
-        }),
-        tx.whatsAppCommand.findFirst({
-          where: {
-            inboxId: cmd.inboxId,
-            status: 'pending',
-            sequence: { lt: fresh.sequence },
-          },
-          select: { id: true },
-        }),
+        isMediaFetch
+          ? Promise.resolve(null)
+          : tx.whatsAppCommand.findFirst({
+              where: {
+                inboxId: cmd.inboxId,
+                status: 'processing',
+                leaseUntil: { gt: now },
+                kind: { not: 'media_fetch' },
+              },
+              select: { id: true },
+            }),
+        isMediaFetch
+          ? Promise.resolve(null)
+          : tx.whatsAppCommand.findFirst({
+              where: {
+                inboxId: cmd.inboxId,
+                status: 'pending',
+                sequence: { lt: fresh.sequence },
+                kind: { not: 'media_fetch' },
+              },
+              select: { id: true },
+            }),
         tx.whatsAppConnection.findUnique({
           where: { inboxId: cmd.inboxId },
           select: { lockOwner: true, lockExpiresAt: true },

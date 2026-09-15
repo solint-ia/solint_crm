@@ -342,7 +342,7 @@ class WhatsAppEventBus extends EventEmitter {
     }
 
     try {
-      const { loadConversationForEvent } = await import('./wa-store');
+      const { loadConversationForEvent, loadMessageForEvent } = await import('./wa-store');
       const conversation = await loadConversationForEvent(
         payload.accountId,
         payload.conversationId,
@@ -358,11 +358,21 @@ class WhatsAppEventBus extends EventEmitter {
             (entry) => entry.kind === 'message' && entry.message.id === payload.messageId,
           )
         : undefined;
+      const message =
+        item?.kind === 'message'
+          ? item.message
+          : payload.messageId
+            ? await loadMessageForEvent(
+                payload.accountId,
+                payload.conversationId,
+                payload.messageId,
+              )
+            : null;
 
       this.emitLocal('conversation', {
         ...payload,
         conversation,
-        ...(item?.kind === 'message' ? { message: item.message } : {}),
+        ...(message ? { message } : {}),
       });
     } catch (err) {
       waLog.warn('[WhatsAppEventBus] Falha ao reidratar evento de conversa:', err);

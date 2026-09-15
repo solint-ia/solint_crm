@@ -260,8 +260,17 @@ export function ChatPanel({
   }, [conversation.id]);
 
   useConversationEvents((payload) => {
-    if (payload.type !== 'history_fetch_status' || payload.conversationId !== conversation.id)
+    if (payload.conversationId !== conversation.id) return;
+    if (payload.type === 'message_updated' && payload.message) {
+      const updated = payload.message as Message;
+      setOlderMessages((current) =>
+        current.some((message) => message.id === updated.id)
+          ? current.map((message) => (message.id === updated.id ? updated : message))
+          : current,
+      );
       return;
+    }
+    if (payload.type !== 'history_fetch_status') return;
     setFetchingPhoneHistory(false);
     setPhoneHistoryError(payload.operationStatus === 'failed' ? payload.error : undefined);
   });

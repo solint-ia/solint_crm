@@ -718,7 +718,7 @@ function PendingMedia({
   readonly content: Extract<MessageContent, { readonly type: 'pending_media' }>;
 }) {
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<string | undefined>(content.downloadError);
   const label =
     content.kind === 'image'
       ? 'foto'
@@ -729,6 +729,21 @@ function PendingMedia({
           : content.kind === 'sticker'
             ? 'figurinha'
             : 'documento';
+
+  useEffect(() => {
+    if (!content.downloadError) return;
+    setLoading(false);
+    setError(content.downloadError);
+  }, [content.downloadError]);
+
+  useEffect(() => {
+    if (!loading) return;
+    const timer = setTimeout(() => {
+      setLoading(false);
+      setError('O download demorou demais. Verifique o celular e tente de novo.');
+    }, 90_000);
+    return () => clearTimeout(timer);
+  }, [loading]);
 
   const download = async () => {
     setLoading(true);
@@ -747,7 +762,9 @@ function PendingMedia({
 
   if (content.unavailable) {
     return (
-      <p className="text-xs italic opacity-75">Esta {label} não está mais disponível no celular.</p>
+      <p className="max-w-64 text-xs italic opacity-75">
+        {content.downloadError ?? `Esta ${label} não está mais disponível no celular.`}
+      </p>
     );
   }
 
@@ -764,7 +781,7 @@ function PendingMedia({
         onClick={() => void download()}
         className="rounded-lg bg-black/10 px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-black/15 disabled:opacity-50 dark:bg-white/10 dark:hover:bg-white/15"
       >
-        {loading ? 'Aguardando o WhatsApp…' : 'Baixar mídia'}
+        {loading ? 'Aguardando o WhatsApp…' : error ? 'Tentar de novo' : 'Baixar mídia'}
       </button>
     </div>
   );

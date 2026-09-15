@@ -7,6 +7,7 @@ import {
   CONVERSATION_INCLUDE,
   contactRow,
   conversationRow,
+  messageRow,
 } from '@/infrastructure/repositories/prisma/mappers';
 import { aplicarPausaDoAgente } from '@/infrastructure/repositories/prisma/conversation-repository';
 import { dispararAutomacoes } from '@/infrastructure/automations/dispatch';
@@ -1246,6 +1247,17 @@ export const loadConversationForEvent = (
   accountId: string,
   conversationId: string,
 ): Promise<Conversation | null> => loadConversation(accountId, conversationId);
+
+export const loadMessageForEvent = async (
+  accountId: string,
+  conversationId: string,
+  messageId: string,
+): Promise<Message | null> => {
+  const row = await prisma.message.findFirst({
+    where: { id: messageId, conversationId, conversation: { accountId } },
+  });
+  return row ? messageRow(row) : null;
+};
 
 const loadConversation = async (
   accountId: string,

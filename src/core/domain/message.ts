@@ -52,6 +52,7 @@ export type MessageContent =
       /** Miniatura JPEG do WhatsApp, limitada a 6 KB na importação. */
       readonly thumb?: string;
       readonly unavailable?: boolean;
+      readonly downloadError?: string;
     }
   | { readonly type: 'template'; readonly templateName: string; readonly text: string }
   | { readonly type: 'system'; readonly text: string };

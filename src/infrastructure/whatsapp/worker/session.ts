@@ -146,6 +146,25 @@ const RECONNECT_BACKOFF_MS = [3_000, 8_000, 20_000, 60_000];
 
 /** Quanto esperar o WhatsApp aceitar a desvinculação antes de apagar o vínculo mesmo assim. */
 const LOGOUT_TIMEOUT_MS = 10_000;
+const PENDING_MEDIA_TIMEOUT_MS = 45_000;
+
+const withTimeout = async <T>(task: Promise<T>, timeoutMs: number): Promise<T> => {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      task,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('O celular não respondeu em 45 segundos. Tente novamente.')),
+          timeoutMs,
+        );
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
 
 /**
  * Limitador de concorrência mínimo.
@@ -3186,6 +3205,7 @@ export class WhatsAppSession {
     messageId: string,
     media: MediaRef,
     fallback: MessageContent,
+    options: { timeoutMs?: number; throwOnFailure?: boolean } = {},
   ): Promise<{ content: MessageContent; bytes?: Buffer; url?: string }> {
     if (media.fileLength > MAX_INLINE_MEDIA_BYTES) return { content: fallback };
 
@@ -3223,12 +3243,15 @@ export class WhatsAppSession {
     if (!socket) return { content: fallback };
 
     try {
-      const buffer = await downloadMediaMessage(
+      const download = downloadMediaMessage(
         msg,
         'buffer',
         {},
         { logger: this.logger, reuploadRequest: socket.updateMediaMessage },
       );
+      const buffer = options.timeoutMs
+        ? await withTimeout(download, options.timeoutMs)
+        : await download;
       const url = await mediaStore.save(
         messageId,
         buffer,
@@ -3258,6 +3281,7 @@ export class WhatsAppSession {
       };
     } catch (error) {
       console.warn(`[WhatsAppSession ${this.inboxId}] Falha ao baixar mídia:`, error);
+      if (options.throwOnFailure) throw error;
       return { content: fallback };
     }
   }
@@ -3300,7 +3324,36 @@ export class WhatsAppSession {
       const raw = proto.WebMessageInfo.decode(plain) as WAMessage;
       const decoded = decodeWaMessage(raw);
       if (!decoded?.media) throw new Error('A referência não contém mídia compatível.');
-      const materialized = await this.materializeMedia(raw, messageId, decoded.media, fallback);
+      if (decoded.media.fileLength > MAX_INLINE_MEDIA_BYTES) {
+        const downloadError = 'Arquivo grande demais para baixar pelo CRM (limite de 16 MB).';
+        await prisma.$transaction([
+          prisma.pendingMedia.updateMany({
+            where: { messageId, accountId: this.accountId, inboxId: this.inboxId },
+            data: { status: 'indisponivel', lastError: downloadError },
+          }),
+          prisma.message.updateMany({
+            where: {
+              id: messageId,
+              conversationId: row.conversationId,
+              conversation: { accountId: this.accountId, inboxId: this.inboxId },
+              content: { path: ['type'], equals: 'pending_media' },
+            },
+            data: { content: asJson({ ...fallback, unavailable: true, downloadError }) },
+          }),
+        ]);
+        waEventBus.emitConversation({
+          type: 'message_updated',
+          accountId: this.accountId,
+          inboxId: this.inboxId,
+          conversationId: row.conversationId,
+          messageId,
+        });
+        return;
+      }
+      const materialized = await this.materializeMedia(raw, messageId, decoded.media, fallback, {
+        timeoutMs: PENDING_MEDIA_TIMEOUT_MS,
+        throwOnFailure: true,
+      });
       if (materialized.content.type === 'pending_media') {
         throw new Error('O celular não disponibilizou os bytes da mídia.');
       }
@@ -3329,7 +3382,10 @@ export class WhatsAppSession {
         });
       }
     } catch (error) {
-      const lastError = error instanceof Error ? error.message : 'Falha ao baixar mídia';
+      const rawError = error instanceof Error ? error.message : '';
+      const lastError = rawError.includes('45 segundos')
+        ? rawError
+        : 'O celular não disponibilizou a mídia. Verifique se está online e ainda possui o arquivo.';
       const attempts = pending.attempts + 1;
       await prisma.$transaction([
         prisma.pendingMedia.updateMany({
@@ -3340,29 +3396,29 @@ export class WhatsAppSession {
             status: attempts >= 3 ? 'indisponivel' : 'pendente',
           },
         }),
-        ...(attempts >= 3
-          ? [
-              prisma.message.updateMany({
-                where: {
-                  id: messageId,
-                  conversationId: row.conversationId,
-                  conversation: { accountId: this.accountId, inboxId: this.inboxId },
-                  content: { path: ['type'], equals: 'pending_media' },
-                },
-                data: { content: asJson({ ...fallback, unavailable: true }) },
-              }),
-            ]
-          : []),
+        prisma.message.updateMany({
+          where: {
+            id: messageId,
+            conversationId: row.conversationId,
+            conversation: { accountId: this.accountId, inboxId: this.inboxId },
+            content: { path: ['type'], equals: 'pending_media' },
+          },
+          data: {
+            content: asJson({
+              ...fallback,
+              unavailable: attempts >= 3,
+              downloadError: lastError,
+            }),
+          },
+        }),
       ]);
-      if (attempts >= 3) {
-        waEventBus.emitConversation({
-          type: 'message_updated',
-          accountId: this.accountId,
-          inboxId: this.inboxId,
-          conversationId: row.conversationId,
-          messageId,
-        });
-      }
+      waEventBus.emitConversation({
+        type: 'message_updated',
+        accountId: this.accountId,
+        inboxId: this.inboxId,
+        conversationId: row.conversationId,
+        messageId,
+      });
       throw error;
     }
   }
