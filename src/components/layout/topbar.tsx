@@ -1,5 +1,5 @@
 import type { AppNotification } from '@/core/domain/notification';
-import type { Account } from '@/core/domain/user';
+import { canCreateWorkspace, type Account } from '@/core/domain/user';
 import { NAV_ITEMS, reachesNavItem } from '@/config/navigation';
 import { GlobalSearch } from '@/features/busca/components/global-search';
 import { container } from '@/infrastructure/container';
@@ -39,7 +39,11 @@ export async function Topbar({
         <GlobalSearch navItems={navItems} />
         {actions}
         <NotificationsMenu notifications={notifications} />
-        <WorkspaceSwitcher current={account} accounts={accounts} />
+        <WorkspaceSwitcher
+          current={account}
+          accounts={accounts}
+          canCreate={canCreateWorkspace(session)}
+        />
       </div>
     </header>
   );

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ALLOWED_LOGO_MIME_TYPES, isAllowedLogoMimeType } from '@/core/domain/image-upload';
 import { container } from '@/infrastructure/container';
+import { prisma } from '@/infrastructure/db/prisma';
 import { BUCKETS, storage } from '@/infrastructure/storage/supabase-storage';
 
 export const dynamic = 'force-dynamic';
@@ -8,10 +9,11 @@ export const dynamic = 'force-dynamic';
 /**
  * Serve o logotipo de uma conta.
  *
- * Escopado pela conta **ativa** da sessão, e não por "é membro dela em algum
- * momento": mesma regra de isolamento que o resto do sistema segue (ver
- * REGRAS-GLOBAIS.md §4.4). Quem tem acesso a duas contas e quer ver o logo da
- * outra precisa trocar de workspace primeiro — não há atalho por id.
+ * A conta ativa, ou outra em que a pessoa tenha vínculo. O seletor de
+ * workspace mostra o logo de todas as contas da pessoa, e só com a conta ativa
+ * as outras apareciam como imagem quebrada até cair nas iniciais. O logo é a
+ * marca da empresa, a mesma que o cliente vê: nenhum dado do atendimento sai
+ * por aqui, e quem não tem vínculo continua recebendo 404.
  */
 export async function GET(request: Request, { params }: { params: Promise<{ accountId: string }> }) {
   const { accountId } = await params;
@@ -21,7 +23,15 @@ export async function GET(request: Request, { params }: { params: Promise<{ acco
     return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 });
   }
   if (accountId !== session.account.id) {
-    return NextResponse.json({ ok: false, error: 'Não encontrada' }, { status: 404 });
+    const vinculo = session.platformActor
+      ? null
+      : await prisma.membership.findUnique({
+          where: { userId_accountId: { userId: session.user.id, accountId } },
+          select: { accountId: true },
+        });
+    if (!vinculo) {
+      return NextResponse.json({ ok: false, error: 'Não encontrada' }, { status: 404 });
+    }
   }
 
   // O tipo vem da URL, então nunca é confiado às cegas — só o que já está na

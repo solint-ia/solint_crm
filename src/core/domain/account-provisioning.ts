@@ -3,16 +3,13 @@ import type { BillingInfo } from './settings';
 /**
  * O molde de um workspace recém-nascido.
  *
- * Hoje há um caminho só que cria conta — o console da plataforma, em
- * `createAccountAction`. Houve dois (o cadastro público e o botão "criar novo
- * workspace" de dentro do CRM), e os dois foram fechados: cada conta aqui é um
- * cliente com contrato, não um autoatendimento.
+ * Dois caminhos criam conta: o console da plataforma (`createAccountAction`) e
+ * o botão "Criar novo workspace" do CRM (`createWorkspaceAction`), restrito a
+ * quem administra o workspace atual e limitado por pessoa. O cadastro público
+ * continua fechado.
  *
- * O molde continua valendo a pena mesmo com um chamador só, porque é ele que
- * garante que toda conta nasça igual — mesmos papéis, mesma caixa, mesmo funil
- * com os mesmos pesos de conversão. Quando o segundo caminho voltar a existir
- * (uma importação, um provisionamento por API), ele não vai divergir na
- * primeira etapa de funil nova.
+ * O molde é o que garante que toda conta nasça igual pelos dois caminhos:
+ * mesmos papéis, mesma caixa, mesmo funil com os mesmos pesos de conversão.
  *
  * Aqui mora o **que** nasce (puro, sem I/O). O **como** grava mora em
  * `infrastructure/provisioning/provision-account.ts`, porque escrever é

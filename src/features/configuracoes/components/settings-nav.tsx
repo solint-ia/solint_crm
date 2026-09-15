@@ -5,7 +5,6 @@ import type { Route } from 'next';
 import {
   // BookOpen,
   Building2,
-  CreditCard,
   Inbox,
   MessageSquare,
   ShieldCheck,
@@ -60,10 +59,7 @@ const SECTION_GROUPS: readonly NavSectionGroup[] = [
   },
   {
     title: 'Conta e segurança',
-    items: [
-      { id: 'faturamento', label: 'Faturamento e Plano', icon: CreditCard },
-      { id: 'seguranca', label: 'Segurança', icon: ShieldCheck },
-    ],
+    items: [{ id: 'seguranca', label: 'Segurança', icon: ShieldCheck }],
   },
 ];
 

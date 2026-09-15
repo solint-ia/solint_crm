@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from 'react';
 import Link from 'next/link';
+import type { Route } from 'next';
 import {
   Calendar,
   Check,
@@ -371,7 +372,7 @@ export function DealDetailPanel({
         {/* Rodapé de Ações Rápidas - Sempre Fixo e Visível na Base */}
         <footer className="shrink-0 border-t border-line p-4 bg-surface-2 flex flex-col gap-2.5">
           {deal.conversationId ? (
-            <Link href="/conversas" className="w-full">
+            <Link href={`/conversas/${deal.conversationId}` as Route} className="w-full">
               <Button
                 variant="primary"
                 fullWidth

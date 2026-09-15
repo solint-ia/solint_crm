@@ -17,14 +17,16 @@ import {
   averageOf,
   bucketIndexOf,
   durationLabel,
+  periodRangeLabel,
   periodWindow,
   type PeriodWindow,
 } from '@/core/domain/analytics-period';
 import { CSAT_MAX, CSAT_MIN, CSAT_TONES, csatLabel, csatTone } from '@/core/domain/csat';
+import { asTimezone } from '@/core/domain/regional-preferences';
 import type { Id } from '@/core/domain/shared';
 import type { InboxAccess } from '@/core/domain/user';
 import type { AnalyticsRepository } from '@/core/ports/analytics-repository';
-import { prisma } from '@/infrastructure/db/prisma';
+import { prisma, readJson } from '@/infrastructure/db/prisma';
 
 /**
  * Os números do painel, calculados a partir do que aconteceu.
@@ -43,6 +45,13 @@ import { prisma } from '@/infrastructure/db/prisma';
  * a janela anterior, para a comparação), e todo indicador derivado das colunas
  * que o atendimento carimba. Onde não há dado, o valor é `—` e a legenda diz
  * que não há — nunca um número inventado que pareça bom.
+ *
+ * **Auditoria de setembro de 2026.** Cinco correções, cada uma anotada no ponto
+ * em que mora: o recorte de dia no fuso da conta, e não no do servidor; as
+ * conversas importadas do histórico fora da contagem de resolvidas; a conversão
+ * do funil como fluxo, e não fotografia (passava de 100%); "abandonadas" sem as
+ * conversas em espera; e a comparação que não inventa queda de 100% quando um
+ * dos períodos não tem nenhuma nota.
  */
 
 /** Uma conversa, reduzida ao que qualquer indicador precisa dela. */
@@ -82,8 +91,23 @@ const LINHA_SELECT = {
   contact: { select: { name: true, phone: true } },
 } as const;
 
+/** Uma etapa do funil com os negócios que estão nela agora. */
+interface EtapaDoFunil {
+  readonly name: string;
+  readonly color: string | null;
+  readonly isWon: boolean;
+  readonly isLost: boolean;
+  readonly deals: readonly { readonly amountInCents: number; readonly enteredStageAt: string }[];
+}
+
 const defined = (values: readonly (number | null)[]): number[] =>
   values.filter((value): value is number => value !== null && Number.isFinite(value));
+
+/** Um par atual/anterior de qualquer contagem. */
+interface Par {
+  readonly atual: number;
+  readonly anterior: number;
+}
 
 /**
  * A variação entre duas janelas, já como texto e direção.
@@ -117,10 +141,102 @@ const variacao = (
   };
 };
 
+/**
+ * Variação de uma **taxa**, em pontos percentuais.
+ *
+ * Uma taxa de resolução que vai de 40% para 50% subiu 10 pontos, não 25%. A
+ * variação relativa de uma porcentagem é a leitura que engana quem decide.
+ */
+const variacaoEmPontos = (
+  current: number | undefined,
+  previous: number | undefined,
+): { readonly delta: string; readonly deltaDirection: Kpi['deltaDirection'] } => {
+  if (current === undefined) return { delta: 'sem dados no período', deltaDirection: 'neutro' };
+  if (previous === undefined) return { delta: 'novo no período', deltaDirection: 'neutro' };
+  const pontos = Math.round(current) - Math.round(previous);
+  if (pontos === 0) return { delta: 'estável', deltaDirection: 'neutro' };
+  return {
+    delta: `${pontos > 0 ? '+' : ''}${pontos} p.p. vs. anterior`,
+    deltaDirection: pontos > 0 ? 'positivo' : 'negativo',
+  };
+};
+
 const plural = (count: number, singular: string, pluralWord: string): string =>
   `${count} ${count === 1 ? singular : pluralWord}`;
 
+/** Parte das conversas recebidas que já está resolvida. Sem conversas, sem taxa. */
+const taxaDeResolucao = (linhas: readonly Linha[]): number | undefined =>
+  linhas.length === 0
+    ? undefined
+    : (linhas.filter((linha) => linha.status === 'resolvida').length / linhas.length) * 100;
+
+/** Média do tempo até a primeira resposta, só entre as conversas respondidas. */
+const tempoMedioDeResposta = (linhas: readonly Linha[]): number | undefined =>
+  averageOf(defined(linhas.map((linha) => linha.firstResponseSecs)));
+
+/** O cartão de CSAT, igual no painel e no relatório. */
+const kpiCsat = (notas: readonly number[]): Kpi => {
+  const media = averageOf(notas);
+  const satisfeitos = notas.filter((nota) => nota >= 4).length;
+  return {
+    id: 'csat',
+    label: 'Índice CSAT',
+    value: csatLabel(media),
+    ...(notas.length === 0
+      ? { delta: 'sem avaliações', deltaDirection: 'neutro' as const }
+      : {
+          delta: `${Math.round((satisfeitos / notas.length) * 100)}% satisfeitos · ${plural(notas.length, 'nota', 'notas')}`,
+          deltaDirection: (media ?? 0) >= 4 ? ('positivo' as const) : ('negativo' as const),
+        }),
+    description:
+      'Média das notas de 1 a 5 que os clientes responderam à pesquisa de satisfação, no período. A pesquisa é enviada no encerramento e precisa estar ligada nas configurações da caixa. Sem respostas, o índice fica em branco em vez de exibir um valor de exemplo.',
+  };
+};
+
+/**
+ * Quantos negócios chegaram **pelo menos** até cada etapa da escada.
+ *
+ * A conversão era o número de negócios parados na próxima etapa dividido pelo
+ * número parado nesta. Isso é fotografia, não fluxo: com 2 negócios em Proposta
+ * e 5 em Negociação, "Proposta → Negociação" dava 250%. Um negócio que está em
+ * Negociação passou por Proposta, então quem chegou a uma etapa é quem está
+ * nela ou em qualquer etapa adiante. Quem chama tira as etapas de perda antes:
+ * um negócio perdido não avançou para lugar nenhum.
+ */
+const alcancadosPorEtapa = (escada: readonly EtapaDoFunil[]): number[] => {
+  const alcancados = escada.map(() => 0);
+  let acumulado = 0;
+  for (let index = escada.length - 1; index >= 0; index -= 1) {
+    acumulado += escada[index]?.deals.length ?? 0;
+    alcancados[index] = acumulado;
+  }
+  return alcancados;
+};
+
+/** Conversão de uma etapa para a seguinte, em 0 a 100. Sem ninguém na etapa, sem taxa. */
+const conversaoEntre = (alcancados: readonly number[], index: number): number | undefined => {
+  const base = alcancados[index];
+  const seguinte = alcancados[index + 1];
+  if (base === undefined || seguinte === undefined || base === 0) return undefined;
+  return (seguinte / base) * 100;
+};
+
 export class PrismaAnalyticsRepository implements AnalyticsRepository {
+  /**
+   * O fuso da conta, o mesmo em que a tela mostra as horas.
+   *
+   * O recorte usava o relógio do processo, e em produção o processo roda em
+   * UTC: "Hoje" começava às 21h do dia anterior no horário de Brasília, e uma
+   * conversa das 22h caía no dia seguinte do gráfico.
+   */
+  private async fusoDaConta(accountId: Id): Promise<string> {
+    const settings = await prisma.accountSettings.findUnique({
+      where: { accountId },
+      select: { company: true },
+    });
+    return asTimezone(readJson<{ timezone?: string }>(settings?.company, {}).timezone);
+  }
+
   /**
    * Lê as duas janelas de uma vez.
    *
@@ -193,21 +309,32 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
    *
    * A data relevante é `resolvedAt`, não `createdAt`: uma conversa aberta na
    * semana passada e resolvida hoje pertence à produção de hoje.
+   *
+   * `importedAt: null` pelo mesmo motivo de `carregar`: uma conversa trazida do
+   * histórico do WhatsApp não é trabalho da equipe no período. Sem o filtro, a
+   * contagem de resolvidas somava importações que a de recebidas já excluía, e
+   * as duas deixavam de ser comparáveis.
    */
   private async contarResolvidas(
     accountId: Id,
     inboxAccess: InboxAccess,
     window: PeriodWindow,
-  ): Promise<{ readonly atual: number; readonly anterior: number }> {
+  ): Promise<Par> {
     const scope = inboxAccess === 'todas' ? {} : { inboxId: { in: [...inboxAccess] } };
 
     const [atual, anterior] = await Promise.all([
       prisma.conversation.count({
-        where: { accountId, ...scope, resolvedAt: { gte: window.from, lte: window.to } },
+        where: {
+          accountId,
+          importedAt: null,
+          ...scope,
+          resolvedAt: { gte: window.from, lte: window.to },
+        },
       }),
       prisma.conversation.count({
         where: {
           accountId,
+          importedAt: null,
           ...scope,
           resolvedAt: { gte: window.previousFrom, lte: window.previousTo },
         },
@@ -217,12 +344,58 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
     return { atual, anterior };
   }
 
+  /**
+   * Mensagens trocadas em cada janela, pela data da própria mensagem.
+   *
+   * Contagem no banco, e não carregando linhas: volume de mensagens é a métrica
+   * que mais cresce numa conta. Ficam de fora notas internas (não saíram para o
+   * cliente), avisos do sistema (ninguém escreveu) e o que veio da importação
+   * de histórico (não aconteceu no período, só chegou ao CRM nele).
+   */
+  private async contarMensagens(
+    accountId: Id,
+    inboxAccess: InboxAccess,
+    window: PeriodWindow,
+  ): Promise<{ readonly recebidas: Par; readonly enviadas: Par }> {
+    const conversation = {
+      accountId,
+      ...(inboxAccess === 'todas' ? {} : { inboxId: { in: [...inboxAccess] } }),
+    };
+    const base = (from: Date, to: Date) => ({
+      conversation,
+      isPrivate: false,
+      createdAt: { gte: from, lte: to },
+      OR: [{ origin: null }, { origin: { not: 'historico' } }],
+    });
+
+    const [recebidaAtual, enviadaAtual, recebidaAnterior, enviadaAnterior] = await Promise.all([
+      prisma.message.count({ where: { ...base(window.from, window.to), author: 'contact' } }),
+      prisma.message.count({
+        where: { ...base(window.from, window.to), author: { in: ['agent', 'ai'] } },
+      }),
+      prisma.message.count({
+        where: { ...base(window.previousFrom, window.previousTo), author: 'contact' },
+      }),
+      prisma.message.count({
+        where: {
+          ...base(window.previousFrom, window.previousTo),
+          author: { in: ['agent', 'ai'] },
+        },
+      }),
+    ]);
+
+    return {
+      recebidas: { atual: recebidaAtual, anterior: recebidaAnterior },
+      enviadas: { atual: enviadaAtual, anterior: enviadaAnterior },
+    };
+  }
+
   async getOverview(
     accountId: Id,
     period: PeriodKey,
     inboxAccess: InboxAccess,
   ): Promise<DashboardOverview> {
-    const window = periodWindow(period);
+    const window = periodWindow(period, new Date(), await this.fusoDaConta(accountId));
 
     /**
      * A fila **agora**, sem recorte de período.
@@ -291,10 +464,7 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
     ]);
 
     const totalNaoLidas = naoLidas._sum.unreadCount ?? 0;
-
     const notasAtual = defined(atual.map((linha) => linha.csatScore));
-    const csatAtual = averageOf(notasAtual);
-    const satisfeitos = notasAtual.filter((nota) => nota >= 4).length;
 
     const kpis: Kpi[] = [
       {
@@ -346,19 +516,7 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
         description:
           'Conversas efetivamente encerradas no período, mesmo que tenham sido abertas antes dele. Mede quanto trabalho a equipe concluiu.',
       },
-      {
-        id: 'csat',
-        label: 'Índice CSAT',
-        value: csatLabel(csatAtual),
-        ...(notasAtual.length === 0
-          ? { delta: 'sem avaliações', deltaDirection: 'neutro' as const }
-          : {
-              delta: `${Math.round((satisfeitos / notasAtual.length) * 100)}% satisfeitos · ${plural(notasAtual.length, 'nota', 'notas')}`,
-              deltaDirection: (csatAtual ?? 0) >= 4 ? ('positivo' as const) : ('negativo' as const),
-            }),
-        description:
-          'Média das notas de 1 a 5 que os clientes responderam à pesquisa de satisfação, no período. A pesquisa é enviada no encerramento e precisa estar ligada nas configurações da caixa. Sem respostas, o índice fica em branco em vez de exibir um valor de exemplo.',
-      },
+      kpiCsat(notasAtual),
     ];
 
     /* ---------------------------------------------------------------- */
@@ -398,25 +556,22 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
     /* ---------------------------------------------------------------- */
     /* Funil comercial.                                                  */
     /* ---------------------------------------------------------------- */
-    const funnel: FunnelStageSummary[] = (defaultPipeline?.stages ?? []).map(
-      (stage, index, todos) => {
-        const proxima = todos[index + 1];
-        // A conversão é quanto do que chegou aqui seguiu adiante. Sem próxima
-        // etapa não há conversão a medir — a última etapa é o destino.
-        const taxa =
-          proxima && stage.deals.length > 0
-            ? `${Math.round((proxima.deals.length / stage.deals.length) * 100)}%`
-            : undefined;
+    const etapas: readonly EtapaDoFunil[] = defaultPipeline?.stages ?? [];
+    const escada = etapas.filter((stage) => !stage.isLost);
+    const alcancados = alcancadosPorEtapa(escada);
 
-        return {
-          stage: stage.name,
-          count: stage.deals.length,
-          amountInCents: stage.deals.reduce((total, deal) => total + deal.amountInCents, 0),
-          colorVar: stage.color || 'var(--color-blue-text)',
-          ...(taxa ? { conversionRate: taxa } : {}),
-        };
-      },
-    );
+    const funnel: FunnelStageSummary[] = etapas.map((stage) => {
+      // A última etapa da escada é o destino, e etapa de perda não converte
+      // para nada: nas duas não há taxa a mostrar.
+      const taxa = conversaoEntre(alcancados, escada.indexOf(stage));
+      return {
+        stage: stage.name,
+        count: stage.deals.length,
+        amountInCents: stage.deals.reduce((total, deal) => total + deal.amountInCents, 0),
+        colorVar: stage.color || 'var(--color-blue-text)',
+        ...(!stage.isLost && taxa !== undefined ? { conversionRate: `${Math.round(taxa)}%` } : {}),
+      };
+    });
 
     /* ---------------------------------------------------------------- */
     /* Série temporal — contagem real por balde.                         */
@@ -432,8 +587,11 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
    * `answered`, `resolved` e `abandoned` eram frações fixas do total (92%, 85%,
    * 4%) — três linhas que nunca podiam se cruzar porque eram a mesma linha
    * multiplicada. Agora cada uma conta o que de fato aconteceu: quem foi
-   * respondida, quem foi resolvida, e quem passou do período sem nenhuma
-   * resposta.
+   * respondida, quem foi resolvida, e quem foi encerrada sem nenhuma resposta.
+   *
+   * "Abandonada" é só a resolvida sem resposta. Contava também a conversa em
+   * espera, que é trabalho em andamento com a equipe aguardando o cliente, e
+   * não desistência de ninguém.
    */
   private serie(window: PeriodWindow, linhas: readonly Linha[]): TimeSeriePoint[] {
     const pontos = window.buckets.map((bucket) => ({
@@ -451,7 +609,7 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
 
       ponto.value += 1;
       if (linha.firstResponseSecs !== null) ponto.answered += 1;
-      else if (linha.status !== 'aberta' && linha.status !== 'pendente') ponto.abandoned += 1;
+      else if (linha.status === 'resolvida') ponto.abandoned += 1;
       if (linha.status === 'resolvida') ponto.resolved += 1;
     }
 
@@ -504,16 +662,19 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
     period: PeriodKey,
     inboxAccess: InboxAccess,
   ): Promise<AnalyticsReport> {
-    const window = periodWindow(period);
-    const [{ atual, anterior }, resolvidas, members, defaultPipeline] = await Promise.all([
-      this.carregar(accountId, inboxAccess, window),
-      this.contarResolvidas(accountId, inboxAccess, window),
-      prisma.membership.findMany({
-        where: { accountId },
-        include: { user: { include: { teamMemberships: { include: { team: true } } } } },
-      }),
-      this.funilDaConta(accountId),
-    ]);
+    const fuso = await this.fusoDaConta(accountId);
+    const window = periodWindow(period, new Date(), fuso);
+    const [{ atual, anterior }, resolvidas, mensagens, members, defaultPipeline] =
+      await Promise.all([
+        this.carregar(accountId, inboxAccess, window),
+        this.contarResolvidas(accountId, inboxAccess, window),
+        this.contarMensagens(accountId, inboxAccess, window),
+        prisma.membership.findMany({
+          where: { accountId },
+          include: { user: { include: { teamMemberships: { include: { team: true } } } } },
+        }),
+        this.funilDaConta(accountId),
+      ]);
 
     /**
      * A janela anterior desenhada com os mesmos rótulos da atual.
@@ -522,21 +683,78 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
      * "Seg" da linha de cima e "Seg" da de baixo estariam em posições
      * diferentes e a comparação visual seria falsa.
      */
+    const deslocamento = window.from.getTime() - window.previousFrom.getTime();
     const janelaAnterior: PeriodWindow = {
       ...window,
       from: window.previousFrom,
       to: window.previousTo,
       buckets: window.buckets.map((bucket) => ({
         label: bucket.label,
-        from: new Date(
-          bucket.from.getTime() - (window.from.getTime() - window.previousFrom.getTime()),
-        ),
-        to: new Date(bucket.to.getTime() - (window.from.getTime() - window.previousFrom.getTime())),
+        from: new Date(bucket.from.getTime() - deslocamento),
+        to: new Date(bucket.to.getTime() - deslocamento),
       })),
     };
 
     const notasAtual = defined(atual.map((linha) => linha.csatScore));
     const notasAnterior = defined(anterior.map((linha) => linha.csatScore));
+    const taxaAtual = taxaDeResolucao(atual);
+    const taxaAnterior = taxaDeResolucao(anterior);
+    const tmrAtual = tempoMedioDeResposta(atual);
+    const tmrAnterior = tempoMedioDeResposta(anterior);
+    const mensagensAtual = mensagens.recebidas.atual + mensagens.enviadas.atual;
+    const mensagensAnterior = mensagens.recebidas.anterior + mensagens.enviadas.anterior;
+
+    /* ---------------------------------------------------------------- */
+    /* Resumo executivo: os seis números que abrem o relatório.          */
+    /* ---------------------------------------------------------------- */
+    const summary: Kpi[] = [
+      {
+        id: 'recebidas',
+        label: 'Atendimentos recebidos',
+        value: String(atual.length),
+        ...variacao(atual.length, anterior.length),
+        description:
+          'Conversas que começaram no período, sem contar as trazidas da importação de histórico do WhatsApp.',
+      },
+      {
+        id: 'resolvidas',
+        label: 'Resolvidos no período',
+        value: String(resolvidas.atual),
+        ...variacao(resolvidas.atual, resolvidas.anterior),
+        description:
+          'Conversas encerradas dentro do período, mesmo as que começaram antes dele. Mede o trabalho concluído.',
+      },
+      {
+        id: 'taxa-resolucao',
+        label: 'Taxa de resolução',
+        value: taxaAtual === undefined ? '—' : `${Math.round(taxaAtual)}%`,
+        ...variacaoEmPontos(taxaAtual, taxaAnterior),
+        description:
+          'Das conversas que começaram no período, quantas já estão resolvidas. A variação é em pontos percentuais: de 40% para 50% são 10 pontos.',
+      },
+      {
+        id: 'tmr',
+        label: 'Tempo médio de 1ª resposta',
+        value: durationLabel(tmrAtual),
+        ...variacao(tmrAtual, tmrAnterior, true),
+        description:
+          'Média do tempo entre a primeira mensagem do cliente e a primeira resposta pública da equipe, só entre as conversas do período que foram respondidas. Cair é melhorar.',
+      },
+      {
+        id: 'mensagens',
+        label: 'Mensagens trocadas',
+        value: mensagensAtual.toLocaleString('pt-BR'),
+        ...(mensagensAtual === 0 && mensagensAnterior === 0
+          ? { delta: 'sem mensagens no período', deltaDirection: 'neutro' as const }
+          : {
+              delta: `${mensagens.recebidas.atual.toLocaleString('pt-BR')} recebidas · ${mensagens.enviadas.atual.toLocaleString('pt-BR')} enviadas`,
+              deltaDirection: 'neutro' as const,
+            }),
+        description:
+          'Mensagens enviadas por clientes e pela equipe (inclusive agentes de IA) no período. Notas internas, avisos do sistema e histórico importado ficam de fora.',
+      },
+      kpiCsat(notasAtual),
+    ];
 
     const comparison: ComparisonRow[] = [
       {
@@ -552,11 +770,44 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
         previous: resolvidas.anterior,
       },
       {
+        id: 'taxa_resolucao',
+        label: 'Taxa de resolução',
+        current: Math.round(taxaAtual ?? 0),
+        previous: Math.round(taxaAnterior ?? 0),
+        format: 'percentual',
+        ...(taxaAtual === undefined ? { currentMissing: true } : {}),
+        ...(taxaAnterior === undefined ? { previousMissing: true } : {}),
+      },
+      {
+        id: 'tmr',
+        label: 'Tempo médio de 1ª resposta',
+        current: Math.round(tmrAtual ?? 0),
+        previous: Math.round(tmrAnterior ?? 0),
+        format: 'duracao',
+        lowerIsBetter: true,
+        ...(tmrAtual === undefined ? { currentMissing: true } : {}),
+        ...(tmrAnterior === undefined ? { previousMissing: true } : {}),
+      },
+      {
+        id: 'mensagens_recebidas',
+        label: 'Mensagens recebidas',
+        current: mensagens.recebidas.atual,
+        previous: mensagens.recebidas.anterior,
+      },
+      {
+        id: 'mensagens_enviadas',
+        label: 'Mensagens enviadas',
+        current: mensagens.enviadas.atual,
+        previous: mensagens.enviadas.anterior,
+      },
+      {
         id: 'csat',
         label: 'CSAT médio',
         current: Math.round((averageOf(notasAtual) ?? 0) * 10) / 10,
         previous: Math.round((averageOf(notasAnterior) ?? 0) * 10) / 10,
         decimals: 1,
+        ...(notasAtual.length === 0 ? { currentMissing: true } : {}),
+        ...(notasAnterior.length === 0 ? { previousMissing: true } : {}),
       },
       {
         id: 'sem_resposta',
@@ -570,11 +821,13 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
     /* ---------------------------------------------------------------- */
     /* Funil: conversão etapa a etapa e onde os negócios se perdem.      */
     /* ---------------------------------------------------------------- */
-    const etapas = defaultPipeline?.stages ?? [];
-    const conversions: ConversionRate[] = etapas.slice(0, -1).map((stage, index) => {
-      const proxima = etapas[index + 1];
-      const taxa =
-        stage.deals.length > 0 ? ((proxima?.deals.length ?? 0) / stage.deals.length) * 100 : 0;
+    const etapas: readonly EtapaDoFunil[] = defaultPipeline?.stages ?? [];
+    const escada = etapas.filter((stage) => !stage.isLost);
+    const alcancados = alcancadosPorEtapa(escada);
+
+    const conversions: ConversionRate[] = escada.slice(0, -1).map((stage, index) => {
+      const proxima = escada[index + 1];
+      const taxa = conversaoEntre(alcancados, index);
 
       // O tempo médio parado na etapa sai do próprio negócio: quanto faz que
       // ele entrou nela e ainda não saiu. `enteredStageAt` é texto ISO gravado
@@ -589,7 +842,7 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
 
       return {
         stage: `${stage.name} → ${proxima?.name ?? 'fim'}`,
-        rate: stage.deals.length === 0 ? '—' : `${Math.round(taxa)}%`,
+        rate: taxa === undefined ? '—' : `${Math.round(taxa)}%`,
         average:
           dias === undefined
             ? '—'
@@ -604,12 +857,15 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
      * "Concorrência"), porque o sistema não pergunta o motivo em lugar nenhum.
      * O que ele de fato sabe é **em qual etapa** os negócios estão parados — e
      * essa é a informação verdadeira equivalente.
+     *
+     * A etapa de ganho fica de fora: negócio fechado não está parado, e aparecia
+     * no topo da lista como se fosse o maior gargalo do funil.
      */
     const totalNegocios = etapas.reduce((total, stage) => total + stage.deals.length, 0);
     const lossReasons: LossReason[] = etapas
-      .filter((stage) => stage.deals.length > 0)
+      .filter((stage) => !stage.isWon && stage.deals.length > 0)
       .map((stage) => ({
-        reason: `Parados em ${stage.name}`,
+        reason: stage.isLost ? `Perdidos em ${stage.name}` : `Parados em ${stage.name}`,
         percentage: totalNegocios > 0 ? Math.round((stage.deals.length / totalNegocios) * 100) : 0,
       }))
       .toSorted((a, b) => b.percentage - a.percentage)
@@ -642,6 +898,9 @@ export class PrismaAnalyticsRepository implements AnalyticsRepository {
       }));
 
     return {
+      rangeLabel: periodRangeLabel(window.from, window.to, fuso),
+      previousRangeLabel: periodRangeLabel(window.previousFrom, window.previousTo, fuso),
+      summary,
       volume: this.serie(window, atual),
       previousVolume: this.serie(janelaAnterior, anterior),
       comparison,

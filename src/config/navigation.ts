@@ -49,7 +49,6 @@ export const CONFIG_READ_PERMISSIONS = [
   'config.conhecimento:ler',
   'config.empresa:ler',
   'config.seguranca:ler',
-  'config.faturamento:ler',
 ] as const satisfies readonly Permission[];
 
 /**
@@ -200,7 +199,8 @@ export const SETTINGS_SECTIONS = [
   },
   // { id: 'conhecimento', label: 'Base de conhecimento', read: 'config.conhecimento:ler', write: 'config.conhecimento:escrever' },
   { id: 'empresa', label: 'Empresa', read: 'config.empresa:ler', write: 'config.empresa:escrever' },
-  { id: 'faturamento', label: 'Faturamento e Plano', read: 'config.faturamento:ler' },
+  // "Faturamento e Plano" saiu: o plano é contratado por fora do produto, e a
+  // tela só repetia números que ninguém na conta podia mudar.
   {
     id: 'seguranca',
     label: 'Segurança',

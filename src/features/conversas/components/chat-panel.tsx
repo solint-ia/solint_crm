@@ -656,7 +656,7 @@ export function ChatPanel({
           <PlugZap className="size-3.5 shrink-0 text-red-500" />
           <span>Canal desconectado: as mensagens não serão entregues até a reconexão.</span>
           <Link
-            href="/configuracoes?secao=integracoes"
+            href="/configuracoes?secao=caixas"
             className="ml-auto font-semibold text-red-600 dark:text-red-200 underline hover:no-underline"
           >
             Reconectar

@@ -167,7 +167,6 @@ const GRUPOS: readonly PermissionGroup[] = [
         label: 'Editar dados da empresa',
         hint: 'Alterar o cadastro.',
       },
-      { id: 'config.faturamento:ler', label: 'Ver faturamento', hint: 'Plano e consumo.' },
       { id: 'config.seguranca:ler', label: 'Ver segurança', hint: 'Sessões ativas e auditoria.' },
       {
         id: 'config.seguranca:escrever',

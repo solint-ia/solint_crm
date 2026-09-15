@@ -1326,7 +1326,8 @@ export async function uploadCompanyLogoAction(formData: FormData): Promise<Actio
       },
     });
 
-    revalidatePath('/configuracoes');
+    // O logo aparece no seletor de workspace, que é do layout.
+    revalidatePath('/', 'layout');
     return { ok: true };
   } catch (error) {
     return failureOf(error, 'Erro ao salvar o logotipo da empresa.');

@@ -117,6 +117,8 @@ export class CommandConsumer {
   private readonly inFlight = new Set<string>();
   /** Ultimo inicio de envio por caixa; caixas distintas nunca esperam entre si. */
   private readonly lastOutboundAt = new Map<string, number>();
+  /** Conta dona de cada caixa. Uma caixa nunca muda de conta, então o valor não envelhece. */
+  private readonly contaDaCaixa = new Map<string, string>();
 
   constructor(sessionManager: WhatsAppSessionManager) {
     this.sessionManager = sessionManager;
@@ -576,6 +578,41 @@ export class CommandConsumer {
     this.lastOutboundAt.set(inboxId, Date.now());
   }
 
+  /**
+   * O `accountId` do payload tem de ser o da caixa que executa o comando.
+   *
+   * Quem enfileira escreve os dois campos, e hoje eles concordam. A conferência
+   * existe para o dia em que não concordarem: o worker usa o `accountId` do
+   * payload para ler anexos do depósito e para escopar consultas, e um valor
+   * errado faria a caixa de um workspace ler ou gravar na conta de outro. Com
+   * várias contas por pessoa, essa fronteira não pode depender só de disciplina
+   * de quem enfileira.
+   */
+  private async assertComandoDaConta(
+    inboxId: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const declarada = payload['accountId'];
+    if (typeof declarada !== 'string') return;
+
+    let dona = this.contaDaCaixa.get(inboxId);
+    if (!dona) {
+      // tenant-ok: a conta é justamente o que se quer descobrir; a busca é pela
+      // chave primária da caixa, e o resultado é comparado com o payload abaixo.
+      const inbox = await prisma.inbox.findUnique({
+        where: { id: inboxId },
+        select: { accountId: true },
+      });
+      if (!inbox) throw new Error(`Caixa ${inboxId} não encontrada.`);
+      dona = inbox.accountId;
+      this.contaDaCaixa.set(inboxId, dona);
+    }
+
+    if (dona !== declarada) {
+      throw new Error(`Comando recusado: a caixa ${inboxId} não pertence à conta informada.`);
+    }
+  }
+
   /** Revalida automaticas no ultimo ponto seguro antes de tocar o socket. */
   private async assertAutomatedRecipientAllowed(payload: Record<string, unknown>): Promise<void> {
     if (payload['trafficClass'] !== 'automated') return;
@@ -604,6 +641,8 @@ export class CommandConsumer {
       string,
       unknown
     >;
+
+    await this.assertComandoDaConta(inboxId, payload);
 
     switch (kind) {
       case 'connect': {
@@ -838,10 +877,11 @@ export class CommandConsumer {
       }
 
       case 'sync_groups': {
-        const accountId =
-          typeof payload['accountId'] === 'string' ? payload['accountId'] : undefined;
         const session = await this.sessaoPronta(inboxId);
-        await session.syncAllGroups(accountId ?? session.accountId);
+        // Sempre a conta da caixa. O payload foi conferido contra ela, mas usar
+        // o valor dele aqui gravaria os grupos na conta errada se a conferência
+        // um dia deixasse de rodar antes.
+        await session.syncAllGroups(session.accountId);
         break;
       }
 

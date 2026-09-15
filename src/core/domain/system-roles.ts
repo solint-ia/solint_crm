@@ -97,7 +97,7 @@ export const SYSTEM_ROLES: readonly SystemRoleTemplate[] = [
   {
     slug: 'administrador',
     name: 'Administrador',
-    description: 'Acesso total: equipe, papéis, canais, faturamento e configurações.',
+    description: 'Acesso total: equipe, papéis, canais e configurações.',
     permissions: PERMISSIONS,
   },
   {

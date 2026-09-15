@@ -340,6 +340,26 @@ export const API_TOKEN_ACTOR_PREFIX = 'api-token:';
 export const isApiTokenActor = (actorId: string | null | undefined): boolean =>
   Boolean(actorId?.startsWith(API_TOKEN_ACTOR_PREFIX));
 
+/**
+ * Pode trocar a própria senha pelo perfil?
+ *
+ * Administrador da conta e superadministrador da plataforma. As demais pessoas
+ * recebem a senha de quem administra a conta, que é quem responde pelo acesso
+ * delas. Mora aqui para a tela e a Server Action decidirem com a mesma regra.
+ */
+export const canChangeOwnPassword = (session: Session): boolean =>
+  Boolean(session.platformActor) || session.user.roleSlug === 'administrador';
+
+/**
+ * Pode criar um workspace novo a partir do CRM?
+ *
+ * Só quem administra o workspace atual, e nunca o superadministrador operando
+ * dentro de uma conta: ele já cria contas no console da plataforma, e criar por
+ * aqui o deixaria como membro de uma conta de cliente.
+ */
+export const canCreateWorkspace = (session: Session): boolean =>
+  !session.platformActor && session.user.roleSlug === 'administrador';
+
 /** Autorização é decidida sempre aqui — nunca espalhada por componentes. */
 export const can = (session: Session, permission: Permission): boolean =>
   session.permissions.includes(permission);

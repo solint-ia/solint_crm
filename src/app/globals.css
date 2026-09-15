@@ -8,13 +8,20 @@
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
 :root {
-  /* superfícies e texto — modo claro */
-  --app-bg: #f8fafc;
-  --chat-bg: #f1f5f9;
-  --surface: #ffffff;
-  --surface-2: #f8fafc;
-  --border: #e2e8f0;
-  --border-soft: #f1f5f9;
+  /* superfícies e texto — modo claro
+
+     Off-white em vez de branco puro. Com `--surface` em #ffffff, a barra, o
+     topo e todos os cartões ocupavam a tela inteira de branco máximo, que
+     ofusca em jornada longa de atendimento. Os tons abaixo são neutros
+     levemente frios (a mesma família do texto ardósia), e a escada fundo →
+     superfície → superfície-2 mantém a diferença de luminosidade que separa
+     cartão de fundo, só que alguns passos abaixo do branco. */
+  --app-bg: #f1f3f6;
+  --chat-bg: #eaedf1;
+  --surface: #fafbfc;
+  --surface-2: #f3f5f8;
+  --border: #dfe4ea;
+  --border-soft: #eaedf1;
   --text: #0f172a;
   --text-muted: #475569;
   --text-dim: #64748b;

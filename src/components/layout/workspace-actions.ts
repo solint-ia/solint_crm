@@ -1,14 +1,25 @@
 'use server';
 
+import { randomUUID } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { landingRouteFor } from '@/config/navigation';
+import { workspaceNameProblem } from '@/core/domain/account-provisioning';
+import {
+  ALLOWED_LOGO_MIME_TYPES,
+  MAX_LOGO_BYTES,
+  buildLogoUrl,
+  isAllowedLogoMimeType,
+} from '@/core/domain/image-upload';
 import type { Permission, PermissionOverrides } from '@/core/domain/user';
-import { effectivePermissions } from '@/core/domain/user';
+import { canCreateWorkspace, effectivePermissions } from '@/core/domain/user';
+import { writeAuditLog } from '@/infrastructure/audit/write-audit-log';
 import { reissueSessionToken } from '@/infrastructure/auth/session';
 import { container } from '@/infrastructure/container';
-import { prisma, readJson } from '@/infrastructure/db/prisma';
+import { asJson, prisma, readJson } from '@/infrastructure/db/prisma';
+import { provisionAccount } from '@/infrastructure/provisioning/provision-account';
+import { BUCKETS, storage } from '@/infrastructure/storage/supabase-storage';
 
 export interface WorkspaceActionResult {
   readonly ok: boolean;
@@ -87,11 +98,114 @@ export async function switchWorkspaceAction(input: unknown): Promise<WorkspaceAc
 }
 
 /**
- * Criar workspace saiu daqui.
+ * Quantos workspaces uma pessoa pode administrar.
  *
- * Era o mesmo buraco do cadastro público por outra porta: qualquer pessoa
- * logada provisionava contas novas e nascia administradora delas, com uma quota
- * como único freio. Agora quem cria conta é o superadministrador, em
- * `/plataforma/nova`, que é onde existe a informação que falta a um botão
- * dentro do CRM — quem é o cliente, e quem responde por ele.
+ * O freio que sobra depois da trava de papel: sem ele, um administrador
+ * provisionaria contas sem fim, cada uma com caixa, funil e papéis.
  */
+const MAX_WORKSPACES_POR_USUARIO = 10;
+
+/**
+ * Cria um workspace novo, com a pessoa como administradora, e entra nele.
+ *
+ * **Quem pode.** Já existiu uma versão aberta a qualquer pessoa logada, e ela
+ * foi fechada porque qualquer colaborador provisionava contas e nascia
+ * administrador delas. Esta volta com a trava que faltava: só quem administra
+ * o workspace atual (`canCreateWorkspace`), e com teto por pessoa.
+ *
+ * **O que nasce.** O mesmo molde do console da plataforma (`provisionAccount`):
+ * papéis, caixa de WhatsApp própria, funil e configurações. A conta nova não
+ * herda nada da atual: contatos, conversas, caixas e credenciais do WhatsApp
+ * são por conta, e é isso que mantém um workspace fora do outro.
+ *
+ * **O logo** é opcional e vai depois da transação: o Storage não participa dela,
+ * e uma falha no upload não deve desfazer a conta. Sem logo, o seletor mostra
+ * as iniciais, e a foto pode ser trocada depois em Configurações › Empresa.
+ */
+export async function createWorkspaceAction(formData: FormData): Promise<WorkspaceActionResult> {
+  const session = await container.session.getCurrentSession();
+  if (!canCreateWorkspace(session)) {
+    return { ok: false, error: 'Só quem administra o workspace atual pode criar outro.' };
+  }
+
+  const nomeBruto = formData.get('name');
+  const nome = typeof nomeBruto === 'string' ? nomeBruto.trim() : '';
+  const problema = workspaceNameProblem(nome);
+  if (problema) return { ok: false, error: problema };
+
+  // O logo é conferido antes de criar qualquer coisa: recusar o arquivo depois
+  // deixaria uma conta criada e a pessoa achando que nada aconteceu.
+  const logoBruto = formData.get('logo');
+  const logo = logoBruto instanceof File && logoBruto.size > 0 ? logoBruto : null;
+  if (logo && logo.size > MAX_LOGO_BYTES) {
+    return { ok: false, error: 'A imagem passou de 2 MB. Escolha um arquivo menor.' };
+  }
+  if (logo && !isAllowedLogoMimeType(logo.type)) {
+    return {
+      ok: false,
+      error: `Envie uma imagem ${ALLOWED_LOGO_MIME_TYPES.map((t) => t.split('/')[1]).join(' ou ')}.`,
+    };
+  }
+
+  // tenant-ok: a quota é da pessoa e atravessa contas de propósito. Escopar por
+  // `accountId` aqui contaria sempre 1 e o teto nunca valeria para nada.
+  const administrados = await prisma.membership.count({
+    where: { userId: session.user.id, roleSlug: 'administrador' },
+  });
+  if (administrados >= MAX_WORKSPACES_POR_USUARIO) {
+    return {
+      ok: false,
+      error: `Você já administra ${MAX_WORKSPACES_POR_USUARIO} workspaces, que é o limite por pessoa.`,
+    };
+  }
+
+  const accountId = `acc-${Date.now().toString(36)}-${randomUUID().slice(0, 4)}`;
+  try {
+    await prisma.$transaction((tx) =>
+      provisionAccount(tx, { accountId, name: nome, ownerUserId: session.user.id }),
+    );
+  } catch (error) {
+    console.error('[workspace] Falha ao criar o workspace:', error);
+    return { ok: false, error: 'Não foi possível criar o workspace. Tente de novo.' };
+  }
+
+  if (logo) {
+    const enviado = await storage
+      .upload(
+        BUCKETS.AVATARS,
+        `accounts/${accountId}`,
+        Buffer.from(await logo.arrayBuffer()),
+        logo.type,
+      )
+      .catch(() => false);
+    if (enviado) {
+      await prisma.accountSettings
+        .update({
+          where: { accountId },
+          data: { company: asJson({ logoUrl: buildLogoUrl(accountId, logo.type) }) },
+        })
+        .catch((error: unknown) => console.error('[workspace] Logo não gravado:', error));
+    }
+  }
+
+  await writeAuditLog({
+    accountId,
+    actorId: session.user.id,
+    actorName: session.user.name,
+    action: 'membro.adicionado',
+    targetType: 'workspace',
+    targetId: accountId,
+    targetName: nome,
+    metadata: {
+      detalhe: 'workspace criado pelo CRM, com quem criou como administrador',
+      origemAccountId: session.account.id,
+      roleSlug: 'administrador',
+    },
+  }).catch(() => undefined);
+
+  await reissueSessionToken(session.user.id, session.tokenId, accountId);
+  revalidatePath('/', 'layout');
+  // Cai onde precisa agir: um workspace novo não atende ninguém enquanto o
+  // WhatsApp da caixa dele não estiver pareado.
+  redirect('/configuracoes?secao=caixas');
+}

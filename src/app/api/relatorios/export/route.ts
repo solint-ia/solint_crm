@@ -1,4 +1,9 @@
-import { compareRow, PERIOD_LABELS, PREVIOUS_PERIOD_LABELS } from '@/core/domain/analytics';
+import {
+  compareRow,
+  formatComparisonValue,
+  PERIOD_LABELS,
+  PREVIOUS_PERIOD_LABELS,
+} from '@/core/domain/analytics';
 import { can } from '@/core/domain/user';
 import { container } from '@/infrastructure/container';
 import { csvFileName, toCsv, type CsvColumn } from '@/lib/csv';
@@ -17,12 +22,6 @@ const TAB_FILE_LABEL: Readonly<Record<ExportTab, string>> = {
   csat: 'satisfacao',
   comparativo: 'comparativo-de-periodos',
 };
-
-const number = (value: number, decimals = 0): string =>
-  value.toLocaleString('pt-BR', {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  });
 
 /**
  * Exportação de relatório em CSV (§13).
@@ -129,14 +128,10 @@ export async function GET(request: Request) {
     case 'comparativo':
       csv = toCsv(report.comparison, [
         { header: 'Indicador', value: (row) => row.label },
-        {
-          header: PERIOD_LABELS[period],
-          value: (row) => number(row.current, row.decimals ?? 0) + (row.unit ? ` ${row.unit}` : ''),
-        },
+        { header: PERIOD_LABELS[period], value: (row) => formatComparisonValue(row, 'current') },
         {
           header: PREVIOUS_PERIOD_LABELS[period],
-          value: (row) =>
-            number(row.previous, row.decimals ?? 0) + (row.unit ? ` ${row.unit}` : ''),
+          value: (row) => formatComparisonValue(row, 'previous'),
         },
         { header: 'Variação', value: (row) => compareRow(row).label },
         {

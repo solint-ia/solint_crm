@@ -1,3 +1,4 @@
+import { durationLabel } from './analytics-period';
 import type { Tone } from './label';
 import type { Id } from './shared';
 
@@ -34,6 +35,19 @@ export interface ComparisonRow {
   /** Métrica em que diminuir é melhor (por exemplo, abandono). */
   readonly lowerIsBetter?: boolean;
   readonly decimals?: number;
+  /**
+   * Como escrever o valor: segundos viram duração ("2m 05s"); percentual é uma
+   * taxa de 0 a 100, e a variação dela é em pontos, não em porcentagem.
+   */
+  readonly format?: 'duracao' | 'percentual';
+  /**
+   * O período não tem base para o indicador (nenhuma nota, nenhuma resposta).
+   *
+   * Diferente de zero: CSAT sem avaliação não é nota zero. Sem esta marca, um
+   * mês sem pesquisa respondida aparecia como queda de 100% na satisfação.
+   */
+  readonly currentMissing?: boolean;
+  readonly previousMissing?: boolean;
 }
 
 export interface ComparisonVerdict {
@@ -42,6 +56,19 @@ export interface ComparisonVerdict {
   readonly label: string;
 }
 
+/** O valor de um dos lados da comparação, já escrito para a tela e para o CSV. */
+export const formatComparisonValue = (row: ComparisonRow, side: 'current' | 'previous'): string => {
+  if (side === 'current' ? row.currentMissing : row.previousMissing) return '—';
+  const value = row[side];
+  if (row.format === 'duracao') return durationLabel(value);
+  const texto = value.toLocaleString('pt-BR', {
+    minimumFractionDigits: row.decimals ?? 0,
+    maximumFractionDigits: row.decimals ?? 0,
+  });
+  if (row.format === 'percentual') return `${texto}%`;
+  return `${texto}${row.unit ? ` ${row.unit}` : ''}`;
+};
+
 /**
  * Variação entre os dois períodos.
  *
@@ -49,6 +76,20 @@ export interface ComparisonVerdict {
  * de zero é a mentira estatística mais comum de painel — aqui vira "novo".
  */
 export const compareRow = (row: ComparisonRow): ComparisonVerdict => {
+  if (row.currentMissing || row.previousMissing) {
+    return { deltaPercent: undefined, direction: 'neutro', label: 'sem base' };
+  }
+
+  if (row.format === 'percentual') {
+    const pontos = Math.round(row.current - row.previous);
+    const melhor = row.lowerIsBetter ? pontos < 0 : pontos > 0;
+    return {
+      deltaPercent: pontos,
+      direction: pontos === 0 ? 'neutro' : melhor ? 'positivo' : 'negativo',
+      label: `${pontos > 0 ? '+' : ''}${pontos} p.p.`,
+    };
+  }
+
   if (row.previous === 0) {
     if (row.current === 0) return { deltaPercent: 0, direction: 'neutro', label: 'sem dados' };
     return { deltaPercent: undefined, direction: 'neutro', label: 'novo no período' };
@@ -163,6 +204,11 @@ export interface DashboardOverview {
 }
 
 export interface AnalyticsReport {
+  /** As datas do período, escritas no fuso da conta ("01/09/2026 a 15/09/2026"). */
+  readonly rangeLabel: string;
+  readonly previousRangeLabel: string;
+  /** Os indicadores que abrem o relatório, com a variação contra o período anterior. */
+  readonly summary: readonly Kpi[];
   readonly volume: readonly TimeSeriePoint[];
   /** Mesma janela, período imediatamente anterior — a linha de referência. */
   readonly previousVolume: readonly TimeSeriePoint[];

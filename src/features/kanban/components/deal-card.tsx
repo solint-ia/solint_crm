@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import type { Route } from 'next';
 import {
   AlertTriangle,
   Building2,
@@ -156,7 +157,7 @@ export function DealCard({
 
                     {deal.conversationId && (
                       <Link
-                        href="/conversas"
+                        href={`/conversas/${deal.conversationId}` as Route}
                         className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-surface-2 text-emerald-600 dark:text-emerald-400"
                       >
                         <MessageCircle className="size-3.5" />
@@ -260,7 +261,7 @@ export function DealCard({
 
           {deal.conversationId && (
             <Link
-              href="/conversas"
+              href={`/conversas/${deal.conversationId}` as Route}
               title="Abrir WhatsApp"
               className="rounded-full p-1 text-emerald-600 hover:bg-emerald-50 transition-colors"
             >

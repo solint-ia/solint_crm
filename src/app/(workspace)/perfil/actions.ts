@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import {
+  canChangeOwnPassword,
   DEFAULT_NOTIFICATION_PREFERENCES,
   NOTIFICATION_SOUNDS,
   type NotificationPreferences,
@@ -17,7 +18,12 @@ import {
 import { BUCKETS, storage } from '@/infrastructure/storage/supabase-storage';
 import { container } from '@/infrastructure/container';
 import { asJson, prisma, readJson } from '@/infrastructure/db/prisma';
-import { destroyCurrentSession, revokeAllSessions } from '@/infrastructure/auth/session';
+import { hashPassword, passwordProblem, verifyPassword } from '@/infrastructure/auth/password';
+import {
+  destroyCurrentSession,
+  revokeAllSessions,
+  revokeOtherSessions,
+} from '@/infrastructure/auth/session';
 import { writeAuditLog } from '@/infrastructure/audit/write-audit-log';
 
 export interface ProfileActionResult {
@@ -209,4 +215,77 @@ export async function uploadProfilePhotoAction(formData: FormData): Promise<Prof
   // navegação e no seletor de workspace, que são do layout.
   revalidatePath('/', 'layout');
   return { ok: true };
+}
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: z.string().min(1).max(200),
+  confirmPassword: z.string().min(1).max(200),
+});
+
+/**
+ * Troca a senha de quem está logado.
+ *
+ * Tudo que a tela confere é conferido de novo aqui, porque a tela não é a
+ * autorização: a senha atual, a confirmação dupla e a regra mínima.
+ *
+ * As **outras** sessões caem junto. Trocar a senha costuma ser a resposta a
+ * "alguém pode ter acesso à minha conta", e manter logado o navegador desse
+ * alguém tornaria a troca inútil. A sessão atual continua: quem acabou de
+ * provar a senha não precisa entrar de novo.
+ */
+export async function changePasswordAction(input: unknown): Promise<ProfileActionResult> {
+  const parsed = changePasswordSchema.safeParse(input);
+  if (!parsed.success)
+    return { ok: false, error: 'Preencha a senha atual, a nova e a confirmação.' };
+
+  const session = await container.session.getCurrentSession();
+  if (!canChangeOwnPassword(session)) {
+    return {
+      ok: false,
+      error: 'Seu papel não permite trocar a senha por aqui. Fale com quem administra a conta.',
+    };
+  }
+
+  const { currentPassword, newPassword, confirmPassword } = parsed.data;
+  if (newPassword !== confirmPassword) {
+    return { ok: false, error: 'A confirmação não confere com a nova senha.' };
+  }
+  const problema = passwordProblem(newPassword);
+  if (problema) return { ok: false, error: problema };
+  if (newPassword === currentPassword) {
+    return { ok: false, error: 'A nova senha precisa ser diferente da atual.' };
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { passwordHash: true },
+    });
+    if (!user || !(await verifyPassword(currentPassword, user.passwordHash))) {
+      return { ok: false, error: 'A senha atual está incorreta.' };
+    }
+
+    await prisma.user.update({
+      where: { id: session.user.id },
+      data: { passwordHash: await hashPassword(newPassword) },
+    });
+    const encerradas = await revokeOtherSessions(session.user.id, session.tokenId);
+
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'senha.alterada',
+      targetType: 'membro',
+      targetId: session.user.id,
+      targetName: session.user.name,
+      metadata: { sessoesEncerradas: encerradas },
+    }).catch(() => undefined);
+
+    return { ok: true };
+  } catch (error) {
+    console.error('[perfil] Falha ao trocar a senha:', error);
+    return { ok: false, error: 'Não foi possível trocar a senha. Tente de novo.' };
+  }
 }

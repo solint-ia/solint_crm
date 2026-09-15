@@ -1,13 +1,12 @@
 import { Minus, TrendingDown, TrendingUp } from 'lucide-react';
 import type { ComparisonRow, PeriodKey } from '@/core/domain/analytics';
-import { compareRow, PERIOD_LABELS, PREVIOUS_PERIOD_LABELS } from '@/core/domain/analytics';
+import {
+  compareRow,
+  formatComparisonValue,
+  PERIOD_LABELS,
+  PREVIOUS_PERIOD_LABELS,
+} from '@/core/domain/analytics';
 import { cn } from '@/lib/cn';
-
-const format = (row: ComparisonRow, value: number): string =>
-  `${value.toLocaleString('pt-BR', {
-    minimumFractionDigits: row.decimals ?? 0,
-    maximumFractionDigits: row.decimals ?? 0,
-  })}${row.unit ? ` ${row.unit}` : ''}`;
 
 /**
  * Comparação entre períodos (§13).
@@ -70,10 +69,10 @@ export function ComparisonTable({
                   {row.label}
                 </th>
                 <td className="py-2.5 pr-3 text-right font-mono text-body font-semibold text-ink tabular-nums">
-                  {format(row, row.current)}
+                  {formatComparisonValue(row, 'current')}
                 </td>
                 <td className="py-2.5 pr-3 text-right font-mono text-body text-dim tabular-nums">
-                  {format(row, row.previous)}
+                  {formatComparisonValue(row, 'previous')}
                 </td>
                 <td className="py-2.5">
                   <div className="flex items-center gap-2">

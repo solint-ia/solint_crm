@@ -892,6 +892,34 @@ export class WhatsAppSession {
     }
   }
 
+  /**
+   * Avisa no log quando o mesmo número está pareado em outra caixa.
+   *
+   * O WhatsApp aceita vários aparelhos vinculados, então parear o mesmo número
+   * em duas caixas (inclusive de workspaces diferentes) funciona. Cada sessão
+   * grava só na própria conta, e nada vaza entre elas; o efeito é outro: toda
+   * mensagem chega em dobro, uma cópia em cada caixa, com saudação automática,
+   * webhook e notificação disparando nas duas. É quase sempre engano de
+   * pareamento, e o log é o primeiro lugar onde isso fica visível.
+   */
+  private async avisarNumeroEmOutraCaixa(userJid: string): Promise<void> {
+    try {
+      const outras = await prisma.whatsAppConnection.findMany({
+        where: { phoneJid: userJid, inboxId: { not: this.inboxId }, status: 'conectado' },
+        select: { inboxId: true, inbox: { select: { name: true, accountId: true } } },
+      });
+      for (const outra of outras) {
+        console.warn(
+          `[WhatsAppSession ${this.inboxId}] O número ${userJid} também está conectado na caixa ` +
+            `"${outra.inbox.name}" (${outra.inboxId}, conta ${outra.inbox.accountId}). ` +
+            `As mensagens vão chegar nas duas caixas.`,
+        );
+      }
+    } catch {
+      // Diagnóstico apenas: uma falha aqui não pode afetar a conexão.
+    }
+  }
+
   private async registrarEstado(
     patch: Partial<WhatsAppStatusPayload>,
     opcoes: { readonly autoConnect?: boolean } = {},
@@ -1545,6 +1573,7 @@ export class WhatsAppSession {
           });
 
           console.log(`[WhatsAppSession ${this.inboxId}] Conectado com sucesso como ${ownerName}`);
+          if (userJid) void this.avisarNumeroEmOutraCaixa(userJid);
           /**
            * Reafirma "offline" depois que a poeira da conexão baixa.
            *

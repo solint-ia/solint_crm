@@ -17,7 +17,6 @@ import { TeamSection } from '@/features/configuracoes/components/sections/team-s
 import { LabelsSection } from '@/features/configuracoes/components/sections/labels-section';
 import { CannedResponsesSection } from '@/features/configuracoes/components/sections/canned-responses-section';
 import { CompanySection } from '@/features/configuracoes/components/sections/company-section';
-import { BillingSection } from '@/features/configuracoes/components/sections/billing-section';
 import { SecuritySection } from '@/features/configuracoes/components/sections/security-section';
 import { AccessDenied } from '@/components/layout/access-denied';
 import { container } from '@/infrastructure/container';
@@ -29,7 +28,6 @@ import {
 } from '@/core/domain/user';
 import { prisma, readJson } from '@/infrastructure/db/prisma';
 import { parseOneOf } from '@/lib/search-params';
-import { listActiveSessions } from '@/infrastructure/auth/session';
 import { PrismaAuditRepository } from '@/infrastructure/repositories/prisma/audit-repository';
 
 /**
@@ -102,26 +100,20 @@ export default async function ConfiguracoesPage({
    */
   const montaVocabulario = currentSection === 'automacoes';
 
-  const [settings, notifications, conversations, pipelines, activeSessions, auditRecords] =
-    await Promise.all([
-      container.settings.get(session.account.id),
-      container.notifications.list(session.account.id, session.user.id),
-      montaVocabulario
-        ? container.conversations.list(session.account.id, session.user.id, {
-            scope: 'todas',
-            inboxAccess: session.inboxAccess,
-          })
-        : Promise.resolve([]),
-      montaVocabulario
-        ? container.pipelines.listPipelines(session.account.id)
-        : Promise.resolve([]),
-      currentSection === 'seguranca'
-        ? listActiveSessions(session.user.id, session.tokenId)
-        : Promise.resolve([]),
-      currentSection === 'seguranca'
-        ? new PrismaAuditRepository().list(session.account.id, { limit: 100 })
-        : Promise.resolve([]),
-    ]);
+  const [settings, notifications, conversations, pipelines, auditRecords] = await Promise.all([
+    container.settings.get(session.account.id),
+    container.notifications.list(session.account.id, session.user.id),
+    montaVocabulario
+      ? container.conversations.list(session.account.id, session.user.id, {
+          scope: 'todas',
+          inboxAccess: session.inboxAccess,
+        })
+      : Promise.resolve([]),
+    montaVocabulario ? container.pipelines.listPipelines(session.account.id) : Promise.resolve([]),
+    currentSection === 'seguranca'
+      ? new PrismaAuditRepository().list(session.account.id, { limit: 100 })
+      : Promise.resolve([]),
+  ]);
 
   /**
    * O efetivo de cada pessoa — papel mais a personalização dela.
@@ -210,11 +202,7 @@ export default async function ConfiguracoesPage({
             <CompanySection account={session.account} company={settings.company} />
           ) : null}
 
-          {currentSection === 'faturamento' ? <BillingSection billing={settings.billing} /> : null}
-
-          {currentSection === 'seguranca' ? (
-            <SecuritySection activeSessions={activeSessions} auditLog={auditRecords} />
-          ) : null}
+          {currentSection === 'seguranca' ? <SecuritySection auditLog={auditRecords} /> : null}
         </main>
       </div>
     </>

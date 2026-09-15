@@ -1,16 +1,19 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { Check, ChevronDown, Loader2 } from 'lucide-react';
+import { Check, ChevronDown, Loader2, Plus } from 'lucide-react';
 import type { Account } from '@/core/domain/user';
 import { Avatar } from '@/components/ui/avatar';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/cn';
+import { CreateWorkspaceModal } from './create-workspace-modal';
 import { switchWorkspaceAction } from './workspace-actions';
 
 interface WorkspaceSwitcherProps {
   readonly current: Account;
   readonly accounts: readonly Account[];
+  /** Mostra "Criar novo workspace" no fim da lista. Decidido no servidor. */
+  readonly canCreate?: boolean;
 }
 
 /**
@@ -35,8 +38,13 @@ const marcaDe = (account: Account) => ({
  * diferentes, o mesmo rosto nas duas não distinguia nada — e a foto de perfil
  * da pessoa continua onde sempre esteve, no menu do próprio perfil.
  */
-export function WorkspaceSwitcher({ current, accounts }: WorkspaceSwitcherProps) {
+export function WorkspaceSwitcher({
+  current,
+  accounts,
+  canCreate = false,
+}: WorkspaceSwitcherProps) {
   const [open, setOpen] = useState(false);
+  const [criando, setCriando] = useState(false);
   const [trocando, setTrocando] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const { show } = useToast();
@@ -120,9 +128,28 @@ export function WorkspaceSwitcher({ current, accounts }: WorkspaceSwitcherProps)
                 );
               })}
             </ul>
+            {canCreate ? (
+              <div className="mt-1 border-t border-line pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    setCriando(true);
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-body font-semibold text-brand transition-colors hover:bg-surface-2"
+                >
+                  <span className="flex size-6 items-center justify-center rounded-full border border-dashed border-brand/50">
+                    <Plus className="size-3.5" />
+                  </span>
+                  Criar novo workspace
+                </button>
+              </div>
+            ) : null}
           </div>
         </>
       ) : null}
+
+      {canCreate ? <CreateWorkspaceModal open={criando} onClose={() => setCriando(false)} /> : null}
     </div>
   );
 }

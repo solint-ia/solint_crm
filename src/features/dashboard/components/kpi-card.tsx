@@ -3,8 +3,11 @@ import {
   CheckCircle2,
   Inbox,
   MessageSquare,
+  MessagesSquare,
   Minus,
+  Percent,
   Star,
+  Timer,
   TrendingDown,
   TrendingUp,
   UserX,
@@ -24,6 +27,9 @@ const KPI_ICONS: Record<string, React.ElementType> = {
   recebidas: Inbox,
   resolvidas: CheckCircle2,
   csat: Star,
+  'taxa-resolucao': Percent,
+  tmr: Timer,
+  mensagens: MessagesSquare,
 };
 
 /**

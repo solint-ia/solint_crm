@@ -1,9 +1,11 @@
 'use client';
 
 import { useMemo, useRef, useState, useTransition } from 'react';
-import { BellOff, Inbox as InboxIcon, Play, Volume2 } from 'lucide-react';
+import { BellOff, Inbox as InboxIcon, Play, Plus, Volume2 } from 'lucide-react';
 import {
   can,
+  canChangeOwnPassword,
+  canCreateWorkspace,
   type AvailabilityStatus,
   type NotificationPreferences,
   type Session,
@@ -15,13 +17,15 @@ import { Card } from '@/components/ui/card';
 import { Field, TextInput } from '@/components/ui/field';
 import { Toggle } from '@/components/ui/toggle';
 import { useToast } from '@/components/ui/toast';
+import { ChangePasswordModal } from './change-password-modal';
 import { UnsavedChangesBar } from '@/features/configuracoes/components/unsaved-changes-bar';
 import { WhatsAppConnectionCard } from '@/features/whatsapp/components/whatsapp-connection-card';
 import { WhatsAppModal } from '@/features/whatsapp/components/whatsapp-modal';
 import { updateProfileAction, uploadProfilePhotoAction } from '@/app/(workspace)/perfil/actions';
+import { uploadCompanyLogoAction } from '@/app/(workspace)/configuracoes/actions';
+import { CreateWorkspaceModal } from '@/components/layout/create-workspace-modal';
 import { switchWorkspaceAction } from '@/components/layout/workspace-actions';
-import { ALLOWED_AVATAR_MIME_TYPES } from '@/core/domain/image-upload';
-import { planned } from '@/components/ui/planned';
+import { ALLOWED_AVATAR_MIME_TYPES, ALLOWED_LOGO_MIME_TYPES } from '@/core/domain/image-upload';
 import {
   NOTIFICATION_SOUND_OPTIONS,
   announceNotificationSoundChange,
@@ -55,6 +59,49 @@ const NOTIFICATION_ITEMS = [
 export function ProfileView({ session, inboxes }: ProfileViewProps) {
   const { user, account, availableAccounts } = session;
   const canManageWhatsApp = can(session, 'config.caixas:escrever');
+  const podeTrocarSenha = canChangeOwnPassword(session);
+  const [trocandoSenha, setTrocandoSenha] = useState(false);
+  const podeCriarWorkspace = canCreateWorkspace(session);
+  const [criandoWorkspace, setCriandoWorkspace] = useState(false);
+
+  /**
+   * A foto do workspace ativo, trocada daqui mesmo.
+   *
+   * É o mesmo logotipo de Configurações › Empresa, com a mesma permissão: não
+   * existe uma segunda imagem da conta. A foto dos outros workspaces só muda
+   * de dentro deles, porque a permissão é de cada conta.
+   */
+  const podeTrocarLogo = can(session, 'config.empresa:escrever');
+  const [logoAtual, setLogoAtual] = useState<string | undefined>();
+  const [enviandoLogo, setEnviandoLogo] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+
+  const handleLogoChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setEnviandoLogo(true);
+    try {
+      const formData = new FormData();
+      formData.set('logo', file);
+      const result = await uploadCompanyLogoAction(formData);
+      if (!result.ok) {
+        show({
+          tone: 'erro',
+          title: 'Não foi possível trocar a foto',
+          description: result.error ?? 'Tente novamente.',
+        });
+        return;
+      }
+      setLogoAtual(URL.createObjectURL(file));
+      show({ tone: 'sucesso', title: 'Foto do workspace atualizada' });
+    } catch {
+      show({ tone: 'erro', title: 'Erro ao enviar a imagem', description: 'Tente novamente.' });
+    } finally {
+      setEnviandoLogo(false);
+    }
+  };
   const { show } = useToast();
   const [saving, startSaving] = useTransition();
   const [trocandoWorkspace, startTrocaWorkspace] = useTransition();
@@ -378,12 +425,21 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
             <h3 className="font-display text-title font-bold text-ink tracking-tight">
               Senha de acesso
             </h3>
-            <p className="mt-0.5 text-meta text-muted">Última alteração realizada há 3 meses</p>
+            <p className="mt-0.5 text-meta text-muted">
+              {podeTrocarSenha
+                ? 'Ao trocar, as sessões em outros dispositivos são encerradas.'
+                : 'Para trocar a senha, fale com quem administra a conta.'}
+            </p>
           </div>
-          <Button variant="secondary" size="sm" {...planned('Alterar a senha de acesso')}>
-            Alterar senha
-          </Button>
+          {podeTrocarSenha ? (
+            <Button variant="secondary" size="sm" onClick={() => setTrocandoSenha(true)}>
+              Alterar senha
+            </Button>
+          ) : null}
         </Card>
+        {podeTrocarSenha ? (
+          <ChangePasswordModal open={trocandoSenha} onClose={() => setTrocandoSenha(false)} />
+        ) : null}
       </div>
 
       {/* NOTIFICAÇÕES E PREFERÊNCIAS */}
@@ -488,9 +544,27 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
 
       {/* WORKSPACES / CONTAS VINCULADAS */}
       <Card className="flex flex-col gap-4 p-5">
-        <h3 className="font-display text-title font-bold text-ink tracking-tight">
-          Workspaces vinculados
-        </h3>
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="font-display text-title font-bold text-ink tracking-tight">
+            Workspaces vinculados
+          </h3>
+          {podeCriarWorkspace ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<Plus className="size-3.5" />}
+              onClick={() => setCriandoWorkspace(true)}
+            >
+              Novo workspace
+            </Button>
+          ) : null}
+        </div>
+        {podeCriarWorkspace ? (
+          <CreateWorkspaceModal
+            open={criandoWorkspace}
+            onClose={() => setCriandoWorkspace(false)}
+          />
+        ) : null}
         <p className="text-body text-muted">
           Alterne entre contas a qualquer momento, aqui ou pelo seletor no topo da tela. Cada
           workspace tem contatos, conversas e funil próprios, e o seu papel pode ser diferente em
@@ -512,16 +586,40 @@ export function ProfileView({ session, inboxes }: ProfileViewProps) {
                   )}
                 >
                   <div className="flex items-center gap-3">
-                    <div className="flex size-8.5 items-center justify-center rounded-control bg-brand-gradient font-display text-body font-bold text-white shadow-xs">
-                      {acc.name.charAt(0)}
-                    </div>
+                    <Avatar
+                      name={acc.name}
+                      tone={acc.brandColor}
+                      src={isCurrent ? (logoAtual ?? acc.logoUrl) : acc.logoUrl}
+                      size="sm"
+                    />
                     <div>
                       <div className="text-ui font-bold text-ink tracking-tight">{acc.name}</div>
                       <div className="text-meta capitalize text-muted">Plano {acc.plan}</div>
                     </div>
                   </div>
                   {isCurrent ? (
-                    <Badge tone="blue">Workspace ativo</Badge>
+                    <div className="flex items-center gap-2">
+                      {podeTrocarLogo ? (
+                        <>
+                          <input
+                            ref={logoInputRef}
+                            type="file"
+                            accept={ALLOWED_LOGO_MIME_TYPES.join(',')}
+                            className="hidden"
+                            onChange={handleLogoChange}
+                          />
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={enviandoLogo}
+                            onClick={() => logoInputRef.current?.click()}
+                          >
+                            {enviandoLogo ? 'Enviando…' : 'Alterar foto'}
+                          </Button>
+                        </>
+                      ) : null}
+                      <Badge tone="blue">Workspace ativo</Badge>
+                    </div>
                   ) : (
                     <Button
                       variant="secondary"

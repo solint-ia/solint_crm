@@ -47,7 +47,7 @@ export const ROLES: readonly Role[] = [
     accountId: ACCOUNT_ID,
     slug: 'administrador',
     name: 'Administrador',
-    description: 'Acesso total, incluindo faturamento, integrações e segurança.',
+    description: 'Acesso total, incluindo integrações e segurança.',
     permissions: PERMISSIONS,
     isSystem: true,
   },

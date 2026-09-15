@@ -50,7 +50,7 @@ const SHORTCUTS: readonly ShortcutItem[] = [
   {
     title: 'Conectar WhatsApp',
     description: 'Gerenciar QR Code e canais',
-    href: '/configuracoes?secao=integracoes',
+    href: '/configuracoes?secao=caixas',
     icon: QrCode,
     colorClass: 'text-emerald-600 bg-emerald-500/10 dark:text-emerald-400',
   },
