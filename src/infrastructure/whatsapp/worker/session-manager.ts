@@ -209,7 +209,7 @@ export class WhatsAppSessionManager {
     }
   }
 
-  async stop(inboxId: string): Promise<void> {
+  async stop(inboxId: string, options: { reiniciando?: boolean } = {}): Promise<void> {
     const starting = this.starting.get(inboxId);
     if (starting) await starting.catch(() => undefined);
     const session = this.sessions.get(inboxId);
@@ -217,7 +217,7 @@ export class WhatsAppSessionManager {
       // A trava é liberada mesmo se o encerramento falhar no meio: presa, ela
       // faria o worker seguinte esperar o prazo vencer para restaurar a caixa.
       try {
-        await session.stop();
+        await session.stop(options);
       } finally {
         this.sessions.delete(inboxId);
         await this.releaseLock(inboxId, session.lockVersion);
@@ -455,6 +455,7 @@ export class WhatsAppSessionManager {
      * outras de liberar a trava delas.
      */
     const inboxIds = Array.from(this.sessions.keys());
-    await Promise.allSettled(inboxIds.map((id) => this.stop(id)));
+    // O próximo worker restaura estas caixas: a tela deve dizer "reconectando".
+    await Promise.allSettled(inboxIds.map((id) => this.stop(id, { reiniciando: true })));
   }
 }

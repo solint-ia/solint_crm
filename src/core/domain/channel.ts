@@ -47,7 +47,13 @@ const CANAL_DESCONHECIDO: ChannelDescriptor = {
 export const describeChannel = (channel: Channel): ChannelDescriptor =>
   CHANNEL_REGISTRY[channel] ?? CANAL_DESCONHECIDO;
 
-export type InboxConnectionStatus = 'conectado' | 'desconectado' | 'pareando' | 'nao_configurado';
+/**
+ * `reconectando` é a caixa já pareada voltando sozinha (deploy do worker, queda
+ * de rede). Não pede ação de ninguém, ao contrário de `pareando`, que espera a
+ * leitura de um QR ou de um código.
+ */
+export type InboxConnectionStatus =
+  'conectado' | 'desconectado' | 'pareando' | 'reconectando' | 'nao_configurado';
 
 /** Caixa de entrada: uma conexão concreta de um canal com a conta. */
 export interface Inbox {

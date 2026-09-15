@@ -55,6 +55,7 @@ export const CAMPAIGN_STATUS_TONE: Readonly<Record<CampaignStatus, Tone>> = {
 export const CONNECTION_STATUS_TONE: Readonly<Record<InboxConnectionStatus, Tone>> = {
   conectado: 'green',
   pareando: 'amber',
+  reconectando: 'amber',
   desconectado: 'red',
   nao_configurado: 'slate',
 };
@@ -62,6 +63,7 @@ export const CONNECTION_STATUS_TONE: Readonly<Record<InboxConnectionStatus, Tone
 export const CONNECTION_STATUS_LABEL: Readonly<Record<InboxConnectionStatus, string>> = {
   conectado: 'Conectado',
   pareando: 'Pareando',
+  reconectando: 'Reconectando',
   desconectado: 'Desconectado',
   nao_configurado: 'Não conectado',
 };

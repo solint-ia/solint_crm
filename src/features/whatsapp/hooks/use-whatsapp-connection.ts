@@ -61,17 +61,21 @@ const createStatusChannel = (inboxId?: string): StatusChannel => {
     }
   };
 
-  const open = () => {
-    if (typeof window === 'undefined') return;
-    if (source) return;
+  let ativo = false;
+  let reabertura: ReturnType<typeof setTimeout> | null = null;
+  let tentativas = 0;
 
-    void fetchStatus();
-
+  const conectar = () => {
     try {
       const sseUrl = inboxId ? `/api/inboxes/${inboxId}/whatsapp/events` : '/api/whatsapp/events';
-      source = new EventSource(sseUrl);
+      const atual = new EventSource(sseUrl);
+      source = atual;
 
-      source.onmessage = (event) => {
+      atual.onopen = () => {
+        tentativas = 0;
+      };
+
+      atual.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data) as WhatsAppStatusPayload;
           notifyAll(payload);
@@ -80,12 +84,74 @@ const createStatusChannel = (inboxId?: string): StatusChannel => {
         }
       };
 
-      source.onerror = () => {
-        // Se a conexão SSE oscilar, tenta reconectar silenciosamente
+      /**
+       * Uma queda de rede o navegador resolve sozinho. Uma resposta com erro,
+       * não: o 502 do proxy enquanto o site reinicia num deploy faz o
+       * `EventSource` desistir de vez e ficar fechado. A tela parava no último
+       * status que ouviu (o "desconectado" do worker encerrando) até alguém
+       * recarregar a página ou abrir o modal. Fechado, ele é reaberto com
+       * espera crescente; a rota de eventos manda o estado atual do banco assim
+       * que a conexão abre.
+       */
+      atual.onerror = () => {
+        if (atual.readyState !== EventSource.CLOSED) return;
+        if (source === atual) source = null;
+        agendarReabertura();
       };
     } catch {
       // EventSource não suportado
     }
+  };
+
+  const agendarReabertura = () => {
+    if (!ativo || reabertura) return;
+    const espera = Math.min(30_000, 2_000 * 2 ** tentativas);
+    tentativas += 1;
+    reabertura = setTimeout(() => {
+      reabertura = null;
+      if (!ativo || source) return;
+      conectar();
+    }, espera);
+  };
+
+  /**
+   * Aba que volta a ficar visível relê o status.
+   *
+   * Um computador que dormiu, ou uma aba que ficou horas em segundo plano, pode
+   * ter perdido eventos sem o `EventSource` perceber. Reler custa uma consulta e
+   * garante que a tela diga o que é verdade agora.
+   */
+  const aoVoltarParaAba = () => {
+    if (document.visibilityState !== 'visible') return;
+    void fetchStatus();
+    if (!source) {
+      if (reabertura) clearTimeout(reabertura);
+      reabertura = null;
+      tentativas = 0;
+      conectar();
+    }
+  };
+
+  const open = () => {
+    if (typeof window === 'undefined') return;
+    if (ativo) return;
+    ativo = true;
+
+    void fetchStatus();
+    document.addEventListener('visibilitychange', aoVoltarParaAba);
+    conectar();
+  };
+
+  const close = () => {
+    ativo = false;
+    if (reabertura) clearTimeout(reabertura);
+    reabertura = null;
+    tentativas = 0;
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', aoVoltarParaAba);
+    }
+    source?.close();
+    source = null;
   };
 
   return {
@@ -98,8 +164,7 @@ const createStatusChannel = (inboxId?: string): StatusChannel => {
       return () => {
         listeners.delete(listener);
         if (listeners.size === 0) {
-          source?.close();
-          source = null;
+          close();
           channels.delete(inboxId ?? 'global');
         }
       };

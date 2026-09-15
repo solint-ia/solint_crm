@@ -4,27 +4,18 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Bot,
-  Clock,
-  Globe,
   Inbox as InboxIcon,
-  MoonStar,
   Plus,
   Radio,
   Smartphone,
   Star,
-  Sun,
   Timer,
   Trash2,
   TriangleAlert,
 } from 'lucide-react';
 import { agentWorksAt, type AgentSchedule } from '@/core/domain/agent-schedule';
 import type { BusinessHours, Weekday } from '@/core/domain/business-hours';
-import {
-  isWithinBusinessHours,
-  summarizeBusinessHours,
-  WEEKDAY_LABELS,
-  WEEKDAYS,
-} from '@/core/domain/business-hours';
+import { summarizeBusinessHours, WEEKDAY_LABELS, WEEKDAYS } from '@/core/domain/business-hours';
 import { describeChannel } from '@/core/domain/channel';
 import { firstWeekdayIndex } from '@/core/domain/regional-preferences';
 import { useRegional } from '@/components/layout/regional-provider';
@@ -194,7 +185,6 @@ export function InboxesSection({ connections, canDelete }: InboxesSectionProps) 
             </span>
             <div className="flex gap-2 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible lg:pb-0">
               {connectionList.map((connection) => {
-                const draft = drafts[connection.id] ?? connection;
                 const active = connection.id === (selected?.id ?? selectedId);
                 return (
                   <button
@@ -222,7 +212,6 @@ export function InboxesSection({ connections, canDelete }: InboxesSectionProps) 
                       <span className="truncate font-mono text-[11px]">
                         {connection.identifier}
                       </span>
-                      <OpenNowDot hours={draft.businessHours} />
                     </div>
                   </button>
                 );
@@ -566,31 +555,6 @@ function EmptyInboxState({ onCreate }: { readonly onCreate: () => void }) {
   );
 }
 
-function OpenNowDot({ hours }: { readonly hours: BusinessHours }) {
-  const [open, setOpen] = useState<boolean | undefined>();
-
-  useEffect(() => {
-    const check = () => setOpen(isWithinBusinessHours(hours, new Date()));
-    check();
-    const timer = setInterval(check, 60_000);
-    return () => clearInterval(timer);
-  }, [hours]);
-
-  if (open === undefined) return null;
-
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1 text-[11px] font-semibold',
-        open ? 'text-green-600 dark:text-green-400' : 'text-dim',
-      )}
-    >
-      {open ? <Sun className="size-3" /> : <MoonStar className="size-3" />}
-      {open ? 'Aberto' : 'Fechado'}
-    </span>
-  );
-}
-
 /**
  * Um intervalo em dias, horas e minutos.
  *
@@ -652,7 +616,11 @@ function InboxDetail({
         ? 'conectado'
         : statusData.status === 'desconectado'
           ? 'desconectado'
-          : 'pareando'
+          : // Conectando com pareamento é o worker voltando (deploy, queda de
+            // rede), e não um QR esperando leitura.
+            statusData.status === 'conectando' && statusData.paired
+            ? 'reconectando'
+            : 'pareando'
       : undefined;
 
   const statusExibido = statusAoVivo ?? connection.status;
@@ -681,7 +649,11 @@ function InboxDetail({
   }, [contando]);
 
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
-  const [hours, setHours] = useState<BusinessHours>(connection.businessHours);
+  /**
+   * O horário de atendimento da caixa saiu desta tela: a grade que fica é a do
+   * agente de IA. O valor gravado continua lá e não é reenviado ao salvar, para
+   * que quem já o tinha configurado não o perca num salvamento qualquer.
+   */
   const [agentSchedule, setAgentSchedule] = useState<AgentSchedule>(connection.aiAgentSchedule);
   const [greeting, setGreeting] = useState(connection.greeting);
   const [closingMessage, setClosingMessage] = useState(
@@ -707,7 +679,6 @@ function InboxDetail({
 
   // Detecta se houve modificação
   const dirty =
-    JSON.stringify(hours) !== JSON.stringify(connection.businessHours) ||
     JSON.stringify(agentSchedule) !== JSON.stringify(connection.aiAgentSchedule) ||
     JSON.stringify(greeting) !== JSON.stringify(connection.greeting) ||
     JSON.stringify(closingMessage) !==
@@ -729,7 +700,6 @@ function InboxDetail({
     csatEnabled !== (connection.csatEnabled ?? false) ||
     csatQuestion !== (connection.csatQuestion ?? '');
 
-  const summary = useMemo(() => summarizeBusinessHours(hours), [hours]);
   const agentSummary = useMemo(
     () => summarizeBusinessHours(agentSchedule.hours),
     [agentSchedule.hours],
@@ -737,7 +707,6 @@ function InboxDetail({
   const agentSemDia = agentSchedule.hours.days.every((day) => !day.enabled);
 
   const handleDiscard = () => {
-    setHours(connection.businessHours);
     setAgentSchedule(connection.aiAgentSchedule);
     setGreeting(connection.greeting);
     setClosingMessage(
@@ -764,7 +733,6 @@ function InboxDetail({
     setSaving(true);
     const result = await updateInboxAction({
       connectionId: connection.id,
-      businessHours: hours,
       aiAgentSchedule: agentSchedule,
       greeting,
       closingMessage,
@@ -788,7 +756,6 @@ function InboxDetail({
 
     onSaved({
       ...connection,
-      businessHours: hours,
       aiAgentSchedule: agentSchedule,
       greeting,
       closingMessage,
@@ -861,14 +828,13 @@ function InboxDetail({
           <div className="flex flex-col">
             <span className="text-[11px] font-semibold uppercase text-dim">Disponibilidade</span>
             <div className="mt-1 flex flex-col gap-0.5">
-              <OpenNowDot hours={hours} />
               <AgentNowDot schedule={agentSchedule} />
             </div>
           </div>
           {/* Aqui havia "Última sincronização" e "Carga semanal". A primeira
               imprimia `new Date()` no render — ou seja, dizia "agora" toda vez,
               independentemente de ter havido sincronização; a segunda repetia
-              uma conta que o cartão de horário logo abaixo já mostra por dia. */}
+              uma conta que a grade de horário já mostrava por dia. */}
           <div className="flex flex-col">
             <span className="text-[11px] font-semibold uppercase text-dim">Tempo de conexão</span>
             <span className="mt-1 text-xs text-ink font-semibold tabular-nums">
@@ -879,48 +845,7 @@ function InboxDetail({
       </div>
 
       {/* ------------------------------------------------------------ */}
-      {/* CARD 2: HORÁRIO DE ATENDIMENTO                                */}
-      {/* ------------------------------------------------------------ */}
-      <div className="rounded-2xl border border-line bg-surface p-5 shadow-2xs">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-line pb-4">
-          <div className="flex items-center gap-2.5">
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
-              <Clock className="size-4" />
-            </div>
-            <div>
-              <h4 className="font-display text-sm font-bold text-ink">Horário de atendimento</h4>
-              <p className="text-xs text-muted">
-                {summary} · Fuso: {hours.timezone}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1 text-xs text-muted">
-              <Globe className="size-3.5 text-dim" />
-              {/* O fuso do próprio expediente. Era o literal `America/Sao_Paulo`
-                  ao lado de um `Fuso: {hours.timezone}` na mesma caixa: uma
-                  caixa configurada em Manaus exibia os dois valores brigando. */}
-              <span className="font-mono font-medium">{hours.timezone}</span>
-            </span>
-          </div>
-        </div>
-
-        <WeeklyHoursTable
-          hours={hours}
-          onChange={setHours}
-          diasDaSemana={diasDaSemana}
-          rotulos={{
-            ativar: (dia) => `Atender ${dia}`,
-            inicio: 'Abertura',
-            fim: 'Fechamento',
-            desligado: 'Sem atendimento',
-          }}
-        />
-      </div>
-
-      {/* ------------------------------------------------------------ */}
-      {/* CARD 3: MENSAGENS AUTOMÁTICAS                                 */}
+      {/* CARD 2: MENSAGENS AUTOMÁTICAS                                 */}
       {/* ------------------------------------------------------------ */}
       <div className="flex flex-col gap-3">
         <div>
@@ -997,8 +922,8 @@ function InboxDetail({
             </div>
           </div>
 
-          {/* Horário de funcionamento do agente: a mesma grade do expediente,
-              com outro significado. Fora dela o webhook da caixa não sai. */}
+          {/* Horário de funcionamento do agente. Fora dele o webhook da caixa
+              continua saindo para alimentar a memória, mas o agente não responde. */}
           <div className="mt-3.5 flex flex-col gap-3 border-b border-line-soft pb-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -1031,13 +956,6 @@ function InboxDetail({
                 />
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <AgentNowDot schedule={agentSchedule} />
-                  <button
-                    type="button"
-                    onClick={() => setAgentSchedule((atual) => ({ ...atual, hours }))}
-                    className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline"
-                  >
-                    Copiar o horário de atendimento
-                  </button>
                 </div>
                 {agentSemDia ? (
                   <p className="flex items-start gap-1.5 rounded-xl border border-amber-line/50 bg-amber-soft/40 p-2.5 text-[11px] text-amber-text">
@@ -1219,8 +1137,8 @@ function InboxDetail({
 /**
  * A grade semanal: uma linha por dia, com o dia ligado ou não e o intervalo.
  *
- * Serve ao horário de atendimento e ao horário do agente de IA, que têm a mesma
- * forma e só mudam o que cada linha quer dizer — daí os rótulos por parâmetro.
+ * Hoje serve só ao horário do agente de IA. Os rótulos continuam por parâmetro
+ * porque o que cada linha quer dizer é do cartão que a usa, não da grade.
  *
  * Começa no dia que a conta escolheu em Empresa › Preferências regionais. A
  * lista sempre abriu no domingo porque `WEEKDAYS` está na ordem de

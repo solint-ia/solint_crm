@@ -964,7 +964,7 @@ export class WhatsAppSession {
     await prisma.inbox.updateMany({
       where: { id: this.inboxId, accountId: this.accountId },
       data: {
-        status: inboxStatusFrom(this.currentStatus.status),
+        status: inboxStatusFrom(this.currentStatus.status, this.isPaired),
         // O identificador só muda quando há número: um `undefined` a caminho
         // do desconectado apagaria o número que a caixa acabou de exibir.
         ...(this.currentStatus.status === 'conectado' && this.currentStatus.phone
@@ -3710,7 +3710,15 @@ export class WhatsAppSession {
     );
   }
 
-  async stop(options: { persistStatus?: boolean } = {}): Promise<void> {
+  /**
+   * Fecha o socket desta sessão.
+   *
+   * `reiniciando` é o encerramento de um deploy ou reinício do worker: a caixa
+   * pareada vai ser restaurada sozinha pelo próximo processo, então o estado
+   * gravado é `conectando`, e não `desconectado`. Gravar `desconectado` fazia a
+   * tela pedir uma ação que ninguém precisava tomar.
+   */
+  async stop(options: { persistStatus?: boolean; reiniciando?: boolean } = {}): Promise<void> {
     this.encerrada = true;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -3740,7 +3748,14 @@ export class WhatsAppSession {
     this.qrCycles = 0;
     this.pairingPhone = undefined;
     if (options.persistStatus !== false) {
-      await this.updateStatus({ status: 'desconectado', qr: undefined });
+      // Só a caixa pareada volta sozinha: uma que estava mostrando QR não é
+      // restaurada no boot, e para ela `desconectado` continua sendo a verdade.
+      const volta = options.reiniciando === true && this.isPaired;
+      await this.updateStatus(
+        volta
+          ? { status: 'conectando', qr: undefined, pairingCode: undefined, error: undefined }
+          : { status: 'desconectado', qr: undefined },
+      );
     }
   }
 }

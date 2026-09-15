@@ -142,14 +142,19 @@ export const MAX_INLINE_MEDIA_BYTES = 16 * 1024 * 1024;
  * propósito: ele diz que o canal nunca foi montado, e uma caixa com sessão de
  * WhatsApp já passou desse ponto.
  */
-export const inboxStatusFrom = (status: WhatsAppConnectionStatus): InboxConnectionStatus => {
+export const inboxStatusFrom = (
+  status: WhatsAppConnectionStatus,
+  /** A sessão já tem pareamento: `conectando` é voltar, e não parear pela primeira vez. */
+  pareada = false,
+): InboxConnectionStatus => {
   switch (status) {
     case 'conectado':
       return 'conectado';
+    case 'conectando':
+      return pareada ? 'reconectando' : 'pareando';
     case 'gerando_qr':
     case 'aguardando_leitura':
     case 'aguardando_codigo':
-    case 'conectando':
       return 'pareando';
     case 'desconectado':
       return 'desconectado';
