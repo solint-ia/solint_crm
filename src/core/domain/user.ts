@@ -353,12 +353,13 @@ export const canChangeOwnPassword = (session: Session): boolean =>
 /**
  * Pode criar um workspace novo a partir do CRM?
  *
- * Só quem administra o workspace atual, e nunca o superadministrador operando
- * dentro de uma conta: ele já cria contas no console da plataforma, e criar por
- * aqui o deixaria como membro de uma conta de cliente.
+ * Quem administra o workspace atual, ou o superadministrador operando dentro de
+ * qualquer conta. No caso do superadministrador, o workspace nasce para os
+ * administradores da conta em que ele está, e não para ele: ver
+ * `createWorkspaceAction`.
  */
 export const canCreateWorkspace = (session: Session): boolean =>
-  !session.platformActor && session.user.roleSlug === 'administrador';
+  Boolean(session.platformActor) || session.user.roleSlug === 'administrador';
 
 /** Autorização é decidida sempre aqui — nunca espalhada por componentes. */
 export const can = (session: Session, permission: Permission): boolean =>

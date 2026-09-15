@@ -15,7 +15,7 @@ import {
 import type { Permission, PermissionOverrides } from '@/core/domain/user';
 import { canCreateWorkspace, effectivePermissions } from '@/core/domain/user';
 import { writeAuditLog } from '@/infrastructure/audit/write-audit-log';
-import { reissueSessionToken } from '@/infrastructure/auth/session';
+import { reissueSessionToken, setPlatformActuation } from '@/infrastructure/auth/session';
 import { container } from '@/infrastructure/container';
 import { asJson, prisma, readJson } from '@/infrastructure/db/prisma';
 import { provisionAccount } from '@/infrastructure/provisioning/provision-account';
@@ -113,6 +113,13 @@ const MAX_WORKSPACES_POR_USUARIO = 10;
  * administrador delas. Esta volta com a trava que faltava: só quem administra
  * o workspace atual (`canCreateWorkspace`), e com teto por pessoa.
  *
+ * **Superadministrador.** Operando dentro de uma conta, ele também cria, sem o
+ * teto. O workspace nasce para os administradores **daquela conta**, e não para
+ * ele: o superadministrador não é membro de conta de cliente, e uma conta cujo
+ * único administrador fosse ele ficaria inacessível para o próprio cliente.
+ * Depois de criar, ele entra no workspace novo pela atuação da plataforma,
+ * como entra em qualquer conta.
+ *
  * **O que nasce.** O mesmo molde do console da plataforma (`provisionAccount`):
  * papéis, caixa de WhatsApp própria, funil e configurações. A conta nova não
  * herda nada da atual: contatos, conversas, caixas e credenciais do WhatsApp
@@ -147,23 +154,57 @@ export async function createWorkspaceAction(formData: FormData): Promise<Workspa
     };
   }
 
-  // tenant-ok: a quota é da pessoa e atravessa contas de propósito. Escopar por
-  // `accountId` aqui contaria sempre 1 e o teto nunca valeria para nada.
-  const administrados = await prisma.membership.count({
-    where: { userId: session.user.id, roleSlug: 'administrador' },
-  });
-  if (administrados >= MAX_WORKSPACES_POR_USUARIO) {
-    return {
-      ok: false,
-      error: `Você já administra ${MAX_WORKSPACES_POR_USUARIO} workspaces, que é o limite por pessoa.`,
-    };
+  const superadmin = Boolean(session.platformActor);
+
+  // Quem sai administrador do workspace novo: a própria pessoa, ou, quando é o
+  // superadministrador quem cria, os administradores da conta em que ele está.
+  let donos: string[];
+  if (superadmin) {
+    const admins = await prisma.membership.findMany({
+      where: { accountId: session.account.id, roleSlug: 'administrador' },
+      select: { userId: true },
+      orderBy: { userId: 'asc' },
+    });
+    donos = admins.map((vinculo) => vinculo.userId);
+    if (donos.length === 0) {
+      return {
+        ok: false,
+        error: 'Esta conta não tem administrador para receber o workspace novo.',
+      };
+    }
+  } else {
+    // tenant-ok: a quota é da pessoa e atravessa contas de propósito. Escopar por
+    // `accountId` aqui contaria sempre 1 e o teto nunca valeria para nada.
+    const administrados = await prisma.membership.count({
+      where: { userId: session.user.id, roleSlug: 'administrador' },
+    });
+    if (administrados >= MAX_WORKSPACES_POR_USUARIO) {
+      return {
+        ok: false,
+        error: `Você já administra ${MAX_WORKSPACES_POR_USUARIO} workspaces, que é o limite por pessoa.`,
+      };
+    }
+    donos = [session.user.id];
   }
+
+  const [primeiroDono, ...demaisDonos] = donos;
+  if (!primeiroDono) return { ok: false, error: 'Não foi possível definir o administrador.' };
 
   const accountId = `acc-${Date.now().toString(36)}-${randomUUID().slice(0, 4)}`;
   try {
-    await prisma.$transaction((tx) =>
-      provisionAccount(tx, { accountId, name: nome, ownerUserId: session.user.id }),
-    );
+    await prisma.$transaction(async (tx) => {
+      await provisionAccount(tx, { accountId, name: nome, ownerUserId: primeiroDono });
+      if (demaisDonos.length > 0) {
+        await tx.membership.createMany({
+          data: demaisDonos.map((userId) => ({
+            userId,
+            accountId,
+            roleSlug: 'administrador',
+            availability: 'disponivel',
+          })),
+        });
+      }
+    });
   } catch (error) {
     console.error('[workspace] Falha ao criar o workspace:', error);
     return { ok: false, error: 'Não foi possível criar o workspace. Tente de novo.' };
@@ -191,19 +232,28 @@ export async function createWorkspaceAction(formData: FormData): Promise<Workspa
   await writeAuditLog({
     accountId,
     actorId: session.user.id,
-    actorName: session.user.name,
+    actorName: superadmin ? `${session.user.name} (plataforma)` : session.user.name,
     action: 'membro.adicionado',
     targetType: 'workspace',
     targetId: accountId,
     targetName: nome,
     metadata: {
-      detalhe: 'workspace criado pelo CRM, com quem criou como administrador',
+      detalhe: superadmin
+        ? 'workspace criado pela plataforma, com os administradores da conta de origem'
+        : 'workspace criado pelo CRM, com quem criou como administrador',
       origemAccountId: session.account.id,
       roleSlug: 'administrador',
+      administradores: donos.length,
     },
   }).catch(() => undefined);
 
-  await reissueSessionToken(session.user.id, session.tokenId, accountId);
+  if (superadmin) {
+    if (!(await setPlatformActuation(accountId))) {
+      return { ok: false, error: 'Workspace criado, mas não foi possível entrar nele.' };
+    }
+  } else {
+    await reissueSessionToken(session.user.id, session.tokenId, accountId);
+  }
   revalidatePath('/', 'layout');
   // Cai onde precisa agir: um workspace novo não atende ninguém enquanto o
   // WhatsApp da caixa dele não estiver pareado.

@@ -89,7 +89,7 @@ export function CreateWorkspaceModal({ open, onClose }: CreateWorkspaceModalProp
       open={open}
       onClose={fechar}
       title="Criar novo workspace"
-      description="Cada workspace tem contatos, conversas, funil e números de WhatsApp próprios. Você entra nele como administrador."
+      description="Cada workspace tem contatos, conversas, funil e números de WhatsApp próprios. Você entra nele logo depois de criar."
     >
       <form onSubmit={criar} className="flex flex-col gap-4">
         <div className="flex items-center gap-4">
