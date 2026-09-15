@@ -14,7 +14,7 @@ import {
   timestampOf,
   type MediaRef,
 } from '../wa-message-content';
-import { timeLabel } from '../wa-format';
+import { fallbackPersonName, nomeUtilizavel, timeLabel } from '../wa-format';
 import {
   commitHistoryBatch,
   pendingContent,
@@ -54,6 +54,13 @@ export interface HistoryImporterDependencies {
   readonly inboxId: string;
   readonly cutoff: Date;
   readonly resolveIdentity: (message: WAMessage) => Promise<ChatIdentity | null>;
+  /**
+   * Nome salvo na agenda do celular para algum destes JIDs, se a sessão já o
+   * conhece. A agenda costuma chegar depois do pacote de histórico, então isto
+   * só resolve quando ela já estava na memória (o mesmo número pareado de novo,
+   * com a agenda restaurada do banco). O resto é resolvido ao fim da importação.
+   */
+  readonly agendaName?: (jids: readonly (string | null | undefined)[]) => string | undefined;
   readonly decode?: typeof decodeWaMessage;
   readonly now?: () => Date;
   readonly onBatch?: (
@@ -168,7 +175,10 @@ export class HistoryImporter {
     if (this.stopped) return;
     const names = new Map<string, string>();
     for (const chat of block.chats ?? []) {
-      const name = chat.name?.trim() || chat.displayName?.trim();
+      // O WhatsApp manda o número mascarado ("+55 ∙∙∙∙∙∙∙ 45") como nome de quem
+      // não está na agenda. Aceitá-lo gravava a máscara no cadastro, e ela não
+      // era mais trocada por nome nenhum.
+      const name = nomeUtilizavel(chat.name) ?? nomeUtilizavel(chat.displayName);
       if (!name) continue;
       if (chat.id) names.set(chat.id, name);
       if (chat.pnJid) names.set(chat.pnJid, name);
@@ -196,6 +206,25 @@ export class HistoryImporter {
         const at = new Date(timestampOf(raw));
         const fromMe = raw.key.fromMe === true;
         const messageId = `msg-wa-${chat.conversationId}-${externalId}`;
+
+        /**
+         * O nome do contato, na ordem do WhatsApp: agenda, nome da conversa,
+         * perfil, telefone formatado.
+         *
+         * O `pushName` de uma mensagem enviada por nós é o nome do **nosso**
+         * perfil. Usá-lo batizava o contato com o nome da empresa, e a primeira
+         * mensagem de uma conversa antiga costuma ser justamente nossa.
+         */
+        const nomeDaAgenda = this.dependencies.agendaName?.([
+          chat.jid,
+          raw.key.remoteJid,
+          (raw.key as { remoteJidAlt?: string | null }).remoteJidAlt,
+        ]);
+        const nomeReal =
+          nomeDaAgenda ||
+          names.get(chat.jid) ||
+          (fromMe ? undefined : nomeUtilizavel(raw.pushName));
+        const reserva = fallbackPersonName(chat.phone, chat.jid);
         let pendingMedia: HistoryCommitItem['pendingMedia'];
         let content = decoded.content;
         if (decoded.media) {
@@ -223,9 +252,7 @@ export class HistoryImporter {
           conversationId: chat.conversationId,
           externalId,
           author: fromMe ? 'agent' : 'contact',
-          authorName: fromMe
-            ? 'Atendente'
-            : raw.pushName?.trim() || names.get(chat.jid) || chat.phone,
+          authorName: fromMe ? 'Atendente' : nomeReal || reserva,
           origin: 'historico',
           content,
           createdAt: at.toISOString(),
@@ -237,7 +264,8 @@ export class HistoryImporter {
         };
         input.push({
           chat,
-          contactName: names.get(chat.jid) || raw.pushName?.trim() || chat.phone,
+          contactName: nomeReal || reserva,
+          contactNameIsReal: Boolean(nomeReal),
           message,
           preview: decoded.preview,
           at,

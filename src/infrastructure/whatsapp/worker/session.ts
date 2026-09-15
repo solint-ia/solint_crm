@@ -72,6 +72,11 @@ import {
   loadAddressBookNames,
   saveAddressBookNames,
 } from '../wa-address-book';
+import {
+  aplicarAgendaNosContatos,
+  type EntradaDaAgenda,
+  type ResultadoDaAgenda,
+} from '../wa-contact-sync';
 
 import { waEventBus, type WhatsAppStatusPayload } from '../whatsapp-events';
 import {
@@ -84,6 +89,7 @@ import {
   MAX_TRACKED_SENT_IDS,
   nomeDoContato,
   nomeUtilizavel,
+  temNomeDeVerdade,
   timeLabel,
   toneFor,
 } from '../wa-format';
@@ -339,6 +345,10 @@ export class WhatsAppSession {
   private addressBookFlush: Promise<void> | null = null;
   /** Número cuja agenda já voltou do banco nesta sessão. */
   private addressBookLoadedFor: string | null = null;
+  /** Conversas gravadas pela importação do histórico nesta sessão. */
+  private readonly historyConversationIds = new Set<string>();
+  /** Uma rodada de busca de fotos de perfil por vez. */
+  private buscandoFotos = false;
   /**
    * Nome já resolvido de cada participante de grupo.
    *
@@ -500,6 +510,7 @@ export class WhatsAppSession {
       accountId: this.accountId,
       inboxId: this.inboxId,
       cutoff: new Date(0),
+      agendaName: (jids) => this.nomeSalvoNaAgenda(jids),
       resolveIdentity: (message) =>
         resolveChatIdentity(socket, message.key, {
           accountId: this.accountId,
@@ -605,6 +616,7 @@ export class WhatsAppSession {
     });
     if (this.historyIdleTimer) clearTimeout(this.historyIdleTimer);
     this.historyIdleTimer = null;
+    void this.completarContatosImportados();
   }
 
   private async receiveHistory(
@@ -668,8 +680,10 @@ export class WhatsAppSession {
             accountId: this.accountId,
             inboxId: this.inboxId,
           }),
+        agendaName: (jids) => this.nomeSalvoNaAgenda(jids),
         onBatch: async (report, stats) => {
           await this.writeHistoryStats(stats);
+          for (const id of report.conversationIds) this.historyConversationIds.add(id);
           if (report.conversationIds.length > 0) {
             waEventBus.emitConversationsImported(
               this.accountId,
@@ -1877,6 +1891,146 @@ export class WhatsAppSession {
     }
   }
 
+  /**
+   * O nome salvo na agenda para o chat de uma mensagem.
+   *
+   * A conversa é guardada pelo telefone, mas a agenda pode ter a pessoa só pelo
+   * LID. A chave da mensagem traz as duas formas quando o servidor as conhece
+   * (`remoteJid` e `remoteJidAlt`), e procurar pelas duas evita perder o nome
+   * salvo até a próxima sincronização copiá-lo para o telefone.
+   */
+  private nomeNaAgenda(chatJid: string, key: WAMessageKey): string | undefined {
+    return this.nomeSalvoNaAgenda([
+      chatJid,
+      key.remoteJid,
+      (key as { remoteJidAlt?: string | null }).remoteJidAlt,
+    ]);
+  }
+
+  /** O nome salvo na agenda para o primeiro destes JIDs que a memória conhecer. */
+  private nomeSalvoNaAgenda(jids: readonly (string | null | undefined)[]): string | undefined {
+    for (const jid of jids) {
+      if (!jid) continue;
+      const nome = nomeUtilizavel(this.contactsStore.get(jidNormalizedUser(jid))?.name);
+      if (nome) return nome;
+    }
+    return undefined;
+  }
+
+  private static readonly FOTOS_POR_RODADA = 300;
+  /** Espaço entre duas consultas de foto: o socket é o mesmo das mensagens. */
+  private static readonly INTERVALO_ENTRE_FOTOS_MS = 1_500;
+
+  /**
+   * Termina o que a importação do histórico não tinha como fazer na hora.
+   *
+   * Dois buracos ficavam nas conversas importadas. O nome: a agenda do celular
+   * chega **depois** do pacote de histórico, então o contato de uma conversa
+   * antiga ficava com o número mesmo estando salvo na agenda. E a foto: ela só
+   * era buscada quando chegava mensagem nova, e numa conversa antiga pode nunca
+   * chegar.
+   *
+   * Roda ao fim da importação e só sobre as conversas que ela gravou. Nome de
+   * verdade que o cadastro já tenha não é tocado.
+   */
+  private async completarContatosImportados(): Promise<void> {
+    const ids = [...this.historyConversationIds];
+    if (ids.length === 0) return;
+
+    try {
+      const conversas = await prisma.conversation.findMany({
+        where: { accountId: this.accountId, inboxId: this.inboxId, id: { in: ids } },
+        select: {
+          id: true,
+          channelThreadId: true,
+          contact: { select: { name: true, phone: true, kind: true } },
+        },
+      });
+      let renomeados = 0;
+      for (const conversa of conversas) {
+        if (conversa.contact.kind === 'grupo' || !conversa.channelThreadId) continue;
+        if (temNomeDeVerdade(conversa.contact)) continue;
+        const salvo = this.nomeSalvoNaAgenda([conversa.channelThreadId]);
+        if (!salvo) continue;
+        await patchContact(conversa.id, { name: salvo });
+        renomeados += 1;
+      }
+      if (renomeados > 0) {
+        console.log(
+          `[WhatsAppSession ${this.inboxId}] ${renomeados} contato(s) importado(s) ` +
+            'receberam o nome salvo na agenda.',
+        );
+      }
+    } catch (error) {
+      waLog.warn(`[sessão ${this.inboxId}] Nomes dos contatos importados não completados:`, error);
+    }
+
+    await this.buscarFotosPendentes(ids);
+  }
+
+  /**
+   * Busca, devagar, a foto de perfil de quem ainda não tem uma.
+   *
+   * Uma consulta ao WhatsApp por contato, espaçadas: é o mesmo socket que
+   * entrega as mensagens, e uma rajada de centenas de pedidos disputaria a
+   * linha com elas. O cache de `hydrateAvatar` evita perguntar de novo, dentro
+   * do prazo dele, por quem não tem foto ou a esconde.
+   */
+  private async buscarFotosPendentes(conversationIds?: readonly string[]): Promise<void> {
+    if (this.buscandoFotos || !this.socket) return;
+    this.buscandoFotos = true;
+    const generation = this.socketGeneration;
+    let buscadas = 0;
+
+    try {
+      const conversas = await prisma.conversation.findMany({
+        where: {
+          accountId: this.accountId,
+          inboxId: this.inboxId,
+          channel: 'whatsapp',
+          channelThreadId: { not: { endsWith: '@g.us' } },
+          contact: { is: { avatarUrl: null, kind: { not: 'grupo' } } },
+          ...(conversationIds ? { id: { in: [...conversationIds] } } : {}),
+        },
+        orderBy: { lastActivityAt: 'desc' },
+        take: WhatsAppSession.FOTOS_POR_RODADA,
+        select: {
+          id: true,
+          contactId: true,
+          channelThreadId: true,
+          contact: { select: { phone: true } },
+        },
+      });
+
+      for (const conversa of conversas) {
+        if (generation !== this.socketGeneration || !this.isAuthenticated || this.encerrada) {
+          return;
+        }
+        const jid = conversa.channelThreadId;
+        if (!jid) continue;
+        await this.hydrateAvatar({
+          jid,
+          isGroup: false,
+          phone: conversa.contact.phone,
+          key: userOf(jid),
+          contactId: conversa.contactId,
+          conversationId: conversa.id,
+        });
+        buscadas += 1;
+        await new Promise((resolve) =>
+          setTimeout(resolve, WhatsAppSession.INTERVALO_ENTRE_FOTOS_MS),
+        );
+      }
+    } catch (error) {
+      waLog.warn(`[sessão ${this.inboxId}] Busca de fotos de perfil interrompida:`, error);
+    } finally {
+      this.buscandoFotos = false;
+      if (buscadas > 0) {
+        waLog.debug(`[sessão ${this.inboxId}] Fotos de perfil consultadas: ${buscadas}.`);
+      }
+    }
+  }
+
   /** Arma a gravação em lote dos nomes da agenda. */
   private scheduleAddressBookFlush(delayMs = ADDRESS_BOOK_FLUSH_MS): void {
     if (this.addressBookTimer || this.encerrada) return;
@@ -2016,7 +2170,7 @@ export class WhatsAppSession {
     }
   }
 
-  async syncAllStoredContacts(): Promise<{ synced: number; created: number }> {
+  async syncAllStoredContacts(): Promise<ResultadoDaAgenda> {
     // O resync completo pode gerar um alerta no WhatsApp Business. Ele só é
     // necessário no primeiro clique de uma sessão que ainda não recebeu a
     // agenda; depois disso os eventos `contacts.*` mantêm o cache atualizado.
@@ -2043,115 +2197,89 @@ export class WhatsAppSession {
       if (digitos) conversasDiretas.add(digitos);
     }
 
-    let synced = 0;
-    let created = 0;
+    /**
+     * A agenda da memória, uma entrada por telefone.
+     *
+     * A mesma pessoa pode estar duas vezes na memória: pelo telefone e pelo LID.
+     * O WhatsApp passou a indexar parte da agenda pelo LID, e nesses casos o
+     * Baileys quase nunca manda o telefone junto (`pnJid` "is usually null", em
+     * `Utils/sync-action-utils.js`). Essas entradas eram puladas, e com elas o
+     * nome salvo: o contato continuava com o nome do perfil no CRM mesmo depois
+     * de sincronizar. O LID é traduzido pelo mapeamento da sessão; o que não
+     * tiver tradução continua de fora, porque sem telefone não há cadastro a
+     * encontrar.
+     */
+    const socket = this.socket;
+    const proprio = socket?.user?.id ? jidNormalizedUser(socket.user.id) : '';
+    const porTelefone = new Map<string, EntradaDaAgenda>();
 
-    for (const [rawJid, contact] of this.contactsStore.entries()) {
+    for (const [rawJid, contact] of [...this.contactsStore.entries()]) {
       if (
         !rawJid ||
         isJidGroup(rawJid) ||
-        isLidUser(rawJid) ||
-        rawJid.endsWith('@lid') ||
         rawJid.endsWith('@g.us') ||
         rawJid.includes('@broadcast') ||
         rawJid.includes('@newsletter')
       )
         continue;
-      if (
-        this.socket?.user?.id &&
-        jidNormalizedUser(rawJid) === jidNormalizedUser(this.socket.user.id)
-      )
-        continue;
 
-      const phoneDigits = userOf(rawJid);
-      if (!phoneDigits) continue;
-      const phone = PhoneNumber.normalize(`+${phoneDigits}`);
-      if (!PhoneNumber.isValid(phone)) continue;
+      const nomeSalvo = nomeUtilizavel(contact.name);
+      let pnJid = rawJid;
+      if (isLidUser(rawJid) || rawJid.endsWith('@lid')) {
+        if (!socket) continue;
+        pnJid = await resolvePhoneJid(socket, rawJid, contact.phoneNumber ?? undefined);
+        if (isLidUser(pnJid) || pnJid.endsWith('@lid')) continue;
 
-      const addressBookName = nomeUtilizavel(contact.name);
-      const pushName = nomeUtilizavel(contact.notify) ?? nomeUtilizavel(contact.verifiedName);
-      const resolvedName = addressBookName || pushName || PhoneNumber.format(phone) || phone;
-      const avatarUrl =
-        typeof contact.imgUrl === 'string' && contact.imgUrl !== 'changed'
-          ? contact.imgUrl
-          : undefined;
-
-      /**
-       * O que separa a agenda de quem só passou pelo caminho.
-       *
-       * O `contactsStore` não é a agenda: é tudo que a sessão já viu. Todo
-       * participante de todo grupo cai ali, porque o WhatsApp manda um registro
-       * de contato para cada pessoa que aparece — foi assim que 500 contatos
-       * viraram 2000.
-       *
-       * O próprio Baileys documenta a distinção no tipo `Contact`:
-       *
-       *   name   → "name of the contact, you have saved on your WA"
-       *   notify → "name of the contact, the contact has set on their own"
-       *
-       * Ou seja, `name` só existe para quem está salvo no aparelho; `notify` é
-       * o nome que a pessoa escolheu para si e todo mundo tem, conhecido ou
-       * não. Testar `name` é exatamente o critério da tela de "nova conversa"
-       * do WhatsApp, que é a lista que se espera ver aqui.
-       *
-       * A conversa direta entra junto porque quem já foi atendido é contato
-       * por definição, tenha sido salvo na agenda ou não — é a mesma regra
-       * aplicada por esta sincronização manual.
-       */
-      const daAgenda = Boolean(addressBookName) || conversasDiretas.has(phoneDigits);
-      if (!daAgenda) continue;
-
-      try {
-        const existing = await prisma.contact.findFirst({
-          where: {
-            accountId: this.accountId,
-            kind: { not: 'grupo' },
-            OR: [
-              { phone },
-              { id: `ct-wa-${phoneDigits}` },
-              { id: `ct-wa-${this.accountId}-${phoneDigits}` },
-            ],
-          },
-        });
-
-        synced += 1;
-        if (existing) {
-          if (addressBookName && existing.name !== addressBookName) {
-            await prisma.contact.update({
-              where: { id: existing.id, accountId: this.accountId },
-              data: {
-                name: addressBookName,
-                ...(avatarUrl && !existing.avatarUrl ? { avatarUrl } : {}),
-              },
-            });
-          }
-        } else {
-          // Chegar aqui já significa passar por `daAgenda`: é contato salvo no
-          // aparelho ou alguém com conversa aberta. O nome pode ser só o número
-          // formatado — um contato salvo sem etiqueta continua sendo contato.
-          const contactId = `ct-wa-${this.accountId}-${phoneDigits}`;
-          await prisma.contact.create({
-            data: {
-              id: contactId,
-              accountId: this.accountId,
-              name: resolvedName,
-              phone,
-              channel: 'whatsapp',
-              avatarTone: 'blue',
-              kind: 'pessoa',
-              avatarUrl: avatarUrl ?? null,
-              customFields: asJson([]),
-              timeline: asJson([]),
-            },
+        // A conversa é guardada pelo telefone. Copiar o nome salvo para essa
+        // chave é o que faz a próxima mensagem do contato encontrá-lo, e o
+        // grava no banco com a chave que o próximo boot vai procurar.
+        const doTelefone = this.contactsStore.get(pnJid);
+        if (nomeSalvo && !nomeUtilizavel(doTelefone?.name)) {
+          this.contactsStore.set(pnJid, {
+            ...doTelefone,
+            id: doTelefone?.id ?? pnJid,
+            name: nomeSalvo,
           });
-          created += 1;
+          this.pendingAddressBook.set(pnJid, nomeSalvo);
+          this.scheduleAddressBookFlush();
         }
-      } catch {
-        // Ignora colisões concorrentes
       }
+      if (proprio && jidNormalizedUser(pnJid) === proprio) continue;
+
+      const phoneDigits = userOf(pnJid);
+      if (!phoneDigits || !PhoneNumber.isValid(`+${phoneDigits}`)) continue;
+
+      const anterior = porTelefone.get(phoneDigits);
+      const addressBookName = nomeSalvo ?? anterior?.addressBookName;
+      const pushName =
+        nomeUtilizavel(contact.notify) ??
+        nomeUtilizavel(contact.verifiedName) ??
+        anterior?.pushName;
+      const avatarUrl =
+        (typeof contact.imgUrl === 'string' && contact.imgUrl !== 'changed'
+          ? contact.imgUrl
+          : undefined) ?? anterior?.avatarUrl;
+      porTelefone.set(phoneDigits, {
+        phoneDigits,
+        ...(addressBookName ? { addressBookName } : {}),
+        ...(pushName ? { pushName } : {}),
+        ...(avatarUrl ? { avatarUrl } : {}),
+      });
     }
 
-    return { synced, created };
+    const resultado = await aplicarAgendaNosContatos(
+      this.accountId,
+      [...porTelefone.values()],
+      conversasDiretas,
+    );
+    console.log(
+      `[WhatsAppSession ${this.inboxId}] Agenda sincronizada: ${resultado.synced} conferido(s), ` +
+        `${resultado.created} criado(s), ${resultado.renamed} renomeado(s), ${resultado.failed} falha(s).`,
+    );
+    // Sem esperar: a foto é enfeite, e a tela já pode mostrar o resultado da
+    // agenda. É também o que completa as fotos de conversas antigas.
+    void this.buscarFotosPendentes();
+    return resultado;
   }
 
   public async syncAllGroups(accountId: string): Promise<{ synced: number; created: number }> {
@@ -2808,7 +2936,7 @@ export class WhatsAppSession {
 
     // Agenda, depois cadastro, depois perfil: ver `nomeDoContato`.
     const name = nomeDoContato({
-      agenda: this.contactsStore.get(jidNormalizedUser(chat.jid))?.name,
+      agenda: this.nomeNaAgenda(chat.jid, msg.key),
       cadastro: existing?.name,
       perfil: fromMe ? undefined : (nomeUtilizavel(msg.pushName) ?? msg.verifiedBizName),
       reserva: fallbackPersonName(chat.phone, chat.jid),

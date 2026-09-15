@@ -356,13 +356,9 @@ export function ContactsExplorer({ contacts, importBatches, canExport }: Contact
   };
 
   const [isSyncingWa, setIsSyncingWa] = useState(false);
+  const [isSyncConfirmOpen, setIsSyncConfirmOpen] = useState(false);
 
   const handleSyncWhatsApp = async () => {
-    const confirmed = window.confirm(
-      'Sincronizar agora pode exibir uma notificação de segurança no WhatsApp Business. A agenda não é sincronizada automaticamente. Deseja continuar?',
-    );
-    if (!confirmed) return;
-
     setIsSyncingWa(true);
     try {
       const res = await syncWhatsAppContactsAction();
@@ -375,10 +371,13 @@ export function ContactsExplorer({ contacts, importBatches, canExport }: Contact
         return;
       }
 
+      const { syncedCount, newCount, renamedCount, inProgress } = res.data;
       show({
         tone: 'sucesso',
-        title: 'Sincronização concluída',
-        description: `${res.data.syncedCount} contato(s) do WhatsApp sincronizados e atualizados na base.`,
+        title: inProgress ? 'Sincronização em andamento' : 'Sincronização concluída',
+        description: inProgress
+          ? 'A agenda ainda está sendo sincronizada. Atualize a lista em instantes para ver o resultado.'
+          : `${syncedCount} contato(s) da agenda conferido(s): ${newCount} novo(s) e ${renamedCount} nome(s) atualizado(s).`,
       });
       router.refresh();
     } catch {
@@ -389,6 +388,7 @@ export function ContactsExplorer({ contacts, importBatches, canExport }: Contact
       });
     } finally {
       setIsSyncingWa(false);
+      setIsSyncConfirmOpen(false);
     }
   };
 
@@ -633,25 +633,29 @@ export function ContactsExplorer({ contacts, importBatches, canExport }: Contact
 
               {/* Botões de Ação */}
               <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="secondary"
-                  size="md"
-                  icon={
-                    isSyncingWa ? (
-                      <Loader2 className="size-3.5 animate-spin text-emerald-600 dark:text-emerald-400" />
-                    ) : (
-                      <MessageSquare className="size-3.5 text-emerald-600 dark:text-emerald-400" />
-                    )
-                  }
-                  onClick={handleSyncWhatsApp}
-                  disabled={isSyncingWa}
-                  title="Sincronização manual da agenda do WhatsApp (intervalo mínimo de 15 minutos)"
-                >
-                  <span className="hidden lg:inline">
-                    {isSyncingWa ? 'Sincronizando...' : 'Sincronizar WhatsApp'}
-                  </span>
-                  <span className="lg:hidden">{isSyncingWa ? 'Sincronizando...' : 'WhatsApp'}</span>
-                </Button>
+                {/* A agenda é de pessoas. Na aba de grupos quem busca é "Buscar grupos do
+                    WhatsApp", e dois botões de WhatsApp lado a lado não diziam qual fazia o quê. */}
+                {tab !== 'grupos' && (
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    icon={
+                      isSyncingWa ? (
+                        <Loader2 className="size-3.5 animate-spin text-emerald-600 dark:text-emerald-400" />
+                      ) : (
+                        <MessageSquare className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+                      )
+                    }
+                    onClick={() => setIsSyncConfirmOpen(true)}
+                    disabled={isSyncingWa}
+                    title="Traz os nomes salvos na agenda do celular conectado para os contatos"
+                  >
+                    <span className="hidden lg:inline">
+                      {isSyncingWa ? 'Sincronizando...' : 'Sincronizar agenda'}
+                    </span>
+                    <span className="lg:hidden">{isSyncingWa ? 'Sincronizando...' : 'Agenda'}</span>
+                  </Button>
+                )}
 
                 <Button
                   variant="secondary"
@@ -1355,6 +1359,26 @@ export function ContactsExplorer({ contacts, importBatches, canExport }: Contact
         isLoading={isPending}
         onClose={() => setIsBulkDeleteOpen(false)}
         onConfirm={handleConfirmBulkDelete}
+      />
+
+      {/* Confirmação da sincronização da agenda do WhatsApp */}
+      <ConfirmModal
+        open={isSyncConfirmOpen}
+        title="Sincronizar agenda do WhatsApp"
+        description={
+          <span>
+            Os nomes salvos na agenda do celular conectado passam a valer nos contatos do CRM, e os
+            contatos da agenda que ainda não existem aqui são criados. Na primeira sincronização
+            depois de uma reconexão, o WhatsApp Business pode exibir uma notificação de segurança no
+            celular.
+          </span>
+        }
+        confirmLabel="Sincronizar"
+        variant="warning"
+        icon="warning"
+        isLoading={isSyncingWa}
+        onClose={() => setIsSyncConfirmOpen(false)}
+        onConfirm={handleSyncWhatsApp}
       />
     </>
   );

@@ -111,6 +111,21 @@ export const nomeDoContato = (fontes: {
   );
 };
 
+/**
+ * O nome gravado no cadastro identifica alguém?
+ *
+ * Vazio, o próprio telefone, um número formatado ou mascarado e o nome
+ * provisório não identificam: são o que ficou quando não havia nome, e devem
+ * ceder ao primeiro nome de verdade que aparecer.
+ */
+export const temNomeDeVerdade = (contact: {
+  readonly name: string;
+  readonly phone: string;
+}): boolean => {
+  const nome = nomeUtilizavel(contact.name);
+  return Boolean(nome) && nome !== contact.phone && !NOME_PROVISORIO.test(nome ?? '');
+};
+
 export const GROUP_METADATA_TTL_MS = 10 * 60 * 1000;
 export const AVATAR_TTL_MS = 60 * 60 * 1000;
 export const MAX_TRACKED_SENT_IDS = 500;

@@ -372,14 +372,14 @@ export class CommandConsumer {
 
     const medir = waLog.timer(`[CommandConsumer] ${claimed.kind}`);
     try {
-      await this.executeCommand(claimed);
+      const resultado = await this.executeCommand(claimed);
       medir('concluído');
       await prisma.whatsAppCommand.updateMany({
         where: { id: claimed.id, status: 'processing', workerId: this.workerId },
         data: {
           status: 'completed',
           leaseUntil: null,
-          result: { completedAt: new Date().toISOString() },
+          result: { completedAt: new Date().toISOString(), ...resultado },
         },
       });
     } catch (error) {
@@ -578,7 +578,13 @@ export class CommandConsumer {
     }
   }
 
-  private async executeCommand(cmd: CommandRow): Promise<void> {
+  /**
+   * Executa o comando. Devolve números para `result` quando quem enfileirou
+   * precisa saber o desfecho, como a contagem da sincronização da agenda.
+   */
+  private async executeCommand(
+    cmd: CommandRow,
+  ): Promise<Readonly<Record<string, number>> | undefined> {
     const { inboxId, kind } = cmd;
     const payload = (cmd.payload && typeof cmd.payload === 'object' ? cmd.payload : {}) as Record<
       string,
@@ -827,14 +833,15 @@ export class CommandConsumer {
 
       case 'sync_contacts': {
         const session = await this.sessaoPronta(inboxId);
-        await session.syncAllStoredContacts();
-        break;
+        // A tela mostra o que a sincronização fez de fato, e só o worker sabe.
+        return { ...(await session.syncAllStoredContacts()) };
       }
 
       default: {
         throw new Error(`Tipo de comando desconhecido: ${kind}`);
       }
     }
+    return undefined;
   }
 
   /**

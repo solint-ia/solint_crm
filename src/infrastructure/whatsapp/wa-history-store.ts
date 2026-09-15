@@ -1,6 +1,7 @@
 import type { Message, MessageContent } from '@/core/domain/message';
 import { asJson, prisma } from '@/infrastructure/db/prisma';
 import type { ChatIdentity } from './wa-identity';
+import { temNomeDeVerdade } from './wa-format';
 
 export interface SealedPendingMedia {
   readonly kind: 'image' | 'video' | 'audio' | 'document' | 'sticker';
@@ -15,6 +16,12 @@ export interface SealedPendingMedia {
 export interface HistoryCommitItem {
   readonly chat: ChatIdentity;
   readonly contactName: string;
+  /**
+   * `contactName` identifica a pessoa (agenda, conversa ou perfil), e não é o
+   * telefone de reserva. Só um nome de verdade substitui o de um cadastro que
+   * ainda não tem nome.
+   */
+  readonly contactNameIsReal?: boolean;
   readonly message: Message;
   readonly preview: string;
   readonly at: Date;
@@ -107,6 +114,7 @@ const ensureContactFromHistory = async (
   chat: ChatIdentity,
   contactId: string,
   name: string,
+  nameIsReal: boolean,
   newestAt: Date,
 ): Promise<void> => {
   const fallback = chat.phone || chat.key;
@@ -137,9 +145,9 @@ const ensureContactFromHistory = async (
     where: { id: contactId, accountId },
     data: {
       // Histórico não ressuscita contato arquivado nem troca um nome escolhido.
-      ...(existing.name.trim() === '' || existing.name === existing.phone
-        ? { name: desiredName }
-        : {}),
+      // Só preenche quem ainda não tem nome de verdade, e só com um nome de
+      // verdade: trocar um número por outro número não informa nada.
+      ...(nameIsReal && !temNomeDeVerdade(existing) ? { name: desiredName } : {}),
       ...(!priorAt || Number.isNaN(priorAt.getTime()) || priorAt < newestAt
         ? { lastContactAt: newestAt.toISOString() }
         : {}),
@@ -254,11 +262,16 @@ export const commitHistoryBatch = async (
       item.message.externalId ? [item.message.externalId] : [],
     );
     const resolved = await resolveHistoryConversation(accountId, inboxId, first.chat, externalIds);
+    // O nome vem do primeiro item que traga um de verdade, e não do mais antigo:
+    // a mensagem mais antiga de uma conversa costuma ser nossa, e ela não tem
+    // nome do contato nenhum.
+    const nomeado = items.find((item) => item.contactNameIsReal) ?? first;
     await ensureContactFromHistory(
       accountId,
       first.chat,
       resolved.contactId,
-      first.contactName,
+      nomeado.contactName,
+      Boolean(nomeado.contactNameIsReal),
       newest.at,
     );
 

@@ -810,8 +810,16 @@ export async function removeContactFromBatchAction(input: unknown): Promise<Acti
  * no worker, e a lista mostra o resultado no próximo carregamento.
  */
 const ESPERA_MAX_MS = 20_000;
-/** Intervalo mínimo entre duas sincronizações completas da mesma caixa. */
-const INTERVALO_SINCRONIZACAO_CONTATOS_MS = 15 * 60 * 1000;
+
+/** A contagem que o worker grava em `result` ao concluir `sync_contacts`. */
+const contagemDaAgenda = (result: unknown) => {
+  const numero = (chave: string): number => {
+    const valor =
+      result && typeof result === 'object' ? (result as Record<string, unknown>)[chave] : undefined;
+    return typeof valor === 'number' ? valor : 0;
+  };
+  return { synced: numero('synced'), created: numero('created'), renamed: numero('renamed') };
+};
 
 const aguardarComando = async (commandId: string): Promise<'concluido' | 'em_andamento'> => {
   const inicio = Date.now();
@@ -827,7 +835,14 @@ const aguardarComando = async (commandId: string): Promise<'concluido' | 'em_and
 };
 
 export async function syncWhatsAppContactsAction(): Promise<
-  ActionResult<{ syncedCount: number; newCount: number }>
+  ActionResult<{
+    /** Contatos da agenda conferidos. Não é o total de contatos da conta. */
+    syncedCount: number;
+    newCount: number;
+    renamedCount: number;
+    /** O worker ainda não terminou quando a espera acabou. */
+    inProgress: boolean;
+  }>
 > {
   try {
     const session = await assertCanWrite();
@@ -861,10 +876,6 @@ export async function syncWhatsAppContactsAction(): Promise<
       }
     }
 
-    const previousContacts = await prisma.contact.count({
-      where: { accountId, kind: { not: 'grupo' } },
-    });
-
     const inboxes = await prisma.inbox.findMany({
       where: { accountId, channel: 'whatsapp' },
       include: { waConnection: true },
@@ -888,47 +899,6 @@ export async function syncWhatsAppContactsAction(): Promise<
       };
     }
 
-    /**
-     * Reserva a sincronização de forma atômica.
-     *
-     * Desabilitar só o botão não basta: duas abas, dois usuários ou uma chamada
-     * direta à Server Action ainda poderiam iniciar dois app-state syncs. A
-     * coluna no banco torna a proteção comum a todas as instâncias do site.
-     */
-    const agora = new Date();
-    const limite = new Date(agora.getTime() - INTERVALO_SINCRONIZACAO_CONTATOS_MS);
-    const reserva = await prisma.whatsAppConnection.updateMany({
-      where: {
-        inboxId: targetInbox.id,
-        OR: [{ lastContactsSyncAt: null }, { lastContactsSyncAt: { lte: limite } }],
-      },
-      data: { lastContactsSyncAt: agora },
-    });
-
-    if (reserva.count === 0) {
-      const ultima = await prisma.whatsAppConnection.findUnique({
-        where: { inboxId: targetInbox.id },
-        select: { lastContactsSyncAt: true },
-      });
-      const minutosRestantes = ultima?.lastContactsSyncAt
-        ? Math.max(
-            1,
-            Math.ceil(
-              (ultima.lastContactsSyncAt.getTime() +
-                INTERVALO_SINCRONIZACAO_CONTATOS_MS -
-                Date.now()) /
-                60_000,
-            ),
-          )
-        : undefined;
-      return {
-        ok: false,
-        error: minutosRestantes
-          ? `A agenda foi sincronizada recentemente. Tente novamente em ${minutosRestantes} minuto${minutosRestantes === 1 ? '' : 's'}.`
-          : 'Já existe uma sincronização recente desta agenda.',
-      };
-    }
-
     if (WA_ENGINE === 'inprocess') {
       /**
        * Sem worker não há fila, e sem fila o comando ficaria pendente para
@@ -941,35 +911,100 @@ export async function syncWhatsAppContactsAction(): Promise<
        * `pending` no banco e o contador voltava igual.
        */
       const { whatsappService } = await import('@/infrastructure/whatsapp/whatsapp-service');
-      await whatsappService.syncAllStoredContacts(accountId);
-    } else {
-      const cmd = await prisma.whatsAppCommand.create({
+      const resultado = await whatsappService.syncAllStoredContacts(accountId);
+      await prisma.whatsAppConnection.updateMany({
+        where: { inboxId: targetInbox.id },
+        data: { lastContactsSyncAt: new Date() },
+      });
+      return {
+        ok: true,
+        data: {
+          syncedCount: resultado.synced,
+          newCount: resultado.created,
+          renamedCount: 0,
+          inProgress: false,
+        },
+      };
+    }
+
+    /**
+     * Uma sincronização por caixa de cada vez, sem intervalo mínimo.
+     *
+     * Havia uma pausa de 15 minutos entre sincronizações. Ela protegia o pedido
+     * da agenda inteira ao WhatsApp (`pullAddressBook`), que pode exibir a
+     * notificação de segurança no WhatsApp Business. Só que esse pedido sai
+     * apenas no primeiro clique depois que a sessão sobe: os seguintes releem a
+     * memória e gravam no banco, sem tráfego nenhum com o WhatsApp. A pausa
+     * bloqueava justamente os cliques que não custam nada.
+     *
+     * O que continua valendo é não rodar duas ao mesmo tempo. Dois cliques,
+     * duas abas ou dois atendentes passam a esperar a mesma sincronização em
+     * vez de abrir outra; a trava consultiva serializa quem chega junto.
+     */
+    const comando = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'sync_contacts:' + targetInbox.id}))`;
+      const emAndamento = await tx.whatsAppCommand.findFirst({
+        where: {
+          inboxId: targetInbox.id,
+          kind: 'sync_contacts',
+          status: { in: ['pending', 'processing'] },
+        },
+        orderBy: { sequence: 'asc' },
+        select: { id: true },
+      });
+      if (emAndamento) return { id: emAndamento.id, criado: false };
+
+      const criado = await tx.whatsAppCommand.create({
         data: {
           inboxId: targetInbox.id,
           kind: 'sync_contacts',
           payload: { accountId },
           status: 'pending',
         },
+        select: { id: true },
       });
+      await tx.whatsAppConnection.updateMany({
+        where: { inboxId: targetInbox.id },
+        data: { lastContactsSyncAt: new Date() },
+      });
+      return { id: criado.id, criado: true };
+    });
 
+    if (comando.criado) {
       await postgresPubSub.publish(DB_CHANNELS.COMMANDS, {
         inboxId: targetInbox.id,
         kind: 'sync_contacts',
-        id: cmd.id,
+        id: comando.id,
       });
-
-      await aguardarComando(cmd.id);
     }
 
-    const currentContacts = await prisma.contact.count({
-      where: { accountId, kind: { not: 'grupo' } },
+    await aguardarComando(comando.id);
+    const final = await prisma.whatsAppCommand.findUnique({
+      where: { id: comando.id },
+      select: { status: true, result: true, error: true },
     });
 
+    if (final?.status === 'failed') {
+      return {
+        ok: false,
+        error: final.error ?? 'O worker não conseguiu sincronizar a agenda do WhatsApp.',
+      };
+    }
+    if (final?.status !== 'completed') {
+      return {
+        ok: true,
+        data: { syncedCount: 0, newCount: 0, renamedCount: 0, inProgress: true },
+      };
+    }
+
+    const contagem = contagemDaAgenda(final.result);
     return {
       ok: true,
       data: {
-        syncedCount: currentContacts,
-        newCount: Math.max(0, currentContacts - previousContacts),
+        syncedCount: contagem.synced,
+        newCount: contagem.created,
+        renamedCount: contagem.renamed,
+        inProgress: false,
       },
     };
   } catch (error) {

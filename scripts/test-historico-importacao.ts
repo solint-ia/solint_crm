@@ -2,6 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import { proto, type WAMessage } from '@whiskeysockets/baileys';
 import { defaultBusinessHours } from '../src/core/domain/business-hours';
+import { PhoneNumber } from '../src/core/domain/contact';
 import { prisma, asJson } from '../src/infrastructure/db/prisma';
 import { open, seal } from '../src/infrastructure/whatsapp/auth/crypto';
 import type { ChatIdentity } from '../src/infrastructure/whatsapp/wa-identity';
@@ -102,6 +103,90 @@ const main = async () => {
     check(
       'reprocessar o bloco não duplica mensagens',
       (await prisma.message.count({ where: { conversationId: chat.conversationId } })) === 1,
+    );
+
+    // Nome do contato no histórico: máscara, mensagem nossa, perfil e agenda.
+    const outroChat = (digitos: string): ChatIdentity => ({
+      jid: `${digitos}@s.whatsapp.net`,
+      isGroup: false,
+      phone: `+${digitos}`,
+      key: digitos,
+      contactId: `ct-wa-${accountId}-${digitos}`,
+      conversationId: `cv-wa-${inboxId}-${digitos}`,
+    });
+    const nomeDoContato = async (contactId: string) =>
+      (await prisma.contact.findUnique({ where: { id: contactId }, select: { name: true } }))?.name;
+    const recente = (horas: number) => new Date(now.getTime() - horas * 60 * 60_000);
+
+    const mascarado = outroChat(`5599901${digits.slice(7)}`);
+    const semNome = new HistoryImporter({
+      accountId,
+      inboxId,
+      cutoff: new Date(now.getTime() - 7 * 86_400_000),
+      now: () => now,
+      resolveIdentity: async () => mascarado,
+    });
+    await semNome.enqueue({
+      syncType: proto.HistorySync.HistorySyncType.RECENT,
+      progress: 100,
+      chats: [{ id: mascarado.jid, displayName: '+55 ∙∙∙∙∙∙∙ 45' }],
+      messages: [
+        {
+          key: { id: 'nossa', remoteJid: mascarado.jid, fromMe: true },
+          messageTimestamp: Math.floor(recente(3).getTime() / 1000),
+          message: { conversation: 'bom dia' },
+          pushName: 'Nome da Empresa',
+        },
+      ],
+    });
+    await semNome.drain();
+    check(
+      'nome mascarado e perfil de mensagem nossa não viram nome do contato',
+      (await nomeDoContato(mascarado.contactId)) === PhoneNumber.format(mascarado.phone),
+    );
+
+    await semNome.enqueue({
+      syncType: proto.HistorySync.HistorySyncType.RECENT,
+      progress: 100,
+      messages: [
+        {
+          ...waText('dele', 'oi', recente(2)),
+          key: { id: 'dele', remoteJid: mascarado.jid, fromMe: false },
+          pushName: 'Carlos Perfil',
+        },
+      ],
+    });
+    await semNome.drain();
+    check(
+      'contato sem nome de verdade recebe o perfil quando ele escreve',
+      (await nomeDoContato(mascarado.contactId)) === 'Carlos Perfil',
+    );
+
+    const salvo = outroChat(`5599902${digits.slice(7)}`);
+    const comAgenda = new HistoryImporter({
+      accountId,
+      inboxId,
+      cutoff: new Date(now.getTime() - 7 * 86_400_000),
+      now: () => now,
+      resolveIdentity: async () => salvo,
+      agendaName: (jids) => (jids.includes(salvo.jid) ? 'Amor' : undefined),
+    });
+    await comAgenda.enqueue({
+      syncType: proto.HistorySync.HistorySyncType.RECENT,
+      progress: 100,
+      chats: [{ id: salvo.jid, displayName: 'Nome da conversa' }],
+      messages: [
+        {
+          ...waText('dela', 'oi', recente(1)),
+          key: { id: 'dela', remoteJid: salvo.jid, fromMe: false },
+          pushName: 'Perfil dela',
+        },
+      ],
+    });
+    await comAgenda.drain();
+    check(
+      'nome salvo na agenda vence o nome da conversa e o perfil',
+      (await nomeDoContato(salvo.contactId)) === 'Amor',
     );
 
     const mediaMessageId = `msg-wa-${chat.conversationId}-media`;
