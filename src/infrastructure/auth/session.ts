@@ -232,6 +232,7 @@ const toDomainAccount = (row: {
   name: string;
   plan: string;
   document: string | null;
+  aiAgentAccessEnabled: boolean;
   settings?: { company: Prisma.JsonValue } | null;
 }): Account => {
   // A marca vive dentro do JSON de configurações; aqui ela é achatada para os
@@ -242,6 +243,7 @@ const toDomainAccount = (row: {
     id: row.id,
     name: row.name,
     plan: row.plan as Account['plan'],
+    aiAgentAccessEnabled: row.aiAgentAccessEnabled,
     ...(row.document ? { document: row.document } : {}),
     ...(company.logoUrl ? { logoUrl: company.logoUrl } : {}),
     ...(company.brandColor ? { brandColor: company.brandColor } : {}),

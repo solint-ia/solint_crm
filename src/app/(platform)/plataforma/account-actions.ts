@@ -319,3 +319,61 @@ export async function deleteAccountAction(input: unknown): Promise<AccountAction
     return failureOf(error, 'Não foi possível excluir a conta.');
   }
 }
+
+const acessoIaSchema = z.object({
+  accountId: z.string().min(1).max(64),
+  enabled: z.boolean(),
+});
+
+/** Libera ou revoga o produto de IA de uma conta, sem apagar a configuração dela. */
+export async function setAccountAiAgentAccessAction(input: unknown): Promise<AccountActionResult> {
+  const parsed = acessoIaSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Dados inválidos.' };
+
+  try {
+    const admin = await exigirSuperAdmin();
+    // tenant-ok: esta e a ficha administrativa escolhida pelo superadministrador.
+    const conta = await prisma.account.findUnique({
+      where: { id: parsed.data.accountId },
+      select: { id: true, name: true, status: true, aiAgentAccessEnabled: true },
+    });
+    if (!conta) return { ok: false, error: 'Conta não encontrada.' };
+    if (conta.status === 'excluida') {
+      return { ok: false, error: 'Não é possível alterar uma conta excluída.' };
+    }
+
+    if (conta.aiAgentAccessEnabled !== parsed.data.enabled) {
+      await prisma.account.update({
+        where: { id: conta.id },
+        data: { aiAgentAccessEnabled: parsed.data.enabled },
+      });
+
+      await writeAuditLog({
+        accountId: conta.id,
+        actorId: admin.id,
+        actorName: `${admin.name} (plataforma)`,
+        action: 'configuracao.alterada',
+        targetType: 'workspace',
+        targetId: conta.id,
+        targetName: conta.name,
+        metadata: {
+          detalhe: parsed.data.enabled
+            ? 'acesso ao agente de IA conectado pela plataforma'
+            : 'acesso ao agente de IA desconectado pela plataforma',
+          plataforma: true,
+          campo: 'aiAgentAccessEnabled',
+          valorAnterior: conta.aiAgentAccessEnabled,
+          valorNovo: parsed.data.enabled,
+        },
+      }).catch(() => undefined);
+    }
+
+    revalidatePath('/plataforma');
+    revalidatePath(`/plataforma/${conta.id}`);
+    revalidatePath('/', 'layout');
+    return { ok: true, accountId: conta.id };
+  } catch (error) {
+    console.error('[plataforma] Falha ao alterar acesso ao agente de IA:', error);
+    return failureOf(error, 'Não foi possível alterar o acesso ao agente de IA.');
+  }
+}

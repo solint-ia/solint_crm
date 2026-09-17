@@ -9,6 +9,7 @@ export const PIPELINES: readonly Pipeline[] = [
     accountId: ACCOUNT_ID,
     name: 'Funil Comercial',
     isDefault: true,
+    showAmounts: true,
     stages: [
       {
         id: 'st-novo',
@@ -77,6 +78,7 @@ export const PIPELINES: readonly Pipeline[] = [
     accountId: ACCOUNT_ID,
     name: 'Pós-venda & CS',
     isDefault: false,
+    showAmounts: false,
     stages: [
       {
         id: 'st-onb',

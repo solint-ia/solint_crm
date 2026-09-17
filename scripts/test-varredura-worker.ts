@@ -374,7 +374,7 @@ async function pedidosDeConexao() {
         select: { id: true, status: true, error: true, payload: true },
       });
 
-    await canal.startSession(dono, { inboxId: CAIXA, method: 'qr' });
+    await canal.startSession(dono, { inboxId: CAIXA });
     const conexao = await prisma.whatsAppConnection.findUnique({
       where: { inboxId: CAIXA },
       select: { autoConnect: true, status: true },
@@ -382,11 +382,12 @@ async function pedidosDeConexao() {
     check('"Conectar" liga a intenção de novo', conexao?.autoConnect === true);
     check('e marca a caixa como conectando', conexao?.status === 'conectando', conexao?.status);
 
-    await canal.startSession(dono, { inboxId: CAIXA, method: 'qr' });
+    await canal.startSession(dono, { inboxId: CAIXA });
     const repetido = await connects();
     check('o mesmo pedido reaproveita o da fila', repetido.length === 1, `${repetido.length}`);
 
-    await canal.startSession(dono, { inboxId: CAIXA, method: 'phone', phoneNumber: '5579999999999' });
+    // Outra janela de histórico é um pedido diferente.
+    await canal.startSession(dono, { inboxId: CAIXA, historyDays: 7 });
     const trocado = await connects();
     check('pedido diferente cria outro comando', trocado.length === 2, `${trocado.length}`);
     check(

@@ -1,4 +1,9 @@
 import type { Channel } from './channel';
+import {
+  capabilitiesOf,
+  isCustomerServiceWindowOpen,
+  type WhatsAppProvider,
+} from './whatsapp-provider';
 import type { Contact } from './contact';
 import type { Label } from './label';
 import type { Message, TimelineItem } from './message';
@@ -133,6 +138,13 @@ export interface Conversation {
    * enderecado por LID quebraria.
    */
   readonly channelThreadId?: string;
+  /**
+   * Como a caixa desta conversa fala com o WhatsApp. Ausente = QR Code.
+   *
+   * Vem da caixa, e não fica gravado na conversa: mover a caixa do QR para a API
+   * oficial muda a regra de todas as conversas dela de uma vez.
+   */
+  readonly channelProvider?: WhatsAppProvider;
   /** A conversa nasceu da importação silenciosa do histórico do WhatsApp. */
   readonly importedAt?: IsoDateTime;
   /**
@@ -191,14 +203,21 @@ export const activityTimeOf = (conversation: Pick<Conversation, 'lastActivityAt'
 export const HSM_WINDOW_HOURS = 24;
 
 /**
- * Janela de 24h do WhatsApp:
- * No WhatsApp Direto (via Baileys / QR Code), não há restrição de 24h da Meta Cloud API.
- * O atendente pode conversar livremente a qualquer momento.
+ * Pode sair texto livre (ou anexo) nesta conversa agora?
+ *
+ * Depende do provedor da caixa. Pelo QR Code (Baileys) não existe janela: o
+ * atendente fala a qualquer momento. Pela API oficial, só dentro das 24 h desde
+ * a última mensagem do cliente; fora disso a Meta recusa (erro 131047) e o
+ * caminho é um template aprovado.
  */
 export const isHsmWindowOpen = (
-  _conversation: Pick<Conversation, 'channel' | 'lastInboundAt'>,
-  _now: Date = new Date(),
-): boolean => true;
+  conversation: Pick<Conversation, 'channel' | 'lastInboundAt' | 'channelProvider'>,
+  now: Date = new Date(),
+): boolean => {
+  if (conversation.channel !== 'whatsapp') return true;
+  if (!capabilitiesOf(conversation.channelProvider).freeTextWindow) return true;
+  return isCustomerServiceWindowOpen(conversation.lastInboundAt, now);
+};
 
 /** Filtro rápido da lista de conversas. */
 export type InboxScope = 'minhas' | 'nao_atribuidas' | 'todas';

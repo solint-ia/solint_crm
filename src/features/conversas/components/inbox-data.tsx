@@ -1,5 +1,6 @@
 import type { InboxScope } from '@/core/domain/conversation';
 import { can, canSeeInbox } from '@/core/domain/user';
+import { hasAiAgentAccess } from '@/config/ai-agent-access';
 import { AccessDenied } from '@/components/layout/access-denied';
 import { container } from '@/infrastructure/container';
 import {
@@ -82,6 +83,7 @@ export async function InboxData({
           status: connection.status,
         }))}
       canManageInboxes={can(session, 'config.caixas:escrever')}
+      canControlAi={hasAiAgentAccess(session.account) && can(session, 'conversas:responder')}
       moveInbox={moveConversationToInboxAction}
       catalog={{ members: settings.members, labels: settings.labels, templates }}
       cannedResponses={settings.cannedResponses}

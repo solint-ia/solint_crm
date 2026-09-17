@@ -493,8 +493,9 @@ export const commitMessage = async (entrada: CommitInput): Promise<void> => {
   // As automações rodam depois da gravação, nunca antes: uma regra que move o
   // card ou aplica etiqueta precisa encontrar a conversa já no estado novo.
   //
-  // Só mensagem recebida dispara. O eco do que **nós** enviamos chega por aqui
-  // igual, e disparar nele faria a resposta automática responder a si mesma.
+  // Este bloco é o da mensagem recebida; a enviada pelo próprio número tem o
+  // seu logo abaixo. Nenhum dos dois vê o eco do que o CRM mandou, que sai
+  // antes de chegar aqui: disparar nele faria a automática responder a si mesma.
   if (!input.fromMe) {
     // Respostas automáticas de caixa: saudação, ausência e leitura da nota da
     // pesquisa de satisfação. As regras (inclusive as travas de repetição)
@@ -542,6 +543,23 @@ export const commitMessage = async (entrada: CommitInput): Promise<void> => {
   }
 
   /**
+   * Mensagem que saiu pelo próprio número, fora do CRM: aparelho, WhatsApp Web
+   * ou outra plataforma conectada. É envio como qualquer outro, e dispara as
+   * regras de "mensagem enviada".
+   *
+   * Sem risco de laço: o eco do que o CRM mandou (inclusive a mensagem de uma
+   * automação) sai antes, em `dispararEcoDoCrm`, e nunca chega aqui.
+   */
+  if (input.fromMe) {
+    await dispararAutomacoes({
+      accountId: input.accountId,
+      trigger: 'mensagem_enviada',
+      conversationId: chat.conversationId,
+      ...(input.preview ? { messageText: input.preview } : {}),
+    });
+  }
+
+  /**
    * O atendente respondeu pelo celular: o agente sai da conversa por um tempo.
    *
    * Chegar aqui com `fromMe` já significa isso. O eco do que o CRM enviou sai
@@ -555,8 +573,21 @@ export const commitMessage = async (entrada: CommitInput): Promise<void> => {
    *
    * A falha é engolida: um agente que continua respondendo é um problema menor
    * do que a mensagem do atendente não entrar na conversa.
+   *
+   * **Só pausa o que o CRM comanda.** A pausa chega ao agente pelo webhook
+   * (`agentePausado`), então sem um webhook ativo desta caixa que o acorde ela
+   * não cala ninguém. E nesse cenário o `fromMe` quase sempre é outro robô: um
+   * número ligado ao n8n por outra plataforma (Evolution, por exemplo) responde
+   * por um aparelho conectado que o CRM não reconhece como seu. Pausar ali só
+   * acendia o botão de "agente pausado" enquanto o agente seguia respondendo.
    */
-  if (input.fromMe) {
+  if (
+    input.fromMe &&
+    (await algumWebhookInscrito(input.accountId, caixaDoEvento, [
+      'mensagem.recebida',
+      'conversa.criada',
+    ]).catch(() => false))
+  ) {
     try {
       await aplicarPausaDoAgente(input.accountId, chat.conversationId, 'resposta_no_celular');
     } catch (erro) {

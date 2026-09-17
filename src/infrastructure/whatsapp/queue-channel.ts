@@ -81,7 +81,9 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
    */
   private async inboxOf(accountId: string): Promise<string | null> {
     const inboxes = await prisma.inbox.findMany({
-      where: { accountId, channel: 'whatsapp' },
+      // Caixa da API oficial não tem sessão no worker: escolhê-la aqui faria a
+      // topbar dizer "desconectado" para uma conta com QR Code conectado.
+      where: { accountId, channel: 'whatsapp', NOT: { provider: 'cloud_api' } },
       select: { id: true, waConnection: { select: { credsCipher: true, status: true } } },
       orderBy: { id: 'asc' },
     });
@@ -184,7 +186,6 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
       ...(inboxId ? { inboxId } : {}),
       status: (conn?.status as WhatsAppStatusPayload['status']) ?? 'desconectado',
       qr: conn?.qrPayload ?? undefined,
-      pairingCode: conn?.pairingCode ?? undefined,
       error: conn?.lastError ?? undefined,
       phone: conn?.phoneJid ?? undefined,
       name: conn?.profileName ?? undefined,
@@ -269,13 +270,11 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
       );
     }
 
-    const pairingMethod = options.method ?? 'qr';
-    const phoneNumber = pairingMethod === 'phone' ? options.phoneNumber : undefined;
     const historyDays = options.historyDays ?? 0;
 
     const queued = await prisma.$transaction(async (tx) => {
       // Serializa tentativas de abas/processos diferentes para que um segundo
-      // clique não invalide o QR ou o código que acabou de ser exibido.
+      // clique não invalide o QR que acabou de ser exibido.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'connect:' + inboxId}))`;
       const pending = await tx.whatsAppCommand.findFirst({
         where: { inboxId, kind: 'connect', status: { in: ['pending', 'processing'] } },
@@ -284,25 +283,13 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
       });
 
       /**
-       * O mesmo pedido reaproveita o que já está na fila; um pedido diferente,
-       * não.
-       *
-       * A deduplicação reaproveitava qualquer `connect` pendente, e um pedido
-       * por código feito enquanto o de QR ainda esperava na fila simplesmente
-       * sumia: a tela esperava um código que nunca vinha. Pendente e diferente,
-       * o antigo é cancelado; já em execução, o novo entra atrás dele na raia da
-       * caixa e o worker troca o método ao executá-lo.
+       * O mesmo pedido reaproveita o que já está na fila; um pedido diferente
+       * (outra janela de histórico), não. Pendente e diferente, o antigo é
+       * cancelado; já em execução, o novo entra atrás dele na raia da caixa.
        */
       if (pending) {
-        const anterior = (pending.payload ?? {}) as {
-          pairingMethod?: string;
-          phoneNumber?: string;
-          historyDays?: number;
-        };
-        const mesmoPedido =
-          (anterior.pairingMethod ?? 'qr') === pairingMethod &&
-          (anterior.phoneNumber ?? undefined) === phoneNumber &&
-          (anterior.historyDays ?? 0) === historyDays;
+        const anterior = (pending.payload ?? {}) as { historyDays?: number };
+        const mesmoPedido = (anterior.historyDays ?? 0) === historyDays;
         if (mesmoPedido) return { command: { id: pending.id }, created: false };
         if (pending.status === 'pending') {
           await tx.whatsAppCommand.updateMany({
@@ -360,9 +347,8 @@ export class QueueWhatsAppChannel implements WhatsAppChannel {
           status: 'pending',
           payload: {
             ...owner,
-            pairingMethod,
+            pairingMethod: 'qr',
             historyDays,
-            ...(phoneNumber ? { phoneNumber } : {}),
           },
         },
         select: { id: true },

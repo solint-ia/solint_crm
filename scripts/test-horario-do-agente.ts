@@ -144,7 +144,10 @@ const dominio = () => {
   );
 
   const parcial = normalizeAgentSchedule(
-    { enabled: true, hours: { days: [{ day: 'Segunda', enabled: true, opensAt: '9:00', closesAt: '1800' }] } },
+    {
+      enabled: true,
+      hours: { days: [{ day: 'Segunda', enabled: true, opensAt: '9:00', closesAt: '1800' }] },
+    },
     padrao,
   );
   const segunda = parcial.hours.days.find((d) => d.day === 'seg');
@@ -156,8 +159,14 @@ const dominio = () => {
   );
   check('fuso ausente cai no de Brasília', parcial.hours.timezone === FUSO);
 
-  check('as datas do teste caem nos dias certos', diaNoFuso(SEG_MEIO_DIA) === 'Mon' && diaNoFuso(TER_MEIO_DIA) === 'Tue');
-  check('desligada: atende a qualquer hora', agentWorksAt({ ...SO_SEGUNDA, enabled: false }, TER_0100));
+  check(
+    'as datas do teste caem nos dias certos',
+    diaNoFuso(SEG_MEIO_DIA) === 'Mon' && diaNoFuso(TER_MEIO_DIA) === 'Tue',
+  );
+  check(
+    'desligada: atende a qualquer hora',
+    agentWorksAt({ ...SO_SEGUNDA, enabled: false }, TER_0100),
+  );
   check('segunda 12h: atende', agentWorksAt(SO_SEGUNDA, SEG_MEIO_DIA));
   check('terça 12h: não atende', !agentWorksAt(SO_SEGUNDA, TER_MEIO_DIA));
   check('08:59: ainda não', !agentWorksAt(SO_SEGUNDA, SEG_0859));
@@ -231,7 +240,14 @@ const receber = async (inboxId: string, texto: string, momento: Date) => {
 };
 
 const banco = async () => {
-  await prisma.account.create({ data: { id: CONTA, name: `Agenda ${sufixo}`, plan: 'teste' } });
+  await prisma.account.create({
+    data: {
+      id: CONTA,
+      name: `Agenda ${sufixo}`,
+      plan: 'teste',
+      aiAgentAccessEnabled: true,
+    },
+  });
 
   console.log('\n2) Caixa nova e gravação pela tela');
   const criada = await container.settings.createInbox(CONTA, { name: 'Caixa do horário' });
@@ -268,15 +284,32 @@ const banco = async () => {
   );
 
   const caixa = criada.id;
-  const outraCaixa = (await container.settings.createInbox(CONTA, { name: 'Caixa sem horário' })).id;
+  const outraCaixa = (await container.settings.createInbox(CONTA, { name: 'Caixa sem horário' }))
+    .id;
 
   const contatoId = `ct-${sufixo}`;
   await prisma.contact.create({
-    data: { id: contatoId, accountId: CONTA, name: 'Cliente', phone: '5579911111112', channel: 'whatsapp', avatarTone: 'slate' },
+    data: {
+      id: contatoId,
+      accountId: CONTA,
+      name: 'Cliente',
+      phone: '5579911111112',
+      channel: 'whatsapp',
+      avatarTone: 'slate',
+    },
   });
   const conversa = async (id: string, inboxId: string) =>
     prisma.conversation.create({
-      data: { id, accountId: CONTA, contactId: contatoId, channel: 'whatsapp', inboxId, queue: 'Atendimento', status: 'aberta', statusLabel: 'Aberta' },
+      data: {
+        id,
+        accountId: CONTA,
+        contactId: contatoId,
+        channel: 'whatsapp',
+        inboxId,
+        queue: 'Atendimento',
+        status: 'aberta',
+        statusLabel: 'Aberta',
+      },
       select: { id: true },
     });
   const conversaDaCaixa = (await conversa(`cv-${sufixo}-a`, caixa)).id;
@@ -300,7 +333,10 @@ const banco = async () => {
   check('terça 12h: não', !(await agenteAtendeEm(CONTA, caixa, TER_MEIO_DIA)));
   check('caixa sem horário: sempre sim', await agenteAtendeEm(CONTA, outraCaixa, TER_MEIO_DIA));
   check('evento sem caixa: sim, como antes', await agenteAtendeEm(CONTA, undefined, TER_MEIO_DIA));
-  check('caixa de outra conta não empresta a agenda', await agenteAtendeEm('acc-outra', caixa, TER_MEIO_DIA));
+  check(
+    'caixa de outra conta não empresta a agenda',
+    await agenteAtendeEm('acc-outra', caixa, TER_MEIO_DIA),
+  );
 
   console.log('\n4) Disparo: fora do horário entrega com agentePausado: true');
   const payloadSegunda = payloadDe(caixa, conversaDaCaixa, contatoId, SEG_MEIO_DIA);
@@ -323,9 +359,15 @@ const banco = async () => {
   check('fora do horário: agentePausado é true', corpoFora.solint.agentePausado === true);
   check('fora do horário: agenteNoHorario é false', corpoFora.solint.agenteNoHorario === false);
 
-  const foraCriada = await entregasDo('conversa.criada', payloadDe(caixa, conversaDaCaixa, contatoId, TER_MEIO_DIA));
+  const foraCriada = await entregasDo(
+    'conversa.criada',
+    payloadDe(caixa, conversaDaCaixa, contatoId, TER_MEIO_DIA),
+  );
   check('conversa.criada fora do horário: entrega', foraCriada === 2, `${foraCriada}`);
-  const outra = await entregasDo('mensagem.recebida', payloadDe(outraCaixa, conversaDaOutra, contatoId, TER_MEIO_DIA));
+  const outra = await entregasDo(
+    'mensagem.recebida',
+    payloadDe(outraCaixa, conversaDaOutra, contatoId, TER_MEIO_DIA),
+  );
   check('a outra caixa, sem horário, continua recebendo normalmente', outra === 2, `${outra}`);
 
   // Sem `messageTimestamp`, vale o relógio. Com nenhum dia ligado, "agora" é
@@ -338,13 +380,20 @@ const banco = async () => {
     where: { accountId: CONTA, dedupeKey: `mensagem.recebida:${payloadSemHora.solint.mensagemId}` },
   });
   const corpoSemHora = JSON.parse(entregaSemHora?.payload as string);
-  check('sem hora na mensagem: agentePausado é true (fora)', corpoSemHora.solint.agentePausado === true);
+  check(
+    'sem hora na mensagem: agentePausado é true (fora)',
+    corpoSemHora.solint.agentePausado === true,
+  );
 
   console.log('\n5) Mensagem gravada pelo worker (commitMessage)');
   await container.settings.updateInbox(CONTA, caixa, { aiAgentSchedule: SO_SEGUNDA });
   const foraDoHorario = await receber(caixa, 'mensagem da terça', TER_MEIO_DIA);
   check('fora do horário: a mensagem entra no CRM', foraDoHorario.gravada === 1);
-  check('fora do horário: evento-fonte na outbox (para alimentar memória)', foraDoHorario.fontes === 1, `${foraDoHorario.fontes}`);
+  check(
+    'fora do horário: evento-fonte na outbox (para alimentar memória)',
+    foraDoHorario.fontes === 1,
+    `${foraDoHorario.fontes}`,
+  );
   const noHorario = await receber(caixa, 'mensagem da segunda', SEG_MEIO_DIA);
   check('no horário: a mensagem entra no CRM', noHorario.gravada === 1);
   check('no horário: evento-fonte na outbox', noHorario.fontes === 1, `${noHorario.fontes}`);
@@ -360,7 +409,9 @@ async function main() {
       console.error(`\n  Atenção: a conta de teste ${CONTA} não pôde ser removida.`);
     });
     // O evento-fonte não tem chave estrangeira para a conta.
-    await prisma.webhookEventOutbox.deleteMany({ where: { accountId: CONTA } }).catch(() => undefined);
+    await prisma.webhookEventOutbox
+      .deleteMany({ where: { accountId: CONTA } })
+      .catch(() => undefined);
   }
 }
 

@@ -123,37 +123,31 @@ export class WhatsAppSessionManager {
     }
   }
 
-  async start(
-    inboxId: string,
-    options: { pairingMethod?: 'qr' | 'phone'; pairingPhone?: string } = {},
-  ): Promise<WhatsAppSession> {
+  async start(inboxId: string): Promise<WhatsAppSession> {
     if (this.shuttingDown) {
       throw new SessaoIndisponivelError('O worker está em processo de encerramento.');
     }
     const pending = this.starting.get(inboxId);
     if (pending) return pending;
 
-    const task = this.startOne(inboxId, options).finally(() => {
+    const task = this.startOne(inboxId).finally(() => {
       if (this.starting.get(inboxId) === task) this.starting.delete(inboxId);
     });
     this.starting.set(inboxId, task);
     return task;
   }
 
-  private async startOne(
-    inboxId: string,
-    options: { pairingMethod?: 'qr' | 'phone'; pairingPhone?: string } = {},
-  ): Promise<WhatsAppSession> {
+  private async startOne(inboxId: string): Promise<WhatsAppSession> {
     const existing = this.sessions.get(inboxId);
     if (existing) {
-      await existing.start(options);
+      await existing.start();
       return existing;
     }
 
     // 1. Busca a caixa de entrada no banco
     const inbox = await prisma.inbox.findUnique({
       where: { id: inboxId },
-      select: { id: true, accountId: true, channel: true },
+      select: { id: true, accountId: true, channel: true, provider: true },
     });
 
     if (!inbox) {
@@ -162,6 +156,9 @@ export class WhatsAppSessionManager {
 
     if (inbox.channel !== 'whatsapp') {
       throw new Error(`Canal da caixa ${inboxId} é ${inbox.channel}, não whatsapp.`);
+    }
+    if (inbox.provider === 'cloud_api') {
+      throw new Error(`A caixa ${inboxId} usa a API oficial e não abre sessão de QR Code.`);
     }
 
     // 2. Garante que a linha de WhatsAppConnection existe
@@ -200,7 +197,7 @@ export class WhatsAppSessionManager {
     this.sessions.set(inboxId, session);
 
     try {
-      await session.start(options);
+      await session.start();
       return session;
     } catch (error) {
       this.sessions.delete(inboxId);
@@ -278,7 +275,7 @@ export class WhatsAppSessionManager {
         },
       });
       await prisma.inbox.updateMany({
-        where: { id: inboxId, accountId: caixa.accountId },
+        where: { id: inboxId, accountId: caixa.accountId, NOT: { provider: 'cloud_api' } },
         data: { status: inboxStatusFrom('desconectado') },
       });
     } finally {
@@ -319,6 +316,8 @@ export class WhatsAppSessionManager {
         where: {
           credsCipher: { not: null },
           autoConnect: true,
+          // Caixa migrada para a API oficial não tem mais sessão de QR a restaurar.
+          inbox: { NOT: { provider: 'cloud_api' } },
         },
         select: { inboxId: true },
       });

@@ -40,10 +40,11 @@ export interface PipelineStage {
  * "Qualificação" e "Proposta" ao mesmo tempo, e a próxima leitura não teria
  * como dizer em qual etapa ele está.
  *
- * O recorte é o funil, não a conta: um contato pode estar num segundo funil ao
- * mesmo tempo, e a etiqueta de lá não tem nada a ver com este movimento.
- * Etiquetas que nenhuma etapa espelha ("VIP", "Reclamação") passam intactas —
- * elas descrevem o contato, não o lugar dele no funil.
+ * Como o contato tem uma etiqueta só, a etapa de destino com etiqueta a
+ * substitui, venha de onde vier a anterior. Destino sem etiqueta tira só a
+ * deste funil: a de outro funil, ou uma que nenhuma etapa espelha ("VIP"),
+ * continua descrevendo o contato. Mover o card nunca o apaga, mesmo que o
+ * contato fique sem etiqueta: quem arrastou quer o card na coluna nova.
  *
  * Função pura de propósito: é a única regra aqui que vale a pena poder
  * verificar sem banco.
@@ -58,8 +59,11 @@ export const contactLabelsAfterMove = (
   );
   const destino = pipeline.stages.find((stage) => stage.id === targetStageId)?.labelId;
 
-  const preservadas = currentLabelIds.filter((id) => !doFunil.has(id));
-  return destino ? [...preservadas, destino] : preservadas;
+  // O contato tem uma etiqueta só (`singleLabel`): a da etapa de destino
+  // substitui qualquer outra. Sem etiqueta no destino, sobra a que não é deste
+  // funil, se houver.
+  if (destino) return [destino];
+  return currentLabelIds.filter((id) => !doFunil.has(id)).slice(0, 1);
 };
 
 export const stageLabelIds = (pipelines: readonly Pipeline[]): ReadonlySet<Id> =>
@@ -75,6 +79,8 @@ export interface Pipeline {
   readonly name: string;
   /** O funil principal da conta. Ele existe sempre e não pode ser excluído. */
   readonly isDefault: boolean;
+  /** Exibir valores (R$) neste funil. Desligado, o valor fica oculto, não apagado. */
+  readonly showAmounts: boolean;
   readonly stages: readonly PipelineStage[];
   /**
    * Vínculo legado com caixa de entrada. Funis novos pertencem à conta e não

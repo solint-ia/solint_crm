@@ -15,7 +15,7 @@ import makeWASocket, {
   type WAMessageKey,
 } from '@whiskeysockets/baileys';
 import { asJson, prisma } from '../db/prisma';
-import { initPostgresAuthState, isPairedCreds } from './auth/postgres-auth-state';
+import { initPostgresAuthState } from './auth/postgres-auth-state';
 
 import type { Contact } from '@/core/domain/contact';
 import type { Message, MessageContent } from '@/core/domain/message';
@@ -80,10 +80,6 @@ export class WhatsAppService {
   private isInitializing = false;
   private isAuthenticated = false;
   private qrAttempts = 0;
-  /** E.164 sem + enquanto o fluxo de pareamento por telefone esta ativo. */
-  private pairingPhone: string | undefined;
-  /** O código já foi pedido neste socket? Ver o mesmo campo em `worker/session.ts`. */
-  private pairingCodeRequested = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private currentStatus: WhatsAppStatusPayload = {
     status: 'desconectado',
@@ -234,9 +230,6 @@ export class WhatsAppService {
       ...patch,
       updatedAt: new Date().toISOString(),
     };
-    if (this.currentStatus.status !== 'aguardando_codigo') {
-      this.currentStatus = { ...this.currentStatus, pairingCode: undefined };
-    }
     if (this.currentStatus.status !== 'aguardando_leitura') {
       this.currentStatus = { ...this.currentStatus, qr: undefined };
     }
@@ -271,7 +264,6 @@ export class WhatsAppService {
           status: this.currentStatus.status,
           lastError: this.currentStatus.error ?? null,
           qrPayload: this.currentStatus.qr ?? null,
-          pairingCode: this.currentStatus.pairingCode ?? null,
         },
       });
 
@@ -281,7 +273,7 @@ export class WhatsAppService {
       const accountId = this.accountId();
       if (accountId) {
         await prisma.inbox.updateMany({
-          where: { id: inboxId, accountId },
+          where: { id: inboxId, accountId, NOT: { provider: 'cloud_api' } },
           data: { status: inboxStatusFrom(this.currentStatus.status) },
         });
       }
@@ -300,8 +292,6 @@ export class WhatsAppService {
       owner?: WhatsAppOwner;
       resetAttempts?: boolean;
       forceFresh?: boolean;
-      pairingMethod?: 'qr' | 'phone';
-      pairingPhone?: string;
       inboxId?: string;
     } = {},
   ): Promise<WhatsAppStatusPayload> {
@@ -331,24 +321,16 @@ export class WhatsAppService {
       return this.currentStatus;
     }
 
-    if (options.pairingMethod === 'phone') {
-      this.pairingPhone = options.pairingPhone;
-    } else if (options.pairingMethod === 'qr') {
-      this.pairingPhone = undefined;
-    }
-
     this.isInitializing = true;
     this.updateStatus({
-      status: this.pairingPhone ? 'conectando' : 'gerando_qr',
+      status: 'gerando_qr',
       error: undefined,
       owner: this.owner,
       qr: undefined,
-      pairingCode: undefined,
     });
 
     // Limpa socket e listeners anteriores antes de abrir um novo
     this.teardownSocket();
-    this.pairingCodeRequested = false;
 
     try {
       const inboxId = await this.activeInboxId();
@@ -485,58 +467,17 @@ export class WhatsAppService {
         void this.applyPresenceUpdate(id, presences);
       });
 
-      // O código de pareamento é pedido no primeiro `qr`, não aqui: o WebSocket
-      // ainda não abriu e o Baileys recusaria com `Connection Closed`. Ver
-      // `solicitarCodigoDePareamento`.
       return this.currentStatus;
     } catch (error) {
       this.isInitializing = false;
-      this.pairingPhone = undefined;
       this.teardownSocket();
       const errorMsg = error instanceof Error ? error.message : 'Falha ao iniciar WhatsApp';
       this.updateStatus({
         status: 'desconectado',
         error: errorMsg,
         qr: undefined,
-        pairingCode: undefined,
       });
       throw error;
-    }
-  }
-
-  /**
-   * Pede o código de 8 caracteres, uma vez por socket, depois do primeiro `qr`.
-   *
-   * Espelha `WhatsAppSession.solicitarCodigoDePareamento` do worker — ver lá
-   * por que o pedido não pode sair logo depois de criar o socket.
-   */
-  private async solicitarCodigoDePareamento(sock: WASocket): Promise<void> {
-    if (this.pairingCodeRequested || !this.pairingPhone) return;
-    this.pairingCodeRequested = true;
-
-    try {
-      const code = await sock.requestPairingCode(this.pairingPhone);
-      if (this.socket !== sock) return;
-      this.isInitializing = false;
-      this.updateStatus({
-        status: 'aguardando_codigo',
-        pairingCode: code.replace(/[^A-Z0-9]/gi, '').toUpperCase(),
-        qr: undefined,
-        error: undefined,
-      });
-    } catch (error) {
-      if (this.socket !== sock) return;
-      const message = error instanceof Error ? error.message : 'falha desconhecida';
-      console.error('[WhatsAppService] Falha ao pedir o código de pareamento:', error);
-      this.isInitializing = false;
-      this.pairingPhone = undefined;
-      this.teardownSocket();
-      this.updateStatus({
-        status: 'desconectado',
-        qr: undefined,
-        pairingCode: undefined,
-        error: `Não foi possível gerar o código de pareamento (${message}). Tente novamente.`,
-      });
     }
   }
 
@@ -554,19 +495,14 @@ export class WhatsAppService {
 
     const { connection, lastDisconnect, qr } = update;
 
-    // No fluxo por telefone o `qr` só sinaliza que o socket ficou pronto.
-    if (qr && this.pairingPhone && !isPairedCreds(sock.authState.creds)) {
-      await this.solicitarCodigoDePareamento(sock);
-    }
-
-    if (qr && !this.pairingPhone) {
+    if (qr) {
       this.qrAttempts = 0;
       // Guarda a string crua. A imagem é gerada na borda que responde ao
       // navegador (`qr-image.ts`) — ver a explicação do teto do `pg_notify` lá.
       this.updateStatus({ status: 'aguardando_leitura', qr, error: undefined });
     }
 
-    if (connection === 'connecting' && this.currentStatus.status !== 'aguardando_codigo') {
+    if (connection === 'connecting') {
       this.updateStatus({ status: 'conectando' });
     }
 
@@ -574,7 +510,6 @@ export class WhatsAppService {
       this.isInitializing = false;
       this.isAuthenticated = true;
       this.qrAttempts = 0;
-      this.pairingPhone = undefined;
       const userJid = sock.user?.id || '';
       const phone = userOf(userJid);
       const name = sock.user?.name || 'WhatsApp Conectado';
@@ -607,7 +542,7 @@ export class WhatsAppService {
       });
 
       await prisma.inbox.updateMany({
-        where: { id: inboxId, accountId },
+        where: { id: inboxId, accountId, NOT: { provider: 'cloud_api' } },
         data: {
           status: 'conectado',
           identifier: phone ? `+${phone}` : 'whatsapp-connected',
@@ -687,14 +622,14 @@ export class WhatsAppService {
         statusCode === DisconnectReason.restartRequired
       ) {
         // Handshake transitório do WebSocket WhatsApp: reconecta automaticamente para obter o QR
-        this.updateStatus({ status: this.pairingPhone ? 'conectando' : 'gerando_qr' });
+        this.updateStatus({ status: 'gerando_qr' });
         this.reconnectTimer = setTimeout(() => {
           this.startSession({ resetAttempts: false }).catch(console.error);
         }, 1500);
       } else if (this.qrAttempts < 8) {
         // Handshake inicial do Baileys: próxima tentativa para receber o QR Code.
         this.qrAttempts += 1;
-        this.updateStatus({ status: this.pairingPhone ? 'conectando' : 'gerando_qr' });
+        this.updateStatus({ status: 'gerando_qr' });
         this.reconnectTimer = setTimeout(() => {
           this.startSession({ resetAttempts: false }).catch(console.error);
         }, 1500);
@@ -1763,7 +1698,6 @@ export class WhatsAppService {
     }
     this.isAuthenticated = false;
     this.isInitializing = false;
-    this.pairingPhone = undefined;
 
     if (this.socket) {
       try {
@@ -1782,7 +1716,6 @@ export class WhatsAppService {
     this.updateStatus({
       status: 'desconectado',
       qr: undefined,
-      pairingCode: undefined,
       phone: undefined,
       name: undefined,
       avatarUrl: undefined,

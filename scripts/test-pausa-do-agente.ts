@@ -82,7 +82,11 @@ const payloadDe = (
 /** O corpo que a outbox guardou para este evento, como ele será entregue. */
 interface CorpoEntregue {
   readonly data?: { readonly message?: Record<string, unknown> };
-  readonly solint?: { readonly agentePausado?: boolean; readonly agentePausadoAte?: string };
+  readonly solint?: {
+    readonly agenteHabilitado?: boolean;
+    readonly agentePausado?: boolean;
+    readonly agentePausadoAte?: string;
+  };
 }
 
 const dispararELer = async (
@@ -103,7 +107,12 @@ const dispararELer = async (
 
 async function main() {
   const conta = await prisma.account.create({
-    data: { id: id('conta'), name: 'Conta da pausa (teste)', plan: 'teste' },
+    data: {
+      id: id('conta'),
+      name: 'Conta da pausa (teste)',
+      plan: 'teste',
+      aiAgentAccessEnabled: true,
+    },
     select: { id: true },
   });
   const caixa = await prisma.inbox.create({
@@ -167,6 +176,7 @@ async function main() {
   try {
     console.log('\n1) Sem pausa, o corpo sai com agentePausado false');
     const ativo = await dispararELer(conta.id, caixa.id, conversa.id, contato.id);
+    check('agenteHabilitado true', ativo.solint?.agenteHabilitado === true);
     check('agentePausado false', ativo.solint?.agentePausado === false);
     check('sem prazo', ativo.solint?.agentePausadoAte === undefined);
     check('a mensagem foi entregue no corpo', Boolean(ativo.data?.message));
@@ -290,6 +300,49 @@ async function main() {
       select: { authorId: true },
     });
     check('authorId e de token', isApiTokenActor(gravada?.authorId), String(gravada?.authorId));
+
+    console.log('\n10) Desconectar a IA preserva webhook, mas bloqueia respostas');
+    await prisma.conversation.update({
+      where: { id: conversa.id },
+      data: {
+        aiPausedUntil: null,
+        aiPausedBy: null,
+        aiPausedByName: null,
+        aiPausedReason: null,
+      },
+    });
+    await prisma.account.update({
+      where: { id: conta.id },
+      data: { aiAgentAccessEnabled: false },
+    });
+
+    const semAcesso = await dispararELer(conta.id, caixa.id, conversa.id, contato.id);
+    check('webhook continua com a mensagem', Boolean(semAcesso.data?.message));
+    check('agenteHabilitado false', semAcesso.solint?.agenteHabilitado === false);
+    check('sem acesso sempre pausa o agente', semAcesso.solint?.agentePausado === true);
+
+    await aplicarPausaDoAgente(conta.id, conversa.id, 'resposta_no_celular');
+    const semPausaDesnecessaria = await prisma.conversation.findUnique({
+      where: { id: conversa.id },
+      select: { aiPausedReason: true },
+    });
+    check(
+      'resposta pelo celular nao grava pausa sem acesso',
+      semPausaDesnecessaria?.aiPausedReason === null,
+    );
+
+    const { POST } = await import('../src/app/api/v1/mensagens/route');
+    const respostaBloqueada = await POST(
+      new Request('https://exemplo.test/api/v1/mensagens', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${rawSecret}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ conversaId: conversa.id, texto: 'nao deve sair' }),
+      }),
+    );
+    check('rota do agente recusa com 403', respostaBloqueada.status === 403);
   } finally {
     // A conta leva caixa, contato, conversa, mensagens, webhooks e entregas.
     await prisma.account.delete({ where: { id: conta.id } }).catch(() => undefined);

@@ -44,7 +44,7 @@ export async function GET(request: Request) {
   const scoped = (payload: WhatsAppStatusPayload): WhatsAppStatusPayload =>
     !payload.owner || payload.owner.accountId === accountId
       ? payload
-      : { ...payload, qr: undefined, pairingCode: undefined };
+      : { ...payload, qr: undefined };
 
   const stream = new ReadableStream({
     start(controller) {

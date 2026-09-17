@@ -32,6 +32,7 @@ import { Field, TextArea, TextInput } from '@/components/ui/field';
 import { Modal } from '@/components/ui/modal';
 import { Toggle } from '@/components/ui/toggle';
 import { useToast } from '@/components/ui/toast';
+import { WHATSAPP_PROVIDER_LABELS, whatsappProviderOf } from '@/core/domain/whatsapp-provider';
 import { WhatsAppModal } from '@/features/whatsapp/components/whatsapp-modal';
 import { UnsavedChangesBar } from '@/features/configuracoes/components/unsaved-changes-bar';
 import { cn } from '@/lib/cn';
@@ -796,7 +797,10 @@ function InboxDetail({
               </div>
               <p className="font-mono text-xs text-muted">
                 {connection.identifier} · {describeChannel(connection.channel).label} (
-                {connection.provider})
+                {connection.channel === 'whatsapp'
+                  ? WHATSAPP_PROVIDER_LABELS[whatsappProviderOf(connection.provider)]
+                  : connection.provider}
+                )
               </p>
             </div>
           </div>

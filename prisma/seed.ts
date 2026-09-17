@@ -86,6 +86,7 @@ async function main() {
       name: row.name,
       plan: row.plan,
       document: row.document ?? null,
+      aiAgentAccessEnabled: row.aiAgentAccessEnabled,
     })),
   });
 

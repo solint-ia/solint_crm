@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import type { Conversation, ConversationStatus, Priority } from '@/core/domain/conversation';
 import { currentProtocol, isHsmWindowOpen } from '@/core/domain/conversation';
+import { capabilitiesOf } from '@/core/domain/whatsapp-provider';
 import type { VariableContext } from '@/core/domain/message-variables';
 import { previewOfMessage, type Message } from '@/core/domain/message';
 import type { ScheduledMessage } from '@/core/domain/scheduled-message';
@@ -124,6 +125,7 @@ interface ChatPanelProps {
   readonly onChangePriority: (priority: Priority) => void;
   readonly onToggleAiPause: (paused: boolean) => void;
   readonly aiPausePending: boolean;
+  readonly canControlAi: boolean;
   readonly onSetLabels: (labels: readonly Label[]) => void;
   readonly inboxes: readonly { readonly id: string; readonly name: string }[];
   readonly onMoveInbox: (inboxId: string) => void;
@@ -156,6 +158,7 @@ export function ChatPanel({
   onChangePriority,
   onToggleAiPause,
   aiPausePending,
+  canControlAi,
   onSetLabels,
   inboxes,
   onMoveInbox,
@@ -191,6 +194,10 @@ export function ChatPanel({
   conversaAtualRef.current = conversation.id;
 
   const hsmOpen = isHsmWindowOpen(conversation);
+  // O que o provedor da caixa sabe fazer: a API oficial não apaga no aparelho
+  // do contato, e mostrar o botão só levaria a um erro.
+  const capacidades = capabilitiesOf(conversation.channelProvider);
+  const podeApagar = Boolean(onDeleteMessage) && capacidades.deleteForEveryone;
   const isGroup = isGroupContact(conversation.contact);
   const temFoto = Boolean(conversation.contact.avatarUrl);
 
@@ -486,12 +493,14 @@ export function ChatPanel({
           {/* Seletor Rápido de Status (Interativo e Compacto) */}
           <StatusMenu conversation={conversation} onChange={onChangeStatus} />
 
-          <AiPauseButton
-            conversation={conversation}
-            onToggle={onToggleAiPause}
-            pending={aiPausePending}
-            formatHour={(iso) => hora(new Date(iso))}
-          />
+          {canControlAi ? (
+            <AiPauseButton
+              conversation={conversation}
+              onToggle={onToggleAiPause}
+              pending={aiPausePending}
+              formatHour={(iso) => hora(new Date(iso))}
+            />
+          ) : null}
 
           {/* Grupo de Metadados Expandido em Telas Muito Largas (Container @6xl+) */}
           {!isContextOpen && (
@@ -713,7 +722,7 @@ export function ChatPanel({
               ? { quoted: byId.get(message.replyToId) }
               : {})}
             onReply={setReplyTo}
-            {...(onDeleteMessage ? { onDelete: setPendingDelete } : {})}
+            {...(podeApagar ? { onDelete: setPendingDelete } : {})}
             {...(onReactToMessage
               ? { onReact: (target: Message, emoji: string) => onReactToMessage(target.id, emoji) }
               : {})}
@@ -737,7 +746,7 @@ export function ChatPanel({
                 ? { quoted: byId.get(item.message.replyToId) }
                 : {})}
               onReply={setReplyTo}
-              {...(onDeleteMessage ? { onDelete: setPendingDelete } : {})}
+              {...(podeApagar ? { onDelete: setPendingDelete } : {})}
               {...(onReactToMessage
                 ? { onReact: (alvo: Message, emoji: string) => onReactToMessage(alvo.id, emoji) }
                 : {})}

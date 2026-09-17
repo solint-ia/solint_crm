@@ -21,6 +21,7 @@ import { prisma, asJson } from '@/infrastructure/db/prisma';
 import { waEventBus } from '@/infrastructure/whatsapp/whatsapp-events';
 import { writeAuditLog } from '@/infrastructure/audit/write-audit-log';
 import { horaLabel } from '@/lib/datetime';
+import { hasAiAgentAccess } from '@/config/ai-agent-access';
 import { CONVERSATION_INCLUDE, conversationRow, messageRow } from './mappers';
 
 const nowLabel = (): string => horaLabel(new Date());
@@ -75,10 +76,12 @@ export const aplicarPausaDoAgente = async (
     select: {
       aiPausedUntil: true,
       aiPausedReason: true,
+      account: { select: { aiAgentAccessEnabled: true } },
       inbox: { select: { aiPauseChannelReplyMinutes: true } },
     },
   });
   if (!conversa) throw new NotFoundError('Conversa', conversationId);
+  if (!hasAiAgentAccess(conversa.account)) return;
 
   if (reason === 'manual') {
     await prisma.$transaction([

@@ -20,6 +20,7 @@ import { FlowBuilder } from '@/features/agentes-ia/components/flow-builder';
 import { can } from '@/core/domain/user';
 import { AccessDenied } from '@/components/layout/access-denied';
 import { FEATURES } from '@/config/features';
+import { hasAiAgentAccess } from '@/config/ai-agent-access';
 import { container } from '@/infrastructure/container';
 import { parseOneOf } from '@/lib/search-params';
 import { sandboxReplyAction, setAgentActiveAction, toggleTransferRuleAction } from '../actions';
@@ -41,6 +42,7 @@ export default async function AgenteDetalhePage({
   const tab: AgentTab = parseOneOf(query.aba, AGENT_TABS, 'config');
 
   const session = await container.session.getCurrentSession();
+  if (!hasAiAgentAccess(session.account)) redirect('/conversas');
   // A rail ja esconde o item; sem esta checagem, a URL direta entraria.
   if (!can(session, 'agentes-ia:ler')) return <AccessDenied permission="agentes-ia:ler" />;
   const agent = await container.aiAgents.findById(session.account.id, id);
@@ -65,6 +67,7 @@ async function AgenteDetalhe({
   readonly tab: AgentTab;
 }) {
   const session = await container.session.getCurrentSession();
+  if (!hasAiAgentAccess(session.account)) redirect('/conversas');
   const agent = await container.aiAgents.findById(session.account.id, agentId);
   if (!agent) notFound();
 

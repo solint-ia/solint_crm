@@ -58,6 +58,11 @@ async function main() {
   webhookEventRunner.start();
   const webhookRunner = new WebhookDeliveryRunner(sessionManager.workerId);
   webhookRunner.start();
+  // Eventos da API oficial (Meta): a rota do webhook só grava, e quem processa
+  // é este processo, que tem relógio e fica de pé entre deploys do site.
+  const { CloudEventRunner } = await import('./infrastructure/whatsapp/cloud/cloud-event-runner');
+  const cloudEventRunner = new CloudEventRunner(`${sessionManager.workerId}-cloud`);
+  cloudEventRunner.start();
   const { WebhookRetentionRunner } =
     await import('./infrastructure/webhooks/webhook-retention-runner');
   const webhookRetentionRunner = new WebhookRetentionRunner(sessionManager.workerId);
@@ -304,6 +309,7 @@ async function main() {
           auditRetentionRunner.stop(),
           slaRunner.stop(),
           commandRecoveryRunner.stop(),
+          cloudEventRunner.stop(),
           webhookRetentionRunner.stop(),
         ]),
         5_000,

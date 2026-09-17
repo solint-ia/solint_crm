@@ -14,5 +14,7 @@
  */
 export const FEATURES = {
   campanhas: false,
-  agentesIA: false,
+  // A disponibilidade por cliente e controlada por
+  // `Account.aiAgentAccessEnabled`; esta chave fica como desligamento global.
+  agentesIA: true,
 } as const;

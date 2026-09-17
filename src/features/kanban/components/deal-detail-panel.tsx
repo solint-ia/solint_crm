@@ -32,6 +32,7 @@ import { cn } from '@/lib/cn';
 interface DealDetailPanelProps {
   readonly deal: Deal;
   readonly stages: readonly PipelineStage[];
+  readonly showAmounts?: boolean;
   readonly onClose: () => void;
   readonly onEdit?: (deal: Deal) => void;
   readonly onDelete?: (dealId: string) => void;
@@ -41,6 +42,7 @@ interface DealDetailPanelProps {
 export function DealDetailPanel({
   deal,
   stages,
+  showAmounts = true,
   onClose,
   onEdit,
   onDelete,
@@ -186,17 +188,19 @@ export function DealDetailPanel({
         <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-5">
           {/* Valor Estimado */}
           <div className="rounded-xl border border-line bg-surface-2/60 p-4">
-            <div>
-              <span className="block text-micro font-semibold uppercase text-dim tracking-wider">
-                Valor da Oportunidade
-              </span>
-              <span className="font-display text-metric font-bold text-ink tracking-tight tabular-nums">
-                {formatarMoeda(deal.amountInCents)}
-              </span>
-            </div>
+            {showAmounts ? (
+              <div className="mb-3 border-b border-line-soft pb-3">
+                <span className="block text-micro font-semibold uppercase text-dim tracking-wider">
+                  Valor da Oportunidade
+                </span>
+                <span className="font-display text-metric font-bold text-ink tracking-tight tabular-nums">
+                  {formatarMoeda(deal.amountInCents)}
+                </span>
+              </div>
+            ) : null}
 
             {/* Badges de Metadados */}
-            <div className="mt-3 flex flex-wrap gap-1.5 border-t border-line-soft pt-3">
+            <div className="flex flex-wrap gap-1.5">
               <Badge tone={PRIORITY_TONE[deal.priority]}>
                 Prioridade: {PRIORITY_LABEL[deal.priority]}
               </Badge>

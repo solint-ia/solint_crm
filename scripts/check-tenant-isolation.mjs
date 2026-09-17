@@ -73,6 +73,13 @@ const VIA_PARENT = new Set([
   // A linha de ligação não tem `accountId`: ela existe dentro de um lote, e o
   // lote é da conta. Escopar aqui seria guardar a mesma informação duas vezes.
   'contactImportBatchContact',
+  // Conexão da API oficial: é da caixa (chave `inboxId`). As leituras sem conta
+  // são as que partem da Meta — `phoneNumberId` e `webhookKey` são a identidade
+  // que o webhook traz, únicos no sistema, e a conta sai da própria linha.
+  'whatsAppCloudConnection',
+  // Fila dos eventos da Meta: gravada antes de se saber a conta (evento de número
+  // desconhecido fica sem ela) e varrida por um processador global.
+  'whatsAppCloudEvent',
 ]);
 
 /** Globais de propósito: a pessoa e a conta não pertencem a uma conta. */

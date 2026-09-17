@@ -30,6 +30,8 @@ const CHANNELS = {
   COMMANDS: 'solint_whatsapp_commands',
   /** Avisa o entregador de que há um item novo no outbox de webhooks. */
   WEBHOOKS: 'solint_webhook_deliveries',
+  /** Avisa o processador de que a Meta mandou evento novo pela API oficial. */
+  WHATSAPP_CLOUD: 'solint_whatsapp_cloud_events',
   /** Batida do worker: e assim que a aplicacao sabe que existe um worker vivo. */
   WORKER: 'solint_whatsapp_worker',
 } as const;

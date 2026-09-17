@@ -72,6 +72,12 @@ model Account {
   /// nasça protegida.
   status String @default("ativa")
 
+  /// Libera a funcionalidade de agentes de IA para esta conta.
+  ///
+  /// E uma habilitacao comercial da conta, independente das permissoes dos
+  /// usuarios e do estado `active` de cada agente cadastrado.
+  aiAgentAccessEnabled Boolean @default(false)
+
   suspendedAt     DateTime?
   /// O que dizer a quem tentar entrar. Sem isto a pessoa vê uma porta fechada
   /// sem nenhuma pista de a quem recorrer.
@@ -79,39 +85,40 @@ model Account {
 
   createdAt DateTime @default(now())
 
-  memberships          Membership[]
-  roles                Role[]
-  labels               Label[]
-  contacts             Contact[]
-  conversations        Conversation[]
-  pipelines            Pipeline[]
-  deals                Deal[]
-  aiAgents             AiAgent[]
-  notifications        Notification[]
-  automations          Automation[]
-  inboxes              Inbox[]
-  categories           KnowledgeCategory[]
-  articles             KnowledgeArticle[]
-  settings             AccountSettings?
-  teams                Team[]
-  webhooks             Webhook[]
-  apiTokens            ApiToken[]
-  customAttributes     CustomAttributeDefinition[]
-  cannedResponses      CannedResponse[]
-  macros               Macro[]
-  auditLogs            AuditLogEntry[]
-  campaigns            Campaign[]
-  segments             Segment[]
-  messageTemplates     MessageTemplate[]
-  invites              Invite[]
-  tasks                Task[]
-  mediaObjects         MediaObject[]
-  mediaBlobs           MediaBlob[]
-  pendingMedia         PendingMedia[]
-  addressBookNames     WhatsAppAddressBookName[]
-  scheduledMessages    ScheduledMessage[]
-  contactImportBatches ContactImportBatch[]
-  webhookDeliveries    WebhookDelivery[]
+  memberships              Membership[]
+  roles                    Role[]
+  labels                   Label[]
+  contacts                 Contact[]
+  conversations            Conversation[]
+  pipelines                Pipeline[]
+  deals                    Deal[]
+  aiAgents                 AiAgent[]
+  notifications            Notification[]
+  automations              Automation[]
+  inboxes                  Inbox[]
+  whatsappCloudConnections WhatsAppCloudConnection[]
+  categories               KnowledgeCategory[]
+  articles                 KnowledgeArticle[]
+  settings                 AccountSettings?
+  teams                    Team[]
+  webhooks                 Webhook[]
+  apiTokens                ApiToken[]
+  customAttributes         CustomAttributeDefinition[]
+  cannedResponses          CannedResponse[]
+  macros                   Macro[]
+  auditLogs                AuditLogEntry[]
+  campaigns                Campaign[]
+  segments                 Segment[]
+  messageTemplates         MessageTemplate[]
+  invites                  Invite[]
+  tasks                    Task[]
+  mediaObjects             MediaObject[]
+  mediaBlobs               MediaBlob[]
+  pendingMedia             PendingMedia[]
+  addressBookNames         WhatsAppAddressBookName[]
+  scheduledMessages        ScheduledMessage[]
+  contactImportBatches     ContactImportBatch[]
+  webhookDeliveries        WebhookDelivery[]
 }
 
 /// A pessoa. Nada aqui é específico de uma conta — o que é, mora em `Membership`.
@@ -328,6 +335,13 @@ model Contact {
   whatsappOptOutReason String?   @map("whatsapp_opt_out_reason")
   /// Ultima autorizacao explicita posterior a um opt-out.
   whatsappOptInAt      DateTime? @map("whatsapp_opt_in_at")
+  /// Id do usuário na API oficial do WhatsApp (BSUID), escopado ao portfólio.
+  ///
+  /// Desde abril de 2026 a Meta manda este id em todo webhook, e o telefone
+  /// (`wa_id`) pode faltar: quem chega por nome de usuário sem conversa nos
+  /// últimos 30 dias vem só com ele. Sem a coluna, esse cliente não teria como
+  /// ser reconhecido na mensagem seguinte nem respondido.
+  whatsappUserId       String?
   /// Quando o contato saiu da agenda sem levar o histórico junto.
   ///
   /// `Conversation.contactId` é obrigatório e cai em cascata: apagar a linha do
@@ -353,6 +367,7 @@ model Contact {
   /// A agenda lista só os vivos, e é a consulta mais frequente da tela.
   @@index([accountId, deletedAt])
   @@index([accountId, whatsappOptOutAt])
+  @@index([accountId, whatsappUserId])
 }
 
 /// Uma execução de importação CSV nomeada pelo usuário.
@@ -501,6 +516,9 @@ model Message {
   /// apontam.
   deletedAt      DateTime?
   externalId     String?
+  /// Dados do canal que não viram coluna: na API oficial, a categoria de cobrança
+  /// (`pricing.category`) e se a mensagem foi cobrável, para o relatório de custo.
+  channelMeta    Json?
   origin         String?
   /// JSON: MessageReaction[] — as reações (emoji) que esta mensagem recebeu.
   ///
@@ -556,10 +574,16 @@ model Message {
 // ---------------------------------------------------------------- funil
 
 model Pipeline {
-  id        String  @id
-  accountId String
-  name      String
-  isDefault Boolean @default(false)
+  id          String  @id
+  accountId   String
+  name        String
+  isDefault   Boolean @default(false)
+  /// Mostra valores (R$) nos cards, colunas, resumo e formulários deste funil.
+  ///
+  /// Nem todo funil é de venda: um funil de suporte ou de matrícula não tem
+  /// valor, e um "R$ 0,00" em cada card é ruído. Desligado, o valor gravado
+  /// continua no banco e volta a aparecer ao religar.
+  showAmounts Boolean @default(true)
 
   /// Vínculo legado entre funil e caixa de entrada.
   ///
@@ -766,9 +790,10 @@ model Inbox {
   csatQuestion               String?
   webhookUrl                 String?
 
-  account           Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  account           Account                   @relation(fields: [accountId], references: [id], onDelete: Cascade)
   conversations     Conversation[]
   waConnection      WhatsAppConnection?
+  cloudConnection   WhatsAppCloudConnection?
   campaigns         Campaign[]
   mediaObjects      MediaObject[]
   pendingMedia      PendingMedia[]
@@ -780,6 +805,92 @@ model Inbox {
   webhookDeliveries WebhookDelivery[]
 
   @@index([accountId])
+}
+
+/// Conexão de uma caixa com a API oficial do WhatsApp (Cloud API da Meta).
+///
+/// Tabela própria, e não colunas em `WhatsAppConnection`: aquela é o estado de
+/// uma sessão Baileys (credenciais Signal, chaves, trava de worker), e nada dela
+/// se aplica a um número que fala por HTTPS com a Meta.
+model WhatsAppCloudConnection {
+  inboxId            String    @id
+  accountId          String
+  /// manual | embedded_signup
+  mode               String
+  coexistence        Boolean   @default(false)
+  businessId         String?
+  wabaId             String
+  phoneNumberId      String    @unique
+  displayPhoneNumber String
+  verifiedName       String?
+  qualityRating      String?
+  messagingLimit     String?
+  /// conectando | pendente_registro | conectado | erro | desconectado
+  status             String    @default("conectando")
+  lastError          String?
+  tokenCipher        Bytes
+  tokenIv            Bytes
+  tokenTag           Bytes
+  tokenKeyId         String?
+  /// Só no modo manual: o app é da empresa, e o secret dela assina o webhook.
+  appId              String?
+  appSecretCipher    Bytes?
+  appSecretIv        Bytes?
+  appSecretTag       Bytes?
+  appSecretKeyId     String?
+  pinCipher          Bytes?
+  pinIv              Bytes?
+  pinTag             Bytes?
+  pinKeyId           String?
+  /// Segmento da URL do webhook no modo manual. Aleatório, nunca o id da caixa.
+  webhookKey         String    @unique
+  /// SHA-256 do verify token. O token em si só aparece na tela ao ser gerado.
+  verifyTokenHash    String
+  subscribedAt       DateTime?
+  registeredAt       DateTime?
+  contactsSyncAt     DateTime?
+  historySyncAt      DateTime?
+  lastWebhookAt      DateTime?
+  connectedByUserId  String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  inbox   Inbox   @relation(fields: [inboxId], references: [id], onDelete: Cascade)
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+}
+
+/// Evento recebido do webhook da Meta, gravado cru antes de ser processado.
+///
+/// A rota só valida e grava: responder em menos de um segundo é o que evita a
+/// Meta retentar por sete dias, e uma falha no processamento não perde nada.
+model WhatsAppCloudEvent {
+  id            String    @id @default(cuid())
+  accountId     String?
+  inboxId       String?
+  phoneNumberId String
+  /// message | status | echo | history | app_state_sync | template_status | account_update | quality | user_preferences | desconhecido
+  kind          String
+  /// kind:id[:status]. A Meta reentrega o mesmo evento, e a chave o absorve.
+  dedupeKey     String    @unique
+  /// Ordena os eventos de um mesmo contato: duas mensagens dele não podem ser
+  /// gravadas fora de ordem.
+  orderKey      String?
+  payload       Json
+  /// pending | processing | done | failed | ignored
+  status        String    @default("pending")
+  attempts      Int       @default(0)
+  availableAt   DateTime  @default(now())
+  leaseUntil    DateTime?
+  workerId      String?
+  error         String?
+  receivedAt    DateTime  @default(now())
+  processedAt   DateTime?
+
+  @@index([status, availableAt])
+  @@index([inboxId, receivedAt])
+  @@index([status, processedAt])
 }
 
 /// Estado de uma sessão Baileys. Existe por caixa de entrada, não por conta:
@@ -1391,6 +1502,10 @@ model MessageTemplate {
   /// approved | rejected | pending
   status             String   @default("approved")
   externalTemplateId String?
+  /// WABA de onde o template veio. Nulo nos criados só no CRM.
+  wabaId             String?
+  /// Motivo da recusa informado pela Meta.
+  rejectedReason     String?
   createdAt          DateTime @default(now())
 
   account   Account    @relation(fields: [accountId], references: [id], onDelete: Cascade)
@@ -1398,6 +1513,7 @@ model MessageTemplate {
 
   @@unique([accountId, name, language])
   @@index([accountId])
+  @@index([accountId, wabaId])
 }
 
 /// Tabela sem uso desde que o acesso passou a ser criado pelo gestor.

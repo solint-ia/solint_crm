@@ -27,8 +27,11 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: blob: https:",
-      `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''}`,
-      `connect-src 'self'${isDev ? ' ws: wss: http: https:' : ''}`,
+      // `connect.facebook.net` e os quadros do Facebook: o botão "Conectar com a
+      // Meta" (Embedded Signup da API oficial) abre o SDK e o popup de lá.
+      `script-src 'self' 'unsafe-inline' https://connect.facebook.net${isDev ? " 'unsafe-eval'" : ''}`,
+      `connect-src 'self' https://graph.facebook.com https://www.facebook.com${isDev ? ' ws: wss: http: https:' : ''}`,
+      'frame-src https://www.facebook.com https://web.facebook.com https://business.facebook.com',
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",

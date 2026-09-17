@@ -73,11 +73,11 @@ export const prismaAutomationEffects: AutomationEffects = {
     });
     if (!label) throw new Error(`Nenhuma etiqueta chamada "${labelName}" nesta conta.`);
 
-    // `connect`, não `set`: a automação **acrescenta** uma etiqueta. `set`
-    // apagaria as que o atendente aplicou à mão.
+    // `set`, e não `connect`: a conversa tem uma etiqueta só (`singleLabel`), e
+    // a da regra substitui a que estava, como faria o seletor da tela.
     return prisma.conversation.update({
       where: { id: conversationId, accountId },
-      data: { labels: { connect: { id: label.id } } },
+      data: { labels: { set: [{ id: label.id }] } },
     });
   },
 

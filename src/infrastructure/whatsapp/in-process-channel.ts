@@ -65,9 +65,7 @@ export class InProcessWhatsAppChannel implements WhatsAppChannel {
   ): Promise<WhatsAppStatusPayload> {
     return whatsappService.startSession({
       owner,
-      pairingMethod: options.method ?? 'qr',
-      pairingPhone: options.phoneNumber,
-      inboxId: options.inboxId,
+      ...(options.inboxId ? { inboxId: options.inboxId } : {}),
     });
   }
 

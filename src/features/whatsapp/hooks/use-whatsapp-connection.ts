@@ -220,7 +220,6 @@ export function useWhatsAppConnection(active = true, inboxId?: string) {
         ...atual,
         status: otimista,
         qr: undefined,
-        pairingCode: undefined,
         error: undefined,
         updatedAt: new Date().toISOString(),
       }));
@@ -276,8 +275,6 @@ export function useWhatsAppConnection(active = true, inboxId?: string) {
   const connect = useCallback(
     (
       options: {
-        method?: 'qr' | 'phone';
-        phoneNumber?: string;
         historyDays?: 0 | 7 | 15 | 30 | 90;
       } = {},
     ) =>
@@ -309,15 +306,15 @@ export function useWhatsAppConnection(active = true, inboxId?: string) {
       isAwaitingQR:
         statusData.status === 'aguardando_leitura' ||
         (statusData.status === 'gerando_qr' && Boolean(statusData.qr)),
-      isAwaitingPairingCode:
-        statusData.status === 'aguardando_codigo' && Boolean(statusData.pairingCode),
       isConnecting:
         statusData.status === 'conectando' ||
         (statusData.status === 'gerando_qr' && !statusData.qr) ||
         (statusData.status === 'aguardando_leitura' && !statusData.qr),
       connect,
       disconnect,
+      /** Relê o status, para quem mudou a conexão fora do `connect` (API oficial). */
+      refresh: channel.fetchNow,
     }),
-    [statusData, actionError, isPending, connect, disconnect],
+    [statusData, actionError, isPending, connect, disconnect, channel],
   );
 }

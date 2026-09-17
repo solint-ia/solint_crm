@@ -213,59 +213,58 @@ export function PriorityMenu({
 }
 
 /**
- * Aplicar etiquetas.
+ * Aplicar a etiqueta.
  *
- * Não fecha a cada clique: etiquetar costuma ser marcar duas ou três de uma vez,
- * e um painel que se fecha sozinho obrigaria a reabrir a cada escolha.
+ * Uma por conversa (e por contato): escolher outra substitui a atual, e clicar
+ * na que já está aplicada a tira. Como é escolha única, o menu fecha no clique,
+ * igual ao de prioridade.
  */
 export function LabelMenu({
   conversation,
   labels,
   onChange,
+  title = 'Etiqueta da conversa',
 }: {
   readonly conversation: Conversation;
   readonly labels: readonly Label[];
   readonly onChange: (labels: readonly Label[]) => void;
+  readonly title?: string;
 }) {
   const applied = new Set(conversation.labels.map((label) => label.id));
+  const atual = conversation.labels[0];
 
-  const toggle = (label: Label) => {
-    const next = applied.has(label.id)
-      ? conversation.labels.filter((item) => item.id !== label.id)
-      : [...conversation.labels, label];
-    onChange(next);
+  const choose = (label: Label) => {
+    onChange(applied.has(label.id) ? [] : [label]);
   };
 
   return (
     <Menu
-      label="Aplicar etiquetas"
+      label="Aplicar etiqueta"
       panelClassName="w-64"
       trigger={
-        <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold text-ink transition-all hover:bg-surface hover:shadow-2xs">
-          <Tag className="size-3 text-dim" />
-          {conversation.labels.length > 0 ? (
-            <span className="flex items-center gap-1">
-              <span>Etiquetas</span>
-              <span className="rounded-full bg-brand/15 text-brand px-1 py-0.2 text-[10px] font-bold">
-                {conversation.labels.length}
-              </span>
-            </span>
-          ) : (
-            'Etiquetas'
-          )}
-          <ChevronDown className="size-3 text-dim" />
+        <span className="inline-flex max-w-44 items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold text-ink transition-all hover:bg-surface hover:shadow-2xs">
+          <Tag className="size-3 shrink-0 text-dim" />
+          <span className="truncate">{atual ? atual.name : 'Etiqueta'}</span>
+          <ChevronDown className="size-3 shrink-0 text-dim" />
         </span>
       }
     >
-      {() => (
+      {(close) => (
         <>
-          <MenuHeader>Etiquetas da conversa</MenuHeader>
+          <MenuHeader>{title}</MenuHeader>
           <div className="max-h-64 overflow-y-auto">
             {labels.map((label) => {
               const active = applied.has(label.id);
               const isHex = isHexColor(label.tone);
               return (
-                <MenuItem key={label.id} selected={active} onClick={() => toggle(label)}>
+                <MenuItem
+                  key={label.id}
+                  selected={active}
+                  onClick={() => {
+                    choose(label);
+                    close();
+                  }}
+                >
                   <span
                     className={cn(
                       'size-1.5 shrink-0 rounded-full',

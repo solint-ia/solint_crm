@@ -77,10 +77,14 @@ export interface DispatchResult {
   readonly error?: string;
 }
 
+/**
+ * Pedido de conexão por QR Code.
+ *
+ * Já houve um segundo método, o código de pareamento pelo número de telefone.
+ * Ele saiu quando a API oficial da Meta entrou como a outra forma de conectar:
+ * quem tem número oficial usa a Cloud API, e quem não tem lê o QR.
+ */
 export interface WhatsAppPairingOptions {
-  readonly method?: 'qr' | 'phone';
-  /** Numero E.164 sem o sinal de +, exigido apenas no metodo phone. */
-  readonly phoneNumber?: string;
   /** Caixa exata que sera pareada; ausente preserva o fluxo legado por conta. */
   readonly inboxId?: string;
   /** Janela explícita solicitada no primeiro pareamento. Zero não importa. */

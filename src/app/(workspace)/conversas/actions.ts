@@ -19,6 +19,7 @@ import {
   type ScheduledMessage,
 } from '@/core/domain/scheduled-message';
 import { groupInboxIds, type Contact, type ContactPartner } from '@/core/domain/contact';
+import { singleLabel } from '@/core/domain/label';
 import { stageLabelIds } from '@/core/domain/pipeline';
 import { can, canSeeInbox, withSignature, type Session } from '@/core/domain/user';
 import { canSendFreeText, MAX_MESSAGE_LENGTH } from '@/core/use-cases/send-message';
@@ -475,6 +476,15 @@ export async function sendMessageAction(input: unknown): Promise<SendMessageResu
       href: `/conversas/${parsed.data.conversationId}`,
       conversationId: parsed.data.conversationId,
       inboxId: conversation.inboxId,
+    });
+  }
+
+  if (!parsed.data.isPrivate && !dispatchError) {
+    await dispararAutomacoes({
+      accountId: session.account.id,
+      trigger: 'mensagem_enviada',
+      conversationId: parsed.data.conversationId,
+      messageText: text,
     });
   }
 
@@ -993,8 +1003,21 @@ export async function setConversationLabelsAction(input: unknown): Promise<Actio
   const session = await container.session.getCurrentSession();
   const settings = await container.settings.get(session.account.id);
 
-  // Só etiquetas que existem nesta conta: o id chega do cliente.
-  const labels = settings.labels.filter((label) => parsed.data.labelIds.includes(label.id));
+  // Lido antes da escrita, pelas duas regras abaixo: qual etiqueta é a nova, e
+  // se a conversa tinha alguma e ficou sem.
+  const anteriores =
+    (
+      await prisma.conversation.findFirst({
+        where: { id: parsed.data.conversationId, accountId: session.account.id },
+        select: { labels: { select: { id: true } } },
+      })
+    )?.labels.map((label) => label.id) ?? [];
+
+  // Só etiquetas que existem nesta conta: o id chega do cliente. E só uma.
+  const labels = singleLabel(
+    anteriores,
+    settings.labels.filter((label) => parsed.data.labelIds.includes(label.id)),
+  );
 
   const result = await container.useCases.setConversationLabels({
     session,
@@ -1002,6 +1025,10 @@ export async function setConversationLabelsAction(input: unknown): Promise<Actio
     labels,
   });
   if (!result.ok) return { ok: false, error: result.error.message };
+
+  if (anteriores.length > 0 && labels.length === 0) {
+    await pruneDealsDaConversaSemEtiqueta(session.account.id, parsed.data.conversationId);
+  }
 
   // A etiqueta já está gravada; agora as regras que reagem a ela.
   await dispararAutomacoes({
@@ -1037,13 +1064,18 @@ export async function setContactLabelsAction(input: unknown): Promise<ActionResu
   }
 
   const settings = await container.settings.get(session.account.id);
-  const labels = settings.labels.filter((label) => parsed.data.labelIds.includes(label.id));
 
   // Lido **antes** da escrita: o que decide a remoção do card é a etiqueta que
   // o contato tinha e deixou de ter. Depois da escrita esse dado já não existe.
   const anteriores = (
     await container.contacts.findById(session.account.id, parsed.data.contactId)
   )?.labels.map((label) => label.id);
+
+  // Uma etiqueta por contato, como na conversa: a nova substitui a anterior.
+  const labels = singleLabel(
+    anteriores ?? [],
+    settings.labels.filter((label) => parsed.data.labelIds.includes(label.id)),
+  );
 
   try {
     const contact = await container.contacts.update(session.account.id, parsed.data.contactId, {
@@ -1072,16 +1104,17 @@ export async function setContactLabelsAction(input: unknown): Promise<ActionResu
 }
 
 /**
- * Tira do funil o contato que perdeu a última etiqueta de etapa.
+ * Tira do funil o contato que ficou sem etiqueta, ou sem etiqueta de etapa.
  *
- * Uma etapa pode declarar a etiqueta que a representa; o conjunto dessas
- * etiquetas é o que coloca um contato no quadro. Perder a última delas é
- * dizer que ele não está em etapa nenhuma — e um card fora de coluna não
- * existe, então ele é apagado.
+ * Com uma etiqueta por contato, ela é o estado dele: ficar sem nenhuma é sair
+ * de todo funil em que ele esteja. E uma etapa pode declarar a etiqueta que a
+ * representa; trocar a etiqueta de etapa por uma que nenhuma etapa espelha
+ * também é dizer que ele não está em coluna nenhuma — e um card fora de coluna
+ * não existe, então ele é apagado.
  *
  * A condição é ter perdido, não estar sem: o card criado à mão para um contato
- * que nunca teve etiqueta de etapa continua onde está. Apagá-lo seria fazer um
- * card sumir logo depois de alguém criá-lo, sem que ninguém tivesse mexido em
+ * que nunca teve etiqueta continua onde está. Apagá-lo seria fazer um card
+ * sumir logo depois de alguém criá-lo, sem que ninguém tivesse mexido em
  * etiqueta nenhuma.
  *
  * Silenciosa em caso de falha, e de propósito: etiquetar é a ação que a pessoa
@@ -1094,21 +1127,49 @@ const pruneDealsSemEtiquetaDeEtapa = async (
   anteriores: readonly string[],
 ): Promise<void> => {
   try {
-    const pipelines = await container.pipelines.listPipelines(accountId);
-    const deEtapa = stageLabelIds(pipelines);
-    if (deEtapa.size === 0) return;
-
-    const tinha = anteriores.some((id) => deEtapa.has(id));
-    if (!tinha) return;
+    if (anteriores.length === 0) return;
 
     const contact = await container.contacts.findById(accountId, contactId);
-    const continua = contact?.labels.some((label) => deEtapa.has(label.id)) ?? true;
-    if (continua) return;
+    const ficouSemEtiqueta = contact !== null && contact.labels.length === 0;
+
+    if (!ficouSemEtiqueta) {
+      const pipelines = await container.pipelines.listPipelines(accountId);
+      const deEtapa = stageLabelIds(pipelines);
+      if (deEtapa.size === 0) return;
+
+      const tinha = anteriores.some((id) => deEtapa.has(id));
+      if (!tinha) return;
+
+      const continua = contact?.labels.some((label) => deEtapa.has(label.id)) ?? true;
+      if (continua) return;
+    }
 
     const removidos = await container.pipelines.deleteDealsOfContact(accountId, contactId);
     if (removidos > 0) revalidatePath('/kanban');
   } catch (error) {
     console.error('[conversas] Falha ao remover os cards do contato sem etiqueta de etapa:', error);
+  }
+};
+
+/**
+ * Tira do funil a conversa que ficou sem etiqueta.
+ *
+ * É o caminho das automações: "etiqueta aplicada → mover para etapa" cria o
+ * card ligado à conversa, e tirar a etiqueta desfaz isso em qualquer funil.
+ * Silenciosa pela mesma razão da função acima.
+ */
+const pruneDealsDaConversaSemEtiqueta = async (
+  accountId: string,
+  conversationId: string,
+): Promise<void> => {
+  try {
+    const removidos = await container.pipelines.deleteDealsOfConversation(
+      accountId,
+      conversationId,
+    );
+    if (removidos > 0) revalidatePath('/kanban');
+  } catch (error) {
+    console.error('[conversas] Falha ao remover os cards da conversa sem etiqueta:', error);
   }
 };
 
@@ -1445,16 +1506,24 @@ export async function sendTemplateAction(input: unknown): Promise<SendMessageRes
     const channelStatus = await channel.getStatus(session.account.id, conversation.inboxId);
 
     if (channelStatus.status === 'conectado') {
-      const sent = await channel.sendText(
-        {
-          accountId: session.account.id,
-          conversationId: conversation.id,
-          messageId: message.id,
-          inboxId: conversation.inboxId,
-        },
-        { channelThreadId: conversation.channelThreadId, phone: conversation.contact.phone },
-        text,
-      );
+      const contexto = {
+        accountId: session.account.id,
+        conversationId: conversation.id,
+        messageId: message.id,
+        inboxId: conversation.inboxId,
+      };
+      const destino = {
+        channelThreadId: conversation.channelThreadId,
+        phone: conversation.contact.phone,
+      };
+      // Pela API oficial o template vai como template, com nome e idioma aprovados
+      // na Meta. Pelo QR Code não existe template: sai o texto já preenchido.
+      const sent =
+        conversation.channelProvider === 'cloud_api'
+          ? await (
+              await import('@/infrastructure/whatsapp/cloud/cloud-templates-send')
+            ).sendTemplateViaCloud(contexto, destino, parsed.data.templateId, parsed.data.values)
+          : await channel.sendText(contexto, destino, text);
       const applied = await applyDispatch(session.account.id, conversation.id, message, sent);
       message = applied.message;
       dispatchError = applied.error;
@@ -1463,6 +1532,15 @@ export async function sendTemplateAction(input: unknown): Promise<SendMessageRes
       await persistDispatchFailure(session.account.id, conversation.id, message.id, dispatchError);
       message = { ...message, deliveryStatus: 'falha' };
     }
+  }
+
+  if (!dispatchError) {
+    await dispararAutomacoes({
+      accountId: session.account.id,
+      trigger: 'mensagem_enviada',
+      conversationId: parsed.data.conversationId,
+      ...(message.content.type === 'template' ? { messageText: message.content.text } : {}),
+    });
   }
 
   const updated = await container.conversations.findById(
@@ -1754,6 +1832,15 @@ export async function sendMediaAction(form: FormData): Promise<SendMessageResult
       await persistDispatchFailure(session.account.id, conversation.id, message.id, dispatchError);
       message = { ...message, deliveryStatus: 'falha' };
     }
+  }
+
+  if (!isPrivate && !dispatchError) {
+    await dispararAutomacoes({
+      accountId: session.account.id,
+      trigger: 'mensagem_enviada',
+      conversationId,
+      ...(caption ? { messageText: caption } : {}),
+    });
   }
 
   const updated = await container.conversations.findById(

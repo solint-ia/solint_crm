@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import { FLOW_BLOCK_TYPES, type AiAgent } from '@/core/domain/ai-agent';
 import { FEATURES } from '@/config/features';
+import { hasAiAgentAccess } from '@/config/ai-agent-access';
 import { container } from '@/infrastructure/container';
 
 /**
@@ -11,6 +12,11 @@ import { container } from '@/infrastructure/container';
  * flag antes de tocar em sessão ou banco.
  */
 const FEATURE_OFF = { ok: false, error: 'Funcionalidade em preparação.' } as const;
+
+const ACCOUNT_OFF = {
+  ok: false,
+  error: 'Agente de IA não está disponível para esta conta.',
+} as const;
 
 const createAgentSchema = z.object({
   name: z.string().trim().min(2, 'Nome deve ter no mínimo 2 caracteres').max(80),
@@ -31,6 +37,7 @@ export async function createAiAgentAction(
   }
 
   const session = await container.session.getCurrentSession();
+  if (!hasAiAgentAccess(session.account)) return ACCOUNT_OFF;
   if (!session.permissions.includes('agentes-ia:escrever')) {
     return { ok: false, error: 'Seu papel não permite criar agentes de IA.' };
   }
@@ -59,6 +66,7 @@ export async function setAgentActiveAction(
   if (!parsed.success) return { ok: false, error: 'Dados inválidos.' };
 
   const session = await container.session.getCurrentSession();
+  if (!hasAiAgentAccess(session.account)) return ACCOUNT_OFF;
   if (!session.permissions.includes('agentes-ia:escrever')) {
     return { ok: false, error: 'Seu papel não permite alterar agentes de IA.' };
   }
@@ -78,6 +86,7 @@ export async function toggleTransferRuleAction(
   if (!parsed.success) return { ok: false, error: 'Dados inválidos.' };
 
   const session = await container.session.getCurrentSession();
+  if (!hasAiAgentAccess(session.account)) return ACCOUNT_OFF;
   if (!session.permissions.includes('agentes-ia:escrever')) {
     return { ok: false, error: 'Seu papel não permite alterar agentes de IA.' };
   }
@@ -101,7 +110,16 @@ export async function sandboxReplyAction(
   const parsed = sandboxSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Mensagem inválida.' };
 
-  const reply = await container.aiSandbox.reply(parsed.data.agentId, parsed.data.prompt);
+  const session = await container.session.getCurrentSession();
+  if (!hasAiAgentAccess(session.account)) return ACCOUNT_OFF;
+  if (!session.permissions.includes('agentes-ia:ler')) {
+    return { ok: false, error: 'Seu papel não permite testar agentes de IA.' };
+  }
+
+  const agent = await container.aiAgents.findById(session.account.id, parsed.data.agentId);
+  if (!agent) return { ok: false, error: 'Agente não encontrado.' };
+
+  const reply = await container.aiSandbox.reply(agent.id, parsed.data.prompt);
   return { ok: true, reply };
 }
 
@@ -137,6 +155,7 @@ export async function saveAgentFlowAction(
   if (!parsed.success) return { ok: false, error: 'Fluxo inválido.' };
 
   const session = await container.session.getCurrentSession();
+  if (!hasAiAgentAccess(session.account)) return ACCOUNT_OFF;
   if (!session.permissions.includes('agentes-ia:escrever')) {
     return { ok: false, error: 'Seu papel não permite alterar agentes de IA.' };
   }

@@ -4,7 +4,7 @@ import { useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import { useRouter } from 'next/navigation';
-import { Layers, MessageCircle, Plus, Trash2 } from 'lucide-react';
+import { CircleDollarSign, Layers, MessageCircle, Plus, Trash2 } from 'lucide-react';
 
 import type { AppNotification } from '@/core/domain/notification';
 import type { Account } from '@/core/domain/user';
@@ -17,7 +17,11 @@ import { Button } from '@/components/ui/button';
 import { ConfirmModal } from '@/components/ui/confirm-modal';
 import { Modal } from '@/components/ui/modal';
 import { cn } from '@/lib/cn';
-import { createPipelineAction, deletePipelineAction } from '@/app/(workspace)/kanban/actions';
+import {
+  createPipelineAction,
+  deletePipelineAction,
+  setPipelineShowAmountsAction,
+} from '@/app/(workspace)/kanban/actions';
 
 interface KanbanHeaderProps {
   readonly currentPipeline: Pipeline;
@@ -46,6 +50,7 @@ export function KanbanHeader({
   const [name, setName] = useState('');
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
+  const [togglingAmounts, setTogglingAmounts] = useState(false);
   const defaultPipeline = pipelines.find((pipeline) => pipeline.isDefault) ?? pipelines[0];
 
   const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
@@ -64,6 +69,19 @@ export function KanbanHeader({
       router.refresh();
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleToggleAmounts = async () => {
+    setTogglingAmounts(true);
+    try {
+      const result = await setPipelineShowAmountsAction({
+        pipelineId: currentPipeline.id,
+        showAmounts: !currentPipeline.showAmounts,
+      });
+      if (result.ok) router.refresh();
+    } finally {
+      setTogglingAmounts(false);
     }
   };
 
@@ -158,6 +176,38 @@ export function KanbanHeader({
                   className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface hover:text-brand"
                 >
                   <Plus className="size-4" />
+                </button>
+              ) : null}
+              {canManage ? (
+                <button
+                  type="button"
+                  onClick={() => void handleToggleAmounts()}
+                  disabled={togglingAmounts}
+                  aria-pressed={currentPipeline.showAmounts}
+                  aria-label={
+                    currentPipeline.showAmounts
+                      ? 'Ocultar valores deste funil'
+                      : 'Exibir valores deste funil'
+                  }
+                  title={
+                    currentPipeline.showAmounts
+                      ? 'Valores visíveis. Clique para ocultar.'
+                      : 'Valores ocultos. Clique para exibir.'
+                  }
+                  className={cn(
+                    'relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-surface disabled:opacity-50',
+                    currentPipeline.showAmounts
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : 'text-dim hover:text-ink',
+                  )}
+                >
+                  <CircleDollarSign className="size-3.5" />
+                  {currentPipeline.showAmounts ? null : (
+                    <span
+                      aria-hidden
+                      className="absolute h-px w-4 rotate-45 rounded bg-current"
+                    />
+                  )}
                 </button>
               ) : null}
               {canManage && !currentPipeline.isDefault ? (

@@ -96,7 +96,14 @@ export class PrismaCampaignRepository implements CampaignRepository {
         accountId: r.accountId,
         name: r.name,
         body: r.body,
-        approval: 'aprovado',
+        // Template da API oficial traz a aprovação da Meta; os demais (usados como
+        // texto pelo QR Code) não passam por aprovação nenhuma.
+        approval:
+          !r.wabaId || r.status === 'approved'
+            ? 'aprovado'
+            : r.status === 'rejected' || r.status === 'disabled' || r.status === 'paused'
+              ? 'rejeitado'
+              : 'em_analise',
         variables: [...new Set(matches)],
       };
     });

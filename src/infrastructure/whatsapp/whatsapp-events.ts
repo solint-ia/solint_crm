@@ -6,7 +6,6 @@ export type WhatsAppConnectionStatus =
   | 'desconectado'
   | 'gerando_qr'
   | 'aguardando_leitura'
-  | 'aguardando_codigo'
   | 'conectando'
   | 'conectado';
 
@@ -30,8 +29,6 @@ export interface WhatsAppStatusPayload {
   readonly inboxId?: string;
   readonly status: WhatsAppConnectionStatus;
   readonly qr?: string;
-  /** Codigo de oito caracteres para vincular pelo numero, sem escanear QR. */
-  readonly pairingCode?: string;
   readonly phone?: string;
   /** Nome do perfil do WhatsApp conectado. */
   readonly name?: string;
@@ -44,6 +41,22 @@ export interface WhatsAppStatusPayload {
   readonly historyImportEnabled?: boolean;
   /** Já existem credenciais; histórico só pode ser pedido em novo pareamento. */
   readonly paired?: boolean;
+  /** Como a caixa fala com o WhatsApp. Ausente = QR Code (Baileys). */
+  readonly provider?: 'baileys' | 'cloud_api';
+  /** Detalhes da conexão pela API oficial. Nunca leva token nem secret. */
+  readonly cloud?: {
+    readonly mode: 'manual' | 'embedded_signup';
+    readonly connectionStatus: string;
+    readonly wabaId: string;
+    readonly phoneNumberId: string;
+    readonly verifiedName?: string;
+    readonly qualityRating?: string;
+    readonly messagingLimit?: string;
+    readonly coexistence: boolean;
+    /** URL que a empresa cola no painel do app da Meta (modo manual). */
+    readonly webhookUrl?: string;
+    readonly lastWebhookAt?: string;
+  };
   readonly historyImport?: {
     readonly status:
       | 'aguardando'

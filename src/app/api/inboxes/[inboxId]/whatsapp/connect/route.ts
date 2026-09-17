@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { container } from '@/infrastructure/container';
 import { prisma } from '@/infrastructure/db/prisma';
-import { PhoneNumber } from '@/core/domain/contact';
 import { can, canSeeInbox } from '@/core/domain/user';
 import { getWhatsAppChannel } from '@/infrastructure/whatsapp/channel-provider';
 import { writeAuditLog } from '@/infrastructure/audit/write-audit-log';
@@ -24,23 +23,19 @@ export async function POST(request: Request, props: { params: Promise<{ inboxId:
 
     const body = (await request.json().catch(() => ({}))) as {
       method?: unknown;
-      phoneNumber?: unknown;
       historyDays?: unknown;
     };
-    const method = body.method === 'phone' ? 'phone' : 'qr';
-    const rawPhone = typeof body.phoneNumber === 'string' ? body.phoneNumber : '';
-    const normalizedPhone = PhoneNumber.normalize(rawPhone);
-
-    if (method === 'phone' && !PhoneNumber.isValid(rawPhone)) {
+    // Aba aberta antes da remoção do pareamento por código ainda pode pedir.
+    if (body.method === 'phone') {
       return NextResponse.json(
         {
           ok: false,
-          error: 'Informe um número válido com DDI e DDD (ex.: 5511999998888).',
+          error:
+            'O pareamento por código foi removido. Use o QR Code ou conecte pela API oficial da Meta.',
         },
         { status: 400 },
       );
     }
-    const phoneNumber = normalizedPhone.slice(1);
     const allowedHistoryDays = [0, 7, 15, 30, 90] as const;
     const requestedHistoryDays = typeof body.historyDays === 'number' ? body.historyDays : 0;
     if (!allowedHistoryDays.some((days) => days === requestedHistoryDays)) {
@@ -56,6 +51,7 @@ export async function POST(request: Request, props: { params: Promise<{ inboxId:
       select: {
         id: true,
         channel: true,
+        provider: true,
       },
     });
 
@@ -73,6 +69,17 @@ export async function POST(request: Request, props: { params: Promise<{ inboxId:
       );
     }
 
+    if (inbox.provider === 'cloud_api') {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            'Esta caixa está conectada pela API oficial. Desconecte a API oficial antes de usar o QR Code.',
+        },
+        { status: 409 },
+      );
+    }
+
     const channel = await getWhatsAppChannel();
     const status = await channel.startSession(
       {
@@ -81,9 +88,7 @@ export async function POST(request: Request, props: { params: Promise<{ inboxId:
         accountId: session.account.id,
       },
       {
-        method,
         inboxId,
-        ...(method === 'phone' ? { phoneNumber } : {}),
         historyDays:
           process.env.WA_HISTORY_IMPORT === '1'
             ? (requestedHistoryDays as 0 | 7 | 15 | 30 | 90)

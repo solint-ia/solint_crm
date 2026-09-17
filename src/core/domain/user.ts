@@ -253,6 +253,8 @@ export interface Account {
   readonly name: string;
   readonly plan: 'starter' | 'profissional' | 'enterprise';
   readonly document?: string;
+  /** A plataforma liberou a funcionalidade de agentes de IA para esta conta. */
+  readonly aiAgentAccessEnabled: boolean;
   /**
    * Marca da empresa, projetada do `CompanyProfile` que mora em
    * `AccountSettings.company`.

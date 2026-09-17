@@ -14,6 +14,7 @@ import { AccountOverview } from '@/features/plataforma/components/account-overvi
 import { AccountMembersCard } from '@/features/plataforma/components/account-members-card';
 import { AccountDangerZone } from '@/features/plataforma/components/account-danger-zone';
 import { EnterAccountButton } from '@/features/plataforma/components/enter-account-button';
+import { AccountAiAccessCard } from '@/features/plataforma/components/account-ai-access-card';
 
 export const metadata: Metadata = { title: 'Ficha da conta' };
 
@@ -63,6 +64,7 @@ export default async function ContaDaPlataformaPage({
       plan: true,
       document: true,
       status: true,
+      aiAgentAccessEnabled: true,
       suspendedAt: true,
       suspendedReason: true,
       createdAt: true,
@@ -142,6 +144,8 @@ async function VisaoGeral({
     readonly plan: string;
     readonly document: string | null;
     readonly createdAt: Date;
+    readonly name: string;
+    readonly aiAgentAccessEnabled: boolean;
   };
 }) {
   const [membros, caixas, contatos, conversas, mensagens, ultimaAtividade] = await Promise.all([
@@ -158,13 +162,20 @@ async function VisaoGeral({
   ]);
 
   return (
-    <AccountOverview
-      plan={conta.plan}
-      document={conta.document ?? undefined}
-      createdAt={conta.createdAt.toISOString()}
-      lastActivityAt={ultimaAtividade?.lastActivityAt?.toISOString()}
-      numeros={{ membros, caixas, contatos, conversas, mensagens }}
-    />
+    <div className="flex flex-col gap-4">
+      <AccountOverview
+        plan={conta.plan}
+        document={conta.document ?? undefined}
+        createdAt={conta.createdAt.toISOString()}
+        lastActivityAt={ultimaAtividade?.lastActivityAt?.toISOString()}
+        numeros={{ membros, caixas, contatos, conversas, mensagens }}
+      />
+      <AccountAiAccessCard
+        accountId={accountId}
+        accountName={conta.name}
+        initialEnabled={conta.aiAgentAccessEnabled}
+      />
+    </div>
   );
 }
 

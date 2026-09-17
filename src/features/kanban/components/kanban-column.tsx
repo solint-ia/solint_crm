@@ -12,6 +12,7 @@ interface KanbanColumnProps {
   readonly deals: readonly Deal[];
   readonly count: number;
   readonly total: number;
+  readonly showAmounts?: boolean;
   readonly isStale: (deal: Deal) => boolean;
   readonly isDragging: boolean;
   readonly isDragOver: boolean;
@@ -33,6 +34,7 @@ export function KanbanColumn({
   deals,
   count,
   total,
+  showAmounts = true,
   isStale,
   isDragOver,
   draggingId,
@@ -128,11 +130,13 @@ export function KanbanColumn({
         </div>
 
         {/* Valor Total da Etapa */}
-        <div className="border-t border-line-soft pt-1.5 text-meta text-muted">
-          <span className="font-display font-bold text-ink tracking-tight tabular-nums">
-            {formatarMoeda(total)}
-          </span>
-        </div>
+        {showAmounts ? (
+          <div className="border-t border-line-soft pt-1.5 text-meta text-muted">
+            <span className="font-display font-bold text-ink tracking-tight tabular-nums">
+              {formatarMoeda(total)}
+            </span>
+          </div>
+        ) : null}
       </header>
 
       {/* Área de Cards com Rolagem Vertical Independente */}
@@ -145,6 +149,7 @@ export function KanbanColumn({
                 deal={deal}
                 stale={isStale(deal)}
                 dragging={draggingId === deal.id}
+                showAmount={showAmounts}
                 onDragStart={onDragStart}
                 onDragEnd={onDragEnd}
                 onOpen={onOpenDeal}

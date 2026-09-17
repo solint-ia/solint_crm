@@ -8,6 +8,8 @@ import { PRIORITIES } from '@/core/domain/conversation';
 import { PRIORITY_LABEL } from '@/components/domain/presentation-maps';
 import { Modal } from '@/components/ui/modal';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/cn';
+import { parseValorEmCentavos } from '../lib/parse-valor';
 
 interface NewDealModalProps {
   readonly open: boolean;
@@ -15,6 +17,8 @@ interface NewDealModalProps {
   readonly stages: readonly PipelineStage[];
   readonly initialStageId?: string;
   readonly owners: readonly string[];
+  /** Desligado, o campo de valor some e o valor gravado não é alterado. */
+  readonly showAmounts?: boolean;
   readonly onSubmit: (data: {
     title: string;
     valueInCents: number;
@@ -34,6 +38,7 @@ export function NewDealModal({
   stages,
   initialStageId,
   owners,
+  showAmounts = true,
   onSubmit,
 }: NewDealModalProps) {
   const [title, setTitle] = useState('');
@@ -56,8 +61,7 @@ export function NewDealModal({
       return;
     }
 
-    const cleanVal = valueStr.replace(/[^\d.,]/g, '').replace(',', '.');
-    const parsedValInCents = Math.round((parseFloat(cleanVal) || 0) * 100);
+    const parsedValInCents = parseValorEmCentavos(valueStr);
 
     setIsSubmitting(true);
     try {
@@ -116,10 +120,10 @@ export function NewDealModal({
         </div>
 
         {/* Valor Estimado + Etapa Inicial */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
+        <div className={cn('grid grid-cols-1 gap-3', showAmounts && 'sm:grid-cols-2')}>
+          <div className={showAmounts ? undefined : 'hidden'}>
             <label className="mb-1 block text-meta font-semibold text-ink">
-              Valor estimado (R$)
+              Valor estimado (R$) <span className="font-normal text-dim">· opcional</span>
             </label>
             <input
               type="text"

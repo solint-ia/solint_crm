@@ -1,6 +1,6 @@
 import type { AppNotification } from '@/core/domain/notification';
 import { canCreateWorkspace, type Account } from '@/core/domain/user';
-import { NAV_ITEMS, reachesNavItem } from '@/config/navigation';
+import { navItemsForSession } from '@/config/navigation';
 import { GlobalSearch } from '@/features/busca/components/global-search';
 import { container } from '@/infrastructure/container';
 import { NotificationsMenu } from './notifications-menu';
@@ -26,7 +26,7 @@ export async function Topbar({
 }: TopbarProps) {
   // A paleta de busca só oferece telas que o papel do usuário alcança (RBAC no servidor).
   const session = await container.session.getCurrentSession();
-  const navItems = NAV_ITEMS.filter((item) => reachesNavItem(session.permissions, item));
+  const navItems = navItemsForSession(session);
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-line bg-surface px-4 shadow-2xs md:h-15 md:gap-4 md:px-6">

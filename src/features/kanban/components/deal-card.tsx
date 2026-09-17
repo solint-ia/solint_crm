@@ -29,6 +29,7 @@ interface DealCardProps {
   readonly deal: Deal;
   readonly stale: boolean;
   readonly dragging: boolean;
+  readonly showAmount?: boolean;
   readonly onDragStart: (dealId: string) => void;
   readonly onDragEnd: () => void;
   readonly onOpen: (dealId: string) => void;
@@ -50,6 +51,7 @@ export function DealCard({
   deal,
   stale,
   dragging,
+  showAmount = true,
   onDragStart,
   onDragEnd,
   onOpen,
@@ -207,12 +209,14 @@ export function DealCard({
         </div>
 
         {/* Valor Estimado */}
-        <div className="mt-2.5 border-t border-line-soft pt-2">
-          <span className="block text-[10px] font-medium uppercase text-dim">Valor Estimado</span>
-          <span className="font-display text-title font-bold text-ink tracking-tight tabular-nums">
-            {formatarMoeda(deal.amountInCents)}
-          </span>
-        </div>
+        {showAmount ? (
+          <div className="mt-2.5 border-t border-line-soft pt-2">
+            <span className="block text-[10px] font-medium uppercase text-dim">Valor Estimado</span>
+            <span className="font-display text-title font-bold text-ink tracking-tight tabular-nums">
+              {formatarMoeda(deal.amountInCents)}
+            </span>
+          </div>
+        ) : null}
 
         {/* Próxima Ação */}
         {deal.nextAction && deal.nextAction !== '—' && (

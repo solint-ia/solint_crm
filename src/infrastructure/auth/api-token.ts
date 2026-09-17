@@ -37,7 +37,13 @@ const PREFIXO = 'sk_live_';
  */
 const sessaoDoToken = (
   token: { id: string; name: string; permissions: unknown },
-  account: { id: string; name: string; plan: string; document: string | null },
+  account: {
+    id: string;
+    name: string;
+    plan: string;
+    document: string | null;
+    aiAgentAccessEnabled: boolean;
+  },
 ): Session => {
   const declaradas = readJson<readonly string[]>(token.permissions as never, []);
 
@@ -74,6 +80,7 @@ const sessaoDoToken = (
       id: account.id,
       name: account.name,
       plan: account.plan as Session['account']['plan'],
+      aiAgentAccessEnabled: account.aiAgentAccessEnabled,
       ...(account.document ? { document: account.document } : {}),
     },
     permissions,

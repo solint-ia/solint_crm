@@ -228,7 +228,9 @@ type ConversationWithRelations = Prisma.ConversationGetPayload<{
   };
 }>;
 
-export const conversationRow = (row: ConversationWithRelations): Conversation => ({
+export const conversationRow = (
+  row: ConversationWithRelations & { readonly inbox?: { readonly provider: string } | null },
+): Conversation => ({
   id: row.id,
   accountId: row.accountId,
   contact: contactRow(row.contact),
@@ -257,6 +259,7 @@ export const conversationRow = (row: ConversationWithRelations): Conversation =>
   ...(row.lastInboundAt ? { lastInboundAt: row.lastInboundAt } : {}),
   ...(row.channelOffline === null ? {} : { channelOffline: row.channelOffline }),
   ...(row.channelThreadId ? { channelThreadId: row.channelThreadId } : {}),
+  ...(row.inbox?.provider === 'cloud_api' ? { channelProvider: 'cloud_api' as const } : {}),
   // A pausa vencida não vira campo: o domínio trata ausência de motivo como
   // "agente ativo", e mandar uma data do passado obrigaria cada tela a repetir
   // a comparação — inclusive as que só querem saber se mostram o aviso.
@@ -289,6 +292,8 @@ export const CONVERSATION_TIMELINE_LIMIT = 200;
 export const CONVERSATION_INCLUDE = {
   contact: { include: { labels: true } },
   labels: true,
+  // Só o provedor: é o que decide a janela de 24 h e os botões da conversa.
+  inbox: { select: { provider: true } },
   messages: { orderBy: { createdAt: 'desc' }, take: CONVERSATION_TIMELINE_LIMIT },
 } as const;
 
@@ -344,6 +349,7 @@ export const pipelineRow = (row: PipelineWithStages): Pipeline => ({
   accountId: row.accountId,
   name: row.name,
   isDefault: row.isDefault,
+  showAmounts: row.showAmounts,
   ...(row.inboxId ? { inboxId: row.inboxId } : {}),
   ...(row.inbox?.name ? { inboxName: row.inbox.name } : {}),
   stages: [...row.stages]

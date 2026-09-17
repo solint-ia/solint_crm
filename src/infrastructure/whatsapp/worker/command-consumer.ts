@@ -7,6 +7,21 @@ import { waLog } from '../wa-log';
 import { loadConversationForEvent } from '../wa-store';
 import { waEventBus } from '../whatsapp-events';
 import { CaixaDesconectadaError, SessaoIndisponivelError } from './errors';
+import { providerOfInbox } from '../cloud/cloud-connection';
+import {
+  announceCloudSent,
+  handleCloudSendError,
+  lastInboundWamid,
+  requireCloudConnection,
+} from '../cloud/cloud-channel';
+import {
+  markCloudRead,
+  sendCloudMedia,
+  sendCloudReaction,
+  sendCloudText,
+  sendCloudTyping,
+} from '../cloud/cloud-sender';
+import { CloudApiError } from '../cloud/graph-client';
 import type { WhatsAppSession } from './session';
 import type { WhatsAppSessionManager } from './session-manager';
 
@@ -644,16 +659,18 @@ export class CommandConsumer {
 
     await this.assertComandoDaConta(inboxId, payload);
 
+    // Caixa da API oficial não tem sessão aqui: o comando sai pela Meta. É o
+    // caminho de tudo que o worker enfileira sozinho — agendamentos, mensagens
+    // automáticas, espera — sem que quem enfileirou precise saber do provedor.
+    // `disconnect` fica de fora: é o comando que encerra a sessão de QR de uma
+    // caixa que acabou de migrar, e ele precisa chegar ao Baileys.
+    if (kind !== 'disconnect' && (await providerOfInbox(inboxId)) === 'cloud_api') {
+      await this.executeCloudCommand(inboxId, kind, payload);
+      return undefined;
+    }
+
     switch (kind) {
       case 'connect': {
-        const pairingMethod = payload['pairingMethod'] === 'phone' ? 'phone' : 'qr';
-        const phoneNumber = payload['phoneNumber'];
-        if (
-          pairingMethod === 'phone' &&
-          (typeof phoneNumber !== 'string' || !/^[1-9]\d{7,14}$/.test(phoneNumber))
-        ) {
-          throw new Error('Comando de pareamento sem um número internacional válido.');
-        }
         // A tela já gravou a intenção ao enfileirar, mas um "Desconectar"
         // processado logo antes deste comando a desligou de novo. A raia da
         // caixa executa os dois na ordem em que foram pedidos, e o pedido de
@@ -662,10 +679,7 @@ export class CommandConsumer {
           where: { inboxId },
           data: { autoConnect: true },
         });
-        await this.sessionManager.start(inboxId, {
-          pairingMethod,
-          ...(pairingMethod === 'phone' ? { pairingPhone: phoneNumber as string } : {}),
-        });
+        await this.sessionManager.start(inboxId);
         break;
       }
 
@@ -896,6 +910,136 @@ export class CommandConsumer {
       }
     }
     return undefined;
+  }
+
+  /**
+   * Um comando de caixa da API oficial.
+   *
+   * Recusa retentável da Meta (vazão, rajada ao mesmo contato) volta para a fila
+   * como sessão indisponível, que é a família de erro que este consumidor já
+   * repete com teto. Timeout não entra: a mensagem pode ter saído.
+   */
+  private async executeCloudCommand(
+    inboxId: string,
+    kind: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const recipient = (payload['recipient'] ?? {}) as {
+      phone?: string;
+      jid?: string;
+      channelThreadId?: string;
+    };
+    const target = {
+      ...(recipient.channelThreadId || recipient.jid
+        ? { channelThreadId: recipient.channelThreadId ?? recipient.jid }
+        : {}),
+      ...(recipient.phone ? { phone: recipient.phone } : {}),
+    };
+    const quote = payload['quote'] as
+      { externalId: string; fromMe: boolean; text: string } | undefined;
+    const messageId = typeof payload['messageId'] === 'string' ? payload['messageId'] : undefined;
+    const accountId = typeof payload['accountId'] === 'string' ? payload['accountId'] : undefined;
+
+    try {
+      switch (kind) {
+        case 'send': {
+          await this.assertAutomatedRecipientAllowed(payload);
+          const conn = await requireCloudConnection(inboxId);
+          const text = ((payload['content'] ?? {}) as { text?: string }).text ?? '';
+          const wamid = await sendCloudText(conn, target, text, quote);
+          await this.stampMessage(payload, wamid);
+          if (messageId) await announceCloudSent(conn, messageId, wamid);
+          return;
+        }
+        case 'send_media': {
+          await this.assertAutomatedRecipientAllowed(payload);
+          const conn = await requireCloudConnection(inboxId);
+          const media = (payload['media'] ?? {}) as {
+            kind?: 'image' | 'video' | 'audio' | 'document';
+            mediaId?: string;
+            mimeType?: string;
+            fileName?: string;
+            caption?: string;
+            voice?: boolean;
+          };
+          if (!media.mediaId || !media.kind || !accountId) {
+            throw new Error('Comando de anexo sem identificação da mídia.');
+          }
+          const stored = await mediaStore.read(media.mediaId, {
+            accountId,
+            inboxId,
+            kind: 'mensagem',
+          });
+          if (!stored) throw new Error(`Anexo ${media.mediaId} não encontrado no depósito.`);
+          const wamid = await sendCloudMedia(
+            conn,
+            target,
+            {
+              kind: media.kind,
+              data: await stored.bytes(),
+              mimeType: media.mimeType ?? stored.mimeType,
+              ...(media.fileName ? { fileName: media.fileName } : {}),
+              ...(media.caption ? { caption: media.caption } : {}),
+              ...(media.voice ? { voice: true } : {}),
+            },
+            quote,
+          );
+          await this.stampMessage(payload, wamid);
+          if (messageId) await announceCloudSent(conn, messageId, wamid);
+          return;
+        }
+        case 'react': {
+          const conn = await requireCloudConnection(inboxId);
+          const alvo = (payload['message'] ?? {}) as { externalId?: string };
+          if (!alvo.externalId) throw new Error('Comando de reação sem o id da mensagem no canal.');
+          await sendCloudReaction(
+            conn,
+            target,
+            alvo.externalId,
+            typeof payload['emoji'] === 'string' ? payload['emoji'] : '',
+          );
+          return;
+        }
+        case 'read': {
+          if (!accountId && typeof payload['conversationId'] !== 'string') return;
+          const conn = await requireCloudConnection(inboxId);
+          const lote = payload['conversationIds'];
+          const ids =
+            typeof payload['conversationId'] === 'string'
+              ? [payload['conversationId']]
+              : Array.isArray(lote)
+                ? lote.filter((id): id is string => typeof id === 'string')
+                : [];
+          for (const conversationId of ids) {
+            const wamid = await lastInboundWamid(conn.accountId, inboxId, conversationId);
+            if (wamid) await markCloudRead(conn, wamid).catch(() => undefined);
+          }
+          return;
+        }
+        case 'presence': {
+          if (payload['status'] !== 'composing') return;
+          const conversationId = payload['conversationId'];
+          if (typeof conversationId !== 'string') return;
+          const conn = await requireCloudConnection(inboxId);
+          const wamid = await lastInboundWamid(conn.accountId, inboxId, conversationId);
+          if (wamid) await sendCloudTyping(conn, wamid);
+          return;
+        }
+        case 'delete':
+          throw new Error('A API oficial do WhatsApp não permite apagar mensagens no aparelho do contato.');
+        case 'disconnect':
+          return;
+        default:
+          throw new Error(`O comando ${kind} não se aplica a uma caixa da API oficial.`);
+      }
+    } catch (error) {
+      if (error instanceof CloudApiError) {
+        const mensagem = await handleCloudSendError(inboxId, error);
+        if (error.retentavel) throw new SessaoIndisponivelError(mensagem);
+        throw new Error(mensagem);
+      }
+      throw error;
+    }
   }
 
   /**

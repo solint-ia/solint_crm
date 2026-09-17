@@ -154,7 +154,7 @@ export function ContextPanel({
       <div className="flex flex-col p-3 gap-3">
         {/* Seção 1: Etiquetas da Conversa */}
         <CardSection
-          title="Etiquetas do Atendimento"
+          title="Etiqueta do Atendimento"
           action={
             <LabelMenu
               conversation={conversation}
@@ -172,12 +172,13 @@ export function ContextPanel({
 
         {/* Seção 2: Etiquetas do Contato */}
         <CardSection
-          title="Etiquetas do Contato"
+          title="Etiqueta do Contato"
           action={
             <LabelMenu
               conversation={{ ...conversation, labels: contact.labels }}
               labels={labels}
               onChange={onSetContactLabels}
+              title="Etiqueta do contato"
             />
           }
         >

@@ -132,6 +132,8 @@ interface InboxWorkspaceProps {
   }[];
   /** Mostra o atalho "Gerenciar canais" na coluna de canais. */
   readonly canManageInboxes: boolean;
+  /** A conta possui IA e esta pessoa pode assumir/devolver conversas. */
+  readonly canControlAi: boolean;
   readonly moveInbox: (input: {
     conversationId: string;
     inboxId: string;
@@ -546,6 +548,7 @@ export function InboxWorkspace(props: InboxWorkspaceProps) {
               onChangePriority={inbox.changePriority}
               onToggleAiPause={inbox.toggleAiPause}
               aiPausePending={inbox.aiPausePending}
+              canControlAi={props.canControlAi}
               onSetLabels={inbox.setLabels}
               onBack={() => setPane('lista')}
               isContextOpen={isContextOpen}

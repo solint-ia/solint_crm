@@ -12,14 +12,20 @@ import {
 import type { PipelineSummary } from '@/core/domain/pipeline';
 import { InfoTooltip } from '@/components/ui/info-tooltip';
 import { useFormatarMoeda } from '@/components/layout/regional-provider';
-
+import { cn } from '@/lib/cn';
 
 interface KanbanMetricsStripProps {
   readonly summary: PipelineSummary;
   readonly isFiltered?: boolean;
+  /** Desligado, o cartão de valor total some e "em negociação" vira contagem. */
+  readonly showAmounts?: boolean;
 }
 
-export function KanbanMetricsStrip({ summary, isFiltered = false }: KanbanMetricsStripProps) {
+export function KanbanMetricsStrip({
+  summary,
+  isFiltered = false,
+  showAmounts = true,
+}: KanbanMetricsStripProps) {
   const formatarMoeda = useFormatarMoeda();
   const [collapsed, setCollapsed] = useState(false);
 
@@ -48,7 +54,12 @@ export function KanbanMetricsStrip({ summary, isFiltered = false }: KanbanMetric
       </div>
 
       {!collapsed && (
-        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <div
+          className={cn(
+            'mt-2 grid grid-cols-2 gap-2 sm:grid-cols-2',
+            showAmounts ? 'lg:grid-cols-4' : 'lg:grid-cols-3',
+          )}
+        >
           {/* Card 1: Total de Oportunidades */}
           <div className="flex items-center gap-3 rounded-control border border-line bg-surface p-2.5 shadow-2xs transition-all hover:border-line">
             <div className="flex size-8 shrink-0 items-center justify-center rounded-control bg-blue-soft text-blue-text">
@@ -66,17 +77,19 @@ export function KanbanMetricsStrip({ summary, isFiltered = false }: KanbanMetric
           </div>
 
           {/* Card 2: Valor Total do Funil */}
-          <div className="flex items-center gap-3 rounded-control border border-line bg-surface p-2.5 shadow-2xs transition-all hover:border-line">
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-control bg-emerald-500/12 text-emerald-600 dark:text-emerald-400">
-              <CircleDollarSign className="size-4" />
+          {showAmounts ? (
+            <div className="flex items-center gap-3 rounded-control border border-line bg-surface p-2.5 shadow-2xs transition-all hover:border-line">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-control bg-emerald-500/12 text-emerald-600 dark:text-emerald-400">
+                <CircleDollarSign className="size-4" />
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-micro font-medium text-dim uppercase">Valor Total</p>
+                <p className="font-display text-title font-bold text-ink tracking-tight tabular-nums">
+                  {formatarMoeda(summary.totalValueInCents)}
+                </p>
+              </div>
             </div>
-            <div className="min-w-0">
-              <p className="truncate text-micro font-medium text-dim uppercase">Valor Total</p>
-              <p className="font-display text-title font-bold text-ink tracking-tight tabular-nums">
-                {formatarMoeda(summary.totalValueInCents)}
-              </p>
-            </div>
-          </div>
+          ) : null}
 
           {/* Card 3: Em Negociação */}
           <div className="flex items-center gap-3 rounded-control border border-line bg-surface p-2.5 shadow-2xs transition-all hover:border-line">
@@ -86,10 +99,21 @@ export function KanbanMetricsStrip({ summary, isFiltered = false }: KanbanMetric
             <div className="min-w-0">
               <p className="truncate text-micro font-medium text-dim uppercase">Em Negociação</p>
               <p className="font-display text-title font-bold text-ink tracking-tight tabular-nums">
-                {formatarMoeda(summary.inNegotiationValueInCents)}{' '}
-                <span className="text-micro font-normal text-muted">
-                  ({summary.inNegotiationCount})
-                </span>
+                {showAmounts ? (
+                  <>
+                    {formatarMoeda(summary.inNegotiationValueInCents)}{' '}
+                    <span className="text-micro font-normal text-muted">
+                      ({summary.inNegotiationCount})
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    {summary.inNegotiationCount}{' '}
+                    <span className="text-micro font-normal text-muted">
+                      {summary.inNegotiationCount === 1 ? 'oportunidade' : 'oportunidades'}
+                    </span>
+                  </>
+                )}
               </p>
             </div>
           </div>

@@ -2,6 +2,7 @@ import { can, canSeeInbox } from '@/core/domain/user';
 import { container } from '@/infrastructure/container';
 import { prisma } from '@/infrastructure/db/prisma';
 import { qrImage } from '@/infrastructure/whatsapp/qr-image';
+import { cloudStatusPayload } from '@/infrastructure/whatsapp/cloud/cloud-connection';
 import { waEventBus, type WhatsAppStatusPayload } from '@/infrastructure/whatsapp/whatsapp-events';
 
 export const dynamic = 'force-dynamic';
@@ -29,7 +30,7 @@ export async function GET(request: Request, props: { params: Promise<{ inboxId: 
   // Valida que a Inbox pertence à conta
   const inbox = await prisma.inbox.findFirst({
     where: { id: inboxId, accountId: session.account.id },
-    select: { id: true },
+    select: { id: true, provider: true },
   });
 
   if (!inbox) {
@@ -63,12 +64,16 @@ export async function GET(request: Request, props: { params: Promise<{ inboxId: 
 
       // 1. Envia estado inicial lido diretamente do banco de dados
       const conn = await prisma.whatsAppConnection.findUnique({ where: { inboxId } });
+      const cloud =
+        inbox.provider === 'cloud_api'
+          ? await cloudStatusPayload(session.account.id, inboxId).catch(() => null)
+          : null;
 
-      publish({
+      if (cloud) publish(cloud);
+      else publish({
         inboxId,
         status: (conn?.status as WhatsAppStatusPayload['status']) ?? 'desconectado',
         qr: conn?.qrPayload ?? undefined,
-        pairingCode: conn?.pairingCode ?? undefined,
         error: conn?.lastError ?? undefined,
         phone: conn?.phoneJid ?? undefined,
         name: conn?.profileName ?? 'WhatsApp',

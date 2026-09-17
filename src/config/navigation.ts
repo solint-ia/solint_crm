@@ -1,5 +1,6 @@
 import type { Route } from 'next';
-import type { Permission } from '@/core/domain/user';
+import type { Permission, Session } from '@/core/domain/user';
+import { hasAiAgentAccess } from './ai-agent-access';
 import { FEATURES } from './features';
 
 export type NavIcon =
@@ -29,6 +30,14 @@ export const reachesNavItem = (permissions: readonly Permission[], item: NavItem
   Array.isArray(item.permission)
     ? item.permission.some((p) => permissions.includes(p))
     : permissions.includes(item.permission as Permission);
+
+/** Navegacao efetiva: permissao do usuario e produtos liberados para a conta. */
+export const navItemsForSession = (session: Session): readonly NavItem[] =>
+  NAV_ITEMS.filter(
+    (item) =>
+      reachesNavItem(session.permissions, item) &&
+      (item.id !== 'agentes-ia' || hasAiAgentAccess(session.account)),
+  );
 
 /**
  * Toda permissão de leitura de alguma sub-seção de Configurações.

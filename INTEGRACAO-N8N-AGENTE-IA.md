@@ -130,6 +130,17 @@ Quem julga é o horário da mensagem, não o da entrega, então uma fila represa
 que chega depois continua respeitando a grade. Com o horário desligado, o agente
 atende a qualquer hora (`agenteNoHorario: true`).
 
+### Acesso do agente por conta
+
+A plataforma pode desconectar o agente de IA de uma conta sem desligar os seus
+webhooks. Nesse estado, os eventos continuam chegando para integrações e memória,
+mas o corpo traz `agenteHabilitado: false` e `agentePausado: true`. O fluxo deve
+sempre encerrar antes de gerar uma resposta quando `agentePausado` for verdadeiro.
+
+O CRM também recusa com HTTP `403` uma tentativa de resposta do agente por
+`POST /api/v1/mensagens` enquanto a conta estiver sem acesso. Essa segunda guarda
+fecha a janela em que o workflow começou antes de o administrador desconectar a IA.
+
 ### Entrega e tolerância a falhas
 
 O CRM grava cada entrega em uma outbox persistente e um runner faz o `POST` JSON,
@@ -228,7 +239,10 @@ Uma mensagem de texto numa conversa já existente:
     "conversaId": "cv-wa-ibx-comercial-rj-5521999620011",
     "contatoId": "ct-wa-acc-solint-5521999620011",
     "mensagemId": "msg-wa-cv-wa-ibx-comercial-rj-5521999620011-3EB0ABC123",
-    "conversaNova": false
+    "conversaNova": false,
+    "agenteHabilitado": true,
+    "agentePausado": false,
+    "agenteNoHorario": true
   }
 }
 ```

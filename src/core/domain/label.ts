@@ -44,3 +44,25 @@ export interface Label {
   readonly description?: string;
   readonly usageCount?: number;
 }
+
+/**
+ * Uma conversa, ou um contato, tem no máximo uma etiqueta.
+ *
+ * A etiqueta virou o estado do atendimento ("Interessado", "Proposta"), e
+ * estado é um só: com duas, a regra de automação e o funil não teriam como
+ * dizer qual delas vale. Aplicar uma nova **substitui** a anterior.
+ *
+ * Quando chega mais de uma, vence a que ainda não estava aplicada, que é a que
+ * a pessoa acabou de escolher. Chegam várias de uma aba aberta antes desta
+ * regra, que ainda manda o conjunto inteiro, e de cadastro antigo que acumulou
+ * etiquetas; recusar esses casos trocaria a escolha da pessoa por um erro.
+ */
+export const singleLabel = <T extends { readonly id: Id }>(
+  anteriores: readonly Id[],
+  escolhidas: readonly T[],
+): readonly T[] => {
+  if (escolhidas.length <= 1) return escolhidas;
+  const nova = escolhidas.findLast((label) => !anteriores.includes(label.id));
+  const vencedora = nova ?? escolhidas.at(-1);
+  return vencedora ? [vencedora] : [];
+};

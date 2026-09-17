@@ -154,7 +154,6 @@ export const inboxStatusFrom = (
       return pareada ? 'reconectando' : 'pareando';
     case 'gerando_qr':
     case 'aguardando_leitura':
-    case 'aguardando_codigo':
       return 'pareando';
     case 'desconectado':
       return 'desconectado';

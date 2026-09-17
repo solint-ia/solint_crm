@@ -2,6 +2,7 @@ import type { Conversation, Priority } from '../domain/conversation';
 import type { Label } from '../domain/label';
 import { DomainError, fail, ok, type Id, type Result } from '../domain/shared';
 import { can, type Session } from '../domain/user';
+import { hasAiAgentAccess } from '@/config/ai-agent-access';
 import type { Assignee, ConversationWriter } from '../ports/conversation-repository';
 
 /**
@@ -56,6 +57,11 @@ export interface SetAiPauseInput {
 export const createSetAiPause =
   (repository: ConversationWriter) =>
   async ({ session, conversationId, paused }: SetAiPauseInput): Promise<Result<Conversation>> => {
+    if (!hasAiAgentAccess(session.account)) {
+      return fail(
+        new DomainError('Agente de IA não está disponível para esta conta.', 'FORBIDDEN'),
+      );
+    }
     if (!can(session, 'conversas:responder')) {
       return fail(new DomainError('Sem permissão para pausar o agente.', 'FORBIDDEN'));
     }

@@ -31,6 +31,8 @@ interface KanbanToolbarProps {
   readonly filters: BoardFilters;
   readonly sortOption: SortOption;
   readonly owners: readonly string[];
+  /** Desligado, somem a ordenação por valor e a faixa de valor. */
+  readonly showAmounts?: boolean;
   readonly onFilterChange: <K extends keyof BoardFilters>(key: K, value: BoardFilters[K]) => void;
   readonly onSortChange: (sort: SortOption) => void;
   readonly onClearFilters: () => void;
@@ -58,6 +60,7 @@ export function KanbanToolbar({
   filters,
   sortOption,
   owners,
+  showAmounts = true,
   onFilterChange,
   onSortChange,
   onClearFilters,
@@ -72,7 +75,7 @@ export function KanbanToolbar({
     filters.source,
     filters.period && filters.period !== 'todos' ? filters.period : null,
     filters.priority,
-    filters.valueRange && filters.valueRange !== 'todos' ? filters.valueRange : null,
+    showAmounts && filters.valueRange && filters.valueRange !== 'todos' ? filters.valueRange : null,
   ].filter(Boolean).length;
 
   const hasActiveFilters = activeFiltersCount > 0 || Boolean(filters.searchQuery.trim());
@@ -129,8 +132,12 @@ export function KanbanToolbar({
               className="h-8.5 rounded-control border border-line bg-surface px-2.5 text-body text-ink outline-none transition-colors focus:border-brand"
             >
               <option value="recentes">Mais recentes</option>
-              <option value="maior_valor">Maior valor (R$)</option>
-              <option value="menor_valor">Menor valor (R$)</option>
+              {showAmounts ? (
+                <>
+                  <option value="maior_valor">Maior valor (R$)</option>
+                  <option value="menor_valor">Menor valor (R$)</option>
+                </>
+              ) : null}
               <option value="proxima_atividade">Próxima atividade</option>
             </select>
           </div>
@@ -256,7 +263,7 @@ export function KanbanToolbar({
             </div>
 
             {/* Faixa de Valor */}
-            <div>
+            <div className={showAmounts ? undefined : 'hidden'}>
               <label className="mb-1 block text-micro font-semibold uppercase text-dim">
                 Faixa de Valor (R$)
               </label>
@@ -366,7 +373,7 @@ export function KanbanToolbar({
             </span>
           )}
 
-          {filters.valueRange && filters.valueRange !== 'todos' && (
+          {showAmounts && filters.valueRange && filters.valueRange !== 'todos' && (
             <span className="inline-flex items-center gap-1 rounded-full bg-cyan-soft border border-cyan-soft text-cyan-text px-2 py-0.5 text-meta font-medium">
               <span>
                 Faixa:{' '}

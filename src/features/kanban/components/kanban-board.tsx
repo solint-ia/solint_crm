@@ -190,7 +190,9 @@ export function KanbanBoard({
     Boolean(board.filters.source) ||
     Boolean(board.filters.priority) ||
     Boolean(board.filters.period && board.filters.period !== 'todos') ||
-    Boolean(board.filters.valueRange && board.filters.valueRange !== 'todos');
+    Boolean(
+      pipeline.showAmounts && board.filters.valueRange && board.filters.valueRange !== 'todos',
+    );
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-app">
@@ -207,13 +209,18 @@ export function KanbanBoard({
       />
 
       {/* Faixa de Resumo do Funil (KPIs) */}
-      <KanbanMetricsStrip summary={board.summary} isFiltered={isFiltered} />
+      <KanbanMetricsStrip
+        summary={board.summary}
+        isFiltered={isFiltered}
+        showAmounts={pipeline.showAmounts}
+      />
 
       {/* Nível 2: Barra de Filtros e Ações */}
       <KanbanToolbar
         filters={board.filters}
         sortOption={board.sortOption}
         owners={owners}
+        showAmounts={pipeline.showAmounts}
         onFilterChange={board.setFilter}
         onSortChange={board.setSortOption}
         onClearFilters={board.clearAllFilters}
@@ -328,6 +335,7 @@ export function KanbanBoard({
                     deals={stageDeals}
                     count={count}
                     total={total}
+                    showAmounts={pipeline.showAmounts}
                     isStale={board.isStale}
                     isDragging={board.draggingId !== null}
                     isDragOver={board.dragOverStageId === stage.id}
@@ -360,6 +368,7 @@ export function KanbanBoard({
           <DealDetailPanel
             deal={board.openDeal}
             stages={board.stages}
+            showAmounts={pipeline.showAmounts}
             onClose={() => board.setOpenDealId(null)}
             onEdit={(deal) => board.setEditingDeal(deal)}
             onDelete={handleDeleteDeal}
@@ -381,6 +390,7 @@ export function KanbanBoard({
         stages={board.stages}
         initialStageId={board.newDealStageId}
         owners={owners}
+        showAmounts={pipeline.showAmounts}
         onSubmit={handleCreateDeal}
       />
 
@@ -390,6 +400,7 @@ export function KanbanBoard({
         deal={board.editingDeal}
         stages={board.stages}
         owners={owners}
+        showAmounts={pipeline.showAmounts}
         onClose={() => board.setEditingDeal(null)}
         onSubmit={handleEditDeal}
       />

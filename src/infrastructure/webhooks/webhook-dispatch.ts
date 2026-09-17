@@ -2,6 +2,7 @@ import { createHash, createHmac } from 'node:crypto';
 
 import { agentWorksAt, normalizeAgentSchedule } from '@/core/domain/agent-schedule';
 import { normalizeBusinessHours } from '@/core/domain/business-hours';
+import { hasAiAgentAccess } from '@/config/ai-agent-access';
 import { asJson, prisma, readJson } from '@/infrastructure/db/prisma';
 import { CHANNELS, postgresPubSub } from '@/infrastructure/db/postgres-pubsub';
 
@@ -86,6 +87,8 @@ export interface SolintRefs {
  * da mesma mensagem nunca discordam entre si.
  */
 export interface SolintRefsEntregues extends SolintRefs {
+  /** A plataforma liberou o produto de IA para esta conta. */
+  readonly agenteHabilitado: boolean;
   /**
    * O agente de IA está fora desta conversa neste instante.
    *
@@ -302,11 +305,14 @@ export const dispararWebhooks = async (
   try {
     const inboxId = payload.solint.caixaEntradaId;
 
-    const noHorario = await agenteAtendeEm(
-      payload.solint.contaId,
-      inboxId,
-      momentoDaMensagem(payload),
-    );
+    const [noHorario, conta] = await Promise.all([
+      agenteAtendeEm(payload.solint.contaId, inboxId, momentoDaMensagem(payload)),
+      prisma.account.findUnique({
+        where: { id: payload.solint.contaId },
+        select: { aiAgentAccessEnabled: true },
+      }),
+    ]);
+    const agenteHabilitado = Boolean(conta && hasAiAgentAccess(conta));
 
     // A pausa é lida aqui, e não em cada um dos três pontos que montam corpo:
     // é a mesma pergunta em todos, e a resposta muda entre um disparo e o
@@ -327,12 +333,13 @@ export const dispararWebhooks = async (
       conversa?.aiPausedReason &&
       (!conversa.aiPausedUntil || conversa.aiPausedUntil.getTime() > Date.now()),
     );
-    const pausado = !noHorario || pausadoPorConversa;
+    const pausado = !agenteHabilitado || !noHorario || pausadoPorConversa;
 
     const corpo: Omit<WebhookPayload, 'destination'> = {
       ...payload,
       solint: {
         ...payload.solint,
+        agenteHabilitado,
         agentePausado: pausado,
         agenteNoHorario: noHorario,
         ...(pausadoPorConversa && conversa?.aiPausedUntil

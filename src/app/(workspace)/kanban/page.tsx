@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { KanbanBoard } from '@/features/kanban/components/kanban-board';
 import { can } from '@/core/domain/user';
 import { visiblePipelines } from '@/core/domain/pipeline';
-import { NAV_ITEMS, reachesNavItem } from '@/config/navigation';
+import { navItemsForSession } from '@/config/navigation';
 import { AccessDenied } from '@/components/layout/access-denied';
 import { container } from '@/infrastructure/container';
 import { moveDealAction } from './actions';
@@ -39,7 +39,7 @@ export default async function KanbanPage({
     container.settings.get(session.account.id),
   ]);
 
-  const navItems = NAV_ITEMS.filter((item) => reachesNavItem(session.permissions, item));
+  const navItems = navItemsForSession(session);
   // O seletor não depende de já existir um card: todos os membros da conta
   // podem receber uma oportunidade. Nomes antigos ainda usados por cards são
   // preservados para que o filtro não torne esses registros inalcançáveis.

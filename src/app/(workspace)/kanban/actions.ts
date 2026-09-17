@@ -49,6 +49,52 @@ export async function createPipelineAction(
   }
 }
 
+const showAmountsSchema = z.object({
+  pipelineId: z.string().min(1).max(128),
+  showAmounts: z.boolean(),
+});
+
+/**
+ * Mostra ou esconde os valores (R$) de um funil.
+ *
+ * Mesma permissão de criar e excluir funil: é configuração do quadro, que vale
+ * para todos que o abrem, e não preferência de quem clicou.
+ */
+export async function setPipelineShowAmountsAction(
+  input: unknown,
+): Promise<{ ok: boolean; error?: string }> {
+  const parsed = showAmountsSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Funil inválido.' };
+
+  try {
+    const session = await container.session.getCurrentSession();
+    if (!can(session, 'config.equipe.papeis:escrever')) {
+      return { ok: false, error: 'Apenas o administrador pode alterar o funil.' };
+    }
+    const pipeline = await container.pipelines.setShowAmounts(
+      session.account.id,
+      parsed.data.pipelineId,
+      parsed.data.showAmounts,
+    );
+    await writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'configuracao.alterada',
+      targetType: 'configuracao',
+      targetId: pipeline.id,
+      targetName: pipeline.name,
+      metadata: {
+        detalhe: `${parsed.data.showAmounts ? 'exibiu' : 'ocultou'} os valores do funil ${pipeline.name}`,
+      },
+    });
+    revalidatePath('/kanban');
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Erro ao alterar o funil.' };
+  }
+}
+
 const deletePipelineSchema = z.object({
   pipelineId: z.string().min(1).max(128),
 });

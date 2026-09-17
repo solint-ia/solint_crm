@@ -4,6 +4,8 @@ import type { Id } from '../domain/shared';
 export interface PipelineRepository {
   listPipelines(accountId: Id): Promise<readonly Pipeline[]>;
   createPipeline(accountId: Id, name: string): Promise<Pipeline>;
+  /** Liga ou desliga a exibição de valores (R$) no funil. */
+  setShowAmounts(accountId: Id, pipelineId: Id, showAmounts: boolean): Promise<Pipeline>;
   /** Exclui um funil personalizado e devolve quantas oportunidades saíram com ele. */
   deletePipeline(accountId: Id, pipelineId: Id): Promise<number>;
   listDeals(accountId: Id, pipelineId: Id): Promise<readonly Deal[]>;
@@ -42,11 +44,18 @@ export interface PipelineRepository {
   /**
    * Apaga todos os cards de um contato. Devolve quantos saíram.
    *
-   * Usado quando o contato perde a última etiqueta ligada a uma etapa: sem
-   * etiqueta de etapa ele não pertence a nenhuma coluna, e um card fora de
-   * coluna não existe.
+   * Usado quando o contato fica sem etiqueta, ou perde a última ligada a uma
+   * etapa: sem ela ele não pertence a nenhuma coluna, e um card fora de coluna
+   * não existe.
    */
   deleteDealsOfContact(accountId: Id, contactId: Id): Promise<number>;
+  /**
+   * Apaga os cards ligados a uma conversa, em qualquer funil. Devolve quantos saíram.
+   *
+   * O par do anterior para a etiqueta da conversa: é ela que as automações
+   * leem para colocar a conversa no funil, e tirá-la tira a conversa de lá.
+   */
+  deleteDealsOfConversation(accountId: Id, conversationId: Id): Promise<number>;
 
   /**
    * Checklist do card.

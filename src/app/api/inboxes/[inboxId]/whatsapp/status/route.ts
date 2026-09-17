@@ -40,6 +40,7 @@ export async function GET(_request: Request, props: { params: Promise<{ inboxId:
     where: { id: inboxId, accountId: session.account.id },
     select: {
       id: true,
+      provider: true,
       waConnection: {
         select: {
           credsCipher: true,
@@ -59,6 +60,11 @@ export async function GET(_request: Request, props: { params: Promise<{ inboxId:
   const channel = await getWhatsAppChannel();
   const status = await channel.getStatus(session.account.id, inboxId);
 
+  // Caixa da API oficial: não há QR nem sessão de worker para descrever.
+  if (inbox.provider === 'cloud_api') {
+    return NextResponse.json({ ok: true, engine: channel.engine, status });
+  }
+
   const owner = status.owner;
   const visible = !owner || owner.accountId === session.account.id;
 
@@ -74,6 +80,6 @@ export async function GET(_request: Request, props: { params: Promise<{ inboxId:
           historyImportEnabled:
             process.env.WA_HISTORY_IMPORT === '1' && channel.engine === 'worker',
         }
-      : { ...status, qr: undefined, pairingCode: undefined },
+      : { ...status, qr: undefined },
   });
 }

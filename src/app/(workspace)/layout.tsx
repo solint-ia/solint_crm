@@ -2,7 +2,7 @@ import { RegionalProvider } from '@/components/layout/regional-provider';
 import { NavigationRail } from '@/components/layout/navigation-rail';
 import { PlatformBanner } from '@/components/layout/platform-banner';
 import { ToastProvider } from '@/components/ui/toast';
-import { NAV_ITEMS, reachesNavItem } from '@/config/navigation';
+import { navItemsForSession } from '@/config/navigation';
 import { can, canSeeInbox } from '@/core/domain/user';
 import { ConversationEventsProvider } from '@/features/realtime/conversation-events';
 import { LiveNotificationsProvider } from '@/features/realtime/live-notifications';
@@ -113,7 +113,7 @@ export default async function WorkspaceLayout({
       unreadCount: conversations.filter((c) => c.inboxId === inbox.id && c.unreadCount > 0).length,
     }));
 
-  const items = NAV_ITEMS.filter((item) => reachesNavItem(session.permissions, item));
+  const items = navItemsForSession(session);
 
   return (
     <ConversationEventsProvider accountId={session.account.id}>

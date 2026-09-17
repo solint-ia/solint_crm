@@ -130,9 +130,11 @@ export class PrismaContactRepository implements ContactRepository {
     if (!primary) throw new NotFoundError('Contato', primaryId);
     if (!duplicate) throw new NotFoundError('Contato', duplicateId);
 
-    const mergedLabels = [
-      ...new Set([...primary.labels, ...duplicate.labels].map((label) => label.id)),
-    ];
+    // Uma etiqueta por contato (`singleLabel`): a do principal vence, e a do
+    // duplicado só entra quando o principal não tinha nenhuma.
+    const mergedLabels = [...primary.labels, ...duplicate.labels]
+      .map((label) => label.id)
+      .slice(0, 1);
 
     const row = await prisma.$transaction(async (tx) => {
       await tx.conversation.updateMany({

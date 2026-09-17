@@ -14,6 +14,7 @@ import { CreateAgentButton } from '@/features/agentes-ia/components/create-agent
 import { can } from '@/core/domain/user';
 import { AccessDenied } from '@/components/layout/access-denied';
 import { FEATURES } from '@/config/features';
+import { hasAiAgentAccess } from '@/config/ai-agent-access';
 import { container } from '@/infrastructure/container';
 import { formatNumber } from '@/lib/format';
 
@@ -38,6 +39,7 @@ export default function AgentesIaPage() {
 
 async function AgentesData() {
   const session = await container.session.getCurrentSession();
+  if (!hasAiAgentAccess(session.account)) redirect('/conversas');
   // A rail ja esconde o item; sem esta checagem, a URL direta entraria.
   if (!can(session, 'agentes-ia:ler')) return <AccessDenied permission="agentes-ia:ler" />;
   const [agents, notifications] = await Promise.all([

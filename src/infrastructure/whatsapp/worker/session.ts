@@ -254,17 +254,6 @@ export class WhatsAppSession {
    * quando o socket fica de pé e o Baileys só troca o QR.
    */
   private qrCycles = 0;
-  /** E.164 sem o sinal de + enquanto o pareamento por codigo esta ativo. */
-  private pairingPhone: string | undefined;
-  /**
-   * O código já foi pedido **neste socket**?
-   *
-   * O Baileys emite `qr` a cada rotação de referência, e cada pedido de código
-   * invalida o anterior no servidor. Sem a trava, o código na tela mudaria a
-   * cada ~20 s enquanto a pessoa ainda o digita no celular. Volta a `false` a
-   * cada socket novo, em `start()`.
-   */
-  private pairingCodeRequested = false;
   /**
    * A sessao ja foi pareada alguma vez?
    *
@@ -846,53 +835,6 @@ export class WhatsAppSession {
    * gravação em silêncio seria trocar um defeito visível por um invisível.
    */
   /**
-   * Pede o código de 8 caracteres, uma vez por socket.
-   *
-   * Só é chamado a partir do primeiro `qr`: antes dele o WebSocket não está
-   * aberto e o Baileys recusa o envio (ver o comentário em `start()`). As
-   * chaves que o pedido gera são salvas pelo handler de `creds.update`.
-   *
-   * A falha não é relançada: quem pediu a conexão já recebeu a resposta do
-   * `start()`. Ela vira estado — `desconectado` com o motivo —, que é o que a
-   * tela acompanha.
-   */
-  private async solicitarCodigoDePareamento(): Promise<void> {
-    const socket = this.socket;
-    if (this.pairingCodeRequested || !this.pairingPhone || !socket) return;
-    this.pairingCodeRequested = true;
-
-    try {
-      const code = await socket.requestPairingCode(this.pairingPhone);
-      // O socket pode ter sido trocado enquanto o pedido estava em voo: o
-      // código pertence ao socket antigo e não vale mais nada.
-      if (this.socket !== socket) return;
-      this.isInitializing = false;
-      await this.registrarEstado({
-        status: 'aguardando_codigo',
-        pairingCode: code.replace(/[^A-Z0-9]/gi, '').toUpperCase(),
-        qr: undefined,
-        error: undefined,
-      });
-    } catch (error) {
-      if (this.socket !== socket) return;
-      const message = error instanceof Error ? error.message : 'falha desconhecida';
-      console.error(
-        `[WhatsAppSession ${this.inboxId}] Falha ao pedir o código de pareamento:`,
-        error,
-      );
-      this.isInitializing = false;
-      this.pairingPhone = undefined;
-      this.teardownSocket();
-      await this.registrarEstado({
-        status: 'desconectado',
-        qr: undefined,
-        pairingCode: undefined,
-        error: `Não foi possível gerar o código de pareamento (${message}). Tente novamente.`,
-      });
-    }
-  }
-
-  /**
    * Avisa no log quando o mesmo número está pareado em outra caixa.
    *
    * O WhatsApp aceita vários aparelhos vinculados, então parear o mesmo número
@@ -951,9 +893,6 @@ export class WhatsAppSession {
       inboxId: this.inboxId,
       updatedAt: new Date().toISOString(),
     };
-    if (this.currentStatus.status !== 'aguardando_codigo') {
-      this.currentStatus = { ...this.currentStatus, pairingCode: undefined };
-    }
     if (this.currentStatus.status !== 'aguardando_leitura') {
       this.currentStatus = { ...this.currentStatus, qr: undefined };
     }
@@ -981,7 +920,6 @@ export class WhatsAppSession {
         status: this.currentStatus.status,
         lastError: this.currentStatus.error ?? null,
         qrPayload: this.currentStatus.qr ?? null,
-        pairingCode: this.currentStatus.pairingCode ?? null,
         profileName: this.currentStatus.name ?? null,
         phoneJid: this.currentStatus.phone ?? null,
         ...(this.currentStatus.status === 'conectado'
@@ -1010,7 +948,9 @@ export class WhatsAppSession {
      * `whatsapp-xxxxxx` no lugar do número.
      */
     await prisma.inbox.updateMany({
-      where: { id: this.inboxId, accountId: this.accountId },
+      // Caixa que migrou para a API oficial: a sessão de QR que ainda está
+      // encerrando não pode escrever "desconectado" por cima da conexão nova.
+      where: { id: this.inboxId, accountId: this.accountId, NOT: { provider: 'cloud_api' } },
       data: {
         status: inboxStatusFrom(this.currentStatus.status, this.isPaired),
         // O identificador só muda quando há número: um `undefined` a caminho
@@ -1024,16 +964,7 @@ export class WhatsAppSession {
     waEventBus.emitStatus(this.currentStatus);
   }
 
-  /** O pedido escolhe um método de pareamento diferente do que está em curso? */
-  private trocaDeMetodo(options: { pairingMethod?: 'qr' | 'phone'; pairingPhone?: string }) {
-    if (options.pairingMethod === 'phone') return options.pairingPhone !== this.pairingPhone;
-    if (options.pairingMethod === 'qr') return this.pairingPhone !== undefined;
-    return false;
-  }
-
-  async start(
-    options: { pairingMethod?: 'qr' | 'phone'; pairingPhone?: string } = {},
-  ): Promise<WhatsAppStatusPayload> {
+  async start(): Promise<WhatsAppStatusPayload> {
     // Sessão já de pé, ou já subindo: não há o que iniciar — mas há o que
     // corrigir. Quem enfileirou o `connect` gravou `conectando` na linha do
     // banco antes de mandar o comando, e sair daqui em silêncio deixava esse
@@ -1044,20 +975,9 @@ export class WhatsAppSession {
       await this.updateStatus({});
       return this.currentStatus;
     }
-    // Subindo, mas com outro método de pareamento pedido: o pedido novo vence.
-    // Sem isto, escolher "código" enquanto o QR ainda estava sendo gerado não
-    // fazia nada, e o código nunca chegava.
-    if (this.isInitializing && !this.trocaDeMetodo(options)) {
+    if (this.isInitializing) {
       await this.updateStatus({});
       return this.currentStatus;
-    }
-
-    // Reconexoes internas chamam start() sem opcoes e preservam o telefone.
-    // Apenas um comando explicito escolhe ou troca o metodo de pareamento.
-    if (options.pairingMethod === 'phone') {
-      this.pairingPhone = options.pairingPhone;
-    } else if (options.pairingMethod === 'qr') {
-      this.pairingPhone = undefined;
     }
 
     this.isInitializing = true;
@@ -1069,14 +989,12 @@ export class WhatsAppSession {
 
     // Fecha o socket anterior antes de abrir outro.
     this.teardownSocket();
-    this.pairingCodeRequested = false;
 
     try {
       await this.updateStatus({
         status: 'conectando',
         error: undefined,
         qr: undefined,
-        pairingCode: undefined,
       });
 
       const { state, saveCreds } = await initPostgresAuthState(this.inboxId, {
@@ -1220,25 +1138,17 @@ export class WhatsAppSession {
 
       this.setupEventHandlers(saveCreds);
 
-      // O código de pareamento NÃO é pedido aqui: o socket acabou de nascer e o
-      // WebSocket ainda não abriu. O `requestPairingCode` do Baileys envia um nó
-      // pelo socket, e `sendRawMessage` recusa com `Connection Closed` enquanto
-      // `ws.isOpen` é falso — pedir neste ponto falhava em toda tentativa. O
-      // pedido sai no primeiro `qr` de `connection.update`, que é o sinal de que
-      // o handshake terminou. Ver `solicitarCodigoDePareamento`.
       return this.currentStatus;
     } catch (error) {
       // Uma tentativa já superada não mexe no estado: ele pertence à mais nova.
       if (this.encerrada || tentativa !== this.tentativaDeInicio) return this.currentStatus;
       this.isInitializing = false;
-      this.pairingPhone = undefined;
       this.teardownSocket();
       const message = error instanceof Error ? error.message : 'Falha ao inicializar WhatsApp';
       await this.updateStatus({
         status: 'desconectado',
         error: message,
         qr: undefined,
-        pairingCode: undefined,
       });
       throw error;
     }
@@ -1287,15 +1197,7 @@ export class WhatsAppSession {
       this.guarded('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
-        // No fluxo por telefone o `qr` não é exibido: ele só sinaliza que o
-        // socket ficou pronto para o pedido do código.
-        if (qr && this.pairingPhone && !this.isPaired) {
-          await this.solicitarCodigoDePareamento();
-        }
-
-        // O Baileys tambem pode emitir QR enquanto prepara o socket. No fluxo
-        // por telefone ele nao deve substituir o codigo que o usuario pediu.
-        if (qr && !this.pairingPhone) {
+        if (qr) {
           this.isInitializing = false;
           // Zerar `qrAttempts` aqui tornava o teto de 8 inalcançável: cada QR
           // recebido devolvia o orçamento inteiro, e o par QR→428→QR girava sem
@@ -1312,7 +1214,6 @@ export class WhatsAppSession {
             await this.registrarEstado({
               status: 'desconectado',
               qr: undefined,
-              pairingCode: undefined,
               error: 'O QR expirou sem ser lido. Clique em conectar para gerar outro.',
             });
             return;
@@ -1324,7 +1225,6 @@ export class WhatsAppSession {
           await this.registrarEstado({
             status: 'aguardando_leitura',
             qr,
-            pairingCode: undefined,
             error: undefined,
           });
         }
@@ -1446,7 +1346,6 @@ export class WhatsAppSession {
               {
                 status: 'desconectado',
                 qr: undefined,
-                pairingCode: undefined,
                 error:
                   'O WhatsApp recusou a conexão deste número (código 403). Abra o WhatsApp no ' +
                   'celular para ver se a conta foi restringida ou banida.',
@@ -1467,7 +1366,6 @@ export class WhatsAppSession {
           // O servidor WhatsApp rotineiramente encerra o primeiro socket (código 428/515)
           // antes de despachar o QR. Reconectamos automaticamente para receber o código.
           if (!this.isPaired && !this.isAuthenticated) {
-            const pairingByPhone = Boolean(this.pairingPhone);
             if (
               (statusCode === 428 ||
                 statusCode === 515 ||
@@ -1479,9 +1377,7 @@ export class WhatsAppSession {
                 `[WhatsAppSession ${this.inboxId}] Handshake transitório (${statusCode}). Tentativa ${this.qrAttempts}/8 gerando QR...`,
               );
               this.agendarReconexao(1500);
-              await this.registrarEstado({
-                status: pairingByPhone ? 'conectando' : 'gerando_qr',
-              });
+              await this.registrarEstado({ status: 'gerando_qr' });
               return;
             }
 
@@ -1489,13 +1385,10 @@ export class WhatsAppSession {
             // conectar, e a tentativa seguinte precisa começar inteira.
             this.qrAttempts = 0;
             this.qrCycles = 0;
-            this.pairingPhone = undefined;
             await this.registrarEstado({
               status: 'desconectado',
               qr: undefined,
-              error: pairingByPhone
-                ? 'Não foi possível concluir o pareamento por telefone. Gere um novo código.'
-                : 'O QR expirou sem ser lido. Clique em conectar para gerar outro.',
+              error: 'O QR expirou sem ser lido. Clique em conectar para gerar outro.',
             });
             return;
           }
@@ -1538,7 +1431,6 @@ export class WhatsAppSession {
           this.qrAttempts = 0;
           this.qrCycles = 0;
           this.retryCount = 0;
-          this.pairingPhone = undefined;
           if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
@@ -3782,7 +3674,6 @@ export class WhatsAppSession {
     this.liberarEspera(false);
     this.qrAttempts = 0;
     this.qrCycles = 0;
-    this.pairingPhone = undefined;
 
     const apagou = await wipeAuthState(this.inboxId, {
       workerId: this.workerId,
@@ -3798,7 +3689,6 @@ export class WhatsAppSession {
       {
         status: 'desconectado',
         qr: undefined,
-        pairingCode: undefined,
         phone: undefined,
         name: undefined,
         connectedAt: undefined,
@@ -3852,14 +3742,13 @@ export class WhatsAppSession {
     // e voltar a conectar começa do zero, não do que sobrou da tentativa antiga.
     this.qrAttempts = 0;
     this.qrCycles = 0;
-    this.pairingPhone = undefined;
     if (options.persistStatus !== false) {
       // Só a caixa pareada volta sozinha: uma que estava mostrando QR não é
       // restaurada no boot, e para ela `desconectado` continua sendo a verdade.
       const volta = options.reiniciando === true && this.isPaired;
       await this.updateStatus(
         volta
-          ? { status: 'conectando', qr: undefined, pairingCode: undefined, error: undefined }
+          ? { status: 'conectando', qr: undefined, error: undefined }
           : { status: 'desconectado', qr: undefined },
       );
     }

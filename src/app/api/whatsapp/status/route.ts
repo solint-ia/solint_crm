@@ -41,6 +41,6 @@ export async function GET() {
     // O QR vira imagem só aqui, na borda — ver `qr-image.ts`.
     status: visible
       ? { ...status, qr: await qrImage(status.qr) }
-      : { ...status, qr: undefined, pairingCode: undefined },
+      : { ...status, qr: undefined },
   });
 }

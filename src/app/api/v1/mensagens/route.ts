@@ -7,6 +7,7 @@ import { MAX_MESSAGE_LENGTH } from '@/core/use-cases/send-message';
 import { sessionFromApiToken } from '@/infrastructure/auth/api-token';
 import { container } from '@/infrastructure/container';
 import { prisma, readJson } from '@/infrastructure/db/prisma';
+import { dispararAutomacoes } from '@/infrastructure/automations/dispatch';
 import { getWhatsAppChannel } from '@/infrastructure/whatsapp/channel-provider';
 import {
   conversationTargetShape,
@@ -14,6 +15,7 @@ import {
   resolveApiConversationId,
 } from '../_shared/conversation-target';
 import { agenteAtendeEm } from '@/infrastructure/webhooks/webhook-dispatch';
+import { hasAiAgentAccess } from '@/config/ai-agent-access';
 
 export const dynamic = 'force-dynamic';
 
@@ -167,11 +169,27 @@ export async function POST(request: Request) {
    * agente é justamente para ele poder escrever.
    */
   if (isApiTokenActor(session.user.id)) {
+    if (!hasAiAgentAccess(session.account)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          erro: 'Agente de IA não está disponível para esta conta.',
+          agenteHabilitado: false,
+          agentePausado: true,
+        },
+        { status: 403 },
+      );
+    }
+
     const conversa = await prisma.conversation.findFirst({
       where: { id: conversationId, accountId: session.account.id },
       select: { inboxId: true, aiPausedUntil: true, aiPausedReason: true },
     });
-    const foraDoHorario = !(await agenteAtendeEm(session.account.id, conversa?.inboxId, new Date()));
+    const foraDoHorario = !(await agenteAtendeEm(
+      session.account.id,
+      conversa?.inboxId,
+      new Date(),
+    ));
     const pausadoPorConversa = Boolean(
       conversa?.aiPausedReason &&
       (!conversa.aiPausedUntil || conversa.aiPausedUntil.getTime() > Date.now()),
@@ -348,6 +366,16 @@ export async function POST(request: Request) {
       { status: 502 },
     );
   }
+
+  // A resposta do agente é envio como o da tela, e dispara as mesmas regras de
+  // "mensagem enviada". Sem laço possível: a mensagem que a regra mandar sai por
+  // `dispatchAutoMessage`, que não passa por esta rota.
+  await dispararAutomacoes({
+    accountId: session.account.id,
+    trigger: 'mensagem_enviada',
+    conversationId: conversation.id,
+    messageText: parsed.data.texto,
+  });
 
   // `queued` é o motor worker dizendo "aceitei, ainda não enviei" — o mesmo
   // significado que a bolha "enviando" tem na tela. Quem integra precisa saber

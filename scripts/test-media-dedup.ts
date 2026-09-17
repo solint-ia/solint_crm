@@ -46,7 +46,12 @@ const sessionFor = (accountId: string): Session => ({
     notifications: DEFAULT_NOTIFICATION_PREFERENCES,
     twoFactorEnabled: false,
   },
-  account: { id: accountId, name: 'Conta do teste', plan: 'starter' },
+  account: {
+    id: accountId,
+    name: 'Conta do teste',
+    plan: 'starter',
+    aiAgentAccessEnabled: false,
+  },
   permissions: [],
   availableAccounts: [],
   inboxAccess: 'todas',

@@ -3,6 +3,7 @@ import type { Id } from './shared';
 export const AUTOMATION_TRIGGERS = [
   'conversa_criada',
   'mensagem_recebida',
+  'mensagem_enviada',
   'conversa_pendente',
   'conversa_resolvida',
   'etiqueta_aplicada',
@@ -12,7 +13,8 @@ export type AutomationTrigger = (typeof AUTOMATION_TRIGGERS)[number];
 
 export const AUTOMATION_TRIGGER_LABELS: Readonly<Record<AutomationTrigger, string>> = {
   conversa_criada: 'Quando uma conversa é criada',
-  mensagem_recebida: 'Quando chega uma mensagem',
+  mensagem_recebida: 'Quando uma mensagem é recebida',
+  mensagem_enviada: 'Quando uma mensagem é enviada',
   conversa_pendente: 'Quando a conversa fica pendente',
   conversa_resolvida: 'Quando a conversa é resolvida',
   etiqueta_aplicada: 'Quando uma etiqueta é aplicada',

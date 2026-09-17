@@ -158,6 +158,19 @@ export class PrismaPipelineRepository implements PipelineRepository {
     return pipelineRow(row);
   }
 
+  async setShowAmounts(accountId: Id, pipelineId: Id, showAmounts: boolean): Promise<Pipeline> {
+    const { count } = await prisma.pipeline.updateMany({
+      where: { id: pipelineId, accountId },
+      data: { showAmounts },
+    });
+    if (count === 0) throw new NotFoundError('Funil', pipelineId);
+    const row = await prisma.pipeline.findFirstOrThrow({
+      where: { id: pipelineId, accountId },
+      include: { stages: true, inbox: { select: { name: true } } },
+    });
+    return pipelineRow(row);
+  }
+
   async deletePipeline(accountId: Id, pipelineId: Id): Promise<number> {
     const pipeline = await prisma.pipeline.findFirst({
       where: { id: pipelineId, accountId },
@@ -373,6 +386,11 @@ export class PrismaPipelineRepository implements PipelineRepository {
     // Sem `assertDeal`: um contato que não tem card nenhum não é erro, é o
     // caso comum de quem nunca entrou no funil.
     const { count } = await prisma.deal.deleteMany({ where: { accountId, contactId } });
+    return count;
+  }
+
+  async deleteDealsOfConversation(accountId: Id, conversationId: Id): Promise<number> {
+    const { count } = await prisma.deal.deleteMany({ where: { accountId, conversationId } });
     return count;
   }
 

@@ -11,6 +11,9 @@ import { WA_ENGINE, type WhatsAppChannel } from './channel';
  * derrubaria ambas com `connectionReplaced`.
  *
  * A promessa é memorizada para que o motor seja um só por processo.
+ *
+ * O que sai daqui é sempre o roteador por caixa (`ProviderRouterChannel`): caixa
+ * da API oficial fala com a Meta direto, e as demais seguem para o motor de QR.
  */
 let cached: Promise<WhatsAppChannel> | undefined;
 
@@ -31,11 +34,20 @@ export const getWhatsAppChannel = (): Promise<WhatsAppChannel> => {
        * `workerOnline` conferem primeiro a trava de sessão, que já prova worker
        * vivo e sai do banco, não do barramento.
        */
-      return new QueueWhatsAppChannel();
+      const { CloudApiWhatsAppChannel } = await import('./cloud/cloud-channel');
+      const { ProviderRouterChannel } = await import('./provider-router-channel');
+      // Os eventos da Meta são processados pelo worker, que tem relógio; aqui só
+      // se envia.
+      return new ProviderRouterChannel(new QueueWhatsAppChannel(), new CloudApiWhatsAppChannel());
     }
 
     const { InProcessWhatsAppChannel } = await import('./in-process-channel');
-    const canal = new InProcessWhatsAppChannel();
+    const { CloudApiWhatsAppChannel } = await import('./cloud/cloud-channel');
+    const { ProviderRouterChannel } = await import('./provider-router-channel');
+    const canal = new ProviderRouterChannel(
+      new InProcessWhatsAppChannel(),
+      new CloudApiWhatsAppChannel(),
+    );
 
     /**
      * Sem worker, quem tem relógio é este processo.
@@ -80,6 +92,10 @@ export const getWhatsAppChannel = (): Promise<WhatsAppChannel> => {
     new WebhookEventOutboxRunner().start();
     const { WebhookDeliveryRunner } = await import('../webhooks/webhook-delivery-runner');
     new WebhookDeliveryRunner().start();
+
+    // E os eventos que a Meta manda pela API oficial, pela mesma razão.
+    const { CloudEventRunner } = await import('./cloud/cloud-event-runner');
+    new CloudEventRunner().start();
 
     return canal;
   })();
