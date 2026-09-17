@@ -47,10 +47,15 @@ FROM source AS web
 # `DATABASE_URL` ele lança e o build morre. O adaptador `pg` não conecta antes
 # da primeira consulta, então uma URL que não aponta para nada basta. O
 # `AUTH_SECRET` é exigido com `NODE_ENV=production`, que o build liga sozinho.
+# `WA_ENCRYPTION_KEY` é lida (e validada) na importação de
+# `infrastructure/whatsapp/auth/crypto.ts`, que as rotas da API oficial do
+# WhatsApp agora trazem para o grafo de módulos coletado nesta etapa — precisa
+# só do formato certo (32 bytes em base64url), nunca é usada de fato aqui.
 #
 # Os valores reais chegam em tempo de execução, pelo `env_file` do compose.
 RUN DATABASE_URL="postgresql://build:build@127.0.0.1:1/build" \
     AUTH_SECRET="somente-para-o-build-nao-e-usado-em-execucao" \
+    WA_ENCRYPTION_KEY="AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE" \
     node_modules/.bin/next build
 ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0
 EXPOSE 3000
