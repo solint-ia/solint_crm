@@ -169,7 +169,18 @@ export interface Deal {
   readonly history: readonly DealHistoryEntry[];
   readonly source?: DealSource;
   readonly tasks?: readonly DealTask[];
+  /** Exceção de exibição do valor deste card. Ausente = segue o funil. */
+  readonly showAmount?: boolean;
 }
+
+/**
+ * Se o valor deste card deve aparecer na tela.
+ *
+ * O card decide por si quando `showAmount` está definido; sem escolha própria,
+ * segue o funil inteiro (`Pipeline.showAmounts`).
+ */
+export const dealShowsAmount = (deal: Pick<Deal, 'showAmount'>, pipeline: Pipeline): boolean =>
+  deal.showAmount ?? pipeline.showAmounts;
 
 /** Um card é sinalizado como parado após este limite na mesma etapa. */
 export const STALE_DEAL_DAYS = 5;

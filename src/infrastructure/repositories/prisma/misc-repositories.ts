@@ -171,6 +171,20 @@ export class PrismaPipelineRepository implements PipelineRepository {
     return pipelineRow(row);
   }
 
+  async setDealShowAmount(
+    accountId: Id,
+    dealId: Id,
+    showAmount: boolean | null,
+  ): Promise<Deal> {
+    const { count } = await prisma.deal.updateMany({
+      where: { id: dealId, accountId },
+      data: { showAmount },
+    });
+    if (count === 0) throw new NotFoundError('Oportunidade', dealId);
+    const row = await prisma.deal.findFirstOrThrow({ where: { id: dealId, accountId } });
+    return dealRow(row);
+  }
+
   async deletePipeline(accountId: Id, pipelineId: Id): Promise<number> {
     const pipeline = await prisma.pipeline.findFirst({
       where: { id: pipelineId, accountId },
@@ -294,6 +308,7 @@ export class PrismaPipelineRepository implements PipelineRepository {
       priority?: string;
       source?: string;
       nextAction?: string;
+      showAmount?: boolean | null;
     },
   ): Promise<Deal> {
     const stage = await prisma.pipelineStage.findFirst({
@@ -320,6 +335,7 @@ export class PrismaPipelineRepository implements PipelineRepository {
         nextAction: draft.nextAction ?? 'Entrar em contato para qualificação',
         enteredStageAt: now.toISOString(),
         stageAgeLabel: 'hoje',
+        showAmount: draft.showAmount ?? null,
         history: asJson([
           {
             text: `Oportunidade criada: ${draft.title} em ${stage.name}`,
@@ -344,6 +360,7 @@ export class PrismaPipelineRepository implements PipelineRepository {
       priority?: string;
       source?: string;
       nextAction?: string;
+      showAmount?: boolean | null;
     },
   ): Promise<Deal> {
     const deal = await prisma.deal.findFirst({ where: { id: dealId, accountId } });
@@ -360,6 +377,7 @@ export class PrismaPipelineRepository implements PipelineRepository {
     // ignorava em silêncio: salvar não dava erro e não mudava nada.
     if (patch.title !== undefined) data.title = patch.title;
     if (patch.source !== undefined) data.source = patch.source;
+    if (patch.showAmount !== undefined) data.showAmount = patch.showAmount;
     if (patch.stageId && patch.stageId !== deal.stageId) {
       data.stageId = patch.stageId;
       data.enteredStageAt = new Date().toISOString();

@@ -235,6 +235,7 @@ const createDealSchema = z.object({
   priority: z.enum(['baixa', 'media', 'alta', 'urgente']).optional(),
   source: z.string().optional(),
   nextAction: z.string().trim().max(200).optional(),
+  showAmount: z.boolean().nullable().optional(),
 });
 
 export async function createDealAction(
@@ -257,6 +258,7 @@ export async function createDealAction(
       priority: parsed.data.priority,
       source: parsed.data.source,
       nextAction: parsed.data.nextAction,
+      showAmount: parsed.data.showAmount,
     });
     revalidatePath('/kanban');
     return { ok: true, deal };
@@ -279,6 +281,7 @@ const updateDealSchema = z.object({
   priority: z.enum(['baixa', 'media', 'alta', 'urgente']).optional(),
   source: z.string().optional(),
   nextAction: z.string().trim().max(200).optional(),
+  showAmount: z.boolean().nullable().optional(),
 });
 
 export async function updateDealAction(
@@ -300,6 +303,41 @@ export async function updateDealAction(
     return {
       ok: false,
       error: error instanceof Error ? error.message : 'Erro ao atualizar oportunidade.',
+    };
+  }
+}
+
+const dealShowAmountSchema = z.object({
+  dealId: z.string().min(1),
+  /** `null` apaga a exceção do card e volta a seguir o funil. */
+  showAmount: z.boolean().nullable(),
+});
+
+/**
+ * Exceção de exibição do valor de um card, independente do funil.
+ *
+ * Qualquer pessoa com acesso ao card pode decidir mostrar ou esconder o valor
+ * dele — é uma escolha sobre aquele lead, não uma configuração do quadro.
+ */
+export async function setDealShowAmountAction(
+  input: unknown,
+): Promise<{ ok: boolean; error?: string; deal?: Deal }> {
+  const parsed = dealShowAmountSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Dados inválidos.' };
+
+  try {
+    const session = await container.session.getCurrentSession();
+    const deal = await container.pipelines.setDealShowAmount(
+      session.account.id,
+      parsed.data.dealId,
+      parsed.data.showAmount,
+    );
+    revalidatePath('/kanban');
+    return { ok: true, deal };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro ao alterar o card.',
     };
   }
 }

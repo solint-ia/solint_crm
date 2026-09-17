@@ -25,6 +25,7 @@ interface KanbanColumnProps {
   readonly onOpenDeal: (dealId: string) => void;
   readonly onEditDeal?: (deal: Deal) => void;
   readonly onDeleteDeal?: (dealId: string) => void;
+  readonly onToggleAmount?: (deal: Deal, showAmount: boolean | null) => void;
   readonly onAddDealToStage: (stageId: string) => void;
   readonly onOpenStagesModal: () => void;
 }
@@ -46,6 +47,7 @@ export function KanbanColumn({
   onOpenDeal,
   onEditDeal,
   onDeleteDeal,
+  onToggleAmount,
   onAddDealToStage,
   onOpenStagesModal,
 }: KanbanColumnProps) {
@@ -149,12 +151,13 @@ export function KanbanColumn({
                 deal={deal}
                 stale={isStale(deal)}
                 dragging={draggingId === deal.id}
-                showAmount={showAmounts}
+                pipelineShowAmounts={showAmounts}
                 onDragStart={onDragStart}
                 onDragEnd={onDragEnd}
                 onOpen={onOpenDeal}
                 onEdit={onEditDeal}
                 onDelete={onDeleteDeal}
+                onToggleAmount={onToggleAmount}
               />
             ))}
           </ul>

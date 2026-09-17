@@ -23,6 +23,7 @@ import { useBoard } from '../hooks/use-board';
 import {
   createDealAction,
   deleteDealAction,
+  setDealShowAmountAction,
   updateDealAction,
   updateStagesAction,
 } from '@/app/(workspace)/kanban/actions';
@@ -136,6 +137,14 @@ export function KanbanBoard({
       router.refresh();
     } else {
       throw new Error(res.error ?? 'Erro ao atualizar oportunidade.');
+    }
+  };
+
+  // Ação de Exibir/Ocultar o Valor de um Card
+  const handleToggleAmount = async (deal: Deal, showAmount: boolean | null) => {
+    const res = await setDealShowAmountAction({ dealId: deal.id, showAmount });
+    if (res.ok && res.deal) {
+      board.handleOptimisticUpdate(res.deal);
     }
   };
 
@@ -351,6 +360,7 @@ export function KanbanBoard({
                     onOpenDeal={board.setOpenDealId}
                     onEditDeal={(deal) => board.setEditingDeal(deal)}
                     onDeleteDeal={handleDeleteDeal}
+                    onToggleAmount={handleToggleAmount}
                     onAddDealToStage={(stId) => {
                       board.setNewDealStageId(stId);
                       board.setNewDealModalOpen(true);
@@ -372,6 +382,7 @@ export function KanbanBoard({
             onClose={() => board.setOpenDealId(null)}
             onEdit={(deal) => board.setEditingDeal(deal)}
             onDelete={handleDeleteDeal}
+            onToggleAmount={handleToggleAmount}
             onMoveStage={(dealId, targetStageId) => {
               board.setDraggingId(dealId);
               board.drop(targetStageId);

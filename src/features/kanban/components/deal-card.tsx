@@ -8,11 +8,14 @@ import {
   Building2,
   Calendar,
   Clock,
+  Eye,
+  EyeOff,
   ExternalLink,
   GripVertical,
   MessageCircle,
   MoreHorizontal,
   Pencil,
+  RotateCcw,
   Trash2,
   User,
 } from 'lucide-react';
@@ -29,12 +32,15 @@ interface DealCardProps {
   readonly deal: Deal;
   readonly stale: boolean;
   readonly dragging: boolean;
-  readonly showAmount?: boolean;
+  /** Exibição efetiva do funil, sem a exceção deste card. */
+  readonly pipelineShowAmounts?: boolean;
   readonly onDragStart: (dealId: string) => void;
   readonly onDragEnd: () => void;
   readonly onOpen: (dealId: string) => void;
   readonly onEdit?: (deal: Deal) => void;
   readonly onDelete?: (dealId: string) => void;
+  /** `null` apaga a exceção do card e volta a seguir o funil. */
+  readonly onToggleAmount?: (deal: Deal, showAmount: boolean | null) => void;
 }
 
 const SOURCE_ICONS: Readonly<Record<string, { label: string; tone: string }>> = {
@@ -51,18 +57,21 @@ export function DealCard({
   deal,
   stale,
   dragging,
-  showAmount = true,
+  pipelineShowAmounts = true,
   onDragStart,
   onDragEnd,
   onOpen,
   onEdit,
   onDelete,
+  onToggleAmount,
 }: DealCardProps) {
   const formatarMoeda = useFormatarMoeda();
   const [showMenu, setShowMenu] = useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
 
   const sourceInfo = deal.source ? SOURCE_ICONS[deal.source] : null;
+  const hasAmountOverride = deal.showAmount !== undefined;
+  const showAmount = deal.showAmount ?? pipelineShowAmounts;
 
   return (
     <li className="group/card relative">
@@ -167,6 +176,38 @@ export function DealCard({
                       </Link>
                     )}
 
+                    {onToggleAmount && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowMenu(false);
+                          onToggleAmount(deal, !showAmount);
+                        }}
+                        className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-surface-2"
+                      >
+                        {showAmount ? (
+                          <EyeOff className="size-3.5 text-dim" />
+                        ) : (
+                          <Eye className="size-3.5 text-dim" />
+                        )}
+                        <span>{showAmount ? 'Ocultar valor deste card' : 'Mostrar valor deste card'}</span>
+                      </button>
+                    )}
+
+                    {onToggleAmount && hasAmountOverride && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowMenu(false);
+                          onToggleAmount(deal, null);
+                        }}
+                        className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-surface-2"
+                      >
+                        <RotateCcw className="size-3.5 text-dim" />
+                        <span>Seguir exibição do funil</span>
+                      </button>
+                    )}
+
                     {onDelete && (
                       <button
                         type="button"
@@ -211,9 +252,26 @@ export function DealCard({
         {/* Valor Estimado */}
         {showAmount ? (
           <div className="mt-2.5 border-t border-line-soft pt-2">
-            <span className="block text-[10px] font-medium uppercase text-dim">Valor Estimado</span>
+            <span className="flex items-center gap-1 text-[10px] font-medium uppercase text-dim">
+              Valor Estimado
+              {hasAmountOverride && (
+                <span title="Este card tem uma exceção de exibição, diferente do funil">
+                  <Eye className="size-2.5" />
+                </span>
+              )}
+            </span>
             <span className="font-display text-title font-bold text-ink tracking-tight tabular-nums">
               {formatarMoeda(deal.amountInCents)}
+            </span>
+          </div>
+        ) : hasAmountOverride ? (
+          <div className="mt-2.5 border-t border-line-soft pt-2">
+            <span
+              className="flex items-center gap-1 text-[10px] font-medium uppercase text-dim"
+              title="Este card tem uma exceção de exibição, diferente do funil"
+            >
+              <EyeOff className="size-2.5" />
+              Valor oculto
             </span>
           </div>
         ) : null}

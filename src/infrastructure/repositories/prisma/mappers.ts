@@ -404,6 +404,9 @@ export const dealRow = (row: DbDealWithTasks): Deal => ({
   ...(row.title ? { title: row.title } : {}),
   ...(row.source ? { source: row.source as DealSource } : {}),
   ...(row.conversationId ? { conversationId: row.conversationId } : {}),
+  ...(row.showAmount !== null && row.showAmount !== undefined
+    ? { showAmount: row.showAmount }
+    : {}),
   ...(row.tasks
     ? {
         tasks: row.tasks.map((task) => ({

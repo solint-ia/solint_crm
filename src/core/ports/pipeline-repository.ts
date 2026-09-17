@@ -6,6 +6,13 @@ export interface PipelineRepository {
   createPipeline(accountId: Id, name: string): Promise<Pipeline>;
   /** Liga ou desliga a exibição de valores (R$) no funil. */
   setShowAmounts(accountId: Id, pipelineId: Id, showAmounts: boolean): Promise<Pipeline>;
+  /**
+   * Exceção de exibição do valor de um card específico.
+   *
+   * `null` apaga a exceção e volta a seguir o funil — é o "herdar do funil",
+   * não um terceiro estado gravado.
+   */
+  setDealShowAmount(accountId: Id, dealId: Id, showAmount: boolean | null): Promise<Deal>;
   /** Exclui um funil personalizado e devolve quantas oportunidades saíram com ele. */
   deletePipeline(accountId: Id, pipelineId: Id): Promise<number>;
   listDeals(accountId: Id, pipelineId: Id): Promise<readonly Deal[]>;
@@ -23,6 +30,7 @@ export interface PipelineRepository {
       priority?: string;
       source?: string;
       nextAction?: string;
+      showAmount?: boolean | null;
     },
   ): Promise<Deal>;
   updateDeal(
@@ -38,6 +46,7 @@ export interface PipelineRepository {
       priority?: string;
       source?: string;
       nextAction?: string;
+      showAmount?: boolean | null;
     },
   ): Promise<Deal>;
   deleteDeal(accountId: Id, dealId: Id): Promise<void>;

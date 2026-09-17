@@ -670,6 +670,12 @@ model Deal {
   conversationId String?
   /// JSON: DealHistoryEntry[]
   history        Json     @default("[]")
+  /// Exibir o valor deste card. Nulo = segue o funil (`Pipeline.showAmounts`).
+  ///
+  /// É a exceção por card: o funil liga/desliga o valor para todos, e este
+  /// campo permite um card específico discordar (ex.: um lead cujo valor
+  /// ainda não foi negociado, num funil que normalmente mostra valores).
+  showAmount     Boolean?
 
   account  Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
   pipeline Pipeline      @relation(fields: [pipelineId], references: [id], onDelete: Cascade)

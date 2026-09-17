@@ -8,6 +8,8 @@ import {
   Check,
   CheckCircle2,
   Clock,
+  Eye,
+  EyeOff,
   MessageCircle,
   Pencil,
   Trash2,
@@ -37,6 +39,8 @@ interface DealDetailPanelProps {
   readonly onEdit?: (deal: Deal) => void;
   readonly onDelete?: (dealId: string) => void;
   readonly onMoveStage?: (dealId: string, targetStageId: string) => void;
+  /** `null` apaga a exceção do card e volta a seguir o funil. */
+  readonly onToggleAmount?: (deal: Deal, showAmount: boolean | null) => void;
 }
 
 export function DealDetailPanel({
@@ -47,11 +51,14 @@ export function DealDetailPanel({
   onEdit,
   onDelete,
   onMoveStage,
+  onToggleAmount,
 }: DealDetailPanelProps) {
   const formatarMoeda = useFormatarMoeda();
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
   const currentStageIndex = stages.findIndex((s) => s.id === deal.stageId);
   const currentStage = stages[currentStageIndex] ?? stages[0];
+  const hasAmountOverride = deal.showAmount !== undefined;
+  const effectiveShowAmount = deal.showAmount ?? showAmounts;
 
   // O checklist vem do banco. O estado local só existe para refletir a
   // resposta da action sem esperar o quadro inteiro recarregar.
@@ -188,16 +195,47 @@ export function DealDetailPanel({
         <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-5">
           {/* Valor Estimado */}
           <div className="rounded-xl border border-line bg-surface-2/60 p-4">
-            {showAmounts ? (
-              <div className="mb-3 border-b border-line-soft pb-3">
+            <div className="mb-3 border-b border-line-soft pb-3">
+              <div className="flex items-center justify-between gap-2">
                 <span className="block text-micro font-semibold uppercase text-dim tracking-wider">
                   Valor da Oportunidade
                 </span>
+                {onToggleAmount && (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => onToggleAmount(deal, !effectiveShowAmount)}
+                      title={
+                        effectiveShowAmount ? 'Ocultar valor deste card' : 'Mostrar valor deste card'
+                      }
+                      className="rounded p-1 text-dim transition-colors hover:bg-surface hover:text-ink"
+                    >
+                      {effectiveShowAmount ? (
+                        <Eye className="size-3.5" />
+                      ) : (
+                        <EyeOff className="size-3.5" />
+                      )}
+                    </button>
+                    {hasAmountOverride && (
+                      <button
+                        type="button"
+                        onClick={() => onToggleAmount(deal, null)}
+                        className="text-micro font-medium text-dim hover:text-ink hover:underline"
+                      >
+                        Seguir funil
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+              {effectiveShowAmount ? (
                 <span className="font-display text-metric font-bold text-ink tracking-tight tabular-nums">
                   {formatarMoeda(deal.amountInCents)}
                 </span>
-              </div>
-            ) : null}
+              ) : (
+                <span className="text-body text-dim italic">Valor oculto neste card</span>
+              )}
+            </div>
 
             {/* Badges de Metadados */}
             <div className="flex flex-wrap gap-1.5">
