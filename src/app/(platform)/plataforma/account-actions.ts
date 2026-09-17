@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
+import { LIMIT_MAX } from '@/core/domain/account-limits';
 import { workspaceNameProblem } from '@/core/domain/account-provisioning';
 import { hashPassword, passwordProblem } from '@/infrastructure/auth/password';
 import { readSuperAdmin } from '@/infrastructure/auth/session';
@@ -317,6 +318,84 @@ export async function deleteAccountAction(input: unknown): Promise<AccountAction
     return { ok: true };
   } catch (error) {
     return failureOf(error, 'Não foi possível excluir a conta.');
+  }
+}
+
+const limitesSchema = z.object({
+  accountId: z.string().min(1).max(64),
+  /** `null` é "sem limite". Zero é um teto legítimo: impede criar qualquer um. */
+  maxInboxes: z.number().int().min(0).max(LIMIT_MAX).nullable(),
+  maxWorkspaces: z.number().int().min(0).max(LIMIT_MAX).nullable(),
+});
+
+/**
+ * Define os tetos de caixas de entrada e de workspaces de uma conta.
+ *
+ * **Não retroage.** Um teto abaixo do que a conta já tem não apaga nada: ele
+ * impede a próxima criação. Apagar caixa leva conversa e mensagem junto, e
+ * isso nunca pode ser efeito colateral de um número digitado noutra tela.
+ */
+export async function setAccountLimitsAction(input: unknown): Promise<AccountActionResult> {
+  const parsed = limitesSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Limites inválidos.' };
+
+  try {
+    const admin = await exigirSuperAdmin();
+    // tenant-ok: esta é a ficha administrativa escolhida pelo superadministrador.
+    const conta = await prisma.account.findUnique({
+      where: { id: parsed.data.accountId },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        maxInboxes: true,
+        maxWorkspaces: true,
+        rootAccountId: true,
+      },
+    });
+    if (!conta) return { ok: false, error: 'Conta não encontrada.' };
+    if (conta.status === 'excluida') {
+      return { ok: false, error: 'Não é possível alterar uma conta excluída.' };
+    }
+
+    const mudou =
+      conta.maxInboxes !== parsed.data.maxInboxes ||
+      conta.maxWorkspaces !== parsed.data.maxWorkspaces;
+    if (!mudou) return { ok: true, accountId: conta.id };
+
+    await prisma.account.update({
+      where: { id: conta.id },
+      data: { maxInboxes: parsed.data.maxInboxes, maxWorkspaces: parsed.data.maxWorkspaces },
+    });
+
+    const label = (valor: number | null) => (valor === null ? 'sem limite' : String(valor));
+    await writeAuditLog({
+      accountId: conta.id,
+      actorId: admin.id,
+      actorName: `${admin.name} (plataforma)`,
+      action: 'configuracao.alterada',
+      targetType: 'workspace',
+      targetId: conta.id,
+      targetName: conta.name,
+      metadata: {
+        detalhe: `limites definidos pela plataforma: caixas ${label(parsed.data.maxInboxes)}, workspaces ${label(parsed.data.maxWorkspaces)}`,
+        plataforma: true,
+        caixasAnterior: label(conta.maxInboxes),
+        caixasNovo: label(parsed.data.maxInboxes),
+        workspacesAnterior: label(conta.maxWorkspaces),
+        workspacesNovo: label(parsed.data.maxWorkspaces),
+      },
+    }).catch(() => undefined);
+
+    revalidatePath('/plataforma');
+    revalidatePath(`/plataforma/${conta.id}`);
+    // Os tetos viajam na sessão: sem isto a conta afetada só os veria no
+    // próximo login.
+    revalidatePath('/', 'layout');
+    return { ok: true, accountId: conta.id };
+  } catch (error) {
+    console.error('[plataforma] Falha ao definir os limites da conta:', error);
+    return failureOf(error, 'Não foi possível salvar os limites.');
   }
 }
 

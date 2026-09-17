@@ -7,6 +7,7 @@ import {
   AUTOMATION_CONDITION_LOGICS,
   AUTOMATION_TRIGGERS,
 } from '@/core/domain/automation';
+import { inboxLimitMessage, isLimitReached } from '@/core/domain/account-limits';
 import { CHANNELS } from '@/core/domain/channel';
 import { ARTICLE_STATUSES } from '@/core/domain/knowledge';
 import { isValidTone } from '@/core/domain/label';
@@ -303,6 +304,22 @@ export async function createInboxAction(
 
   try {
     const session = await assertCanWrite('config.caixas:escrever');
+
+    /**
+     * O teto da plataforma vale para todos, inclusive para o
+     * superadministrador atuando dentro da conta. Um limite que a própria
+     * plataforma fura não é limite: o número na ficha deixaria de descrever o
+     * que a conta tem. Quem precisa de mais levanta o teto na ficha, e são dois
+     * cliques na mesma tela.
+     */
+    const limite = session.account.maxInboxes;
+    if (limite !== undefined) {
+      const atuais = await prisma.inbox.count({ where: { accountId: session.account.id } });
+      if (isLimitReached(limite, atuais)) {
+        return { ok: false, error: inboxLimitMessage(limite) };
+      }
+    }
+
     const settingsRepo =
       typeof container.settings.createInbox === 'function'
         ? container.settings

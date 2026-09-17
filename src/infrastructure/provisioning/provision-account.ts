@@ -37,14 +37,22 @@ export interface ProvisionAccountInput {
   readonly document?: string;
   /** Quem vira administrador da conta. Precisa já existir na transação. */
   readonly ownerUserId: string;
+  /** A conta de origem, quando nasce pelo botão do CRM. Ver `Account.rootAccountId`. */
+  readonly rootAccountId?: string;
 }
 
 export const provisionAccount = async (
   tx: Prisma.TransactionClient,
-  { accountId, name, document, ownerUserId }: ProvisionAccountInput,
+  { accountId, name, document, ownerUserId, rootAccountId }: ProvisionAccountInput,
 ): Promise<void> => {
   await tx.account.create({
-    data: { id: accountId, name, plan: 'starter', ...(document ? { document } : {}) },
+    data: {
+      id: accountId,
+      name,
+      plan: 'starter',
+      ...(document ? { document } : {}),
+      ...(rootAccountId ? { rootAccountId } : {}),
+    },
   });
 
   await tx.role.createMany({

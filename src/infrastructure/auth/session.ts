@@ -233,6 +233,9 @@ const toDomainAccount = (row: {
   plan: string;
   document: string | null;
   aiAgentAccessEnabled: boolean;
+  maxInboxes?: number | null;
+  maxWorkspaces?: number | null;
+  rootAccountId?: string | null;
   settings?: { company: Prisma.JsonValue } | null;
 }): Account => {
   // A marca vive dentro do JSON de configurações; aqui ela é achatada para os
@@ -244,6 +247,9 @@ const toDomainAccount = (row: {
     name: row.name,
     plan: row.plan as Account['plan'],
     aiAgentAccessEnabled: row.aiAgentAccessEnabled,
+    ...(typeof row.maxInboxes === 'number' ? { maxInboxes: row.maxInboxes } : {}),
+    ...(typeof row.maxWorkspaces === 'number' ? { maxWorkspaces: row.maxWorkspaces } : {}),
+    ...(row.rootAccountId ? { rootAccountId: row.rootAccountId } : {}),
     ...(row.document ? { document: row.document } : {}),
     ...(company.logoUrl ? { logoUrl: company.logoUrl } : {}),
     ...(company.brandColor ? { brandColor: company.brandColor } : {}),

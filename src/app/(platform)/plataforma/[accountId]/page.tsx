@@ -15,6 +15,7 @@ import { AccountMembersCard } from '@/features/plataforma/components/account-mem
 import { AccountDangerZone } from '@/features/plataforma/components/account-danger-zone';
 import { EnterAccountButton } from '@/features/plataforma/components/enter-account-button';
 import { AccountAiAccessCard } from '@/features/plataforma/components/account-ai-access-card';
+import { AccountLimitsCard } from '@/features/plataforma/components/account-limits-card';
 
 export const metadata: Metadata = { title: 'Ficha da conta' };
 
@@ -65,6 +66,9 @@ export default async function ContaDaPlataformaPage({
       document: true,
       status: true,
       aiAgentAccessEnabled: true,
+      maxInboxes: true,
+      maxWorkspaces: true,
+      rootAccountId: true,
       suspendedAt: true,
       suspendedReason: true,
       createdAt: true,
@@ -146,20 +150,29 @@ async function VisaoGeral({
     readonly createdAt: Date;
     readonly name: string;
     readonly aiAgentAccessEnabled: boolean;
+    readonly maxInboxes: number | null;
+    readonly maxWorkspaces: number | null;
+    readonly rootAccountId: string | null;
   };
 }) {
-  const [membros, caixas, contatos, conversas, mensagens, ultimaAtividade] = await Promise.all([
-    prisma.membership.count({ where: { accountId } }),
-    prisma.inbox.count({ where: { accountId } }),
-    prisma.contact.count({ where: { accountId, deletedAt: null } }),
-    prisma.conversation.count({ where: { accountId } }),
-    prisma.message.count({ where: { conversation: { accountId } } }),
-    prisma.conversation.findFirst({
-      where: { accountId, lastActivityAt: { not: null } },
-      orderBy: { lastActivityAt: 'desc' },
-      select: { lastActivityAt: true },
-    }),
-  ]);
+  // O teto de workspaces é da família: conta os que nasceram desta conta (ou da
+  // raiz dela, quando ela mesma é um workspace filho). Ver `Account.rootAccountId`.
+  const raiz = conta.rootAccountId ?? accountId;
+  const [membros, caixas, contatos, conversas, mensagens, workspaces, ultimaAtividade] =
+    await Promise.all([
+      prisma.membership.count({ where: { accountId } }),
+      prisma.inbox.count({ where: { accountId } }),
+      prisma.contact.count({ where: { accountId, deletedAt: null } }),
+      prisma.conversation.count({ where: { accountId } }),
+      prisma.message.count({ where: { conversation: { accountId } } }),
+      // tenant-ok: a contagem é da família de contas, e é o que o teto mede.
+      prisma.account.count({ where: { rootAccountId: raiz, status: { not: 'excluida' } } }),
+      prisma.conversation.findFirst({
+        where: { accountId, lastActivityAt: { not: null } },
+        orderBy: { lastActivityAt: 'desc' },
+        select: { lastActivityAt: true },
+      }),
+    ]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -169,6 +182,13 @@ async function VisaoGeral({
         createdAt={conta.createdAt.toISOString()}
         lastActivityAt={ultimaAtividade?.lastActivityAt?.toISOString()}
         numeros={{ membros, caixas, contatos, conversas, mensagens }}
+      />
+      <AccountLimitsCard
+        accountId={accountId}
+        initialMaxInboxes={conta.maxInboxes}
+        initialMaxWorkspaces={conta.maxWorkspaces}
+        usedInboxes={caixas}
+        usedWorkspaces={workspaces}
       />
       <AccountAiAccessCard
         accountId={accountId}

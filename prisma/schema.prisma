@@ -78,6 +78,17 @@ model Account {
   /// usuarios e do estado `active` de cada agente cadastrado.
   aiAgentAccessEnabled Boolean @default(false)
 
+  /// Tetos definidos pela plataforma. Nulo = sem limite.
+  ///
+  /// `maxWorkspaces` conta os workspaces criados **a partir** desta conta
+  /// (os que têm `rootAccountId` apontando para ela), não ela própria.
+  maxInboxes    Int?
+  maxWorkspaces Int?
+  /// A conta de origem, quando este workspace nasceu pelo botão "Criar novo
+  /// workspace" de outra. É o que permite contar a família contra o teto da
+  /// conta raiz; nulo nas contas criadas pelo console da plataforma.
+  rootAccountId String?
+
   suspendedAt     DateTime?
   /// O que dizer a quem tentar entrar. Sem isto a pessoa vê uma porta fechada
   /// sem nenhuma pista de a quem recorrer.
@@ -118,6 +129,8 @@ model Account {
   addressBookNames         WhatsAppAddressBookName[]
   scheduledMessages        ScheduledMessage[]
   contactImportBatches     ContactImportBatch[]
+
+  @@index([rootAccountId])
   webhookDeliveries        WebhookDelivery[]
 }
 

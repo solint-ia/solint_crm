@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { landingRouteFor } from '@/config/navigation';
+import { isLimitReached, workspaceLimitMessage } from '@/core/domain/account-limits';
 import { workspaceNameProblem } from '@/core/domain/account-provisioning';
 import {
   ALLOWED_LOGO_MIME_TYPES,
@@ -156,6 +157,37 @@ export async function createWorkspaceAction(formData: FormData): Promise<Workspa
 
   const superadmin = Boolean(session.platformActor);
 
+  /**
+   * O teto da conta, definido pela plataforma na ficha dela.
+   *
+   * Conta a **família**: os workspaces que nasceram desta conta, ou da raiz
+   * dela quando ela mesma é um filho. Sem a raiz, bastaria entrar no workspace
+   * recém-criado e criar a partir dele para o teto nunca valer.
+   *
+   * Vale também para o superadministrador, pela mesma razão do teto de caixas:
+   * um limite que a plataforma fura deixa de descrever a conta.
+   */
+  const contaRaiz = session.account.rootAccountId ?? session.account.id;
+  const tetoDaConta = session.account.rootAccountId
+    ? (
+        await prisma.account.findUnique({
+          where: { id: contaRaiz },
+          select: { maxWorkspaces: true },
+        })
+      )?.maxWorkspaces
+    : session.account.maxWorkspaces;
+
+  if (typeof tetoDaConta === 'number') {
+    // tenant-ok: a contagem é da família de contas de propósito — escopar por
+    // `accountId` contaria sempre zero e o teto nunca valeria.
+    const criados = await prisma.account.count({
+      where: { rootAccountId: contaRaiz, status: { not: 'excluida' } },
+    });
+    if (isLimitReached(tetoDaConta, criados)) {
+      return { ok: false, error: workspaceLimitMessage(tetoDaConta) };
+    }
+  }
+
   // Quem sai administrador do workspace novo: a própria pessoa, ou, quando é o
   // superadministrador quem cria, os administradores da conta em que ele está.
   let donos: string[];
@@ -193,7 +225,12 @@ export async function createWorkspaceAction(formData: FormData): Promise<Workspa
   const accountId = `acc-${Date.now().toString(36)}-${randomUUID().slice(0, 4)}`;
   try {
     await prisma.$transaction(async (tx) => {
-      await provisionAccount(tx, { accountId, name: nome, ownerUserId: primeiroDono });
+      await provisionAccount(tx, {
+        accountId,
+        name: nome,
+        ownerUserId: primeiroDono,
+        rootAccountId: contaRaiz,
+      });
       if (demaisDonos.length > 0) {
         await tx.membership.createMany({
           data: demaisDonos.map((userId) => ({

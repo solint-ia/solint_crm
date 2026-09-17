@@ -255,6 +255,12 @@ export interface Account {
   readonly document?: string;
   /** A plataforma liberou a funcionalidade de agentes de IA para esta conta. */
   readonly aiAgentAccessEnabled: boolean;
+  /** Teto de caixas de entrada definido pela plataforma. Ausente = sem limite. */
+  readonly maxInboxes?: number;
+  /** Teto de workspaces criados a partir desta conta. Ausente = sem limite. */
+  readonly maxWorkspaces?: number;
+  /** A conta de origem, quando este workspace foi criado a partir de outra. */
+  readonly rootAccountId?: string;
   /**
    * Marca da empresa, projetada do `CompanyProfile` que mora em
    * `AccountSettings.company`.
