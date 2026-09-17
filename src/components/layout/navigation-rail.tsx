@@ -7,6 +7,7 @@ import { usePathname } from 'next/navigation';
 import {
   Bot,
   ChevronDown,
+  FileText,
   GripVertical,
   Inbox,
   KanbanSquare,
@@ -54,6 +55,7 @@ const ICONS: Readonly<Record<NavIcon, typeof Inbox>> = {
   kanban: KanbanSquare,
   ai: Bot,
   campaigns: Megaphone,
+  templates: FileText,
   dashboard: LayoutDashboard,
   settings: Settings,
 };

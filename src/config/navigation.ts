@@ -4,7 +4,14 @@ import { hasAiAgentAccess } from './ai-agent-access';
 import { FEATURES } from './features';
 
 export type NavIcon =
-  'inbox' | 'contacts' | 'kanban' | 'ai' | 'campaigns' | 'dashboard' | 'settings';
+  | 'inbox'
+  | 'contacts'
+  | 'kanban'
+  | 'ai'
+  | 'campaigns'
+  | 'templates'
+  | 'dashboard'
+  | 'settings';
 
 export interface NavItem {
   readonly id: string;
@@ -138,7 +145,10 @@ export const NAV_ITEMS: readonly NavItem[] = [
     id: 'templates',
     label: 'Templates',
     href: '/templates',
-    icon: 'campaigns',
+    // Ícone próprio: com o megafone de Campanhas os dois viravam o mesmo item
+    // na barra, e a diferença entre "o que eu mando" e "para quem eu mando"
+    // é justamente a que o ícone precisa carregar.
+    icon: 'templates',
     permission: 'campanhas:ler',
   },
   {
