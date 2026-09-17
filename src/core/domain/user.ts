@@ -363,6 +363,17 @@ export const canChangeOwnPassword = (session: Session): boolean =>
 export const canCreateWorkspace = (session: Session): boolean =>
   Boolean(session.platformActor) || session.user.roleSlug === 'administrador';
 
+/**
+ * Pode gerir os templates da API oficial (sincronizar da Meta e criar novos)?
+ *
+ * Administrador da conta e superadministrador da plataforma. Um template
+ * criado aqui vai para a análise da Meta em nome da conta do WhatsApp Business
+ * da empresa, e o que é enviado à Meta em nome da empresa fica com quem
+ * responde por ela. A barra lateral e a página decidem com a mesma regra.
+ */
+export const canManageTemplates = (session: Session): boolean =>
+  Boolean(session.platformActor) || session.user.roleSlug === 'administrador';
+
 /** Autorização é decidida sempre aqui — nunca espalhada por componentes. */
 export const can = (session: Session, permission: Permission): boolean =>
   session.permissions.includes(permission);

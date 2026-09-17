@@ -61,6 +61,22 @@ export interface HistoryImporterDependencies {
    * com a agenda restaurada do banco). O resto é resolvido ao fim da importação.
    */
   readonly agendaName?: (jids: readonly (string | null | undefined)[]) => string | undefined;
+  /**
+   * O grupo pode entrar no chat?
+   *
+   * A mesma regra do tempo real: só o grupo que o administrador marcou como
+   * "Permitido no Chat" em Contatos grava mensagem. Ausente, nenhum grupo é
+   * importado — é o comportamento de antes, e o que os testes sem banco esperam.
+   */
+  readonly isGroupAllowed?: (chat: ChatIdentity) => Promise<boolean>;
+  /**
+   * Quem escreveu numa mensagem de grupo: o `senderJid` que fica na linha e o
+   * nome acima da bolha. Ausente, fica o `pushName` da mensagem ou o número.
+   */
+  readonly groupAuthor?: (
+    chat: ChatIdentity,
+    message: WAMessage,
+  ) => Promise<{ readonly senderJid?: string; readonly authorName?: string }>;
   readonly decode?: typeof decodeWaMessage;
   readonly now?: () => Date;
   readonly onBatch?: (
@@ -112,6 +128,11 @@ export class HistoryImporter {
   private pendingBlocks = 0;
   private stopped = false;
   private statsValue = initialStats();
+  /**
+   * Resposta de "este grupo pode?" por JID. Um grupo movimentado manda centenas
+   * de mensagens no mesmo pacote, e a permissão não muda no meio da importação.
+   */
+  private readonly groupDecisions = new Map<string, Promise<boolean>>();
 
   constructor(dependencies: HistoryImporterDependencies) {
     this.dependencies = dependencies;
@@ -145,7 +166,10 @@ export class HistoryImporter {
     for (const message of block.messages ?? []) {
       const jid = message.key.remoteJid;
       if (!message.message || !isSupportedChatJid(jid)) continue;
-      if (isJidGroup(jid) || jid.endsWith('@g.us')) {
+      // Grupo não é descartado aqui: quem decide é a permissão do grupo em
+      // Contatos, consultada em `processBlock`. Sem nenhum resolvedor, cai fora
+      // já, para não pagar a decodificação de algo que não vai entrar.
+      if ((isJidGroup(jid) || jid.endsWith('@g.us')) && !this.dependencies.isGroupAllowed) {
         this.statsValue = { ...this.statsValue, grupos: this.statsValue.grupos + 1 };
         continue;
       }
@@ -171,6 +195,40 @@ export class HistoryImporter {
       });
   }
 
+  private groupAllowed(chat: ChatIdentity): Promise<boolean> {
+    const resolver = this.dependencies.isGroupAllowed;
+    if (!resolver) return Promise.resolve(false);
+    let decisao = this.groupDecisions.get(chat.jid);
+    if (!decisao) {
+      decisao = resolver(chat).catch(() => false);
+      this.groupDecisions.set(chat.jid, decisao);
+    }
+    return decisao;
+  }
+
+  private async groupAuthorOf(
+    chat: ChatIdentity,
+    message: WAMessage,
+  ): Promise<{ readonly senderJid?: string; readonly authorName?: string }> {
+    const participant = message.key.participant ?? undefined;
+    const reserva = {
+      ...(participant ? { senderJid: participant } : {}),
+      authorName:
+        nomeUtilizavel(message.pushName) ??
+        (participant ? fallbackPersonName('', participant) : 'Participante'),
+    };
+    if (!this.dependencies.groupAuthor) return reserva;
+    try {
+      const resolvido = await this.dependencies.groupAuthor(chat, message);
+      return {
+        senderJid: resolvido.senderJid ?? reserva.senderJid,
+        authorName: resolvido.authorName ?? reserva.authorName,
+      };
+    } catch {
+      return reserva;
+    }
+  }
+
   private async processBlock(block: HistoryBlock): Promise<void> {
     if (this.stopped) return;
     const names = new Map<string, string>();
@@ -193,8 +251,12 @@ export class HistoryImporter {
         const externalId = raw.key.id;
         if (!externalId) continue;
         const chat = await this.dependencies.resolveIdentity(raw);
-        if (!chat || chat.isGroup) continue;
-        if (!chat.phone && (isLidUser(chat.jid) || chat.jid.endsWith('@lid'))) {
+        if (!chat) continue;
+        if (chat.isGroup && !(await this.groupAllowed(chat))) {
+          this.statsValue = { ...this.statsValue, grupos: this.statsValue.grupos + 1 };
+          continue;
+        }
+        if (!chat.phone && !chat.isGroup && (isLidUser(chat.jid) || chat.jid.endsWith('@lid'))) {
           this.statsValue = {
             ...this.statsValue,
             lidSemTelefone: this.statsValue.lidSemTelefone + 1,
@@ -220,11 +282,17 @@ export class HistoryImporter {
           raw.key.remoteJid,
           (raw.key as { remoteJidAlt?: string | null }).remoteJidAlt,
         ]);
-        const nomeReal =
-          nomeDaAgenda ||
-          names.get(chat.jid) ||
-          (fromMe ? undefined : nomeUtilizavel(raw.pushName));
-        const reserva = fallbackPersonName(chat.phone, chat.jid);
+        // Num grupo o contato é o grupo, e o `pushName` é de quem escreveu —
+        // batizar o grupo com o nome de um participante trocaria o cadastro.
+        const nomeReal = chat.isGroup
+          ? names.get(chat.jid)
+          : nomeDaAgenda ||
+            names.get(chat.jid) ||
+            (fromMe ? undefined : nomeUtilizavel(raw.pushName));
+        const reserva = chat.isGroup
+          ? 'Grupo do WhatsApp'
+          : fallbackPersonName(chat.phone, chat.jid);
+        const autor = chat.isGroup && !fromMe ? await this.groupAuthorOf(chat, raw) : undefined;
         let pendingMedia: HistoryCommitItem['pendingMedia'];
         let content = decoded.content;
         if (decoded.media) {
@@ -252,7 +320,8 @@ export class HistoryImporter {
           conversationId: chat.conversationId,
           externalId,
           author: fromMe ? 'agent' : 'contact',
-          authorName: fromMe ? 'Atendente' : nomeReal || reserva,
+          authorName: fromMe ? 'Atendente' : autor?.authorName || nomeReal || reserva,
+          ...(autor?.senderJid ? { senderJid: autor.senderJid } : {}),
           origin: 'historico',
           content,
           createdAt: at.toISOString(),

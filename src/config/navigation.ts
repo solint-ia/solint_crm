@@ -1,5 +1,5 @@
 import type { Route } from 'next';
-import type { Permission, Session } from '@/core/domain/user';
+import { canManageTemplates, type Permission, type Session } from '@/core/domain/user';
 import { hasAiAgentAccess } from './ai-agent-access';
 import { FEATURES } from './features';
 
@@ -36,7 +36,10 @@ export const navItemsForSession = (session: Session): readonly NavItem[] =>
   NAV_ITEMS.filter(
     (item) =>
       reachesNavItem(session.permissions, item) &&
-      (item.id !== 'agentes-ia' || hasAiAgentAccess(session.account)),
+      (item.id !== 'agentes-ia' || hasAiAgentAccess(session.account)) &&
+      // Templates vão para a análise da Meta em nome da empresa: só quem
+      // administra a conta os gere. Ver `canManageTemplates`.
+      (item.id !== 'templates' || canManageTemplates(session)),
   );
 
 /**
@@ -125,6 +128,19 @@ export const NAV_ITEMS: readonly NavItem[] = [
         } as const,
       ]
     : []),
+  /**
+   * Templates da API oficial: o que a Meta aprovou para a conta do WhatsApp
+   * Business e o que está em análise. Existe mesmo com Campanhas desligada,
+   * porque o template é o único jeito de falar com um cliente depois das 24 h
+   * numa caixa oficial — e o seletor da conversa lê desta mesma lista.
+   */
+  {
+    id: 'templates',
+    label: 'Templates',
+    href: '/templates',
+    icon: 'campaigns',
+    permission: 'campanhas:ler',
+  },
   {
     id: 'configuracoes',
     label: 'Configurações',

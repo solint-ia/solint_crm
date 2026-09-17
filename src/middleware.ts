@@ -21,6 +21,7 @@ const PROTECTED = [
   '/kanban',
   '/agentes-ia',
   '/campanhas',
+  '/templates',
   '/relatorios',
   '/configuracoes',
   '/perfil',

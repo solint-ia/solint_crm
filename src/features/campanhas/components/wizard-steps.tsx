@@ -2,11 +2,11 @@
 
 import { cn } from '@/lib/cn';
 
-const STEPS = [
-  { id: 1, label: 'Publico' },
-  { id: 2, label: 'Template' },
-  { id: 3, label: 'Variáveis' },
-  { id: 4, label: 'Agendamento' },
+export const WIZARD_STEPS = [
+  { id: 1, label: 'Caixa e template' },
+  { id: 2, label: 'Variáveis' },
+  { id: 3, label: 'Público' },
+  { id: 4, label: 'Revisão e disparo' },
 ] as const;
 
 export function WizardSteps({
@@ -18,7 +18,7 @@ export function WizardSteps({
 }) {
   return (
     <ol className="mb-4 flex items-center gap-2">
-      {STEPS.map((item, index) => (
+      {WIZARD_STEPS.map((item, index) => (
         <li key={item.id} className="flex flex-1 items-center gap-2">
           <button
             type="button"
@@ -34,18 +34,18 @@ export function WizardSteps({
                 current < item.id && 'border-line bg-surface text-dim',
               )}
             >
-              {current > item.id ? '\u2713' : item.id}
+              {current > item.id ? '✓' : item.id}
             </span>
             <span
               className={cn(
-                'text-body font-semibold',
+                'hidden text-body font-semibold sm:inline',
                 current === item.id ? 'text-ink' : 'text-dim',
               )}
             >
               {item.label}
             </span>
           </button>
-          {index < STEPS.length - 1 ? <span className="h-px flex-1 bg-line" /> : null}
+          {index < WIZARD_STEPS.length - 1 ? <span className="h-px flex-1 bg-line" /> : null}
         </li>
       ))}
     </ol>

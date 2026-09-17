@@ -96,6 +96,8 @@ export const getWhatsAppChannel = (): Promise<WhatsAppChannel> => {
     // E os eventos que a Meta manda pela API oficial, pela mesma razão.
     const { CloudEventRunner } = await import('./cloud/cloud-event-runner');
     new CloudEventRunner().start();
+    const { CampaignRunner } = await import('../campaigns/campaign-runner');
+    new CampaignRunner().start();
 
     return canal;
   })();

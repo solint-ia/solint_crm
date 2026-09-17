@@ -1,140 +1,125 @@
-'use client';
-
-import { useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
-
-import { Pause, Play, Trash2 } from 'lucide-react';
+import Link from 'next/link';
+import type { Route } from 'next';
 import type { Campaign } from '@/core/domain/campaign';
 import { CAMPAIGN_STATUS_LABELS, rate } from '@/core/domain/campaign';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { ConfirmModal } from '@/components/ui/confirm-modal';
 import { EmptyState } from '@/components/ui/empty-state';
 import { CAMPAIGN_STATUS_TONE } from '@/components/domain/presentation-maps';
-import {
-  deleteCampaignAction,
-  toggleCampaignStatusAction,
-} from '@/app/(workspace)/campanhas/actions';
+import { formatNumber } from '@/lib/format';
+import { CampaignActions } from './campaign-actions';
 
-export function CampaignTable({ campaigns }: { readonly campaigns: readonly Campaign[] }) {
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
-  const [deletingCampaign, setDeletingCampaign] = useState<Campaign | null>(null);
-
-  const handleToggleStatus = (campaign: Campaign) => {
-    const nextStatus = campaign.status === 'em_andamento' ? 'pausada' : 'em_andamento';
-    startTransition(async () => {
-      await toggleCampaignStatusAction({ campaignId: campaign.id, status: nextStatus });
-      router.refresh();
-    });
-  };
-
-  const handleConfirmDelete = async () => {
-    if (!deletingCampaign) return;
-    startTransition(async () => {
-      await deleteCampaignAction({ campaignId: deletingCampaign.id });
-      setDeletingCampaign(null);
-      router.refresh();
-    });
-  };
-
-
+export function CampaignTable({
+  campaigns,
+  canDispatch,
+}: {
+  readonly campaigns: readonly Campaign[];
+  readonly canDispatch: boolean;
+}) {
   if (campaigns.length === 0) {
     return (
       <EmptyState
         title="Nenhuma campanha criada ainda"
-        description="Crie uma campanha para enviar um template aprovado a um segmento de contatos."
+        description="Uma campanha envia um template aprovado pela Meta a uma lista importada, a uma etiqueta ou à base inteira, por uma caixa da API oficial."
       />
     );
   }
 
   return (
     <Card padded={false} className="overflow-x-auto">
-      <table className="w-full min-w-[720px] text-left text-body">
-        <caption className="sr-only">Campanhas de disparo em massa</caption>
+      <table className="w-full min-w-[880px] text-left text-body">
+        <caption className="sr-only">Campanhas de disparo</caption>
         <thead className="border-b border-line text-meta tracking-wide text-dim uppercase">
           <tr>
-            <th scope="col" className="px-4 py-3 font-semibold">Campanha</th>
-            <th scope="col" className="px-4 py-3 font-semibold">Status</th>
-            <th scope="col" className="px-4 py-3 font-semibold">Entrega</th>
-            <th scope="col" className="px-4 py-3 font-semibold">Leitura</th>
-            <th scope="col" className="px-4 py-3 font-semibold">Envio</th>
-            <th scope="col" className="px-4 py-3 font-semibold text-right">Ações</th>
+            <th scope="col" className="px-4 py-3 font-semibold">
+              Campanha
+            </th>
+            <th scope="col" className="px-4 py-3 font-semibold">
+              Status
+            </th>
+            <th scope="col" className="px-4 py-3 font-semibold">
+              Destinatários
+            </th>
+            <th scope="col" className="px-4 py-3 font-semibold">
+              Entregues
+            </th>
+            <th scope="col" className="px-4 py-3 font-semibold">
+              Lidos
+            </th>
+            <th scope="col" className="px-4 py-3 font-semibold">
+              Responderam
+            </th>
+            <th scope="col" className="px-4 py-3 font-semibold">
+              Disparo
+            </th>
+            {canDispatch ? (
+              <th scope="col" className="px-4 py-3 text-right font-semibold">
+                Ações
+              </th>
+            ) : null}
           </tr>
         </thead>
         <tbody>
-          {campaigns.map((campaign) => (
-            <tr key={campaign.id} className="border-b border-line-soft last:border-0 hover:bg-surface-2/60">
-              <th scope="row" className="px-4 py-3 font-normal">
-                <span className="block font-semibold text-ink">{campaign.name}</span>
-                <span className="block text-meta text-dim">{campaign.segmentName}</span>
-              </th>
-              <td className="px-4 py-3">
-                <Badge tone={CAMPAIGN_STATUS_TONE[campaign.status]} withDot>
-                  {CAMPAIGN_STATUS_LABELS[campaign.status]}
-                </Badge>
-              </td>
-              <td className="px-4 py-3 text-muted">
-                {campaign.metrics.sent > 0
-                  ? `${rate(campaign.metrics.delivered, campaign.metrics.sent)}%`
-                  : '—'}
-              </td>
-              <td className="px-4 py-3 text-muted">
-                {campaign.metrics.delivered > 0
-                  ? `${rate(campaign.metrics.read, campaign.metrics.delivered)}%`
-                  : '—'}
-              </td>
-              <td className="px-4 py-3 text-muted">{campaign.scheduledLabel}</td>
-              <td className="px-4 py-3 text-right">
-                <div className="flex items-center justify-end gap-1">
-                  {campaign.status === 'em_andamento' || campaign.status === 'pausada' ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={isPending}
-                      onClick={() => handleToggleStatus(campaign)}
-                      icon={
-                        campaign.status === 'em_andamento' ? (
-                          <Pause className="size-3.5" />
-                        ) : (
-                          <Play className="size-3.5" />
-                        )
-                      }
-                    />
+          {campaigns.map((campaign) => {
+            const m = campaign.metrics;
+            return (
+              <tr
+                key={campaign.id}
+                className="border-b border-line-soft last:border-0 hover:bg-surface-2/60"
+              >
+                <th scope="row" className="px-4 py-3 font-normal">
+                  <Link
+                    href={`/campanhas/${campaign.id}` as Route}
+                    className="block font-semibold text-ink hover:underline"
+                  >
+                    {campaign.name}
+                  </Link>
+                  <span className="block text-meta text-dim">
+                    {campaign.templateName} · {campaign.audienceLabel}
+                  </span>
+                  <span className="block text-meta text-dim">
+                    {campaign.inboxName} · {campaign.inboxPhone}
+                  </span>
+                </th>
+                <td className="px-4 py-3">
+                  <Badge tone={CAMPAIGN_STATUS_TONE[campaign.status]} withDot>
+                    {CAMPAIGN_STATUS_LABELS[campaign.status]}
+                  </Badge>
+                  {campaign.lastError ? (
+                    <span className="mt-1 block max-w-[220px] truncate text-meta text-red-text">
+                      {campaign.lastError}
+                    </span>
                   ) : null}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={isPending}
-                    aria-label={`Excluir campanha ${campaign.name}`}
-                    onClick={() => setDeletingCampaign(campaign)}
-                    icon={<Trash2 className="size-3.5 text-danger" />}
-                  />
-                </div>
-              </td>
-            </tr>
-          ))}
+                </td>
+                <td className="px-4 py-3 text-ink">
+                  {formatNumber(m.sent + m.failed)}
+                  <span className="text-dim"> / {formatNumber(m.recipients)}</span>
+                  {m.failed > 0 ? (
+                    <span className="block text-meta text-red-text">{m.failed} com falha</span>
+                  ) : null}
+                </td>
+                <td className="px-4 py-3 text-muted">
+                  {m.sent > 0 ? `${rate(m.delivered, m.sent)}%` : '—'}
+                </td>
+                <td className="px-4 py-3 text-muted">
+                  {m.delivered > 0 ? `${rate(m.read, m.delivered)}%` : '—'}
+                </td>
+                <td className="px-4 py-3 text-muted">
+                  {m.sent > 0 ? `${rate(m.replied, m.sent)}%` : '—'}
+                </td>
+                <td className="px-4 py-3 text-muted">{campaign.scheduledLabel}</td>
+                {canDispatch ? (
+                  <td className="px-4 py-3 text-right">
+                    <div className="flex justify-end">
+                      <CampaignActions campaign={campaign} compact />
+                    </div>
+                  </td>
+                ) : null}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
-
-      <ConfirmModal
-        open={deletingCampaign !== null}
-        title="Excluir campanha"
-        description={
-          <span>
-            Tem certeza que deseja excluir a campanha{' '}
-            <strong className="text-ink">{deletingCampaign?.name}</strong>? Os relatórios e métricas de envio desta campanha serão removidos permanentemente.
-          </span>
-        }
-        confirmLabel="Excluir campanha"
-        variant="danger"
-        isLoading={isPending}
-        onClose={() => setDeletingCampaign(null)}
-        onConfirm={handleConfirmDelete}
-      />
     </Card>
   );
 }
-
-

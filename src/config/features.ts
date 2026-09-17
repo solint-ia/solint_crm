@@ -13,7 +13,9 @@
  * duas coisas merecem mensagens diferentes na tela.
  */
 export const FEATURES = {
-  campanhas: false,
+  // Ligada com a API oficial: o disparo sai só por caixas conectadas à Meta,
+  // com template aprovado. Ver `campaign-runner.ts`.
+  campanhas: true,
   // A disponibilidade por cliente e controlada por
   // `Account.aiAgentAccessEnabled`; esta chave fica como desligamento global.
   agentesIA: true,

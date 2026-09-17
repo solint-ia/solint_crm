@@ -548,16 +548,9 @@ async function main() {
       inboxId: 'ibx-wa-oficial',
       name: c.name,
       channel: 'whatsapp',
-      status:
-        c.status === 'em_andamento'
-          ? 'running'
-          : c.status === 'concluida'
-            ? 'completed'
-            : c.status === 'agendada'
-              ? 'scheduled'
-              : c.status === 'pausada'
-                ? 'paused'
-                : 'draft',
+      status: c.status,
+      audience: json({ kind: 'todos' }),
+      variables: json([]),
       stats: json(c.metrics),
     })),
   });

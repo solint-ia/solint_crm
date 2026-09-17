@@ -525,6 +525,8 @@ export class WhatsAppSession {
           accountId: this.accountId,
           inboxId: this.inboxId,
         }),
+      isGroupAllowed: (chat) => this.grupoAutorizadoNoChat(chat),
+      groupAuthor: (chat, message) => this.autorNoGrupoDoHistorico(socket, chat, message),
       onBatch: (report) => {
         if (report.conversationIds.length > 0) {
           waEventBus.emitConversationsImported(
@@ -690,6 +692,8 @@ export class WhatsAppSession {
             inboxId: this.inboxId,
           }),
         agendaName: (jids) => this.nomeSalvoNaAgenda(jids),
+        isGroupAllowed: (chat) => this.grupoAutorizadoNoChat(chat),
+        groupAuthor: (chat, message) => this.autorNoGrupoDoHistorico(socket, chat, message),
         onBatch: async (report, stats) => {
           await this.writeHistoryStats(stats);
           for (const id of report.conversationIds) this.historyConversationIds.add(id);
@@ -2906,6 +2910,47 @@ export class WhatsAppSession {
    * agenda vence o que a pessoa publica, e o número é o último recurso — o que
    * se usa quando não há nome nenhum em lugar algum.
    */
+  /**
+   * O grupo foi autorizado em Contatos ("Permitido no Chat")?
+   *
+   * Lido do cadastro, e não da memória: a importação de histórico roda logo
+   * depois do pareamento, quando esta sessão ainda não viu nenhuma mensagem do
+   * grupo. A regra é a mesma que `handleMessage` aplica ao tempo real — um
+   * grupo que não entra ao vivo também não entra pelo histórico.
+   */
+  private async grupoAutorizadoNoChat(chat: ChatIdentity): Promise<boolean> {
+    if (!chat.isGroup) return true;
+    const contato = await prisma.contact.findFirst({
+      where: {
+        accountId: this.accountId,
+        kind: 'grupo',
+        OR: [{ id: chat.contactId }, { id: `ct-wa-${chat.key}` }],
+      },
+      select: { kind: true, customFields: true },
+    });
+    if (!contato) return false;
+    return isGroupAllowedInChat({
+      kind: 'grupo',
+      customFields: Array.isArray(contato.customFields)
+        ? (contato.customFields as unknown as CustomField[])
+        : [],
+    });
+  }
+
+  /** Quem escreveu numa mensagem de grupo vinda do histórico. */
+  private async autorNoGrupoDoHistorico(
+    socket: WASocket,
+    chat: ChatIdentity,
+    msg: WAMessage,
+  ): Promise<{ readonly senderJid?: string; readonly authorName?: string }> {
+    const sender = await resolveSenderIdentity(socket, msg.key);
+    const authorName = await this.resolveAuthorName(chat, msg, false, '', sender);
+    return {
+      ...(sender?.jid ? { senderJid: sender.jid } : {}),
+      ...(authorName ? { authorName } : {}),
+    };
+  }
+
   private async resolveAuthorName(
     chat: ChatIdentity,
     msg: WAMessage,

@@ -1376,19 +1376,36 @@ model AuditLogEntry {
   @@index([accountId, action, createdAt])
 }
 
+/// Disparo de um template aprovado da API oficial para uma lista de contatos.
+///
+/// Só caixas da API oficial: o disparo em massa por QR Code é o uso que o
+/// WhatsApp bane, e o template aprovado é o único jeito de falar com quem não
+/// escreveu nas últimas 24 h.
 model Campaign {
   id          String    @id @default(cuid())
   accountId   String
   inboxId     String
   name        String
   channel     String
-  /// draft | scheduled | running | paused | completed | canceled
-  status      String    @default("draft")
+  /// rascunho | agendada | em_andamento | pausada | concluida | cancelada
+  status      String    @default("rascunho")
   segmentId   String?
   templateId  String?
+  /// JSON: CampaignAudience — de onde saíram os destinatários (lista importada,
+  /// etiqueta ou base inteira). Guardado para a tela explicar a campanha depois.
+  audience    Json      @default("{}")
+  /// JSON: CampaignVariable[] — de onde sai cada `{{n}}` do template: texto
+  /// fixo ou um campo do contato.
+  variables   Json      @default("[]")
+  /// Envios por minuto. O executor dosa a fila por ele.
+  rateLimit   Int       @default(30)
   scheduledAt DateTime?
   startedAt   DateTime?
   completedAt DateTime?
+  canceledAt  DateTime?
+  /// Último erro que parou a campanha (token inválido, conta bloqueada).
+  lastError   String?
+  createdById String?
   /// JSON: CampaignStats
   stats       Json      @default("{}")
   createdAt   DateTime  @default(now())
@@ -1411,10 +1428,12 @@ model CampaignRecipient {
   name        String?
   /// JSON: variables
   variables   Json      @default("{}")
-  /// queued | sent | delivered | read | replied | failed
+  /// queued | sending | sent | delivered | read | replied | failed
   status      String    @default("queued")
   externalId  String?
   error       String?
+  /// Conversa em que o template foi gravado, para a tela levar até ela.
+  conversationId String?
   sentAt      DateTime?
   deliveredAt DateTime?
   readAt      DateTime?
@@ -1425,6 +1444,7 @@ model CampaignRecipient {
 
   @@index([campaignId, status])
   @@index([externalId])
+  @@index([phone, status])
 }
 
 model Segment {

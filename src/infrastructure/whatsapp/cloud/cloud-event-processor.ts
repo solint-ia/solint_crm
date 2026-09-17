@@ -1,6 +1,10 @@
 import type { Contact } from '@/core/domain/contact';
 import type { Message, MessageContent } from '@/core/domain/message';
 import { asJson, prisma } from '@/infrastructure/db/prisma';
+import {
+  applyCampaignReceipt,
+  applyCampaignReply,
+} from '@/infrastructure/campaigns/campaign-runner';
 import { createNotification } from '@/infrastructure/notifications/create-notification';
 import { commitHistoryBatch, type HistoryCommitItem } from '../wa-history-store';
 import { aplicarAgendaNosContatos, type EntradaDaAgenda } from '../wa-contact-sync';
@@ -315,6 +319,11 @@ const processarMensagem = async (
       })
       .catch(() => undefined);
   }
+
+  // Resposta a uma campanha recente conta como "respondeu" no relatório dela.
+  if (!fromMe && chat.phone) {
+    await applyCampaignReply(conn.inboxId, chat.phone).catch(() => undefined);
+  }
 };
 
 /** Recibo de envio, entrega, leitura ou falha de uma mensagem que o CRM mandou. */
@@ -347,6 +356,9 @@ const processarStatus = async (conn: CloudConnection, payload: Obj): Promise<voi
 
   if (entrega !== 'falha') {
     if (entrega) await applyDeliveryUpdate(wamid, entrega, conn.inboxId);
+    if (entrega === 'entregue' || entrega === 'lido') {
+      await applyCampaignReceipt(wamid, entrega).catch(() => undefined);
+    }
     return;
   }
 
@@ -354,6 +366,7 @@ const processarStatus = async (conn: CloudConnection, payload: Obj): Promise<voi
     ? (status['errors'] as { code?: number; title?: string; message?: string }[])
     : undefined;
   const mensagem = deliveryErrorMessage(errors);
+  await applyCampaignReceipt(wamid, 'falha', mensagem).catch(() => undefined);
 
   const linha = await prisma.message.findFirst({
     where: {

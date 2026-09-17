@@ -1,56 +1,101 @@
-import type { Campaign, Segment, WhatsAppTemplate } from '@/core/domain/campaign';
+import type {
+  CampaignMetrics,
+  CampaignStatus,
+  Segment,
+  WhatsAppTemplate,
+} from '@/core/domain/campaign';
 import { ACCOUNT_ID } from './workspace';
 
-export const CAMPAIGNS: readonly Campaign[] = [
+/** Campanha de demonstração: só o que o seed grava. */
+export interface SeedCampaign {
+  readonly id: string;
+  readonly accountId: string;
+  readonly name: string;
+  readonly status: CampaignStatus;
+  readonly templateName: string;
+  readonly metrics: CampaignMetrics;
+}
+
+export const CAMPAIGNS: readonly SeedCampaign[] = [
   {
     id: 'cp-reativacao',
     accountId: ACCOUNT_ID,
     name: 'Reativação Agosto',
     status: 'em_andamento',
-    segmentName: 'Clientes inativos 60+ dias',
     templateName: 'reativacao_desconto_v2',
-    scheduledLabel: 'Hoje, 08:00',
-    metrics: { recipients: 2000, sent: 1482, delivered: 1393, read: 861, failed: 27 },
+    metrics: {
+      recipients: 2000,
+      queued: 491,
+      sent: 1482,
+      delivered: 1393,
+      read: 861,
+      replied: 0,
+      failed: 27,
+    },
   },
   {
     id: 'cp-pro',
     accountId: ACCOUNT_ID,
     name: 'Lançamento Plano Pro',
     status: 'concluida',
-    segmentName: 'Clientes VIP',
     templateName: 'lancamento_plano_pro',
-    scheduledLabel: '12 ago, 10:00',
-    metrics: { recipients: 184, sent: 184, delivered: 178, read: 118, failed: 6 },
+    metrics: {
+      recipients: 184,
+      queued: 0,
+      sent: 184,
+      delivered: 178,
+      read: 118,
+      replied: 0,
+      failed: 6,
+    },
   },
   {
     id: 'cp-nps',
     accountId: ACCOUNT_ID,
     name: 'Pesquisa NPS Q3',
     status: 'agendada',
-    segmentName: 'Clientes ativos',
     templateName: 'pesquisa_nps_padrao',
-    scheduledLabel: '25 ago, 09:00',
-    metrics: { recipients: 640, sent: 0, delivered: 0, read: 0, failed: 0 },
+    metrics: {
+      recipients: 640,
+      queued: 640,
+      sent: 0,
+      delivered: 0,
+      read: 0,
+      replied: 0,
+      failed: 0,
+    },
   },
   {
     id: 'cp-black',
     accountId: ACCOUNT_ID,
     name: 'Black Week · aquecimento',
     status: 'rascunho',
-    segmentName: '—',
     templateName: '—',
-    scheduledLabel: '—',
-    metrics: { recipients: 0, sent: 0, delivered: 0, read: 0, failed: 0 },
+    metrics: {
+      recipients: 0,
+      queued: 0,
+      sent: 0,
+      delivered: 0,
+      read: 0,
+      replied: 0,
+      failed: 0,
+    },
   },
   {
     id: 'cp-cobranca',
     accountId: ACCOUNT_ID,
     name: 'Cobrança fatura julho',
     status: 'pausada',
-    segmentName: 'Faturas em aberto',
     templateName: 'lembrete_fatura',
-    scheduledLabel: '30 jul, 14:00',
-    metrics: { recipients: 310, sent: 214, delivered: 189, read: 102, failed: 25 },
+    metrics: {
+      recipients: 310,
+      queued: 71,
+      sent: 214,
+      delivered: 189,
+      read: 102,
+      replied: 0,
+      failed: 25,
+    },
   },
 ];
 

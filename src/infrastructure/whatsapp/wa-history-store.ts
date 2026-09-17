@@ -133,7 +133,10 @@ const ensureContactFromHistory = async (
         channel: 'whatsapp',
         avatarTone: 'emerald',
         origin: 'whatsapp',
-        kind: 'pessoa',
+        // Grupo só chega aqui quando já foi autorizado em Contatos, então a
+        // linha existe; o `kind` fica certo mesmo assim, para o caso raro de o
+        // cadastro ter sido apagado no meio da importação.
+        kind: chat.isGroup ? 'grupo' : 'pessoa',
         lastContactAt: newestAt.toISOString(),
       },
     });
@@ -288,7 +291,8 @@ export const commitHistoryBatch = async (
             contactId: resolved.contactId,
             channel: 'whatsapp',
             inboxId,
-            queue: 'Geral',
+            // A mesma fila que o tempo real usa para grupos (`commitMessage`).
+            queue: first.chat.isGroup ? 'Grupos' : 'Geral',
             status: newestIsRecentInbound ? 'aberta' : 'resolvida',
             statusLabel: newestIsRecentInbound ? 'Em andamento' : 'Histórico importado',
             createdAt: first.at,

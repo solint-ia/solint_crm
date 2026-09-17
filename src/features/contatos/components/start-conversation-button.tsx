@@ -1,18 +1,21 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, MessageCircle, Phone, Send } from 'lucide-react';
 import { PhoneNumber, type Contact } from '@/core/domain/contact';
+import { renderTemplate } from '@/core/domain/campaign';
 import { Button } from '@/components/ui/button';
-import { Field, TextArea } from '@/components/ui/field';
+import { Field, Select, TextArea, TextInput } from '@/components/ui/field';
 import { Modal } from '@/components/ui/modal';
 import { useToast } from '@/components/ui/toast';
 import {
   findContactConversationAction,
   startContactConversationAction,
+  startContactTemplateConversationAction,
   type CaixaDisponivel,
   type DestinoPossivel,
+  type TemplateDisponivel,
 } from '@/app/(workspace)/conversas/actions';
 import { cn } from '@/lib/cn';
 
@@ -70,6 +73,7 @@ export function StartConversationButton({
 
   const [checking, setChecking] = useState(false);
   const [caixas, setCaixas] = useState<readonly CaixaDisponivel[] | undefined>();
+  const [templates, setTemplates] = useState<readonly TemplateDisponivel[]>([]);
   const [phoneOptions, setPhoneOptions] = useState<readonly DestinoPossivel[] | undefined>();
   const [recipientPhone, setRecipientPhone] = useState(contact.phone);
 
@@ -114,6 +118,7 @@ export function StartConversationButton({
     }
 
     setRecipientPhone(phone ?? contact.phone);
+    setTemplates(result.templates ?? []);
     setCaixas(result.caixas);
   };
 
@@ -140,6 +145,7 @@ export function StartConversationButton({
           contact={contact}
           recipientPhone={recipientPhone}
           caixas={caixas}
+          templates={templates}
           onClose={() => setCaixas(undefined)}
           onSent={(conversationId) => {
             setCaixas(undefined);
@@ -234,17 +240,24 @@ export function StartConversationButton({
  * telefone de quem recebe. Com dois números conectados, deixar o sistema
  * escolher significa o cliente ver uma mensagem de um número que não conhece —
  * e responder para lá, onde ninguém está olhando.
+ *
+ * Na caixa da API oficial o campo de texto dá lugar ao seletor de template:
+ * quem nunca nos escreveu está fora da janela de 24 h, e a Meta só aceita
+ * template aprovado como primeira mensagem. Oferecer texto livre ali seria
+ * oferecer um envio que falha.
  */
 function FirstMessageModal({
   contact,
   recipientPhone,
   caixas,
+  templates,
   onClose,
   onSent,
 }: {
   readonly contact: Contact;
   readonly recipientPhone: string;
   readonly caixas: readonly CaixaDisponivel[];
+  readonly templates: readonly TemplateDisponivel[];
   readonly onClose: () => void;
   readonly onSent: (conversationId: string) => void;
 }) {
@@ -256,24 +269,48 @@ function FirstMessageModal({
     conectadas.length === 1 ? (conectadas[0]?.id ?? '') : (caixas[0]?.id ?? ''),
   );
   const [text, setText] = useState('');
+  const [templateId, setTemplateId] = useState('');
+  const [values, setValues] = useState<readonly string[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
   const escolhida = caixas.find((caixa) => caixa.id === inboxId);
+  const oficial = escolhida?.provider === 'cloud_api';
+  const templatesDaCaixa = useMemo(
+    () => (escolhida?.wabaId ? templates.filter((t) => t.wabaId === escolhida.wabaId) : []),
+    [escolhida, templates],
+  );
+  const template =
+    templatesDaCaixa.find((t) => t.id === templateId) ??
+    (templateId === '' ? templatesDaCaixa[0] : undefined);
+  const preview = template ? renderTemplate(template.body, values) : '';
+  const faltaVariavel = template
+    ? template.variables.some((_, index) => !values[index]?.trim())
+    : true;
+  const podeEnviar = oficial ? Boolean(template) && !faltaVariavel : Boolean(text.trim());
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (sending || !text.trim() || !inboxId) return;
+    if (sending || !inboxId || !podeEnviar) return;
 
     setError(undefined);
     setSending(true);
 
-    const result = await startContactConversationAction({
-      contactId: contact.id,
-      inboxId,
-      text: text.trim(),
-      ...(recipientPhone ? { recipientPhone } : {}),
-    });
+    const result =
+      oficial && template
+        ? await startContactTemplateConversationAction({
+            contactId: contact.id,
+            inboxId,
+            templateId: template.id,
+            values: template.variables.map((_, index) => values[index] ?? ''),
+            ...(recipientPhone ? { recipientPhone } : {}),
+          })
+        : await startContactConversationAction({
+            contactId: contact.id,
+            inboxId,
+            text: text.trim(),
+            ...(recipientPhone ? { recipientPhone } : {}),
+          });
 
     setSending(false);
 
@@ -315,12 +352,17 @@ function FirstMessageModal({
           <select
             id="first-message-inbox"
             value={inboxId}
-            onChange={(event) => setInboxId(event.target.value)}
+            onChange={(event) => {
+              setInboxId(event.target.value);
+              setTemplateId('');
+              setValues([]);
+            }}
             className="h-10 w-full rounded-xl border border-line bg-surface px-3 text-body text-ink outline-none transition-all focus:border-brand focus:ring-2 focus:ring-brand/20"
           >
             {caixas.map((caixa) => (
               <option key={caixa.id} value={caixa.id}>
                 {caixa.name} · {caixa.identifier}
+                {caixa.provider === 'cloud_api' ? ' · API oficial' : ''}
                 {caixa.conectada ? '' : ' (desconectada)'}
               </option>
             ))}
@@ -337,17 +379,78 @@ function FirstMessageModal({
           </p>
         ) : null}
 
-        <Field label="Mensagem" htmlFor="first-message-text">
-          <TextArea
-            id="first-message-text"
-            rows={4}
-            maxLength={4096}
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            placeholder={`Olá ${contact.name.split(' ')[0] ?? ''}, tudo bem?`}
-            autoFocus
-          />
-        </Field>
+        {oficial ? (
+          templatesDaCaixa.length === 0 ? (
+            <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-meta text-amber-700 dark:text-amber-400">
+              Esta caixa usa a API oficial, e a primeira mensagem para quem nunca escreveu precisa
+              ser um template aprovado pela Meta. Não há nenhum aprovado para esta conta: sincronize
+              ou crie um em Campanhas e templates.
+            </p>
+          ) : (
+            <>
+              <Field
+                label="Template aprovado"
+                htmlFor="first-message-template"
+                hint="Na API oficial, a primeira mensagem para quem nunca escreveu é sempre um template."
+              >
+                <Select
+                  id="first-message-template"
+                  value={template?.id ?? ''}
+                  onChange={(event) => {
+                    setTemplateId(event.target.value);
+                    setValues([]);
+                  }}
+                >
+                  {templatesDaCaixa.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name} · {item.language}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+
+              {template && template.variables.length > 0 ? (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {template.variables.map((variavel, index) => (
+                    <Field key={variavel} label={variavel} htmlFor={`first-message-var-${index}`}>
+                      <TextInput
+                        id={`first-message-var-${index}`}
+                        value={values[index] ?? ''}
+                        placeholder={index === 0 ? contact.name.split(' ')[0] : undefined}
+                        onChange={(event) =>
+                          setValues((atuais) => {
+                            const proximos = [...atuais];
+                            proximos[index] = event.target.value;
+                            return proximos;
+                          })
+                        }
+                      />
+                    </Field>
+                  ))}
+                </div>
+              ) : null}
+
+              {template ? (
+                <div className="rounded-xl border border-line bg-surface-2/60 px-3 py-2">
+                  <p className="mb-1 text-meta font-semibold text-muted">Como chega no cliente</p>
+                  <p className="whitespace-pre-wrap text-body text-ink">{preview}</p>
+                </div>
+              ) : null}
+            </>
+          )
+        ) : (
+          <Field label="Mensagem" htmlFor="first-message-text">
+            <TextArea
+              id="first-message-text"
+              rows={4}
+              maxLength={4096}
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              placeholder={`Olá ${contact.name.split(' ')[0] ?? ''}, tudo bem?`}
+              autoFocus
+            />
+          </Field>
+        )}
 
         <div className="flex justify-end gap-2 border-t border-line pt-4">
           <Button type="button" variant="secondary" onClick={onClose}>
@@ -356,7 +459,7 @@ function FirstMessageModal({
           <Button
             type="submit"
             icon={sending ? undefined : <Send className="size-3.5" />}
-            disabled={sending || !text.trim() || !inboxId}
+            disabled={sending || !inboxId || !podeEnviar}
           >
             {sending ? 'Enviando…' : 'Enviar e abrir conversa'}
           </Button>

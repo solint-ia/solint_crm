@@ -22,6 +22,7 @@ import { groupInboxIds, type Contact, type ContactPartner } from '@/core/domain/
 import { singleLabel } from '@/core/domain/label';
 import { stageLabelIds } from '@/core/domain/pipeline';
 import { can, canSeeInbox, withSignature, type Session } from '@/core/domain/user';
+import { whatsappProviderOf, type WhatsAppProvider } from '@/core/domain/whatsapp-provider';
 import { canSendFreeText, MAX_MESSAGE_LENGTH } from '@/core/use-cases/send-message';
 import { container } from '@/infrastructure/container';
 import { prisma, readJson } from '@/infrastructure/db/prisma';
@@ -1189,6 +1190,20 @@ export interface CaixaDisponivel {
   /** O número pareado, quando há um. É por ele que a pessoa reconhece a caixa. */
   readonly identifier: string;
   readonly conectada: boolean;
+  /** Como a caixa fala com o WhatsApp. Na API oficial a primeira mensagem é um template. */
+  readonly provider: WhatsAppProvider;
+  /** Conta do WhatsApp Business da caixa oficial: é dela que vêm os templates. */
+  readonly wabaId?: string;
+}
+
+/** Template aprovado pela Meta, pronto para abrir conversa numa caixa oficial. */
+export interface TemplateDisponivel {
+  readonly id: string;
+  readonly name: string;
+  readonly language: string;
+  readonly body: string;
+  readonly variables: readonly string[];
+  readonly wabaId: string;
 }
 
 export interface ContactConversationResult {
@@ -1198,6 +1213,14 @@ export interface ContactConversationResult {
   readonly conversationId?: string;
   /** Ausente a conversa, as caixas por onde a primeira mensagem pode sair. */
   readonly caixas?: readonly CaixaDisponivel[];
+  /**
+   * Templates aprovados das caixas oficiais listadas.
+   *
+   * Vêm junto porque, numa caixa oficial, um contato que nunca escreveu está
+   * fora da janela de 24 h e só pode receber template: sem a lista, a tela
+   * ofereceria um campo de texto cujo envio a Meta recusaria.
+   */
+  readonly templates?: readonly TemplateDisponivel[];
   /** Mais de um destinatário exige escolha antes de procurar/criar conversa. */
   readonly phoneSelectionRequired?: boolean;
   readonly phones?: readonly DestinoPossivel[];
@@ -1306,8 +1329,46 @@ export async function findContactConversationAction(
     return { ok: false, error: 'Este contato não tem telefone cadastrado.' };
   }
 
-  return { ok: true, caixas: await caixasDeWhatsApp(session, contact) };
+  const caixas = await caixasDeWhatsApp(session, contact);
+  return { ok: true, caixas, templates: await templatesAprovadosDe(session.account.id, caixas) };
 }
+
+/**
+ * Templates aprovados das WABAs das caixas oficiais oferecidas.
+ *
+ * Só aprovados e só da WABA certa: template de outra conta do WhatsApp
+ * Business dá erro 132001 na Meta, e um em análise nem chega a sair.
+ */
+const templatesAprovadosDe = async (
+  accountId: string,
+  caixas: readonly CaixaDisponivel[],
+): Promise<readonly TemplateDisponivel[]> => {
+  const wabas = [...new Set(caixas.flatMap((caixa) => (caixa.wabaId ? [caixa.wabaId] : [])))];
+  if (wabas.length === 0) return [];
+  const rows = await prisma.messageTemplate.findMany({
+    where: { accountId, status: 'approved', wabaId: { in: wabas } },
+    select: { id: true, name: true, language: true, body: true, wabaId: true },
+    orderBy: [{ name: 'asc' }, { language: 'asc' }],
+  });
+  return rows.flatMap((row) =>
+    row.wabaId
+      ? [
+          {
+            id: row.id,
+            name: row.name,
+            language: row.language,
+            body: row.body,
+            variables: [
+              ...new Set(
+                [...row.body.matchAll(/\{\{(\d+)\}\}/g)].map((match) => `Variável ${match[1]}`),
+              ),
+            ],
+            wabaId: row.wabaId,
+          },
+        ]
+      : [],
+  );
+};
 
 /**
  * As caixas de WhatsApp que esta sessão alcança, com o estado da conexão.
@@ -1339,19 +1400,40 @@ const caixasDeWhatsApp = async (
    */
   const doGrupo = contact?.kind === 'grupo' ? groupInboxIds(contact) : [];
 
-  return settings.connections
-    .filter(
-      (connection) =>
-        connection.channel === 'whatsapp' &&
-        canSeeInbox(session, connection.id) &&
-        (doGrupo.length === 0 || doGrupo.includes(connection.id)),
-    )
-    .map((connection) => ({
+  const elegiveis = settings.connections.filter(
+    (connection) =>
+      connection.channel === 'whatsapp' &&
+      canSeeInbox(session, connection.id) &&
+      (doGrupo.length === 0 || doGrupo.includes(connection.id)) &&
+      // A API oficial não fala com grupo: oferecer a caixa seria oferecer um
+      // envio que a Meta recusa.
+      (contact?.kind !== 'grupo' || whatsappProviderOf(connection.provider) !== 'cloud_api'),
+  );
+
+  const oficiais = elegiveis.filter(
+    (connection) => whatsappProviderOf(connection.provider) === 'cloud_api',
+  );
+  const wabaPorCaixa = new Map<string, string>();
+  if (oficiais.length > 0) {
+    const conexoes = await prisma.whatsAppCloudConnection.findMany({
+      where: { accountId: session.account.id, inboxId: { in: oficiais.map((c) => c.id) } },
+      select: { inboxId: true, wabaId: true },
+    });
+    for (const conexao of conexoes) wabaPorCaixa.set(conexao.inboxId, conexao.wabaId);
+  }
+
+  return elegiveis.map((connection) => {
+    const provider = whatsappProviderOf(connection.provider);
+    const wabaId = wabaPorCaixa.get(connection.id);
+    return {
       id: connection.id,
       name: connection.name,
       identifier: connection.identifier,
       conectada: connection.status === 'conectado',
-    }));
+      provider,
+      ...(wabaId ? { wabaId } : {}),
+    };
+  });
 };
 
 const startContactConversationSchema = z.object({
@@ -1453,6 +1535,110 @@ export async function startContactConversationAction(
         detalhe: `para ${parsed.data.recipientPhone ?? contact.phone}`,
         contactId: contact.id,
         inboxId: parsed.data.inboxId,
+        ...(contact.company ? { empresa: contact.company } : {}),
+      },
+    });
+  }
+
+  revalidatePath('/conversas');
+  revalidatePath('/contatos');
+
+  return { ...enviado, conversationId };
+}
+
+const startContactTemplateSchema = z.object({
+  contactId: z.string().min(1).max(64),
+  inboxId: z.string().min(1).max(64),
+  templateId: z.string().min(1).max(64),
+  values: z.array(z.string().trim().max(300)).max(10),
+  recipientPhone: z.string().trim().min(8).max(30).optional(),
+});
+
+/**
+ * Abre a conversa numa caixa da API oficial e manda um template aprovado.
+ *
+ * É a versão de `startContactConversationAction` para quem nunca nos escreveu
+ * por um número oficial: a janela de 24 h está fechada, a Meta recusa texto
+ * livre, e a única primeira mensagem possível é um template. O envio em si é o
+ * mesmo do banner de janela fechada da conversa (`sendTemplateAction`), para
+ * não haver dois jeitos de mandar template.
+ */
+export async function startContactTemplateConversationAction(
+  input: unknown,
+): Promise<SendMessageResult & { readonly conversationId?: string }> {
+  const parsed = startContactTemplateSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: 'Dados inválidos para iniciar a conversa.' };
+  }
+
+  const session = await container.session.getCurrentSession();
+  if (!can(session, 'conversas:responder')) {
+    return { ok: false, error: 'Seu papel não permite enviar mensagens.' };
+  }
+  if (!canSeeInbox(session, parsed.data.inboxId)) {
+    return { ok: false, error: 'Você não tem acesso a esta caixa de entrada.' };
+  }
+
+  const contact = await container.contacts.findById(session.account.id, parsed.data.contactId);
+  if (!contact) return { ok: false, error: 'Contato não encontrado.' };
+  if (contact.kind === 'grupo') {
+    return { ok: false, error: 'A API oficial não envia para grupos.' };
+  }
+
+  const phones = [...new Set([contact.phone, ...(contact.extraPhones ?? [])].filter(Boolean))];
+  const recipientPhone = parsed.data.recipientPhone ?? phones[0];
+  if (!recipientPhone) return { ok: false, error: 'Este contato não tem telefone cadastrado.' };
+  if (!phones.includes(recipientPhone)) {
+    return { ok: false, error: 'O telefone escolhido não pertence a este contato.' };
+  }
+
+  const settings = await container.settings.get(session.account.id);
+  const inbox = settings.connections.find((item) => item.id === parsed.data.inboxId);
+  if (!inbox || inbox.channel !== 'whatsapp') {
+    return { ok: false, error: 'Caixa de entrada inválida para WhatsApp.' };
+  }
+  if (whatsappProviderOf(inbox.provider) !== 'cloud_api') {
+    return { ok: false, error: 'Esta caixa não usa a API oficial. Envie uma mensagem de texto.' };
+  }
+
+  let conversationId: string;
+  try {
+    const aberta = await openOutboundConversation({
+      accountId: session.account.id,
+      inboxId: parsed.data.inboxId,
+      contact,
+      recipientPhone,
+    });
+    conversationId = aberta.id;
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro ao abrir a conversa.',
+    };
+  }
+
+  const enviado = await sendTemplateAction({
+    conversationId,
+    templateId: parsed.data.templateId,
+    values: parsed.data.values,
+  });
+
+  // A mesma linha de auditoria da abordagem por texto: quem abriu, para qual
+  // número, e aqui também com qual template.
+  if (enviado.ok) {
+    void writeAuditLog({
+      accountId: session.account.id,
+      actorId: session.user.id,
+      actorName: session.user.name,
+      action: 'conversa.iniciada',
+      targetType: 'conversa',
+      targetId: conversationId,
+      targetName: contact.name,
+      metadata: {
+        detalhe: `para ${recipientPhone} com template`,
+        contactId: contact.id,
+        inboxId: parsed.data.inboxId,
+        templateId: parsed.data.templateId,
         ...(contact.company ? { empresa: contact.company } : {}),
       },
     });

@@ -63,6 +63,10 @@ async function main() {
   const { CloudEventRunner } = await import('./infrastructure/whatsapp/cloud/cloud-event-runner');
   const cloudEventRunner = new CloudEventRunner(`${sessionManager.workerId}-cloud`);
   cloudEventRunner.start();
+  // Campanhas saem pela API oficial, e o executor delas mora onde há relógio.
+  const { CampaignRunner } = await import('./infrastructure/campaigns/campaign-runner');
+  const campaignRunner = new CampaignRunner(`${sessionManager.workerId}-campaigns`);
+  campaignRunner.start();
   const { WebhookRetentionRunner } =
     await import('./infrastructure/webhooks/webhook-retention-runner');
   const webhookRetentionRunner = new WebhookRetentionRunner(sessionManager.workerId);
@@ -310,6 +314,7 @@ async function main() {
           slaRunner.stop(),
           commandRecoveryRunner.stop(),
           cloudEventRunner.stop(),
+          campaignRunner.stop(),
           webhookRetentionRunner.stop(),
         ]),
         5_000,
