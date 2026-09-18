@@ -529,6 +529,53 @@
   }
 }
 
+/*
+ * A ilustração da tela de entrada (xl em diante). Ver `AuthSplitLayout`.
+ *
+ * O fundo repete as cores medidas nas bordas da imagem, da esquerda para a
+ * direita, para as faixas que sobram em telas fora de 16:9 emendarem nela.
+ */
+.auth-backdrop {
+  background: linear-gradient(90deg, #032b5e 0%, #042d6c 25%, #0646b6 50%, #0b64f8 75%, #228cfd 100%);
+}
+
+/* A imagem inteira, do maior tamanho que cabe na tela, ancorada à esquerda. */
+.auth-backdrop-art {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  translate: 0 -50%;
+  width: min(100vw, calc(100vh * 3800 / 2139));
+  aspect-ratio: 3800 / 2139;
+}
+
+/* Tela mais alta que a imagem: sobra faixa em cima e embaixo. */
+@media (max-aspect-ratio: 3800/2139) {
+  .auth-backdrop-art {
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 4%, #000 96%, transparent);
+    mask-image: linear-gradient(to bottom, transparent, #000 4%, #000 96%, transparent);
+  }
+}
+
+/*
+ * Tela mais larga que a imagem, ou exatamente 16:9: sobra faixa à direita.
+ * Um 1920×1080 é um fio mais largo que a imagem (3800×2139), e sem esta regra
+ * ficava uma linha de 1 px de outra cor na borda. O esmaecimento cai no terço
+ * vazio, atrás do cartão, onde não há nada a perder.
+ */
+@media (min-aspect-ratio: 3800/2139) {
+  /* A faixa da direita continua a borda direita da imagem, que muda de cor de
+     cima para baixo (mais clara no meio). Com o gradiente horizontal ela ficava
+     chapada, e o encontro virava uma coluna de luz no ultrawide. */
+  .auth-backdrop {
+    background: linear-gradient(180deg, #2495fd 0%, #3ab5fd 25%, #2aacfd 50%, #1a91fe 75%, #1e84fd 100%);
+  }
+  .auth-backdrop-art {
+    -webkit-mask-image: linear-gradient(to right, #000 90%, transparent);
+    mask-image: linear-gradient(to right, #000 90%, transparent);
+  }
+}
+
 /* O painel do formulário: card branco elevado, nítido e com alta definição */
 .auth-panel {
   background: #ffffff;
